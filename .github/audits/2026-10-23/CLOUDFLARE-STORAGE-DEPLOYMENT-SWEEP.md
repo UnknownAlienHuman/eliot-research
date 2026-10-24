@@ -25,6 +25,7 @@ deploy, migration or residency certification.
 | 100 | Local development now exposes correlated OpenTelemetry traces/logs and binding activity through Local Explorer. The observability endpoint is read-only, while other Explorer resource surfaces can mutate local KV/R2/D1 data. Local traces reflect the local runtime/configuration and do not prove deployed Access, Search, provider or network behavior. | Development agents use only the read-only local observability endpoint for diagnosis unless a task explicitly authorizes isolated fixture mutation. Keep local resources synthetic and separate from mounted production data. Record trace IDs and reproduction, but do not treat a local successful trace as deployed acceptance or add a temporary logging service merely for debugging. |
 | 101 | Beginning 2026-12-01, Workers Logs, Workers/Cloudflare Traces, Container logs, R2 Data Access Logs, AI Gateway logs and Workers Issues share account-level Observability ingestion/storage pricing. Shared datasets default to seven-day retention. Ingestion is metered before compression and includes enriched/custom attributes; sampling before storage reduces both meters. Paid plans include finite ingestion/storage allowances and continue billing after exhaustion. Agent traces are explicitly incomplete and may truncate payloads. | Set explicit head sampling and per-span/log field budgets before enabling production observability. Keep seven-day operational retention and no full payload/reasoning/tool replay by default. Track ingestion/storage estimates and alert before allowance exhaustion. Do not use traces/logs as conversation history, evidence archive or a lossless audit trail; durable product history remains D1/R2. |
 | 102 | Logpush is available with usage-based internal/external export pricing, and Transformers can filter, redact and reshape supported datasets before delivery. Export introduces another retained copy and destination policy; it does not make best-effort/source logs complete. | Do not enable Logpush in the initial product. Add it only for a named external incident/SIEM/long-retention consumer, with payload-free allowlisted fields, transformation/redaction before delivery, documented destination jurisdiction/retention/deletion and explicit export cost. It is operational telemetry, never workspace backup or activity authority. |
+| 103 | Remote bindings let locally executing code call deployed D1/R2/KV/DO and other resources. They are opt-in per binding, but Workers AI always runs remotely and AI Search has no local implementation, so their local development paths necessarily call a Cloudflare account resource. `wrangler dev --local` disables configured remote bindings for simulatable resources, not Workers AI or an AI Search operation that requires remote mode. Local model/search calls can incur usage and mutate deployed indexes. | Default development uses local simulated D1/R2/DO plus synthetic fixtures and `wrangler dev --local`; committed production bindings do not carry `remote:true`. Separate explicit dev/integration environments bind only dedicated non-production AI Search/Gateway/Workers AI resources, with hard spend limits and disposable data. Local agents cannot point at production resources or run indexing/model calls without the explicit integration profile. |
 
 ## Secrets and deployment decision
 
@@ -33,12 +34,13 @@ deploy, migration or residency certification.
 | Create/rotate/delete provider secrets | Human owner or dedicated Secrets Store administrator; never ordinary CI |
 | Associate a key with AI Gateway | Explicit setup operation using Secrets Store Deployer/owner authority |
 | Deploy routine Worker code | Worker-scoped Editor token with no secret-store, bucket-lock or delete authority |
-| Create production/preview storage jurisdiction | Explicit setup manifest before resource creation |
+| Create production/preview/dev storage jurisdiction | Explicit setup manifest before resource creation |
 | Change jurisdiction | New resource + export/import/verification/cutover; no in-place mutation |
 | Configure R2 lock/Local Uploads | Explicit owner storage policy; absent from ordinary application deploy |
 | Configure AI Gateway response cache | Off globally; explicit server-owned immutable-operation exception only |
 | Configure production observability | Sampled payload-free seven-day operations profile with cost budget |
 | Configure Logpush | Off initially; separate owner-approved external telemetry integration only |
+| Configure local development | Local simulated bindings by default; separate disposable remote integration profile only |
 | Deploy ordinary code | Full deploy initially; gradual only after mixed-version contract tests exist |
 | Create/rename/delete/transfer DO class | Separate owner-approved atomic `wrangler deploy`, with pre-removal of callers and portable export |
 | Recover one DO's SQLite state | Native PITR when appropriate; never presented as whole-product rollback |
@@ -63,12 +65,14 @@ Logs/traces/issues destination, sampling, field budget and retention
 Logpush destination/transform/retention: disabled | explicit
 Browser Run / conversion / container location claim
 Web Search provider and data handling
+remote development resources: none | dedicated non-production IDs
 external MCP/tool provider policy
 checked_at / evidence
 ```
 
-A missing row is displayed as **not guaranteed**, not inferred from the account or another product. Preview resources use
-the same declared profile or are explicitly labelled non-production and forbidden from receiving production data.
+A missing row is displayed as **not guaranteed**, not inferred from the account or another product. Preview/integration
+resources use the same declared profile or are explicitly labelled non-production and forbidden from receiving production
+data.
 
 ## Deployment compatibility matrix
 
@@ -86,6 +90,7 @@ AI Search item/metadata schema
 DO exports lifecycle
 Worker or AI Gateway cache policy/key
 observability fields/sampling/export
+local/preview/production binding IDs
 ```
 
 A mixed-version deployment is permitted only when every affected row is backward/forward compatible and exercised.
@@ -96,6 +101,7 @@ deployment. DO lifecycle changes remain a separate atomic operation.
 
 The Secrets Store access-control/integration docs, D1/R2/DO data-location docs, R2 locks/Local Uploads, Workers Cache,
 AI Gateway response cache, Markdown for Agents, Local Explorer/tracing, Observability/Logpush pricing and retention,
-gradual-deployment docs and declarative DO lifecycle constraints were inspected. No secret was created/rotated, no
-role/token/lock/cache/telemetry export was provisioned, no jurisdictional or Local Uploads bucket was created, no
-mixed-version deployment was run and no PITR/rollback was exercised. These remain stage-owned runtime checks.
+remote-binding/local-development behavior, gradual-deployment docs and declarative DO lifecycle constraints were
+inspected. No secret was created/rotated, no role/token/lock/cache/telemetry export or remote binding was provisioned, no
+jurisdictional or Local Uploads bucket was created, no local model/index call was made, no mixed-version deployment was
+run and no PITR/rollback was exercised. These remain stage-owned runtime checks.
