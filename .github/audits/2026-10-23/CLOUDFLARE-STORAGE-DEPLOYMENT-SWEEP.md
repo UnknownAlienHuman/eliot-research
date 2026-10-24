@@ -23,6 +23,8 @@ deploy, migration or residency certification.
 | 98 | AI Gateway response caching is disabled by default. Its default key hashes provider, endpoint, model, provider credential header and the complete request body. A custom `cf-aig-cache-key` replaces that boundary, opts the request into caching and can share a response across otherwise different requests; without an explicit/default TTL it still receives a five-minute TTL. Cache writes are volatile, so simultaneous identical calls can both reach the provider. | Keep Gateway response caching globally off. Ordinary chat/research explicitly skips it. A future cacheable immutable derived operation may use either the default exact-request key or a server-generated digest covering the complete response-equivalence boundary: actor/share scope, frozen source/page revisions, prompt/profile/tool versions, selected model route, settings, language/style and relevant retrieval/coverage inputs. Never use a question-only/client key. Store `cf-aig-cache-status`; a HIT is neither freshness nor completeness proof, and a MISS does not prove only one provider charge. |
 | 99 | Markdown for Agents returns an edge-generated streamed Markdown representation when `Accept: text/markdown` is negotiated. Current conversion supports up to 6 MiB of decompressed HTML, preserves origin security/cache headers and Content Signals, adds `Vary: Accept`, removes body validators such as `ETag`/`Last-Modified`, omits `Content-Length` and no longer emits token-count headers. | Treat it as a provider-generated representation with URL, response headers, timestamp and content-signal provenance, not the original HTML. Calculate tokens locally. A later HTML refetch is not the same snapshot and cannot be silently paired with the Markdown. Use it for preview/discovery or retain it explicitly; capture original bytes or both representations in one deliberate acquisition when original provenance is required. |
 | 100 | Local development now exposes correlated OpenTelemetry traces/logs and binding activity through Local Explorer. The observability endpoint is read-only, while other Explorer resource surfaces can mutate local KV/R2/D1 data. Local traces reflect the local runtime/configuration and do not prove deployed Access, Search, provider or network behavior. | Development agents use only the read-only local observability endpoint for diagnosis unless a task explicitly authorizes isolated fixture mutation. Keep local resources synthetic and separate from mounted production data. Record trace IDs and reproduction, but do not treat a local successful trace as deployed acceptance or add a temporary logging service merely for debugging. |
+| 101 | Beginning 2026-12-01, Workers Logs, Workers/Cloudflare Traces, Container logs, R2 Data Access Logs, AI Gateway logs and Workers Issues share account-level Observability ingestion/storage pricing. Shared datasets default to seven-day retention. Ingestion is metered before compression and includes enriched/custom attributes; sampling before storage reduces both meters. Paid plans include finite ingestion/storage allowances and continue billing after exhaustion. Agent traces are explicitly incomplete and may truncate payloads. | Set explicit head sampling and per-span/log field budgets before enabling production observability. Keep seven-day operational retention and no full payload/reasoning/tool replay by default. Track ingestion/storage estimates and alert before allowance exhaustion. Do not use traces/logs as conversation history, evidence archive or a lossless audit trail; durable product history remains D1/R2. |
+| 102 | Logpush is available with usage-based internal/external export pricing, and Transformers can filter, redact and reshape supported datasets before delivery. Export introduces another retained copy and destination policy; it does not make best-effort/source logs complete. | Do not enable Logpush in the initial product. Add it only for a named external incident/SIEM/long-retention consumer, with payload-free allowlisted fields, transformation/redaction before delivery, documented destination jurisdiction/retention/deletion and explicit export cost. It is operational telemetry, never workspace backup or activity authority. |
 
 ## Secrets and deployment decision
 
@@ -35,6 +37,8 @@ deploy, migration or residency certification.
 | Change jurisdiction | New resource + export/import/verification/cutover; no in-place mutation |
 | Configure R2 lock/Local Uploads | Explicit owner storage policy; absent from ordinary application deploy |
 | Configure AI Gateway response cache | Off globally; explicit server-owned immutable-operation exception only |
+| Configure production observability | Sampled payload-free seven-day operations profile with cost budget |
+| Configure Logpush | Off initially; separate owner-approved external telemetry integration only |
 | Deploy ordinary code | Full deploy initially; gradual only after mixed-version contract tests exist |
 | Create/rename/delete/transfer DO class | Separate owner-approved atomic `wrangler deploy`, with pre-removal of callers and portable export |
 | Recover one DO's SQLite state | Native PITR when appropriate; never presented as whole-product rollback |
@@ -55,7 +59,8 @@ AI Search availability/location claim: verified or none
 Workers AI / AI Gateway / vendor route retention and location
 AI Gateway response cache: disabled | explicit operation/profile
 Secrets Store global/beta status
-Logs/traces/issues destination and retention
+Logs/traces/issues destination, sampling, field budget and retention
+Logpush destination/transform/retention: disabled | explicit
 Browser Run / conversion / container location claim
 Web Search provider and data handling
 external MCP/tool provider policy
@@ -80,6 +85,7 @@ R2 object envelope/manifest reader
 AI Search item/metadata schema
 DO exports lifecycle
 Worker or AI Gateway cache policy/key
+observability fields/sampling/export
 ```
 
 A mixed-version deployment is permitted only when every affected row is backward/forward compatible and exercised.
@@ -89,7 +95,7 @@ deployment. DO lifecycle changes remain a separate atomic operation.
 ## Verification boundary
 
 The Secrets Store access-control/integration docs, D1/R2/DO data-location docs, R2 locks/Local Uploads, Workers Cache,
-AI Gateway response cache, Markdown for Agents, Local Explorer/tracing, gradual-deployment docs and declarative DO lifecycle
-constraints were inspected. No secret was created/rotated, no role/token/lock/cache was provisioned, no jurisdictional or
-Local Uploads bucket was created, no mixed-version deployment was run and no PITR/rollback was exercised. These remain
-stage-owned runtime checks.
+AI Gateway response cache, Markdown for Agents, Local Explorer/tracing, Observability/Logpush pricing and retention,
+gradual-deployment docs and declarative DO lifecycle constraints were inspected. No secret was created/rotated, no
+role/token/lock/cache/telemetry export was provisioned, no jurisdictional or Local Uploads bucket was created, no
+mixed-version deployment was run and no PITR/rollback was exercised. These remain stage-owned runtime checks.
