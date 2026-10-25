@@ -1,25 +1,24 @@
 # Eliot Research
 
-A research workspace for one owner and the agents the owner connects: a shared library, readable sources with exact
-passages, automatic distillation of every document, cited answers, project knowledge pages, deep research and an MCP
-endpoint for external agents — on Cloudflare.
+A private research workspace for one owner and connected agents: shared Library, immutable readable sources, exact
+passages, budgeted one-time source distillation, cited answers, project knowledge, bounded deep research and MCP — on
+Cloudflare.
 
-**Status:** the replacement is specified and its shell is merged; product contours K1+ are not built yet. Code under
-`apps/`, `packages/`, `crates/` and `infra/` is the legacy system, kept as donor and data source until K10.
+**Status:** the replacement architecture and delivery contours are specified; the one-package Worker/Vite shell is
+merged, while product contours K0+ still require implementation. Legacy `apps/`, `packages/`, `crates/` and `infra/`
+remain donor/import material until K10 and are not implementation instructions.
 
 | Document | Purpose |
 |---|---|
-| [AGENTS.md](AGENTS.md) | How work is done: contours, acceptance, budgets, what not to produce |
-| [Architecture](docs/ARCHITECTURE.md) | Product, principles, guarantees, system shape |
-| [Map](docs/MAP.md) | Contours K0–K10: what to build, where, acceptance, out of scope, budgets |
-| [Implementation](docs/IMPLEMENTATION.md) | Technical contracts: data, ingest, citations, distillation, tools, Ask, search, models, UI |
-| [Donors](docs/DONORS.md) | What to reuse per contour, with licences |
-| [Eval](eval/README.md) | Fixed material and acceptance scripts |
+| [AGENTS.md](AGENTS.md) | execution, acceptance, cost and coordination rules |
+| [Architecture](docs/ARCHITECTURE.md) | product, invariants, guarantees and Cloudflare system shape |
+| [Map](docs/MAP.md) | contours K0–K10, acceptance classes, budgets and explicit deferrals |
+| [Implementation](docs/IMPLEMENTATION.md) | data/API/citation/model/search contracts and dated platform facts |
+| [Donors](docs/DONORS.md) | exact reuse pins, paths, licences and boundaries |
+| [Eval](eval/README.md) | fixed material and real-product acceptance scripts |
 
-Next step: [K0 — Shell](docs/MAP.md#k0--shell).
-
-Earlier audits and the review register are preserved at
+Start with [K0 — Shell](docs/MAP.md#k0--shell). Earlier audits and the review register remain available at
 [`20400288/.github/audits`](https://github.com/UnknownAlienHuman/eliot-research/tree/204002889537de4af1583aa512cbb013cddccfe6/.github/audits);
-[issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) explains the earlier failure.
+[issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) records the earlier failure mode.
 
 MIT. See [LICENSE](LICENSE).

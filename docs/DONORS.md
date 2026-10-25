@@ -1,86 +1,108 @@
-# Donors
+# Eliot Research — Donor registry
 
-What to reuse, per contour of [MAP](MAP.md). **Code** means the licence allows copying with its notice; keep the copied
-part small and adapt it. **Idea** means re-implement the mechanism; do not copy code. Check the licence of the exact file
-before copying. Repository metadata (licence, last push) was checked on 2026-10-24.
+This file is a controlled reuse plan, not a list of interesting projects. A donor is used only when it removes concrete
+work from the active contour. [MAP](MAP.md) owns delivery order; [IMPLEMENTATION](IMPLEMENTATION.md) owns Eliot's
+contracts. Donor behaviour never overrides either document.
 
-A donor enters only when it removes concrete work in the contour being built. Name it in the PR that uses it.
+## Adoption rule
 
-## Legacy Eliot code (port by moving or copying into `src/`, then trimming)
+Before copying code or depending on an external package, the contour PR records:
 
-| Legacy path | What it gives | Contour | How |
+1. repository, exact commit and exact paths inspected;
+2. licence of the copied file/package;
+3. the one mechanism being reused and the donor-specific layers being discarded;
+4. Eliot's caller and acceptance check for that mechanism;
+5. whether code was copied, adapted, moved from legacy Eliot, or only reimplemented as an idea.
+
+Use a direct maintained package when it is already installed and its public API matches the need. Otherwise copy the
+smallest mechanism. Do not import a donor's architecture, persistence model, orchestration framework or terminology.
+Pins below are review baselines; recheck the path and licence when a contour actually adopts code.
+
+## Legacy Eliot baseline
+
+Pinned repository state: [`7c034569b908d3b03a8b821b7c537477a24b10f7`](https://github.com/UnknownAlienHuman/eliot-research/tree/7c034569b908d3b03a8b821b7c537477a24b10f7).
+Legacy folders are donor/import material, never instructions.
+
+| Path | Reuse | Contour | Method |
 |---|---|---|---|
-| `packages/ui/src/tokens/` (theme, Google Sans with Cyrillic), `primitives/`, Material Symbols component | the accepted design system | K0 | `git mv` to `src/web/ui/` unchanged |
-| `apps/eliotr-web/src/app/Shell.tsx`, `shell.css` | frame: top bar, rail, bottom bar, panes | K0 | copy, rewire routes |
-| `packages/ui/src/features/sources/{projects,import,document}` | projects home, upload, reader | K1 | `git mv`, retype props to `src/shared/` |
-| `packages/ui/src/features/research/{run,evidence}` | chat panel, citations/evidence view | K2 | `git mv`, retype props |
-| `apps/eliotr-web/src/app/ChatModelPicker.tsx`, `ModelSettingsPanel.tsx` | model choice UI | K2 | copy, drop qualification parts |
-| `packages/ui/src/features/agents/DecisionInbox.tsx` | proposals inbox | K4 | `git mv` |
-| `packages/ui/src/features/studio`, `.../research/report` | Studio and report views | K6 | `git mv` |
-| `packages/cloudflare-markdown/src/markdown-conversion.ts` (+ test) | `toMarkdown` call and result parsing | K1 | copy the call and parsing (~200 lines), drop receipts |
-| `packages/retrieval/src/structural-projector.ts` (+ tests) | UTF-8 offsets, heading tracking | K1 | copy the offset/heading helpers only |
-| `packages/cloudflare-evidence/src/content-store.ts` (+ test) | R2 range reads | K1 | copy the range read (~100 lines) |
-| `packages/platform-cloudflare/src/r2.ts` | write-once object pattern | K1 | idea; the new code is a few lines |
-| `packages/cloudflare-access/src/access.test.ts` | negative cases for Access JWT checks | K0 | reuse the cases with `jose` |
+| `packages/ui/src/tokens/`, `primitives/`, Material Symbols component | accepted Material theme, type, shape and primitives | K0 | move, then remove dead stories/adapters |
+| `apps/eliotr-web/src/app/Shell.tsx`, `shell.css` | top bar, rail/bottom bar and pane geometry | K0 | copy markup/CSS, replace data/runtime imports |
+| `packages/ui/src/features/sources/{projects,import,document}` | projects, file picker and reader views | K1 | move feature with new shared API types |
+| `packages/ui/src/features/research/{run,evidence}` | composer, answer stream and citation presentation | K2 | move feature, retain visual tokens only |
+| `apps/eliotr-web/src/app/ChatModelPicker.tsx`, `ModelSettingsPanel.tsx` | model selection interaction | K2 | copy interaction, delete qualification/admin layers |
+| `packages/ui/src/features/agents/DecisionInbox.tsx` | proposal review | K4 | move and rewire |
+| `packages/ui/src/features/studio`, `packages/ui/src/features/research/report` | Studio/report views | K6/K7 | move only when their routes work |
+| `packages/cloudflare-markdown/src/markdown-conversion.ts` | `AI.toMarkdown` invocation/result parsing | K1 | copy the narrow adapter and focused cases |
+| `packages/retrieval/src/structural-projector.ts` | UTF-8 offsets and heading tracking | K1 | copy tested pure helpers, not legacy splitting pipeline |
+| `packages/cloudflare-evidence/src/content-store.ts` | R2 range reads | K1 | copy the range mechanism only |
+| `packages/cloudflare-access/src/access.test.ts` | JWT failure cases | K0 | reuse cases with new `jose` implementation |
 
-Do not port: receipt, proof, qualification, admission, outbox, lease, readback and authority code; the research and
-workflow packages (`cloudflare-research*`, `packages/research`, `cloudflare-workflows`); model transport/control
-packages; erasure, backup, artifacts, navigation, federation, computer-agent packages; `owner-api-client`, `eliotr-pwa`,
-`apps/eliotr-web/src/query/**`; `crates/**`; legacy `infra/` SQL (read it only for K10). The legacy code imports no AI
-SDK, Hono, `jose`, `AIChatAgent` or MCP SDK: chat, models and MCP are new code based on the Cloudflare examples below.
+Do **not** port legacy receipt/proof/qualification/admission/outbox/lease/authority layers, model-control transports,
+research/workflow frameworks, generic artifacts/navigation/federation packages, `owner-api-client`, PWA/query adapters,
+Rust crates or legacy SQL. K10 reads legacy stores only to import owner data.
 
-## Cloudflare examples and templates (MIT, `github.com/cloudflare/agents`)
+## Cloudflare primary donors
 
-| Example | Take | Contour |
+### Agents SDK and examples
+
+Repository pin: [`cloudflare/agents@321814b6c13f72cff82161e7eb20312574ac9b7a`](https://github.com/cloudflare/agents/tree/321814b6c13f72cff82161e7eb20312574ac9b7a),
+checked 2026-10-24. The installed package versions and generated `.d.ts` remain the implementation authority.
+
+| Exact path | Mechanism to reuse | Contour | Do not take |
+|---|---|---|---|
+| `examples/resumable-stream-chat/`, `docs/agents/resumable-streaming.md` | Durable Object chat stream reconnection/history replay | K2 | example UI and provider configuration |
+| `examples/ai-chat/`, `docs/agents/chat-agents.md` | `AIChatAgent`/client wiring and server tools | K2/K5 | kitchen-sink features |
+| `examples/context-overflow-recovery/` | proactive context-size guard and explicit overflow recovery | K2/K5 | lossy keep-last-messages policy |
+| `examples/mcp-worker/`, `examples/mcp-worker-authenticated/` | stateless Worker MCP handler and auth boundary | K4 | donor OAuth/account model; Eliot uses Access actors |
+| `examples/mcp-client/` | outgoing MCP connection lifecycle | K8 | unrestricted dynamic tools |
+| `examples/web-research/` | web-search/read tool shape and compact result rendering | K7 | uncaptured web citations |
+| `examples/workflows/` | bounded Workflow progress and approval/cancellation patterns | K7/K8 | donor business schema |
+
+Cloudflare product documentation is the source of truth for Access, Workers, D1, R2, Workflows, Workers AI, AI Search,
+Browser Run and pricing. Example code is never evidence for a current limit or price.
+
+### Cloudflare service selection
+
+| Requirement | Use first | Add only after measured need |
 |---|---|---|
-| `examples/resumable-stream-chat`, `examples/ai-chat` | `AIChatAgent` + `useAgentChat` wiring, resumable streams | K2 |
-| `examples/context-overflow-recovery` | proactive input-budget guard and overflow error handling (not its keep-last-two compaction) | K2, K5 |
-| `examples/mcp-worker-authenticated`, `examples/mcp-server` | MCP server on a Worker behind auth | K4 |
-| `examples/web-research` | `webSearchTool()`, trimmed model view of results and replay rule | K7 |
-| `examples/workflows` | progress reporting and approval gate in Workflows | K7, K8 |
-| `examples/mcp-client` | outgoing MCP client | K8 |
-| `cloudflare/agents-starter`, `cloudflare/templates/llm-chat-app-template` | Vite + Worker + chat project layout (reference) | K0 |
+| API/static app | one Worker + assets | no second server |
+| relational state | D1 | no KV mirror |
+| immutable documents/artifacts | R2 | no document bodies in D1 |
+| chat state/stream | Durable Object via Agents SDK | no custom socket broker |
+| durable ingest/distill/research | Workflows with coarse steps | no Queue/event bus |
+| conversion and default models | Workers AI | external Gateway route only with owner credentials/eval |
+| large-scope retrieval | whole text → claims/FTS → optional AI Search | no custom Vectorize stack before K5 gate |
+| rendered capture | static fetch first | Browser Run only when required |
+| identity | hostname-based Cloudflare Access | no in-app account system |
 
-## Research quality (mostly ideas)
+## Research-quality donors
 
-| Donor | Licence | Take | Do not take | Contour |
-|---|---|---|---|---|
-| PaperQA2 (`Future-House/paper-qa`: `core.py` `map_fxn_summary`, `agents/tools.py` `gather_evidence`, `gen_answer`) | Apache-2.0, idea | score passages, keep the relevant ones, answer only from kept evidence, abstain when insufficient | Python runtime | K3, K5 |
-| Anthropic "Contextual Retrieval" (blog, 2024-09-19) | idea, deferred | prefix passages with document and section context before indexing. With one AI Search item per revision and native chunking this is not possible; revisit only if K5 measurements show context-poor hits and per-section items become worth it | model call per chunk | after K5 |
-| NotebookLM (product behaviour) | idea | per-source guide with suggested questions; notebook overview; citations that open the passage | audio products | K3 |
-| LLM-maintained wiki (Karpathy pattern) | idea | agents keep an index page and a change log over the corpus; search the wiki first, then sources | uncited wiki prose | K6 |
-| STORM (`stanford-oval/storm`, `persona_generator.py`) | MIT, idea (stale since 2025-09) | several perspectives generate questions to find gaps before writing | dspy runtime | K6, K7 |
-| GraphRAG summary-level reduce | idea | build project-level summaries from per-source summaries, not raw text | graph database, community detection | K6 |
-| OpenScholar | Apache-2.0, idea (stale) | a separate verification pass over a draft | self-feedback loops by default | K7 |
-| GPT Researcher (`skills/curator.py`) | Apache-2.0, idea | score candidate sources before reading | Python runtime | K7 |
-| Docling `HybridChunker` (`docling-core@b359e1c`) | MIT, idea | merge small blocks under one heading; split long tables by rows repeating the header | Python service | K1 |
-| SurfSense citation prompt (`e3de9e0`, `surfsense_local/backend/modules/chat/prompt.py`) | Apache-2.0, code with notice | numbered labels grouped by document; explicit "no results / still indexing" wording | regex as authority | K2 |
-| Open Notebook (`a0f6f30`) | MIT, idea | separate focused chat from research; tell the user when context was truncated | empty selection meaning "all" | K2 |
-| WeKnora (`e28c68c`, `internal/application/repository/wiki_page.go`) | MIT with exceptions, idea | keep the previous revision; update only if the expected version matches | GORM, force writes | K2, K6 |
-| PipesHub (`e598631`, `backend/python/app/utils/public_http.py`) | Apache-2.0, idea | re-check every redirect, cap bytes, separate fetch from admission | IP pinning claims | K1 |
-| vercel/ai (`packages/anthropic/src/map-anthropic-citation.ts`) | Apache-2.0, code with notice | map provider citations to AI SDK source parts | web-search branch | K2 (if an Anthropic route is used) |
+| Donor pin | Reuse | Contour | Boundary |
+|---|---|---|---|
+| [`Future-House/paper-qa@57e89f7223b0960d5ee5ea048c69e3c47e088572`](https://github.com/Future-House/paper-qa/tree/57e89f7223b0960d5ee5ea048c69e3c47e088572) (Apache-2.0) | gather relevant evidence, answer from retained evidence, abstain when insufficient | K3/K5 | ideas only; no Python runtime or agent framework |
+| Anthropic, “Contextual Retrieval” (2024-09-19) | document/section context can improve ambiguous passage retrieval | after K5 | only revisit if the K5 eval proves native chunks lose context; never pay a call per chunk by default |
+| NotebookLM observed product behaviour | source guide, suggested questions, notebook overview, passage-opening citations | K3 | behaviour reference only; no audio/public-sharing scope |
+| STORM (`stanford-oval/storm`) | multiple perspectives to expose missing questions | K6/K7 | one bounded perspective call, no DSPy runtime |
+| GraphRAG summary-level reduce | synthesize project material from compact source summaries | K6 | no graph database/community pipeline |
+| Karpathy-style LLM wiki pattern | index/change-log discipline for derived pages | K6 | every factual page sentence still needs source citations |
 
-## Deep research loops (code candidates)
+## Deep-research code candidates
 
-| Donor | Licence | Take | Add / remove | Contour |
-|---|---|---|---|---|
-| `dzhng/deep-research` `src/deep-research.ts` (~300 lines) | MIT, code | breadth/depth loop, learnings accumulator, follow-up questions, final report | replace Firecrawl with the shared toolset and Cloudflare web search; add budget, cancellation, citation labels | K7 |
-| `G4brym/workers-research` `src/workflows.ts` | MIT, code | one `step.do` per round, learnings dedup, status history in a Workflow | do not take `src/webSearch.ts` (DuckDuckGo scraping) or its provider | K7 |
+These are not dependencies. K7 may adapt a small loop after reading both implementations.
 
-## Model-native options
+| Donor pin | Exact path | Take | Replace/remove |
+|---|---|---|---|
+| [`dzhng/deep-research@1f8f3e285bbc23e80b98a66a64effab9069f3ad4`](https://github.com/dzhng/deep-research/tree/1f8f3e285bbc23e80b98a66a64effab9069f3ad4) (MIT) | `src/deep-research.ts` | breadth/depth loop, accumulated learnings, follow-up questions | Firecrawl/provider code; add Eliot tools, hard budget, Stop, captured-source citation |
+| [`G4brym/workers-research@c7ae739907d5f27980fd56e94331aea83f0c7809`](https://github.com/G4brym/workers-research/tree/c7ae739907d5f27980fd56e94331aea83f0c7809) (MIT) | `src/workflows.ts` | Workflow rounds, compact status history, retry classification | DuckDuckGo scraping/provider/UI/schema; use Eliot tools and job row |
 
-- **Anthropic citations** (`search_result` / `document` blocks): the API returns the cited block and exact text, which
-  Eliot can check by equality. Only on Anthropic routes; cannot be combined with structured output. Consider for K2 if
-  an Anthropic model becomes the default answer model; Eliot's label scheme stays for every other route.
-- **Prompt caching**: keep the source part of the prompt byte-identical between turns so cached input applies (Workers
-  AI lists cached-input prices for the default models; external routes depend on AI Gateway passing caching through —
-  open check in IMPLEMENTATION §15).
-- **Batch inference** for bulk distillation where the provider offers it at a discount and latency does not matter.
+When copied code is substantial, preserve the required licence notice in `THIRD_PARTY_NOTICES.md`; do not add that file
+until the first actual copy requires it.
 
-## Excluded
+## Rejected or deferred donors
 
-Dify code (modified licence), Khoj (AGPL-3.0), Cloud Notebook and Deep Research App code (no licence; ideas only),
-Vane/Perplexica (SearXNG dependency), `langchain-ai/open_deep_research` (archived), Python runtimes (PaperQA2, STORM,
-GPT Researcher, OpenScholar, Docling), LangChain/LlamaIndex, any second design system (AI Elements, assistant-ui,
-shadcn), graph databases, Cloudflare Agent Memory as a knowledge store (private beta, lossy), AI Search public
-endpoints and its built-in generation for evidence.
+- LangChain, LlamaIndex, DSPy runtimes and Python research stacks: duplicate Cloudflare/TypeScript orchestration.
+- Dify code (modified licence), Khoj (AGPL), unlicensed research apps: ideas only or excluded.
+- A second component system (`shadcn`, assistant-ui, AI Elements): conflicts with the accepted Material interface.
+- Graph databases and Cloudflare Agent Memory as source truth: unnecessary/lossy for the required product.
+- AI Search public MCP/generation endpoints: Eliot keeps auth, scope, hydration and citations in its own Worker.
+- Firecrawl/SearXNG as mandatory infrastructure: use Cloudflare/static fetch first; revisit only for a demonstrated gap.

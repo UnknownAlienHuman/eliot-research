@@ -1,130 +1,138 @@
 # Eliot Research — Architecture
 
-What the product is, what the owner can rely on, and the boundaries every implementation keeps. It does not claim
-anything is implemented. [MAP](MAP.md) orders the work into contours, [IMPLEMENTATION](IMPLEMENTATION.md) holds the
-technical contracts, [DONORS](DONORS.md) names what to reuse.
+This document defines the product and the invariants that implementation must preserve. It does not claim a capability
+is implemented. [MAP](MAP.md) orders delivery, [IMPLEMENTATION](IMPLEMENTATION.md) gives the technical contracts, and
+[DONORS](DONORS.md) records the mechanisms we may reuse.
 
 ## Mission
 
-Eliot is a NotebookLM-style research workspace for one human owner and the agents the owner connects. It turns a
+Eliot is a private, NotebookLM-style research workspace for one owner and the agents that owner connects. It turns a
 changing library of papers, reports, web pages and working documents into inspectable, cited knowledge without making
-the owner administer a platform.
+the owner administer retrieval infrastructure.
 
 > **collect → read → understand → ask → compare → save → revise**
 
-The ordinary path stays ordinary: a question over selected documents gets a fast streamed answer whose every claim
-opens the exact passage it came from. Long work — whole-corpus comparison, deep research with the web — is an explicit
-job with progress and a Stop button, never hidden extra work in a chat message. Everything that can happen
-automatically does: upload means pick the files; conversion, reading and distillation follow without further steps.
+The ordinary path stays ordinary: select sources, ask a question, receive a streamed answer, open every citation at the
+exact passage. Long work is an explicit job with progress, limits and Stop. The system may automate conversion and
+one-time source understanding, but it must never hide recurring model work behind page loads, reconnects or saves.
 
 ## Design principles
 
-1. **Understand documents, do not just chunk them.** Models are cheap or free. Each source is read once by a large model
-   that produces a guide, claim cards with exact quotes, a digest and a glossary. Answers, comparisons and agents build
-   on that layer and drop to exact source passages for evidence. Embeddings and chunk search are a routing aid for large
-   scopes, not the core.
-2. **Read whole documents when they fit.** When the selected sources fit the model's context, the model reads them in
-   full. Search is for scopes that do not fit.
-3. **One toolset for every agent.** Eliot's chat, background jobs and external agents (Claude Code, Codex over MCP) use
-   the same small set of tools — list, outline, read, search, find claims, propose page. No transport-specific stacks.
-4. **Code decides scope, labels, budgets and permissions; models decide content.** Citations are labels that code maps
-   to exact byte ranges; quotes are verified by code against the retained text.
-5. **Build by contours.** Each contour is a usable end-to-end capability with an acceptance run on fixed material
-   (`eval/`). Nothing is built for a later contour in advance, and nothing waits for the whole product to exist.
-6. **Use Cloudflare and maintained libraries directly.** Copy a donor's mechanism, not its platform.
+1. **Canonical text before retrieval.** Keep original bytes and one immutable readable text per source revision. Search
+   indexes and model artifacts are disposable projections; they never become primary evidence.
+2. **Read whole sources when they fit.** Whole-reading is the default because it preserves context. Verified claims are
+   the compact fallback. Passage search is introduced only when measured library scale requires it.
+3. **Derive once, reuse everywhere.** A readable revision is converted and distilled once, independent of how many
+   projects attach it. Reopening a project, reconnecting a chat or saving an answer performs no paid recomputation.
+4. **One toolset for every agent.** Eliot chat, background jobs and external MCP clients use the same small product
+   functions: list, outline, read, find claims, search, get page and propose page.
+5. **Code controls risk.** Scope, permissions, byte ranges, citation resolution, quote verification, call limits and
+   spend admission are deterministic code. Models decide prose and semantic classification, not authority.
+6. **Paid effects are explicit and bounded.** Every model/search job has a caller, an upper bound, recorded usage and a
+   visible failure state. When a budget is exhausted, the system pauses before the call rather than completing it and
+   reporting the bill later.
+7. **Cloudflare-native first; optional services behind gates.** Use one Worker, D1, R2, Durable Objects, Workflows and
+   Workers AI directly. AI Search and Browser Run arrive only after their contour proves a need and a cost/quality win.
+   Do not add KV, Queues, Vectorize, a graph database or another backend without a measured requirement.
+8. **Copy mechanisms, not donor platforms.** A donor is pinned to a commit and exact path. Reuse the smallest proven
+   mechanism, adapt it to Eliot's data model, retain its licence notice when required, and delete donor-specific layers.
+9. **Build by usable contours.** Each contour produces an end-to-end owner capability with real acceptance material.
+   Nothing is built merely because a later section mentions it.
 
 ## Product model
 
-A **project** (notebook) groups sources, chats and knowledge pages. The **Library** owns each source once; projects
-attach sources through memberships, so one source can serve many projects. Every captured or reconverted
-representation is an immutable **source revision** with a canonical readable text (`text.md`). **Knowledge** is what
-Eliot and its agents produce: per-source guides, claim cards, digests and glossaries, and per-project pages — the
-overview, saved answers, notes, reports, Wiki pages and the project map.
+A **project** groups sources, chats and knowledge pages. The shared **Library** owns each source once; projects attach it
+through memberships. A captured or reconverted representation is an immutable **source revision** containing the
+original and canonical `text.md`. Per-source **knowledge** consists of a guide, verified claim cards, digest and
+glossary. Per-project knowledge consists of an overview, saved answers, notes, reports, Wiki pages and the project map.
 
-A **citation** points to an exact UTF-8 byte range of one source revision's `text.md`. A saved page referencing another
-page is labelled derived; generated prose never becomes a primary source.
+A citation resolves to `{ revisionId, block, start, end }`, where `start` and `end` are UTF-8 byte offsets in that
+revision's `text.md`. Generated pages are derived material and never silently replace source evidence.
 
-## Required capabilities
+## Complete product capabilities
 
-| Area | The complete product provides |
+| Area | Owner-visible result |
 |---|---|
-| Projects | Create, rename, archive, open and switch projects; each open project/chat has its own URL; drafts, source selection, chats and settings are per project. |
-| Library | Batch upload files, add URLs or text; keep originals; show conversion state and warnings; detect exact duplicates; attach one source to several projects; replace or reconvert into a new revision; exclude from answers; detach, archive or delete deliberately. Unconvertible files stay stored and visibly need conversion. |
-| Reading | Original and readable text, outline navigation, exact passage links, older revisions; works when models and search are unavailable. |
-| Understanding | Automatic per-source guide with suggested questions, claim cards (methods, results with numbers and conditions, limitations, datasets, definitions) with verified quotes, digest and EN/RU glossary; automatic project overview. |
-| Ask | Questions in Russian or English over the project default, an explicit selection or no sources; streamed answer with exact citations; stop, reconnect, reopen; save an answer as a page. |
-| Retrieval | Whole reading when the selection fits; claim cards and hybrid/keyword search across English and Russian when it does not; source scope is applied before retrieval, never widened. |
-| Knowledge | Notes, saved answers, reports and Wiki pages with history; proposals from agents; pages turn stale when their sources change and refresh as new revisions. |
-| Project map | Topics with their sources and claims, comparison tables from claims, disagreements to review, gaps, reading routes. Derived navigation with exact links, not a graph database. |
-| Deep research | Explicit job over library scope with optional web search; web material is captured into the Library before it is cited; progress, budget, partial results and Stop. |
-| Agents | External agents connect over MCP (Streamable HTTP), use the shared toolset with their own models and propose pages; outgoing remote MCP tools and task offers when needed. |
-| Models | Owner chooses default models for answers and distillation; per-project override; each model has known limits; credentials stay in Cloudflare. |
-| Data ownership | Export originals, readable texts, claims and pages; delete with visible impact; deleted evidence shows as unavailable, never silently replaced. |
+| Projects | Create, rename, archive and switch projects; stable project/chat URLs; independent source selection and settings. |
+| Library | Add files, URLs and text; keep originals; show conversion states; detect exact duplicates; attach one source to many projects; replace as a new revision; detach, archive or delete deliberately. |
+| Reading | Open original or readable text, navigate an outline, reopen exact passage links and old revisions even when models/search are unavailable. |
+| Understanding | Automatic guide, suggested questions, verified claims, digest and EN/RU glossary per readable revision; deterministic project overview. |
+| Ask | Russian or English questions over project default, explicit selection or empty scope; streamed answer, exact citations, stop/reconnect, chat history and Save as page. |
+| Retrieval | Whole reading when it fits; verified claims when it does not; AI Search only for scopes that still exceed those modes. Scope is frozen before retrieval and never widened. |
+| Knowledge | Versioned notes, answers, reports and Wiki pages; agent proposals; explicit staleness and refresh. |
+| Project map | Topics, comparable result tables, disagreement candidates, gaps and reading routes built from verified claims. |
+| Deep research | Explicit bounded job over the Library with optional web capture; progress, partial result, cost and Stop. Web material must enter the Library before citation. |
+| Agents | External agents connect through MCP, read through the shared tools and write proposals rather than accepted owner pages. |
+| Models | Owner chooses defaults and project overrides from known routes; credentials remain in Cloudflare; limits and dated prices are visible. |
+| Data ownership | Export originals, texts, claims and pages; delete with impact preview; missing/deleted evidence stays visibly missing. |
 
-## What the owner can rely on
+## Owner guarantees
 
-**Canonical text before derived convenience.** Original bytes and the readable text are kept independently of search
-indexes and model output. A new conversion creates a new revision; old citations keep pointing at the old text. Search
-indexes are disposable and rebuilt from the Library. Index OCR output is never treated as source text.
+**Evidence survives derived systems.** A new conversion creates a new revision. Existing citations continue to point to
+the old text. AI Search can be deleted and rebuilt without changing source truth.
 
-**Honest answers.** An answer separates what sources state from inference, says plainly when the selected sources do not
-contain the answer, and never invents source names, ranges or page numbers. Claim-mode and search-mode answers say which
-mode was used.
+**Answers are honest.** Eliot distinguishes source statements from inference, says when selected sources do not contain
+the answer, and never invents page numbers, labels or source names. Every accepted citation is server-resolved.
 
-**Projects do not interfere.** There is no server-wide "current project"; every route, chat, job and write carries its
-project. Switching tabs never redirects a stream. Removing a source from a project does not delete the shared source.
+**No hidden paid work.** Opening, listing, reading, reconnecting and saving existing output are storage operations only.
+An ordinary answer is one model call in whole/claim mode or a short capped tool loop in search mode. Distillation runs
+at most once for an unchanged revision. Research is an explicit job. Failed streams are not automatically continued.
 
-**Knowledge changes visibly.** A changed or deleted source marks the pages that cite it stale; refresh creates a new
-revision; owner edits are not overwritten; agent writes are proposals.
+**Graceful degradation.** Reading works without any model. Whole/claim answering works without AI Search. When a paid
+service is unavailable or the budget is exhausted, the UI shows the blocked operation and the cheaper available path.
 
-**Bounded effort.** An ordinary answer is one model call (whole or claim mode) or a short, capped tool loop (search mode).
-Jobs have limits on calls, tokens and time and stop when asked. Opening a project or reconnecting never starts model
-work. Saving an existing answer never buys it again.
+**Projects do not interfere.** There is no process-wide current project. Every route, chat, job and write carries its
+project or immutable revision. Removing a project membership never deletes the shared Library source.
 
-**Practical security.** Cloudflare Access is the single sign-in, checked once per request at the Worker. Inside, there
-are no per-row permission checks: one owner sees everything; agents read and propose. Credentials live in Cloudflare.
-Source text and tool output are data, never instructions.
+**Knowledge changes visibly.** Replacing or deleting a source marks dependent pages stale. Refresh writes a new page
+revision. Owner edits are not overwritten; agent output is proposed.
 
-## Owner interface
-
-The existing Material 3 Expressive interface (`packages/ui` and `apps/eliotr-web` at the legacy baseline) is the
-accepted design. The replacement moves it into the new application and connects it to the new functions; it does not
-introduce another visual language. Keep its colour/type/shape/motion tokens, self-hosted Google Sans, colourful light
-and dark themes, the top bar with navigation rail (bottom bar on phones), the Sources | conversation/reader |
-agents-and-tools panes, 48 dp touch targets and geometry that does not jump while answers stream. Changes are polish:
-plain language, fixes for observed problems, new screens from the same tokens and components. A different look needs an
-explicit owner decision.
+**Practical security.** Cloudflare Access is the only login. A hostname-based Access application protects the UI/API
+and supports the chat WebSocket; the Worker validates the JWT. One owner sees all data. Agent service tokens can read
+and propose only. Source text and tool output are untrusted data, never instructions.
 
 ## System shape
 
-One Cloudflare Worker deployment containing:
+One Cloudflare Worker deployment contains the React/Vite owner app, Hono API, chat Durable Object classes, Workflows
+and the MCP endpoint. Product functions are shared by HTTP, chat, MCP and Workflows.
 
-- the React/Vite owner app (static assets) and a Hono JSON API;
-- `ChatAgent` (`AIChatAgent`, SQLite Durable Object) — one per chat;
-- Workflows: `IngestWorkflow`, `DistillWorkflow`, `ProjectKnowledgeWorkflow`, `ResearchWorkflow`;
-- the MCP endpoint on its own hostname.
+| Service | Role | Introduced | Cost rule |
+|---|---|---|---|
+| Worker + static assets | UI, API and routing | K0 | One deployment; no second backend. |
+| D1 | identities, relationships, states, claims and FTS | K1 | Relational metadata only; no duplicated document bodies. |
+| R2 | originals, `text.md`, block maps, artifacts and page bodies | K1 | Immutable keys; delete orphaned objects later. |
+| Workflows | conversion, distillation, project knowledge and research | K1+ | Few coarse steps; large bodies in R2, not Workflow state. |
+| Durable Objects / Agents SDK | one resumable chat per chat ID | K2 | Created only for active chats; no background loops. |
+| Workers AI | `toMarkdown` and default models | K1/K2 | Cheap default model; usage recorded; monthly model budget checked before calls. |
+| AI Gateway | provider routing, analytics, caching/rate limits and optional BYOK | K2 | No external provider by default. |
+| AI Search | disposable large-library projection | K5 only | Must pass offset, quality and monthly-usage gates first. |
+| Browser Run | rendered web capture | K7 only | Use static fetch first; render only when necessary. |
+| Cloudflare Access | owner and agent authentication | K0/K4 | Hostname applications; JWT verified by Worker. |
 
-Storage and platform services: **D1** for identities, relationships, states, claim cards (with FTS5 trigram search);
-**R2** for originals, readable texts, block maps, distillation artifacts and page bodies; **AI Search** (one instance,
-`default` namespace) as a disposable search projection for large scopes; **Workers AI** for conversion and models,
-**AI Gateway** for external models and spend limits; **Cloudflare Access** for sign-in.
+The target baseline is one Workers Paid account. Variable model and search spend is separately budgeted. Current
+Cloudflare prices and inclusions are dated in IMPLEMENTATION §15 and must be rechecked before implementation or a cost
+claim.
 
-Browser, API, chat, MCP and Workflows call the same product functions. A module exists for a product responsibility.
+## Owner interface
 
-## Rules that keep the code small
+The accepted Material 3 Expressive interface in legacy `packages/ui` and `apps/eliotr-web` is moved into the replacement,
+not redrawn. Keep its semantic tokens, Google Sans with Cyrillic, light/dark themes, navigation rail/bottom bar, touch
+targets and stable streaming geometry. Replace legacy data adapters with the new API; do not copy obsolete runtime or
+query layers. A different visual language requires an explicit owner decision.
 
-1. Implement one usable capability end to end — caller, function, stored result, reader — then the next.
-2. One owner per fact and one implementation per behaviour. Replace callers and delete the predecessor; no `v2`
-   wrappers or compatibility layers without a real consumer.
-3. Add an abstraction only when it removes existing duplication or isolates a changing platform API.
-4. Keep SQL relational and short; put decisions in readable TypeScript.
-5. Parse provider responses for the fields you need and ignore the rest.
-6. Measure on the assembled product with the `eval/` material, then fix the measured bottleneck.
-7. Audits and reviews produce concrete fixes in the owning document or code, not registers or reports in the repo.
+## Rules that keep implementation small
+
+1. Deliver caller → product function → stored result → reader in one contour.
+2. One owner per behaviour. Replace callers and delete predecessors; no speculative `v2` layers.
+3. Add an abstraction only when it removes present duplication or isolates a platform API already in use.
+4. Keep SQL relational and short; keep decisions in readable TypeScript.
+5. Store bodies in R2 and IDs/counts in D1/Workflow state.
+6. Measure the assembled product on `eval/`; optimise the measured bottleneck.
+7. Reviews change the owning document or code. Do not add audit/report bureaucracy to the repository.
 
 ## Scope boundary
 
-The complete replacement includes every capability above, delivered in the contour order of [MAP](MAP.md). Audio/video
-products, public multi-user sharing, tenancy, a connector marketplace, automatic memory extraction, graph analytics and
-a Rust/Wasm rewrite are later choices. Useful content from the old system is imported in K10 before the old system is
-retired. Documentation authorises no deployment, production mutation or live-data deletion.
+The replacement includes the capabilities above in [MAP](MAP.md) order. Public multi-user sharing, tenancy, connector
+marketplaces, graph analytics, automatic personal-memory extraction, audio/video products and a Rust/Wasm rewrite are
+later choices. K10 imports useful legacy content before retiring the old implementation. Documentation authorises no
+production deployment, live-data mutation or legacy resource deletion by itself.

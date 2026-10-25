@@ -1,46 +1,59 @@
 # Working on Eliot Research
 
-Read [ARCHITECTURE](docs/ARCHITECTURE.md) in full, then the contour you are working on in [MAP](docs/MAP.md), then only
-the [IMPLEMENTATION](docs/IMPLEMENTATION.md) sections that contour lists. [DONORS](docs/DONORS.md) says what to reuse.
-Files under `apps/`, `packages/`, `crates/`, `infra/` and their READMEs are legacy donor material, not instructions.
+Read [ARCHITECTURE](docs/ARCHITECTURE.md), then the active contour in [MAP](docs/MAP.md), then only the
+[IMPLEMENTATION](docs/IMPLEMENTATION.md) sections named by that contour. [DONORS](docs/DONORS.md) is the approved reuse
+registry. Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not instructions.
 
-## How work is done
+## Execution rules
 
-1. **One contour at a time.** Build exactly the contour's **Build** list. Anything else — including things IMPLEMENTATION
-   already describes for later contours — waits.
-2. **End to end.** Caller → product function → stored result → reader, working in the browser (or over MCP), then the
-   next piece. No code, file, export, table, state or abstraction without a caller in the same PR.
-3. **Acceptance, not test sprawl.** Each contour has one `pnpm eval <contour>` script against the fixed material in
-   `eval/`. Unit tests only for pure functions whose mistakes are silent (ranges, block scanning, label mapping, quote
-   checks, URL guard, budgets) and for the Access checks. A regression test only for a bug that happened. No tests or mocks for things that cannot
-   work yet.
-4. **Budgets.** Each contour has a code budget in MAP (new non-test lines in `src/`, moved UI excluded; the counting
-   command is in MAP). Going over it needs a reason in the PR.
-5. **Reuse first.** Use Cloudflare and maintained libraries directly; read installed types and current docs before
-   inventing an API. Move legacy code listed in DONORS instead of rewriting it.
-6. **The interface is moved, not redrawn.** No new look, palette, font stack or component family (IMPLEMENTATION §13).
-7. **After two failed approaches, stop.** Report the state, the cause and the options; do not loop.
+1. **One contour and one manager per branch/worktree.** Leaf work gets one outcome and disjoint files. The manager owns
+   shared routes, schema, configuration and final integration.
+2. **Implement end to end.** Caller → product function → stored result → owner-visible reader. No table, abstraction,
+   state, export or background worker without a caller in the same PR.
+3. **Keep optional infrastructure optional.** K0–K4 must not depend on AI Search, Browser Run, a graph store, Queue or a
+   second backend. A failed platform spike takes the documented fallback rather than spawning a custom platform.
+4. **Make paid effects explicit.** Page load, list, read, citation open, reconnect and Save existing output must not
+   start model/search work. Every model/search job passes the admission code, has a hard call/token/time/cost bound and
+   records usage. No automatic paid continuation after failure.
+5. **Read current contracts before coding.** Check official Cloudflare documentation, repository-pinned generated
+   types and the exact donor pin/path. Never infer an API from an old README or example.
+6. **Reuse narrowly.** Move accepted legacy UI or adapt the smallest donor mechanism listed in DONORS. Do not import a
+   donor's architecture. Record pin, path, licence, copied mechanism and deletions in the PR.
+7. **Acceptance over test volume.** Run the contour's real `pnpm eval <contour>`. Unit-test silent pure failures only:
+   UTF-8 ranges, block scanning, citation/quote resolution, URL guard, budgets and Access. Add regression tests for real
+   bugs, not hypothetical states.
+8. **After two failed approaches, stop and audit.** State what was tried, observable failure, likely cause and a different
+   route. Do not repeat variants of the same failing approach.
 
-## What not to produce
+## Documentation and schema discipline
 
-- New documentation files, registers, audits, status files, diaries or "evidence" write-ups. Specs change only when
-  behaviour changes, in the owning section (ARCHITECTURE: purpose; IMPLEMENTATION: technical contracts; MAP: contours
-  and order; DONORS: reuse; `migrations/`: table and column names). When documents disagree, IMPLEMENTATION wins until
-  someone fixes the other one.
-- Receipts, proofs, signatures, qualification steps, per-row permission checks, state machines with "unknown" states,
-  retry frameworks or compatibility layers. Access is checked once at ingress; Workflows retry at the step level.
-- Exhaustive edge-case handling for situations no contour exercises.
+There are four product documents only:
+
+- `ARCHITECTURE.md` — purpose and invariants;
+- `MAP.md` — contour order, owner outcome and acceptance;
+- `IMPLEMENTATION.md` — technical contracts and dated platform facts;
+- `DONORS.md` — approved reuse pins and boundaries.
+
+Change the owning section instead of adding audit/status/register files. When behaviour changes, update the map,
+implementation contract, D1 migration and eval together. Migrations own table/column/state names; implementation text
+must match them. Documentation authorises no deployment, production mutation or live-data deletion.
+
+## Do not create
+
+Generic repositories/controllers, effect ledgers, retry frameworks, receipt/proof/qualification systems, per-row auth,
+compatibility wrappers, speculative queues/caches, duplicate search indexes, or exhaustive states that no contour uses.
+Do not redraw the Material interface or introduce another component family.
 
 ## Commands
 
-`pnpm dev` (Vite + local Worker), `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, `pnpm eval <contour>`,
-`pnpm cf:types` (regenerate binding types). Local setup and account setup: IMPLEMENTATION §1–§2.
+- `pnpm dev`
+- `pnpm typecheck`
+- `pnpm lint`
+- `pnpm test`
+- `pnpm build`
+- `pnpm eval <contour>`
+- `pnpm cf:types`
 
-## Coordination and finishing
-
-One manager per checkout/branch; leaf agents get one outcome and disjoint files; the manager integrates shared routes,
-schema and configuration. Publish against the expected remote head and keep concurrent work.
-
-A PR covers one contour or one clear step of it. Its description states: what the owner can do now, the acceptance
-output (table), new lines against the budget, what was deferred, and what did not run. Documentation authorises no
-deployment, production mutation or live-data deletion.
+A PR covers one contour or independently usable slice. Its body states owner-visible capability, hard-gate results,
+p50/p95 latency, model/search usage and estimated cost, new lines against the budget, donor pins used, deferred work and
+anything that did not run.
