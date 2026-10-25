@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../../AGENTS.md) and `docs/`.
+
 # ResearchSession projection, strict client contract
 
 **Baseline:** `0b7c307e9e7c267bda712e6ae41b87b555e9fc01`

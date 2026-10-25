@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../../AGENTS.md) and `docs/`.
+
 # ELIOT Research + Google orchestration
 
 Use ELIOT as a bounded planning and authority-checking surface. ELIOT MCP does not directly mutate

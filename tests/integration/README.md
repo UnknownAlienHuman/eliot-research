@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../AGENTS.md) and `docs/`.
+
 # T4–T6 integration and live conformance
 
 Live tests are opt-in and produce durable, redacted receipts. Missing credentials, bindings, or a

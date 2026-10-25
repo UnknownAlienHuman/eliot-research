@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../AGENTS.md) and `docs/`.
+
 # Antigravity MCP client profile
 
 This profile is for Google Antigravity 2.0, Antigravity IDE, and Antigravity CLI. It prepares a
