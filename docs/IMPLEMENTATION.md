@@ -11,7 +11,7 @@ relying on it (§15).
 | K1 Read | §1, §3, §4, §5, §13 |
 | K2 Ask | §1, §3, §5, §8, §11, §13 |
 | K3 Distill | §1, §3, §5, §6, §8 (claim mode) |
-| K4 Agents in | §2, §7, §10 |
+| K4 Agents in | §2, §3, §7, §10 |
 | K5 Library scale | §3, §7, §8 (search mode), §9, §15 |
 | K6 Project knowledge | §3, §10, §12 |
 | K7 Deep research | §3, §4, §7, §10 |
@@ -41,9 +41,9 @@ WebSocket, the MCP endpoint, the chat Durable Object and the Workflows.
 | `src/mcp.ts` | MCP server | K4 |
 | `src/search.ts` | AI Search projection (§9) | K5 |
 | `src/workflows/project.ts`, `src/workflows/research.ts` | ProjectKnowledgeWorkflow, ResearchWorkflow | K6, K7 |
-| `src/shared/` | types used by both Worker and web (API payloads only) | K1 |
+| `src/shared/` | types used by both Worker and web (API payloads only) | K0 |
 | `src/web/` | React app; `src/web/ui/` is the moved Material design system; `src/web/api.ts` holds the fetch hooks | K0 |
-| `migrations/` | D1 migrations | K0 |
+| `migrations/` | D1 migrations, one per contour (§3) | K1 |
 | `scripts/eval/` | acceptance scripts, run with `pnpm eval <contour>` | K1 |
 
 Split a file when one responsibility becomes hard to read, not in advance. No service/repository/controller layers;
@@ -76,8 +76,11 @@ and Workflows.
     // K3: { "binding": "DISTILL", "name": "eliot-distill", "class_name": "DistillWorkflow" }
     // K6: PROJECT_KNOWLEDGE / ProjectKnowledgeWorkflow; K7: RESEARCH / ResearchWorkflow
   ]
-  // K2: Durable Object binding "CHAT" for class ChatAgent (declarative exports, SQLite storage)
+  // K2: "durable_objects": { "bindings": [{ "name": "CHAT", "class_name": "ChatAgent" }] },
+  //     "exports": { "ChatAgent": { "type": "durable-object", "storage": "sqlite" } }
+  // K3: "triggers": { "crons": ["* * * * *"] } for the distillation scheduler (§6); K9 adds a daily sweep
   // K5: "ai_search": [{ "binding": "SEARCH", "instance_name": "library-v1" }]
+  // K7: "browser": { "binding": "BROWSER" } for rendered pages
 }
 ```
 
@@ -87,7 +90,7 @@ Worker entry, `workers_dev: false` and `preview_urls: false`.
 Worker variables (plain vars unless marked secret): `ACCESS_TEAM`, `ACCESS_AUD_UI`, `ACCESS_AUD_MCP` (K4),
 `OWNER_EMAIL`, `UI_ORIGIN` (e.g. `https://research.example.org`), `OWNER_SERVICE_CLIENTS` (comma-separated Access
 service-token client IDs that act as the owner, for eval and automation), `MCP_ALLOWED_CLIENTS` (K4),
-`ELIOT_LOCAL_DEV` (only in `.dev.vars`).
+`DISTILL_CONCURRENCY` (K3, default 2), `ELIOT_LOCAL_DEV` (only in `.dev.vars`).
 
 Already pinned in `package.json` and first used in: `zod` (K1), `ai` and `@cloudflare/ai-chat` (K2), `agents` and
 `@modelcontextprotocol/server` (K4). Generate binding types with `wrangler types` and commit the output; never hand-write `Env`. Add `hono`, `jose` and
@@ -113,8 +116,10 @@ beyond the Access applications.
 
 JSON under `/api/`, validated with zod. Errors are `{ "error": { "code", "message" } }` with codes `invalid`,
 `not_found`, `conflict`, `busy`, `unavailable`; messages are plain owner language. Lists use `?cursor=&limit=` and
-return `{ items, nextCursor }`. Mutations that create or publish something accept an `Idempotency-Key` header; a repeat
-with the same key returns the first result. The browser never retries a mutation by itself. Project work is addressed
+return `{ items, nextCursor }`. Two writes are idempotent by design and need nothing else: a chat turn (`turnId` in the
+body, primary key of `chat_turn`) and a page revision (`mutationId` in the body, unique in `page_revision`). Uploads are
+not deduplicated automatically; the SHA-256 notice handles repeats. There is no generic idempotency layer. The browser
+never retries a mutation by itself. Project work is addressed
 by `:projectId` in the path.
 
 | Route | Purpose | Contour |
@@ -138,6 +143,7 @@ by `:projectId` in the path.
 | `POST /api/page-revisions/:revisionId/decision` | accept or reject a proposal | K4 |
 | `POST /api/projects/:projectId/search` | search (same function as the `search` tool) | K5 |
 | `POST /api/projects/:projectId/map/refresh`, `POST /api/pages/:pageId/refresh` | rebuild map / refresh a stale page | K6 |
+| `POST /api/projects/:projectId/wiki` | write a Wiki page for one map topic: `{ topicId, mutationId }` | K6 |
 | `GET/POST /api/projects/:projectId/jobs`, `GET /api/jobs/:jobId`, `POST /api/jobs/:jobId/cancel` | research jobs | K7 |
 | `GET /api/sources/:sourceId/impact`, `POST /api/sources/:sourceId/archive`, `DELETE /api/sources/:sourceId` | projects and pages that cite the source; archive; delete | K9 |
 | `GET /api/projects/:projectId/export` | ZIP export | K9 |
@@ -184,7 +190,8 @@ type Scope = { mode: "project_default" } | { mode: "explicit"; sourceIds: string
 ```
 
 Upload: `POST /api/projects/:projectId/sources` with `multipart/form-data` parts `file` (repeatable), or JSON
-`{ "url": "..." }` / `{ "title": "...", "text": "..." }`; response `{ items: SourceRow[] }`.
+`{ "url": "..." }` / `{ "title": "...", "text": "..." }`; response `{ items: SourceRow[] }`. One request carries at most
+100 MB in total (Workers request limit); the UI and eval split larger batches into several requests.
 
 ## 2. Access and actor
 
@@ -220,9 +227,10 @@ One migration per contour; the files own all column and state names:
 |---|---|---|
 | `migrations/0001_library.sql` | K1 | `project`, `source`, `source_revision`, `project_source` |
 | `migrations/0002_ask.sql` | K2 | `settings` (seeded with the default answer model), `project.instructions`, `project.answer_model`, `chat`, `chat_turn`, `page`, `page_revision` |
-| `migrations/0003_distill.sql` | K3 | `settings.distill_model`, `source.authors`, `source.published`, distillation state, token and `guide_summary` columns, `claim`, `claim_fts` |
-| `0004_search.sql` (to write) | K5 | `source_revision.search_item_id`, `search_state` |
-| `0005_jobs.sql` (to write) | K7 | `job` |
+| `migrations/0003_distill.sql` | K3 | `settings.distill_model`, `source.authors`, `source.published`, distillation state, token and `guide_summary` columns, `claim` |
+| `migrations/0004_agents.sql` | K4 | `claim_fts` (trigram), backfilled from existing claims |
+| `0005_search.sql` (to write) | K5 | `source_revision.search_item_id`, `search_state` |
+| `0006_jobs.sql` (to write) | K7 | `job` |
 
 Do not add a table before the contour that reads it. Columns needed by a later contour are added by that contour's
 migration unless the table is created in the same contour and the column is part of its identity or state.
@@ -233,7 +241,7 @@ migration unless the table is created in the same contour and the column is part
 | `project` | title, description, standing answer instructions, model override |
 | `source`, `source_revision` | one Library source; immutable revisions with conversion and distillation state |
 | `project_source` | many-to-many membership; `enabled = 0` keeps a source out of answers |
-| `claim`, `claim_fts` | distilled claim cards with exact quote ranges; trigram FTS for substring search in any language |
+| `claim`, `claim_fts` | distilled claim cards with exact quote ranges (K3); trigram FTS for substring search in any language (K4) |
 | `chat`, `chat_turn` | chat inventory; one row per turn with scope, context mode, tokens, timings, error |
 | `page`, `page_revision` | project knowledge pages and their revisions (accepted, proposed, rejected) |
 
@@ -271,7 +279,7 @@ page/<revision>/data.json           K6 structured data of a map page (§12)
 ### Admission
 
 `POST /api/projects/:projectId/sources` accepts several files at once; each file becomes one source and one revision.
-For each: check size, read the file into memory (≤ 25 MB), hash it with `crypto.subtle.digest("SHA-256")`, write
+For each: check size, read the file into memory (≤ 25 MB), hash it with `crypto.subtle.digest("SHA-256", bytes)`, write
 `source/<rev>/original`, create rows (`readable_state = 'pending'`, shown as "Converting"), return the created sources
 immediately and start `IngestWorkflow` with instance ID `ingest-<revision>`. An identical SHA-256 already in the
 Library is reported ("already in Library as …") with an Attach action; it is not merged silently. Scripts and agents
@@ -412,11 +420,12 @@ Purpose: read each source once with a large model and keep what a researcher nee
    claim are removed.
 5. **Write** `guide.md`, `digest.md`, `glossary.json` and `distill.json` (raw output and the verification report:
    kept/dropped counts, reasons) to R2; set `source_revision.guide_summary` (the guide's first sentence, for lists),
-   insert `claim` rows and `claim_fts` rows (`body` = statement + quote + task/metric/dataset), set
+   insert `claim` rows (from K4 also `claim_fts` rows, `body` = statement + quote + task/metric/dataset), set
    `distill_state` (`done`, or `partial` if the second call failed), `distill_model` and the token columns.
 6. **Project overview**: if no other revision of any project containing this source is `queued`/`running`, regenerate
    `page(kind='overview')` for those projects from their source guides (title, one paragraph per source, 5 suggested
-   questions across sources).
+   questions across sources). Pages written by Workflows use actor `owner` and origin `job`. From K6 the same condition
+   also starts `ProjectKnowledgeWorkflow` for those projects (§12).
 
 Each model call is its own Workflow step with retries (`limit: 5`, delay from `Retry-After` when present, exponential
 otherwise). A 4xx that is not 429 fails the step without retry (`NonRetryableError`).
@@ -459,6 +468,8 @@ Rules:
 - Errors are short instructions to the model ("source not found — call `list_sources`"), not stack traces.
 - Scope, labels, size caps and the agent write rule (proposals only) are enforced in code, not left to the model.
 - Tool descriptions in `src/tools/descriptions.ts` say when to use each tool; keep them under 60 words each.
+- A `source` argument accepts the label shown by `list_sources` (`<rev8>`) or a full source ID; `page` and `project`
+  arguments take the IDs shown by the list tools.
 
 ## 8. Ask
 
@@ -470,8 +481,8 @@ Rules:
    block's full label (`[S1:0]`, `[S1:1]`, …) at the start of every block, fit within the whole-reading budget: `min(0.6 × model context, 400,000)` tokens minus history and
    output reserve. Estimate tokens as `utf8_bytes / 3`, which is conservative for English and Russian.
 2. **claims** (K3) — whole does not fit: guides (their `[<i>]` labels rewritten to `[S<k>:<i>]`) plus all verified
-   claims of the selected sources, each claim rendered with its turn label. If even that exceeds the budget, include claims ranked by `claim_fts` match to the question until
-   the budget is reached, and say so in the answer footer.
+   claims of the selected sources, each claim rendered with its turn label. If even that exceeds the budget, the turn
+   asks the owner to narrow the selection; from K5 it switches to search mode instead.
 3. **search** (K5) — the model gets the guides of the selected sources and the tools `search`, `read`, `find_claims`
    with at most 6 tool steps, then must answer.
 4. **none** — explicit empty scope: no sources; the answer says it uses no library material.
@@ -491,15 +502,19 @@ Model selection: the turn uses `project.answer_model` when set, otherwise `setti
 `@cloudflare/ai-chat/react`.
 
 - One turn function `runTurn(input)` used by both entry points: `onChatMessage` (browser, streaming over the WebSocket)
-  and the RPC method `ask(input)` behind `POST /api/chats/:chatId/turns` (waits for completion and returns
-  `TurnResult`). It inserts `chat_turn` (`started`), builds context, calls `streamText` with the turn's model, resolves
+  and the RPC method `ask(input)` behind `POST /api/chats/:chatId/turns` (appends the user message the same way the
+  SDK does for a browser message, waits for the turn to settle and returns `TurnResult` built from `chat_turn` and the
+  stored assistant message; check the installed `AIChatAgent` types for the method that persists a message and runs
+  `onChatMessage` — `saveMessages` in `@cloudflare/ai-chat` 0.12.2). It inserts `chat_turn` (`started`), builds context, calls `streamText` with the turn's model, resolves
   labels, stores the citations on the assistant message as a `data-citations` part, then updates tokens, `citations`,
   `invalid_labels`, `first_token_ms`, `total_ms` and `state`.
 - One active turn per chat; a second submit while streaming waits in the SDK queue (`messageConcurrency: "queue"`).
 - Stop cancels the stream and sets the turn to `cancelled` (keeping any text already streamed); closing the tab does
   not stop it (`cancelOnClientAbort: false`, `resume: true`).
-- After a crash, keep the partial answer and mark the turn `partial` (`onChatRecovery` → `{ continue: false }`); no
-  automatic paid continuation.
+- After a crash, keep the partial answer and mark the turn `partial` (override the protected `onChatRecovery` to
+  return `{ continue: false }`); no automatic paid continuation.
+- Token usage comes from the AI SDK result `usage`: `inputTokens`, `outputTokens` and
+  `inputTokenDetails.cacheReadTokens` (stored as `chat_turn.cached_tokens`).
 - K5 tools: server-side tools with a step limit; `autoContinueAfterToolResult: false` on the client.
 - Never put credentials, usage or scope decisions into client-editable state.
 
@@ -548,8 +563,9 @@ until `completed`, then pages through `items.get(id).chunks({ limit: 100, offset
 Query: resolve the scope in D1 to revision IDs; call
 `env.SEARCH.search({ query, ai_search_options: { retrieval: { retrieval_type, max_num_results, match_threshold: 0,
 filters: { revision_id: { $in: ids } } } } })`; for each chunk, look up its byte range in `chunks.json`, snap to the
-covering blocks, and return labelled passages. Inspect `errors` in the response and report partial results. An empty
-scope returns nothing without calling Search. Keyword mode sets `retrieval_type: "keyword"`; quoted strings in the
+covering blocks, and return labelled passages. A single-instance search response has no per-instance `errors` field: a
+failed call throws, and the tool then answers "search unavailable" (chat falls back to claim mode). An empty scope
+returns nothing without calling Search. Keyword mode sets `retrieval_type: "keyword"`; quoted strings in the
 query are additionally checked as exact substrings in the hydrated text.
 
 Limits (2026-10-01 docs): 500,000 files per hybrid instance, 5 custom metadata fields, 64 filterable bytes per string,
@@ -560,8 +576,10 @@ at most 50 results per query, item key ≤ 128 characters, text item ≤ 10 MiB.
 
 ### MCP (K4)
 
-`src/mcp.ts` uses `createMcpHandler` from `agents/mcp` with an MCP SDK v2 server factory: a fresh server per request,
-stateless Streamable HTTP at `POST /mcp` on the MCP hostname only, exact `allowedHostnames`. It registers the tools of
+`src/mcp.ts` uses `createMcpHandler` from `agents/mcp/server` (the factory form; `agents/mcp` also carries deprecated
+SDK v1 overloads) with an MCP SDK v2 server factory: a fresh server per request, stateless Streamable HTTP at
+`POST /mcp` on the MCP hostname only, exact `allowedHostnames`. Leave the SDK's `legacy` option at its default unless a
+named client needs `legacy: "stateless"`. It registers the tools of
 §7 except `web_search`, `web_read` and `capture_url`, with their descriptions. The actor comes from §2; agents can call every read tool and
 `propose_page`. Large uploads are not accepted over MCP; `capture_url` arrives in K7.
 
@@ -569,13 +587,14 @@ stateless Streamable HTTP at `POST /mcp` on the MCP hostname only, exact `allowe
 
 | Workflow | Started by | Steps | State lives in |
 |---|---|---|---|
-| `IngestWorkflow` (K1) | source upload, revision creation | convert → write text/blocks → set state → (K3) start Distill → (K5) index | `source_revision` |
-| `DistillWorkflow` (K3) | Ingest | §6 | `source_revision.distill_state`, R2, `claim` |
-| `ProjectKnowledgeWorkflow` (K6) | end of a distill batch, owner Refresh | §12 | map page revisions |
+| `IngestWorkflow` (K1) | source upload, revision creation | convert → write text/blocks → set state → (K3) mark distillation `queued` → (K5) index | `source_revision` |
+| `DistillWorkflow` (K3) | the distillation cron (§6) | §6 | `source_revision.distill_state`, R2, `claim` |
+| `ProjectKnowledgeWorkflow` (K6) | last distillation of a batch (§6 step 6), owner Refresh | §12 | map page revisions |
 | `ResearchWorkflow` (K7) | owner | plan → search/read/claims → web → capture → synthesize | `job` |
 
 Instance IDs are deterministic (`ingest-<revision>`, `distill-<revision>`, `project-<project>-<timestamp>`,
-`research-<job>`), so a repeated start finds the existing instance. Each external call (model, fetch, AI Search upload)
+`research-<job>`). `create()` throws when the ID already exists, so a repeated start first calls `get(id)` (or catches
+that error) and reuses the existing instance. Each external call (model, fetch, AI Search upload)
 is its own step with retries; deterministic writes are separate steps. Step results stay small (IDs, counts); bodies go
 to R2. Progress is written to the row the UI already reads; the UI polls every 3 s while something is running.
 
@@ -610,8 +629,9 @@ switches context mode (§8) instead of failing at the provider.
 
 ## 12. Project knowledge (K6)
 
-`ProjectKnowledgeWorkflow(projectId)` builds one map page revision (`page(kind='map')`): `body.md` for reading and
-`data.json` for the UI:
+`ProjectKnowledgeWorkflow(projectId)` (workflow binding `PROJECT_KNOWLEDGE`) builds one map page revision
+(`page(kind='map')`): `body.md` for reading and `data.json` for the UI. It starts when the last distillation of a batch
+finishes (§6 step 6) and on Refresh:
 
 ```json
 {
@@ -688,3 +708,4 @@ citation chips from resolved citations, not from text.
 | `$in` filter with 500 IDs on the real binding | **open** — K5 spike | — |
 | Prompt caching through AI Gateway for external routes | **open** — K2 | — |
 | Max output tokens of the default models | **open** — read from the model pages in K2 | — |
+| SDK names used here (`AIChatAgent`, `messageConcurrency`, `onChatRecovery`, `saveMessages`, `useAgentChat` options, `createMcpHandler` from `agents/mcp/server`, `toMarkdown`, AI Search binding methods, `step.do` retries with a delay function, `NonRetryableError`, `Workflow.create`/`get`, R2 range, D1 `batch`, AI SDK `usage.inputTokenDetails.cacheReadTokens`) | verified against installed `.d.ts` (agents 0.30.1, @cloudflare/ai-chat 0.12.2, workers-types 5.20260926.1, ai 7.0.152, wrangler 4.152.0 schema) | 2026-10-24 |

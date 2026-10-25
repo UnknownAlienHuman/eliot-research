@@ -46,7 +46,7 @@ SDK, Hono, `jose`, `AIChatAgent` or MCP SDK: chat, models and MCP are new code b
 | Donor | Licence | Take | Do not take | Contour |
 |---|---|---|---|---|
 | PaperQA2 (`Future-House/paper-qa`: `core.py` `map_fxn_summary`, `agents/tools.py` `gather_evidence`, `gen_answer`) | Apache-2.0, idea | score passages, keep the relevant ones, answer only from kept evidence, abstain when insufficient | Python runtime | K3, K5 |
-| Anthropic "Contextual Retrieval" (blog, 2024-09-19) | idea | prefix each passage with its document and section context before indexing — done deterministically from title + heading path | model call per chunk | K5 |
+| Anthropic "Contextual Retrieval" (blog, 2024-09-19) | idea, deferred | prefix passages with document and section context before indexing. With one AI Search item per revision and native chunking this is not possible; revisit only if K5 measurements show context-poor hits and per-section items become worth it | model call per chunk | after K5 |
 | NotebookLM (product behaviour) | idea | per-source guide with suggested questions; notebook overview; citations that open the passage | audio products | K3 |
 | LLM-maintained wiki (Karpathy pattern) | idea | agents keep an index page and a change log over the corpus; search the wiki first, then sources | uncited wiki prose | K6 |
 | STORM (`stanford-oval/storm`, `persona_generator.py`) | MIT, idea (stale since 2025-09) | several perspectives generate questions to find gaps before writing | dspy runtime | K6, K7 |

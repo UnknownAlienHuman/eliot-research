@@ -187,8 +187,8 @@ citations like `[S2:14]`; clicking a citation opens the exact passage. Answers c
 6. `src/prompts/answer.md` — the answer instructions (IMPLEMENTATION §8 gives the required content).
 7. Pages: save an answer as `page(kind='answer')` with citations rewritten to the stored form; Studio tab lists pages
    (read-only).
-8. Minimal Models setting: choose the default answer model from the configured list (keys are Worker secrets / AI
-   Gateway; no key entry UI yet).
+8. Minimal Models setting: choose the default answer model and a per-project override from the configured list (keys
+   are Worker secrets / AI Gateway; no key entry UI yet).
 9. UI: `git mv` `packages/ui/src/features/research/run` and `.../evidence` (imports replaced as in K1); composer with
    scope chips (project default / explicit / none), citation chips that open the reader, Save answer, chat list;
    routes `/p/:projectId/chat/:chatId?` and `/p/:projectId/studio`.
@@ -229,22 +229,21 @@ Claim cards are also the backbone of comparisons (K6) and agent work (K4).
 
 **Build**
 
-1. `DistillWorkflow` (`src/workflows/distill.ts`), started by `IngestWorkflow` when a revision becomes readable:
-   read-and-extract call → quote verification → digest-and-glossary call → write R2 artifacts and D1 `claim` rows →
+1. `DistillWorkflow` (`src/workflows/distill.ts`): `IngestWorkflow` marks a readable revision `queued`, the
+   distillation cron starts it (step 2); read-and-extract call → quote verification → digest-and-glossary call → write R2 artifacts and D1 `claim` rows →
    set `distill_state`. Apply `migrations/0003_distill.sql`; workflow binding `DISTILL`. Contracts and prompts in
    IMPLEMENTATION §6, quote verification in §5.
-2. Rate-limit handling: Workflow step retries with the provider's `Retry-After`; a cron trigger starts queued
-   distillations while fewer than `DISTILL_CONCURRENCY` (default 2) run (IMPLEMENTATION §6).
+2. Scheduler and rate limits: a cron trigger (`* * * * *`, `scheduled` handler) starts queued distillations while fewer
+   than `DISTILL_CONCURRENCY` (default 2) run; model calls retry with the provider's `Retry-After` (IMPLEMENTATION §6).
 3. Project overview: when the last queued distillation of a project finishes, regenerate `page(kind='overview')` from
    the source guides (one cheap call). Opening a project never starts model work.
 4. `src/context.ts` gains **claim mode**: when whole reading does not fit, the context is the guides plus the claim
    cards of all selected sources (claims carry exact ranges, so citations stay exact). `chat_turn.context_mode`
    records which mode answered.
-5. `claim_fts` rows written with each claim; read by claim-mode ranking when even all claims exceed the budget (§8).
-6. UI: reader side panel with guide and claims (quotes highlighted in text); Studio lists digests and the overview;
+5. UI: reader side panel with guide and claims (quotes highlighted in text); Studio lists digests and the overview;
    suggested questions drop into the composer.
-7. Unit tests: quote locator (exact, whitespace-normalised, Cyrillic, ambiguous repeats), number check.
-8. `scripts/eval/k3.ts`.
+6. Unit tests: quote locator (exact, whitespace-normalised, Cyrillic, ambiguous repeats), number check.
+7. `scripts/eval/k3.ts`.
 
 **Acceptance — `pnpm eval k3`**
 
@@ -274,14 +273,15 @@ Studio.
 
 **Build**
 
-1. `src/tools/` — the shared toolset from IMPLEMENTATION §7 as plain functions `(env, actor, input) → text`. Before K5,
+1. `migrations/0004_agents.sql` (`claim_fts`, backfilled); DistillWorkflow starts writing `claim_fts` rows.
+2. `src/tools/` — the shared toolset from IMPLEMENTATION §7 as plain functions `(env, actor, input) → text`. Before K5,
    `search` is backed by `claim_fts` + guides; K5 swaps in AI Search behind the same signature.
-2. `src/mcp.ts` — `createMcpHandler` on the MCP hostname, stateless Streamable HTTP, registering those tools plus
+3. `src/mcp.ts` — `createMcpHandler` (from `agents/mcp/server`) on the MCP hostname, stateless Streamable HTTP, registering those tools plus
    `propose_page` and `get_page`. IMPLEMENTATION §10.
-3. Access application for the MCP hostname with service tokens; allowed client IDs in a Worker variable; actor
+4. Access application for the MCP hostname with service tokens; allowed client IDs in a Worker variable; actor
    `agent:<client-id>` recorded on page revisions. No agent table yet.
-4. UI: proposals inbox in Studio (move `packages/ui/src/features/agents/DecisionInbox.tsx`), accept/reject.
-5. `scripts/eval/k4.ts` — an MCP client calls every tool against `arxiv-10` and checks output size caps and formats.
+5. UI: proposals inbox in Studio (move `packages/ui/src/features/agents/DecisionInbox.tsx`), accept/reject.
+6. `scripts/eval/k4.ts` — an MCP client calls every tool against `arxiv-10` and checks output size caps and formats.
 
 **Acceptance**
 
@@ -307,7 +307,7 @@ tools (search, read, claims) for a few steps.
    500 revision IDs; Russian keyword behaviour with `porter` vs `trigram`. Choose settings from the results.
 2. Setup: AI Search instance `library-v1` in the `default` namespace with the settings in IMPLEMENTATION §9; binding
    `SEARCH` (`ai_search`).
-3. Migration `0004_search.sql`: `source_revision.search_item_id`, `search_state`.
+3. Migration `0005_search.sql`: `source_revision.search_item_id`, `search_state`.
 4. `IngestWorkflow` uploads `text.md` as one item per revision with metadata, waits for indexing, stores the chunk map
    (`chunks()` → `source/<rev>/chunks.json`).
 5. `search` tool backed by AI Search: frozen revision filter → chunks → byte ranges → snapped to blocks → labelled
@@ -316,8 +316,8 @@ tools (search, read, claims) for a few steps.
    IMPLEMENTATION §8.
 7. `eval/library-200/` — 200 arXiv IDs plus ten "needle" questions with the expected paper and section.
 
-**Acceptance — `pnpm eval k5`**: ≥ 9/10 needles answered with the right paper cited; citations 100 % valid; median first
-token ≤ 6 s; K2 questions still pass.
+**Acceptance — `pnpm eval k5`**: ≥ 9/10 needles answered with the right paper cited; `invalid_labels` = 0; median first
+token ≤ 6 s; the K2 script still passes.
 
 **Out of scope.** Per-project instances, reranking, AI Search generation or public endpoints.
 
@@ -334,10 +334,11 @@ revision.
 
 **Build**
 
-1. `ProjectKnowledgeWorkflow` — topic assignment per new source (guide + claims), comparison rows by code from claim
+1. `ProjectKnowledgeWorkflow` (binding `PROJECT_KNOWLEDGE`), started after the last distillation of a batch and on
+   Refresh — topic assignment per new source (guide + claims), comparison rows by code from claim
    keys, disagreement check only inside a key group, gap questions from perspectives. Output: `page(kind='map')` with
    `body.md` and `data.json`. IMPLEMENTATION §12.
-2. Wiki page per topic on request; stale marking from `page_revision.inputs_json`; Refresh creates a new revision
+2. Wiki page per topic on request (`POST /api/projects/:projectId/wiki`); stale marking from `page_revision.inputs_json`; Refresh creates a new revision
    (proposal when an agent asks).
 3. UI: move `packages/ui/src/features/studio` and `.../research/report`; map view (list/tree), comparison table,
    disagreement list with links to both quotes.
@@ -360,9 +361,9 @@ receive a cited report saved as a page, with web sources captured into the Libra
 
 **Build**
 
-1. Migration `0005_jobs.sql`: `job` (project, question, model, state `queued|running|done|failed|cancelled`, limits,
+1. Migration `0006_jobs.sql`: `job` (project, question, model, state `queued|running|done|failed|cancelled`, limits,
    usage, progress, result page, timestamps). IMPLEMENTATION §10.
-2. `ResearchWorkflow` — bounded loop (plan → search/read/claims → web search → capture → synthesize) over the shared
+2. `ResearchWorkflow` (binding `RESEARCH`) — bounded loop (plan → search/read/claims → web search → capture → synthesize) over the shared
    toolset; web tools from the Agents SDK; capture through `IngestWorkflow`; progress written to the job row.
    Rendered pages use Browser Run through a new `BROWSER` binding (converter `browser_markdown`, IMPLEMENTATION §4).
 3. UI: job list and detail with progress, partial findings and Stop.

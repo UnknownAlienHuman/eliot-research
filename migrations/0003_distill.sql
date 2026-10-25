@@ -33,6 +33,3 @@ CREATE TABLE claim (
 CREATE INDEX claim_by_revision ON claim(source_revision_id);
 CREATE INDEX claim_by_key ON claim(task, metric);
 
--- Substring search over claims in any language (trigram handles Russian).
--- Read by claim-mode ranking (IMPLEMENTATION §8) and by the find_claims tool (K4).
-CREATE VIRTUAL TABLE claim_fts USING fts5(claim_id UNINDEXED, body, tokenize = 'trigram');
