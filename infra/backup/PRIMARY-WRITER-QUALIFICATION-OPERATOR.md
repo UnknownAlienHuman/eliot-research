@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../AGENTS.md) and `docs/`.
+
 # Primary writer qualification operator
 
 `primary-writer-qualification-operator.mjs` installs one reviewed

@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../AGENTS.md) and `docs/`.
+
 # Gemini Spark MCP integration (legacy Gemini CLI material retained)
 
 The active client scope is Gemini Spark Connected Apps and Google Antigravity. Spark connects a custom

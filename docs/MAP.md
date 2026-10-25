@@ -1,141 +1,334 @@
-# Eliot Research — Replacement map
+# Eliot Research — Delivery map
 
-Use PR #414 as the documentation scaffold for one pnpm package, one Cloudflare Worker and one React/Vite application.
-[ARCHITECTURE](ARCHITECTURE.md) defines the product; [IMPLEMENTATION](IMPLEMENTATION.md) defines mechanics;
-[DONORS](DONORS.md) records reusable mechanisms. This map orders work and maps legacy owners. It does not authorize
-production mutation or early deletion.
+This is the executable work plan. It splits [ARCHITECTURE](ARCHITECTURE.md) into usable end-to-end contours.
+[IMPLEMENTATION](IMPLEMENTATION.md) is the technical contract, [DONORS](DONORS.md) identifies reusable mechanisms, and
+[`eval/`](../eval/README.md) contains fixed acceptance material.
 
-**Pinned legacy baseline:** [`main@7c034569`](https://github.com/UnknownAlienHuman/eliot-research/tree/7c034569b908d3b03a8b821b7c537477a24b10f7).  
-**Original Claude draft:** [`42d72871`](https://github.com/UnknownAlienHuman/eliot-research/tree/42d728716bf0c6ee2450fcee3f9b50cbaed061f8).
+## How a contour is executed
 
-## Product/data that must survive
+1. Read ARCHITECTURE, this contour and only the IMPLEMENTATION sections named by it.
+2. Build only **Build**. Anything under **Not now** waits, even when another document already describes it.
+3. Exercise the real API and owner journey on fixed material. No mock acceptance.
+4. Open one PR per contour or independently usable slice. State owner outcome, acceptance output, new non-test lines,
+   measured latency/cost and deferred work.
+5. A contour is done when the owner can use it, hard gates pass, each new route/table/file has a caller and the code
+   budget holds or is explicitly justified.
 
-- Project/notebook identity, source memberships and independent per-project chat/model/tool state.
-- Original files, canonical readable text, retained source revisions, converter profiles/warnings/known omissions and exact citation ranges.
-- Typed page/table/figure navigation hints with their fidelity; generated descriptions are not silently upgraded to OCR or literal evidence.
-- Notes, digests, reports, Wiki/Map/Audit histories, pending proposals, owner decisions and unchanged sections during targeted edits.
-- Fact checking, hypothesis review and project-versus-literature analysis as shared research profiles, not discarded with the old engine.
-- Ordered usable chat messages, typed citation/progress/approval parts, partial/unknown attempts, referenced large bodies,
-  completed/partial research outputs, task logical scope/frozen revisions/results and attributable activity.
-- Model/tool connection references, model capability profiles and effective agent scopes/revocations, but never raw provider secrets/OAuth tokens in exports.
-- Known active/unknown external effects needed for safe cutover.
+### Acceptance classes
 
-The replacement uses one canonical Library source with immutable revisions and many-to-many `project_source`
-memberships. D1 owns relationships and the authoritative chat inventory; R2 owns immutable bodies; AI Search is a
-disposable projection. Page/chat/job/task scope/input projections make change/deletion impact queryable without scanning
-bodies or Durable Objects. Propagate recorded dependencies of reused pages, distinguish fixed-selection outputs from
-project-wide coverage, and fit scope reads/writes to D1 limits. These are shared data rules, not new services.
+- **Hard functional gate:** correctness, citation validity, data integrity, auth and owner journey. Failure blocks merge.
+- **Hard quality gate:** expected facts and abstention on fixed questions. Failure blocks merge.
+- **Measured budget:** latency, token use and estimated cost. The first real contour run establishes p50/p95; a target
+  becomes a hard regression gate only after it has three comparable runs. A catastrophic ceiling may block immediately.
+- **Platform spike:** an uncertain Cloudflare contract is tested before architecture depends on it. A failed spike uses
+  the documented fallback; it does not trigger a home-grown platform rewrite.
 
-## Legacy owners → target responsibilities
+Unit tests exist only for pure logic whose failure can be silent: UTF-8 ranges, block scanning, label resolution, quote
+verification, URL guard, context budgeting, cost admission and Access validation. Add a regression test for a bug that
+actually occurred. Product tests remain the contour evals.
 
-| Legacy source at pinned main | Target | Preserve / retire boundary |
-|---|---|---|
-| `apps/eliotr-web/src/app/ProjectsHome.tsx`, `ProjectOverview.tsx`, `ResearchPanel.tsx`, `ChatModelPicker.tsx`, `ModelSettingsPanel.tsx`; PWA/client packages | `src/web/`, `chat.ts`, `research.ts`, `models.ts` | Keep project switching, source scope, provider/model choice, chat/run/report history and Material research layout. Preserve useful catalog/default/key setup; replace recurring qualification with capability profiles and actual-call errors. Retire Astro/PWA and duplicate clients only after replacement journeys work. |
-| `apps/eliotr-core/src/`, `packages/contracts/`, `packages/platform-cloudflare/` | `index.ts`, `api.ts`, `auth.ts`, shared product functions | Keep validated inputs, actor attribution, conditional writes and stable operation IDs. Discard composition/gate layers and transport-specific service stacks. |
-| Model-control/configuration packages and project/run configuration HTTP | `models.ts`, Models UI, `model_connection`, `model_profile` | Preserve write-only credential setup/status, catalogs/manual IDs, simple chat/research defaults, turn/job selection and immutable run capture. Replace qualification/proof bundles with declared capabilities, conservative unknowns and actual-call errors. |
-| Raw ingest, `packages/cloudflare-markdown/`, source contracts, revision readers and D1 ingest commit | `library.ts`, `ingest.ts`, `source*`, `project_source` | Preserve conditional original storage, deterministic local UTF-8 reading, useful `toMarkdown` options/status and exact revision identity. Add current supported-format discovery, simple readable/warning/needs-conversion states and explicit converter provenance. Discard strict exact-response contracts, dispatch receipt machinery and any assumption that AI Search OCR is canonical source text. |
-| `packages/retrieval/src/structural-projector.ts`, `packages/cloudflare-ai/src/project-search.ts`, evidence/readback code | `retrieval.ts`, `citations.ts`, conservative block map and `search_item` | Reuse tested UTF-8 offsets, heading/fence awareness, deterministic keys and exact readback. Add typed anchor fidelity and valid table row/column groups with exact repeated headers. Discard historical 32–64 KiB generic splitting as target semantics, custom index generations, proof handles and global-top-k post-filtering. |
-| Research workflow/session/stage/configuration packages | `research.ts`, `ResearchWorkflow`, `job`, `job_input` | Preserve progress, cancellation, limits, completed findings and cited outputs; keep analytical profiles from `packages/contracts/src/research.ts` without claiming their enum proves implementation. Replace the fixed 18-stage programme with one bounded operation loop. |
-| Wiki/evidence/Inbox code | `knowledge.ts`, `page*`, `page_input` | Preserve history, expected-head updates, proposals and decisions. Distil/refresh selectively; do not convert proposals to notes. |
-| Navigation/Corpus Lens/map models | `maps.ts`, one versioned Map page | Preserve source cards, document map, topics, versions, contradictions, gaps and reading routes. Drop graph DB/centrality/federation authority. |
-| Existing audits, maintenance/status readers | `audits.ts`, one versioned Audit page | Preserve deterministic health/impact facts and proposed actions. Drop certification packets and auto-repair authority. |
-| Workspace MCP, grants, external task store and computer-agent dispatch | `mcp.ts`, `tasks.ts`, `auth.ts`, `agent`, `task_scope`, `task_input` | Preserve incoming project/source/page/job/task tools, owner offers and attributable results. Use Access identity and small scopes; separate requested logical scope from exact frozen revisions; discard qualification stacks and separate executors. |
-| Existing external integrations/connection experiments | `tools.ts`, owner Tool Connection Agent, `mcp_connection` | Reuse current Agents SDK MCP client/OAuth/discovery. Pin approved selected-tool descriptors and classifications; do not build a connector protocol/framework. |
-| `apps/eliotr-core/src/research-session.ts`, research run/history readers and owner-client state | `AIChatAgent`, D1 `chat`, R2 large-body references and versioned chat snapshots | The inspected session disables chat history and exposes run projection only. Preserve actual questions, checkpoints and saved reports through their D1/R2 owners below; do not invent a transcript. New ChatAgent snapshots use supported APIs and `persistMessages`; a different historical cohort needs separate evidence. |
-| Erasure/backup compositions and workflow cleanup | `cleanup.ts`, `export.ts`, `CleanupWorkflow` | Preserve logical deletion, unavailable-reference behavior, exact cleanup and recoverable export. Keep tombstoned identities/input rows needed by retained history; drop proof/receipt infrastructure. |
+Code budgets count new non-test lines under `src/`, excluding UI moved without semantic changes. They are ceilings, not
+quotas.
 
-## Legacy data extraction map
+## Current state — 2026-10-24
 
-These are inspected source entrypoints at [`a3497558`](https://github.com/UnknownAlienHuman/eliot-research/tree/a3497558deb793843a313a75327302a1c2101145),
-not an inventory of deployed rows or proof that every historical writer was found. Use them to build one temporary
-export/import manifest. [Implementation](IMPLEMENTATION.md#14-portable-export-migration-and-cutover) owns import behavior;
-the [review register](../.github/audits/REVIEW-REGISTER.md) owns remaining coverage.
+- PR #415 merged the one-package Vite/Worker shell. `src/worker.ts` serves `/api/health`; `src/client/` is still a
+  placeholder UI.
+- No D1, R2, Workers AI, AI Search, Durable Object or Workflow binding exists on `main`.
+- Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
+- The accepted Material interface remains in `packages/ui/src/**` and `apps/eliotr-web/src/app/Shell.tsx`.
+- PR #417 is the authoritative replacement-documentation history and supersedes the stacked plan in PR #416.
 
-| User data | Checked legacy stores and code | Target extraction |
-|---|---|---|
-| Projects and attachments | `project`, `project_owner`, `project_source_membership`; [owner service](../packages/cloudflare-navigation/src/project-owner-service.ts), [owner DDL](../infra/d1/core/migrations/0058_project_owner.sql) | Enumerate owned projects independently of memberships, including zero-source projects. Preserve identity/title and current attachments; distinguish historical `valid_to` memberships. Target project archive is required but is not implemented by the inspected create/update service. |
-| Captured original files | `raw_file_capture.object_key`, original filename/MIME/size/digest and capture state; [raw writer](../packages/cloudflare-raw-ingest/src/raw-ingest.ts), [ingest commit](../packages/platform-cloudflare/src/d1-ingest-commit.ts) | The normalized admission writer sets `source_revision.original_r2_key` to NULL. Join recorded capture identity to source/revision and also enumerate captured-but-unadmitted uploads. Retain actual original bytes; do not treat NULL as absence or a normalized digest as the original digest. |
-| Conversion and candidate-admission history | `raw_markdown_conversion`, `raw_normalized_admission`, `workspace_mcp_raw_normalized_admission` and candidate plan/observation rows; [converter](../packages/cloudflare-markdown/src/raw-markdown-conversion.ts), [admission](../packages/cloudflare-raw-ingest/src/raw-normalized-admission-service.ts), [Workspace binding](../packages/cloudflare-workspace-mcp/src/workspace-candidate-admission-service.ts) | Keep recorded conversion `output.md`/receipt keys, exact referenced output and capture→conversion→admission/source mapping. Workspace bindings own D1 relationships, not another R2 file. Keep unresolved staged promotion state separate from admitted canonical bytes. [Raw erasure inventory](../packages/cloudflare-erasure/src/raw-ingest-inventory.ts) covers capture, conversion, admission and Workspace binding; candidate plan/observation rows are separate append-only history. Preserve deletion/hold disposition without copying its authority framework. |
-| Readable source revisions | `source`/`source_revision`, `normalized_artifact_ref`, residency/identity fields; [normalized reader](../packages/cloudflare-evidence/src/content-store.ts), [bundle promotion](../packages/platform-cloudflare/src/ingest-promotion.ts) | Export the recorded normalized bundle and exact `content.md` bytes, conversion/coordinate metadata and historical revision identity. Reuse the key builder with stored identity or recorded manifest refs; do not guess keys from titles. Preserve purge/currentness restrictions; rebuild readiness/index projections. |
-| Research questions, runs and partial outcomes | `investigation_ledger_head`/events, `research_workflow_run`/attempt/checkpoint; [run writer](../packages/cloudflare-research-runtime/src/research-session-application.ts), [checkpoint DDL](../infra/d1/core/migrations/0020_research_workflow_checkpoints.sql), [run reader](../packages/cloudflare-research-runtime/src/research-run-list.ts) | Retain stored questions/input and useful completed/partial outputs from `WORK_BUCKET` refs. Initial payloads use `research-payload-<suffix>`; stage output refs use `workflow/<request-sha>/<attempt-ref>`. Resolve recorded refs/digests, not prefix-only bucket scans. Import saved job outcomes; do not transplant the old stage machine or automatically dispatch interrupted work. |
-| External-agent tasks/results | `research_external_agent_task`, `_progress`, `_payload`; [task store](../packages/cloudflare-workflows/src/external-agent-task-store.ts), [payload DDL](../infra/d1/core/migrations/0086_external_agent_task_payload.sql), [result commit](../packages/cloudflare-workflows/src/external-agent-result-outbox.ts) | Payload, result and progress JSON are stored in D1, not R2. Preserve task/run/project binding, attributed content, result disposition and useful progress before retiring notification outboxes. A recorded result survives lost wake; old lease/credential generations never become valid target authorization. |
-| Owner offers and accepted assignments | `computer_agent_dispatch`, acceptance/decline/abandonment/reassignment records and project route bindings; [dispatch store](../packages/cloudflare-computer-agent/src/computer-agent-dispatch-store.ts), [dispatch DDL](../infra/d1/core/migrations/0090_computer_agent_dispatch.sql) | This is a second task family. Preserve outstanding offers, accepted assignment/workflow link and decisions as task/history data. Recreate connection authorization; do not silently turn an old accepted dispatch into a new paid run. |
-| Delegated access and agent connections | `project_client_grant` revisions/current view and `computer_agent_connection`; [grant DDL](../infra/d1/core/migrations/0072_project_client_grants.sql), [actual grant checks](../packages/cloudflare-navigation/src/client-grant-authority.ts), [connection DDL](../infra/d1/core/migrations/0087_computer_agent_connections.sql) | Export revision history for attribution; derive effective authority from the latest revision, exact issuer/method/subject, expiry, operations, project and namespace ceiling. Keep revoked/disabled states. Unmappable restrictions stay disabled; a namespace-limited grant never becomes Library-wide authority. Old grant/connection IDs do not authenticate target callers. |
-| Google connection lifecycle | `google_exchange_connection`, OAuth intents and reconnect/disconnect receipts; [credential store](../packages/google-drive-exchange/src/google-token-store.ts), [disconnect application](../packages/google-drive-exchange/src/google-disconnect-application.ts) | Keep nonsecret connection identity, state/generation/revision, scopes, timestamps and completed/pending disconnect outcomes. REVOKED rows may still contain encrypted token bytes; existence is not permission to reconnect. Exclude token ciphertext from product export and require fresh OAuth for any selected replacement connection. Candidate/admitted research bytes follow the source rows above. |
-| Reports and editable drafts | `artifact_revision`/`artifact_head`, `artifact_draft_reservation`/head/binding/object; [draft DDL](../infra/d1/core/migrations/0032_artifact_drafts.sql), [reader](../packages/cloudflare-artifacts/src/artifact-draft-read-service.ts), [Markdown export](../packages/owner-api-client/src/evidence/report/export.ts) | Follow manifest and section body refs in declared order, plus dependency/evidence objects needed to reconstruct citations. Preserve accepted/draft status and edit lineage. A report download is not a workspace backup; missing declared sections cannot yield a complete report. Retire COW/acceptance plumbing after extracting these facts. |
-| Wiki history, proposals and owner edits | Later writer uses `wiki_publication_proposal`/revision/head and owner-edit bindings; [publication store](../packages/cloudflare-wiki/src/wiki-publication-store.ts), [owner-edit writer](../packages/cloudflare-wiki/src/wiki-owner-edit-proposal.ts). Earlier `wiki_revision`/`wiki_head` also exist in [initial DDL](../infra/d1/core/migrations/0001_initial.sql) | Inventory both families; later code does not prove older rows empty. Retain page JSON, body/evidence-map refs, dependencies, heads, proposals and owner edit bases/decisions. `PROPOSED` does not become accepted knowledge. Normalize into the shared page writer, not a second Wiki store. |
-| Session projection | [ResearchSession](../apps/eliotr-core/src/research-session.ts) stores `session:<id>` and a chat-binding identity; `/get-messages` returns 410 | Use it for session/run reconciliation, not invented chat messages. The target D1 chat inventory/snapshot API is new. Older deployed DO cohorts, if present, require separate inventory; this source review does not establish empty storage. |
-| Primary/offsite backups and deletion state | `BACKUP_PARTS_BUCKET` `backup-parts/` objects, epoch manifests, payload-part indexes and `backup_offsite_copy_receipt`; [primary inventory](../packages/cloudflare-backup/src/primary-writer-inventory.ts), [epoch publisher](../packages/cloudflare-backup/src/backup-epoch-manifest-publisher.ts), [offsite adapter](../packages/cloudflare-backup/src/backup-offsite-s3.ts), [restore erasure checks](../packages/cloudflare-backup/src/restore-erasure-gate.ts) | Record each retained copy's exact locator, key-generation reference, expiry/hold/deletion state and recovery disposition. Offsite bucket/destination are installed configuration, not a guessed repo constant. Preserve needed encrypted replicas/recovery access until accepted retirement; do not treat them as canonical source files. Reconcile current purge/revocation state before restoring an older snapshot; regenerate search plans and never reactivate old writers merely by copying rows. |
+## Contour overview
 
-The [legacy backup table list](../packages/backup-o2/src/coverage.ts) helps locate additional tables, but is not an importer
-or proof of live contents. The named raw/Workspace, grant, Google disconnect and backup paths have been source-traced;
-several components label themselves `IMPLEMENTED_NOT_LIVE`. Reconcile applied migrations, installed destinations/key
-access, actual rows/objects, remaining call sites and every active or unknown effect. Neither that label nor source code
-establishes whether a deployed cohort contains data.
+| # | Owner capability | Depends on | Primary paid effect | Budget |
+|---|---|---|---|---|
+| K0 | Protected Material shell | — | none | 600 |
+| K1 | Projects, ingest and exact reader | K0 | conversion only when needed | 1,500 |
+| K2 | Cited chat and saved answers | K1 | one answer call per turn | 1,500 |
+| K3 | One-time source understanding | K2 | two bounded calls per new revision | 1,200 |
+| K4 | External agents over MCP | K3 | agents bring their own model | 900 |
+| K5 | Large-library passage search | K3 | AI Search only after gate | 900 |
+| K6 | Project map and comparisons | K3; K5 optional | bounded incremental synthesis | 1,200 |
+| K7 | Deep research jobs | K6 | explicit job budget | 1,200 |
+| K8 | Outgoing tools/tasks | K7 + concrete need | owner-approved only | by need |
+| K9 | Lifecycle and export | K6 | none in ordinary use | 600 |
+| K10 | Legacy import/retirement | K9 | one-off script | script |
 
-## Delivery order
+K4 may proceed after K3. K5 is not a mandatory prerequisite for K6 when whole/claim retrieval passes the project eval.
 
-Each stage is a vertical product slice: real caller → shared function → durable write → reader. A stage is not complete
-because types, migrations or screenshots exist in isolation.
+---
 
-**Next implementation change: stage 0 at the repository root.** Create root `src/` and the replacement `migrations/`;
-switch root `package.json`, lockfile, TypeScript/Vite/Wrangler/lint configuration and active CI to that single package in
-the same change. Remove legacy workspace membership (`apps/*`, `packages/*`) from active package-manager configuration;
-retain only package-manager settings still needed. Target imports do not use donor `workspace:*` packages and target
-commands do not run recursive legacy builds.
+## K0 — Shell
 
-Keep legacy source/package manifests and historical migrations as donor/import evidence. The pinned legacy commit keeps
-their original build configuration reproducible. Retire `check:implementation-status`/`launch:code` and their machine
-status file when their last active build consumer is removed; trace contract/schema consumers separately. Update
-`fast-ci.yml` commands and `frontend-owner.yml` path filters with the new source/config locations. Do not leave a green
-legacy build presented as verification of new `src/`.
+**Owner outcome.** `research.<domain>` is protected by Cloudflare Access and displays the accepted Material frame on
+desktop and phone, with working light/dark themes and `/api/me` showing the authenticated actor.
 
-This is a development-tooling transition, not deployment or live-data cutover. New local bindings/schema are isolated;
-production predecessor resources remain until stage 9. The review queue supplies checks for each slice, not a pre-build
-qualification programme. Stage 2 must resolve the complete large-source search path; it does not block stage 0/1 work.
+**Build**
 
-| Order | Build | Complete when |
-|---|---|---|
-| 0. Transparent scaffold | Root package/tooling/CI switch above; Worker/React shell with a compiled locked SDK set and generated types, declarative SQLite Durable Object `exports`, separate hostname-based Access apps for UI/WebSocket and MCP, isolated local bindings, minimal Models/Connections screens and model capability profiles. Canonical docs remain ordinary tracked files. | Protected shell starts; root compile/build commands exercise replacement `src/`; configured chat/research defaults, route/billing/capability status and connection status are visible; incompatible tool/structured/large-context selection is rejected before dispatch; browser/API/MCP audiences are unambiguous; no live resource deleted. |
-| 1. Library and projects | Compact D1 schema; project CRUD/switch; source/revision/membership metadata; immutable R2 originals/readable text; local UTF-8 conversion; cached current `toMarkdown().supported()` diagnostics; explicit converter profile/options/warnings/anchor fidelity; bounded public URL acquisition; `IngestWorkflow`. | Create/open/switch several projects; batch add file/URL/text; attach/detach shared source; read original/text/revisions. Native English/Russian text documents become readable; an empty/unsupported/scanned direct conversion remains `stored_needs_conversion`; AI Search OCR is never treated as hidden canonical text; owner-supplied normalized Markdown creates a new revision. Failed/out-of-order replacement preserves the prior/current head. Generated image descriptions and first-frame-only GIF coverage are labelled. Blocked/oversize/stronger-egress-required URLs fail explicitly; project state is isolated and URL-restorable; project open admits no guide/model work. |
-| 2. Search projection | Conservative deterministic outline/block map; valid tables/code/context ranges; source card; bounded-concurrency AI Search publication; controlled native chunking; `search_item`; namespace/instance pointer. | Selected-scope English/Russian search works without global fallback; requested/readable/index-ready coverage and native partial errors are visible. Exact citations reopen retained UTF-8 bytes; page/table/figure hints show verified/observed/unavailable fidelity. One item normally maps to one native chunk; split-item ranges are verified against canonical bytes; generated image descriptions cannot support literal or quantitative claims; exact keys/subranges can be reconciled/deleted/rebuilt; broad discovery uses one native ranking plus exact metadata hits. |
-| 3. Ask and chat | Minimal page/draft writer for Save answer; exact mapping and typed source/page reference navigation; frozen-scope/tombstone checks; `AIChatAgent`; pre-dispatch `chat_input`; visible scope/model/tool state; conservative model-context budgeting; immutable R2 storage for oversized finalized bodies; internal portable snapshot method. | No-tool turn makes one synthesis and may repair one concrete same-scope retrieval gap. Tool mode has the small call cap, `autoContinueAfterToolResult: false` and at most one host-admitted continuation per request. Wrong-scope/tombstoned/unretained-OCR results never reach primary evidence context. Stream/open/stop/reconnect/reopen works without automatic paid continuation. A primary-source citation reopens its retained source revision/range; a derived-page reference opens its retained page revision and is labelled derived. Both retain context or show explicit unavailability, without model/search work. Explicit empty scope excludes old evidence from model context; labels cannot collide; failed turn never leaves unrecorded dependency; two tabs cannot retarget each other; snapshot export reads ordered messages/state without private SQL or model calls. |
-| 4. Knowledge/distillation | Extend page/revision CAS writer, typed `page_input`, safe Markdown and notes/digests/reports/Wiki/Inbox. Build the bounded `ResearchWorkflow`/job foundation for `distill_source`/`compare`/`revise_section` and Library-based analytical profiles; expose the named profiles and their inputs in Research. Index accepted pages through the existing projection/`IngestWorkflow`. | Owner can start, reopen, stop and save partial/final cited results for these long operations. Saved notes/reports/Wiki are content-searchable with derived references, excluding drafts/superseded heads; historical snapshots do not self-invalidate; long digest shows extraction/search coverage and output completion; source changes propagate through reuse; new material flags project-wide coverage; quantitative findings and known extraction omissions survive reduction; raw HTML/arbitrary citation links cannot bypass rendering; a section edit preserves unrelated text. Fact checking, hypothesis review and project-versus-literature review expose their distinct evidence/limitation outputs; maintenance audits remain separate. |
-| 5. Corpus Map and Audit | `maps.ts`, `audits.ts`, deterministic source/health projections and versioned Map/Audit pages. | Owner can navigate topics/versions/contradictions/gaps and inspect actionable extraction/index/freshness proposals without graph platform or auto-delete. |
-| 6. Incoming/outgoing MCP and tasks | Access-protected MCP handler; agent profiles/scopes; task modes and claim sequence; owner Tool Connection Agent; approved tool descriptors; bounded RPC and approvals. | Agent receives useful excerpts within whole-response budget, performs only granted operations, sees frozen revisions and completes only current claim sequence; committed result survives failed wake. Eliot refuses a changed selected tool without blocking unrelated tools; read tools and separately approved mutations work; failure is isolated. |
-| 7. Durable deep research | Extend stage 4's existing `ResearchWorkflow` with adaptive `deep_research`, optional web capture and one-agent delegation. Apply the same `job_input`, explicit SDK/Gateway/Workflow retry policy, awaited admission/deadlines, Spend Limits metadata, local caps and cancellation to the additional effects. | Run survives reconnect, preserves partial findings, admits no new effect after observed cancellation and saves cited report without repaying publication; captured/returned evidence is tracked before use; Find sources needs no full investigation; Search usage differs from generation spend; ordinary chat remains ordinary. |
-| 8. Lifecycle, cleanup and portable export | Impact from membership/input projections; retained tombstone identities; `CleanupWorkflow`; portable originals/readable revisions/conversion profiles/pages/tasks/chat export; versioned ChatAgent snapshots with referenced R2 bodies. | Lifecycle actions differ; impact is visible; cleanup preserves historical identity; late/unknown writes reconcile; old references stay exact/unavailable; UI makes no third-party-erasure promise; export contains requested originals/history/tasks and every selected chat snapshot passes checksum/message/body-reference validation. |
-| 9. Migration and retirement | Rehearsed D1/R2/chat-snapshot import, stable old→new mappings, final write freeze/drain, verification, route switch and rollback boundary. | Legacy records are extracted from their real stores without widening permissions; same stable chat IDs restore into empty target DOs or resume the same reserved import using supported state plus `persistMessages`, with message IDs/order/typed refs/large-body digests read back and no model call; source readable bytes, conversion states/warnings and exact references survive; OAuth is reauthorized; counts/bytes/references/histories and complete journeys verify; owner accepts cutover; only then remove predecessor apps/packages/crates/migrations/resources. |
+1. Move the Worker entry to `src/index.ts`; add Hono, `jose`, generated binding types and the API error shape.
+2. Implement hostname-based Access JWT validation, owner/service-token actor resolution, Origin checks and explicit
+   local development bypass. Do not use Worker-level Access because K2 needs WebSockets. IMPLEMENTATION §2.
+3. Move the design tokens, primitives, Material Symbols component and frame from the legacy UI. Do not copy old query,
+   runtime, preview or regression infrastructure.
+4. Keep only Projects and Settings placeholders. Wire CI for lint, typecheck, build and focused unit tests.
+5. Perform the one-time custom-domain and Access application setup; record repeatable CLI steps in `scripts/setup.sh`.
 
-## Quality gates that are not bureaucracy
+**Hard acceptance**
 
-Before declaring the replacement complete, use representative owner material and inspect the result:
+- Browser login and owner service token both resolve to `owner`; malformed, expired and wrong-audience assertions fail.
+- 1440 px and 390 px screenshots in light/dark match the accepted frame with no stream-layout placeholder hacks.
+- `pnpm check` and focused auth/contrast tests pass.
 
-- deterministic Markdown/plain text/CSV and current `toMarkdown` support discovery, including harmless additive provider response fields;
-- native English and Russian PDFs, a scanned PDF, two-column paper, long/wide table, footnotes, equation/code, office document, static HTML, rendered page, image and animated GIF;
-- retained bytes, conversion state/warnings, known omissions, page/table/figure fidelity and exact non-ASCII range reopening for those fixtures;
-- direct conversion versus AI Search OCR separation: an OCR search chunk is never primary evidence unless the same text/mapping is retained as a source revision;
-- English↔Russian semantic/lexical retrieval, exact identifiers/numbers and a fact late in a paper;
-- structural item/native chunk mapping, valid tables/equations/code, duplicates and contradictory sources;
-- explicit scope over 50/500 sources without global fallback; partial search errors and unindexed readable heads;
-- wrong-scope/tombstoned provider results and deletion between context preparation and dispatch;
-- exact non-ASCII/repeated-text references after replacement/reindexing, including citation→retained-reader navigation;
-- several projects/tabs, different model roles/scopes/tools, shared sources and concurrent jobs;
-- model-profile context/output/tool/structured enforcement, conservative custom/dynamic routes and actual-model capture;
-- Access coverage and Managed OAuth/service-token identity;
-- public URL guardrail cases without unproven DNS-pinning claims;
-- no-tool/tool chat, server-side admission despite altered client continuation flags, duplicate tool results, denied approval, controlled single continuation, unknown mutation outcome, cancel races and reconnect;
-- page conflicts/proposals/freshness, transitive dependencies, new-source coverage and server draft conflicts;
-- content search for accepted knowledge without indexing drafts or treating repeated reports as independent evidence;
-- first-claim scope freeze, unchanged inputs on reclaim, agent expiry/revocation and committed result whose wake failed;
-- lost Workflow-create acknowledgement, native replay across the entry write/checkpoint boundary and no recreation after native expiry;
-- source deletion, external-provider retention disclosure, cleanup and export/import fidelity, including conversion/Workspace bindings and older backup restore without resurrecting deleted content or revoked access;
-- bounded reductions, output truncation/structured validation and saved partial reports;
-- immutable R2 collision/null handling and reindex handoff with concurrent publication;
-- oversized assistant/tool body reopen after SDK compaction;
-- chat snapshot export/import to empty namespace preserving order, citations, approvals, partial attempts and R2 refs,
-  while `persistMessages` causes no model call; rejection of private-SQL copy and nonempty conflicting import;
-- measured request count, Eliot overhead, provider/tool latency, Search use and generation spend.
+**Not now.** Projects, storage, model UI, chat, MCP.
 
-Run scoped TypeScript compile/lint/build while constructing. Use minimal Clippy only if Rust changes. Add regression checks
-only for observed failures or critical invariants above; do not rebuild source-text/ancestry/gate machinery.
+**Cost.** No model/search call; ordinary requests are Worker/static asset requests only.
+
+---
+
+## K1 — Read
+
+**Owner outcome.** Create a project, choose many files in one browser action, add URL/text, watch conversion state and
+open any readable source with outline and exact passage links.
+
+**Build**
+
+1. Bind D1, R2, Workers AI and `IngestWorkflow`; apply `migrations/0001_library.sql`.
+2. Implement projects, shared Library sources, project memberships and immutable revisions.
+3. Browser batch UX sends **one file per request**, with at most two uploads in flight. The API accepts one file up to
+   25 MiB, never a 100 MiB buffered multipart batch. Text and URL have separate JSON routes/shapes. IMPLEMENTATION §4.
+4. Hash, store original under an immutable R2 key, create pending rows and start deterministic
+   `ingest-<revisionId>`. Exact duplicates are reported with Attach; never silently merged.
+5. Convert native UTF-8 text locally. Use cached `env.AI.toMarkdown().supported()` only for document formats that
+   require it. Do not opt into model-assisted image/OCR conversion in K1; scans retain the original and show
+   `needs_conversion`. Write canonical `text.md`, exact `blocks.json`, state/warnings and current readable revision.
+6. Implement outline, whole text, exact UTF-8 range and original download. Reading must not call a model.
+7. Move the project/source/import/reader UI features and replace legacy adapters with `src/shared/api.ts` +
+   `src/web/api.ts`.
+8. Add block/range/URL-guard tests and `pnpm eval k1`.
+
+**Hard acceptance — `pnpm eval k1`**
+
+- Ingest the ten `eval/arxiv-10` PDFs and the Russian corpus with client concurrency 2.
+- All settle as readable/readable-with-warnings; expected papers produce at least 20 KiB and 50 blocks.
+- Three random ranges per source exactly match slices of the downloaded whole text.
+- Eval prints converter, original/text bytes, blocks, wall time and conversion tokens when Cloudflare returns them.
+- Owner opens three citations and one copied range link on phone.
+
+**Measured budget.** Peak Worker memory is inspected during the 25 MiB case; no exceeded-memory event. Conversion count
+must equal the number of files that actually require conversion.
+
+**Not now.** OCR pipeline for scans, search, claims, model answer, bulk direct-to-R2 uploads above 25 MiB.
+
+---
+
+## K2 — Ask
+
+**Owner outcome.** Select sources, ask in Russian or English, receive a streamed answer with exact clickable citations,
+stop/reconnect, reopen chat and save an answer as a page.
+
+**Build**
+
+1. Apply `migrations/0002_ask.sql`; add one `ChatAgent` Durable Object per chat and `/agents/*` routing.
+2. Implement dated model metadata, conservative context/output limits, estimated cost and monthly model-budget admission.
+3. Build whole-reading context from the frozen readable revisions. When it does not fit, return a clear narrow-scope
+   response; claim/search modes arrive later.
+4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.
+5. Use one `runTurn` for WebSocket and eval RPC; persist turn before the model call, stream, resolve labels, store
+   citations/tokens/timings/cost and never auto-continue a paid failed stream.
+6. Add chat/page APIs, minimal model selector, saved answers and the moved chat/evidence UI.
+7. Add label/context/cost tests and `pnpm eval k2`.
+
+**Hard acceptance — `pnpm eval k2`**
+
+- Run C1–C4 and O1–O8 from `eval/arxiv-10/questions.md` in whole mode.
+- Every completed answer has at least one citation, `invalidLabels = 0`, and every cited range opens.
+- C1–C4 contain the expected values and conditions. O8 abstains where the corpus lacks the answer.
+- Owner judges O1, O2, O3 and O8 at least as useful and honest as the recorded NotebookLM baseline.
+- No turn exceeds the configured monthly model budget; eval reports input/cached/output tokens and estimated USD.
+
+**Measured budget.** Record cold/warm p50/p95 first-token and total time. Initial target: warm p50 first token ≤ 10 s,
+p95 total ≤ 40 s. Catastrophic ceiling: a completed answer taking > 90 s fails K2. Promote tighter thresholds after three
+comparable runs rather than making one provider fluctuation invalidate the architecture.
+
+**Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
+
+---
+
+## K3 — Distill
+
+**Owner outcome.** Each new readable revision receives one guide, verified claim set, digest and EN/RU glossary. The
+project overview is assembled from guides. Large selections can answer from claims. Unchanged revisions are never
+re-distilled automatically.
+
+**Build**
+
+1. Apply `migrations/0003_distill.sql`; add `DistillWorkflow`, scheduler and quote/number verification.
+2. Ingest marks a readable revision queued only when auto-distill is enabled and no completed artifact exists.
+3. Scheduler admits the oldest queued revisions only while concurrency and monthly model budget allow. Budget-blocked
+   work becomes visibly `paused`, not a hidden retry loop. Reconcile stale `running` rows against deterministic Workflow
+   IDs.
+4. First call reads block-labelled text and emits guide + candidate claims. Code verifies quotes/ranges/numbers. Second
+   call receives only verified material and emits digest/glossary. Store raw output/report in R2 and compact claims in
+   D1.
+5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
+   an extra overview model call.
+6. Add claim context mode. The same answer prompt and citation resolver are used.
+7. Add reader guide/claims UI, quote tests and `pnpm eval k3`.
+
+**Hard acceptance — `pnpm eval k3`**
+
+- All ten papers reach `done` or a documented `partial` state; a second eval run performs no re-distillation of unchanged revisions.
+- Every stored quote is an exact byte range; numeric result fields are cleared when not supported by their quote.
+- Transformer, ResNet and LoRA anchor expectations in `eval/arxiv-10/questions.md` are present with correct conditions;
+  no unsupported number is stored. Claim count and drop rate are reported, not quality gates.
+- Claim mode keeps C1–C4 correct and citations valid; overview lists every readable source without a model call.
+- Eval prints per-revision calls, tokens, estimated cost, kept/dropped reasons and wall time.
+
+**Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
+
+---
+
+## K4 — Agents in
+
+**Owner outcome.** Claude Code, Codex or another MCP client reads Eliot through the same tools and submits a proposed
+page that the owner can accept or reject.
+
+**Build**
+
+1. Apply `migrations/0004_agents.sql`; backfill/write trigram FTS over verified claim bodies.
+2. Implement the shared product tools as `(env, actor, input) → compact Markdown` with hard output caps.
+3. Expose them through stateless Streamable HTTP MCP on a separate Access-protected hostname. Agent service-token actors
+   may read and propose; only owner accepts.
+4. Move the proposals inbox and add `pnpm eval k4` using a real MCP client.
+
+**Hard acceptance.** Every tool respects scope/size and labels resolve. A connected agent answers O2/O5 using only Eliot
+tools, proposes a page, and all citations remain valid after owner acceptance.
+
+**Cost.** Eliot performs no model call for an external-agent request; the client brings its own model. FTS/read tools
+use D1/R2 only.
+
+**Not now.** Per-agent project ACLs, task marketplace, outgoing MCP tools, large upload through MCP.
+
+---
+
+## K5 — Library scale
+
+**Owner outcome.** Large scopes that do not fit whole or claim mode can retrieve relevant passages with exact source
+scope and exact citations. Identifier/number searches use cheaper full-text mode.
+
+**Activation gate — before building product code**
+
+Run one spike against a real AI Search instance and record in IMPLEMENTATION §15:
+
+1. `items.chunks()` byte offsets map exactly to uploaded UTF-8 bytes.
+2. Metadata `$in` supports the intended revision scope (test 500 IDs).
+3. Russian keyword quality with `porter` versus `trigram`.
+4. `uploadAndPoll` and item deletion behave as the installed binding types describe.
+5. The `library-200` eval demonstrates a material quality/latency gain over claim mode.
+6. Forecasted monthly ingestion/storage/semantic/full-text usage fits the included tier or has explicit owner approval.
+
+A failed offset/scope gate means K5 does not ship. Keep whole/claim/FTS retrieval and ask the owner to narrow scope;
+do not build a private Vectorize stack as an automatic reaction.
+
+**Build after the gate**
+
+1. Create one built-in-storage AI Search instance in `default`; bind it directly.
+2. Index one item per **current readable revision**. Unchanged revisions are not uploaded again; replacement deletes the
+   old search item after the new one is ready. Keep old R2 text for citations.
+3. Use `uploadAndPoll` inside one Workflow step, then store the chunk-ID → byte-range map.
+4. Search with frozen revision filters. Hydrate/snaps hits to source blocks before the model sees them.
+5. Use full-text for quoted identifiers/numbers and hybrid for semantic questions. Keep reranking and query rewrite off
+   until a measured eval proves their value.
+6. Add search context/tool loop with a strict step cap and a local fallback to claim mode.
+7. Cap ordinary monthly usage below the included allocation (initially 900 semantic + 900 full-text queries,
+   4.5M ingestion tokens and 9 GiB indexed storage) to retain operational headroom.
+
+**Hard acceptance — `pnpm eval k5`.** At least 9/10 `library-200` needles cite the expected paper/section;
+`invalidLabels = 0`; source filters never leak. K2/K3 evals still pass.
+
+**Measured budget.** Report p50/p95 latency and actual query type/count. AI Search billing assumptions are dated and
+rechecked before merge.
+
+**Not now.** Per-project instances, public AI Search endpoint, AI Search generation, custom vector database.
+
+---
+
+## K6 — Project knowledge
+
+**Owner outcome.** A living project map shows topics, compatible comparison rows, disagreement candidates, gaps,
+reading routes and owner-requested Wiki pages. Source changes stale only dependent pages.
+
+**Build**
+
+1. `ProjectKnowledgeWorkflow` starts after a completed distillation batch or explicit Refresh.
+2. Assign new sources to at most 12 topics using guide + verified claims. Reuse existing topics where possible.
+3. Build comparison candidates by code: NFKC/lowercase normalization, parsed numeric value/unit, dataset and condition
+   compatibility. Use one bounded semantic grouping call only for unmatched EN/RU synonyms; never compare incompatible
+   units/datasets merely because raw `task`/`metric` text matches.
+4. Check disagreement only inside compatible groups and show both exact quotes.
+5. Build gaps/routes from compact guides/claims; write a versioned map page. Wiki pages are generated only on request.
+6. Mark pages stale from `inputs_json`; Refresh writes a new revision/proposal.
+
+**Hard acceptance — `pnpm eval k6`.** All sources appear in topics; at least three genuinely comparable multi-source
+result groups; replacing one paper stales exactly the pages that used the old revision. Owner can answer O1–O5 from the
+map and inspect evidence for every comparison.
+
+**Cost.** Incremental: unchanged source/topic assignments are reused. No full-corpus re-read.
+
+**Not now.** Graph database, centrality, automatic Wiki for every topic.
+
+---
+
+## K7 — Deep research
+
+**Owner outcome.** Start a bounded investigation over Library plus optional web, see progress and estimated spend, Stop,
+and receive a cited report. Web evidence is captured before citation.
+
+**Build**
+
+1. Add `job` migration/state with explicit `maxModelCalls`, `maxTokens`, `maxWebCaptures`, `maxEstimatedCostMicrousd`
+   and deadline.
+2. Implement `ResearchWorkflow`: plan → Library tools → optional web search/read → capture selected pages → synthesize.
+   Static fetch first; Browser Run only when rendered content is necessary.
+3. Check cancellation/budget before every external call; persist compact progress and partial findings.
+4. Save final/partial report as a page with resolved citations.
+
+**Hard acceptance — `pnpm eval k7`.** Two web-required questions produce valid reports with at least five captured
+sources inside configured limits. Stop prevents the next external call and leaves a readable partial result.
+
+**Not now.** Autonomous recurring research, invisible budget expansion, uncaptured web citations.
+
+---
+
+## K8 — Outgoing tools and tasks
+
+Write this contour only after a named remote MCP server or connected agent task is required. Start read-only. Every
+mutating remote call needs owner approval. Task offers are simple records that a connected agent accepts and completes
+with a proposed page. Do not build a marketplace or generic orchestration layer.
+
+## K9 — Lifecycle and export
+
+1. Detach removes project membership; Archive hides a Library source from new selection; Delete previews affected
+   projects/pages, hides immediately and removes R2/search objects synchronously or in a daily cleanup.
+2. Old citations remain present and show deleted evidence rather than retargeting.
+3. Export streams a ZIP of originals, `text.md`, claims, pages/citations and manifest.
+
+**Hard acceptance.** Deleting one `arxiv-10` source stales dependent pages, removes it from current retrieval and keeps
+old citation identity visible. Export opens and matches its manifest.
+
+## K10 — Legacy import and retirement
+
+One idempotent script, not a migration framework: read the pinned legacy stores, upload originals/readable text/reports
+through K1/K2 APIs, print counts/checksums and let the owner compare. Reauthorise external connections. Only after owner
+acceptance remove old applications, packages, crates, migrations and Cloudflare resources in a dedicated PR.
+
+| Legacy material | Import target |
+|---|---|
+| projects and memberships | projects + `project_source` |
+| original file captures | Library originals |
+| normalized `content.md` | revision with `owner_markdown` converter |
+| artifact/wiki revisions | report/wiki pages, preserving proposal state |
+| completed research outputs | report pages when output exists |
+| chats | none: legacy did not retain a usable transcript |
+| agent grants/connections/backups | do not copy blindly; reauthorise or separately archive |

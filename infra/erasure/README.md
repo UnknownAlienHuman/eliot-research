@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../AGENTS.md) and `docs/`.
+
 # Exact erasure authority
 
 The executable implementation lives in `packages/cloudflare-erasure` and is orchestrated only through

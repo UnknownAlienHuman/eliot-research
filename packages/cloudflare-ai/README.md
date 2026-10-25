@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../AGENTS.md) and `docs/`.
+
 # @eliotr/cloudflare-ai
 
 Bounded Cloudflare AI Search generation governance and strict AI Gateway execution adapters. Live provider authority is supplied only through injected ports.

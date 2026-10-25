@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../AGENTS.md) and `docs/`.
+
 # Retained independent audit harnesses
 
 These four harnesses were written and run **outside** the repository, against branch worktrees on
