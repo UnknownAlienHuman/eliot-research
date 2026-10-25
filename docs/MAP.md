@@ -20,7 +20,7 @@ and the code budget holds or the PR explains why not. The next contour starts af
 
 **Testing policy.** Each contour has one acceptance script (`pnpm eval <contour>`) that drives the real system through
 its API on the fixed material in `eval/`. Unit tests exist only for pure functions whose mistakes are silent: UTF-8
-ranges, block scanning, citation-label mapping, quote verification, the URL guard, context budgeting. A regression test
+ranges, block scanning, citation-label mapping, quote verification, the URL guard, context budgeting, Access checks. A regression test
 is added only for a bug that actually happened. No tests or mocks for capabilities that cannot work yet.
 
 **Budgets** count new non-test lines in `src/`, excluding UI moved from `packages/ui` and `apps/eliotr-web`. They are
@@ -51,10 +51,10 @@ column; moved files appear as renames and count only their edits).
 | K6 | Project knowledge | Topic map, comparison table, disagreements, gaps, reading routes, Wiki pages; refresh only what changed | K5 | 1,200 |
 | K7 | Deep research | Long investigation with library and web, captured web sources, progress, budget and Stop | K6 | 1,200 |
 | K8 | Outgoing tools and tasks | Owner-approved remote MCP tools in chat and research; tasks offered to connected agents | K7 | by need |
-| K9 | Lifecycle and export | Delete/detach/archive with visible impact; ZIP export of originals, texts, claims and pages | K3 | 600 |
+| K9 | Lifecycle and export | Delete/detach/archive with visible impact; ZIP export of originals, texts, claims and pages | K6 | 600 |
 | K10 | Legacy import | Old originals, readable texts and saved reports imported; legacy retired | K9 | script |
 
-K4 and K5 may run in parallel after K3; K9 may start any time after K3.
+K4 and K5 may run in parallel after K3.
 
 ---
 
@@ -136,7 +136,7 @@ and without search.
 7. UI: `git mv` `packages/ui/src/features/sources/projects`, `.../import`, `.../document` into
    `src/web/ui/features/`; replace their `@eliotr/owner-api-client` and `src/query` imports with `src/shared/api.ts`
    types and hooks in `src/web/api.ts`; Projects home, Sources tab with multi-file drop and per-source state, reader
-   with outline, highlighted range and copyable link; routes `/p/:projectId/sources` and `/p/:projectId/source/:id`.
+   with outline, highlighted range and copyable link; routes `/p/:projectId/sources` and `/p/:projectId/source/:sourceId`.
 8. Unit tests: block scanner (Cyrillic, CRLF, BOM, fenced code, tables), range read helper, URL guard.
 9. Eval harness: add `tsx` and the script `"eval": "tsx scripts/eval/run.ts"`; `scripts/eval/lib.ts` (HTTP client,
    upload, polling, table) and `scripts/eval/k1.ts`, as described in [`eval/README.md`](../eval/README.md).
@@ -233,7 +233,8 @@ Claim cards are also the backbone of comparisons (K6) and agent work (K4).
    read-and-extract call → quote verification → digest-and-glossary call → write R2 artifacts and D1 `claim` rows →
    set `distill_state`. Apply `migrations/0003_distill.sql`; workflow binding `DISTILL`. Contracts and prompts in
    IMPLEMENTATION §6, quote verification in §5.
-2. Rate-limit handling: Workflow step retries with the provider's `Retry-After`; one global concurrency setting.
+2. Rate-limit handling: Workflow step retries with the provider's `Retry-After`; a cron trigger starts queued
+   distillations while fewer than `DISTILL_CONCURRENCY` (default 2) run (IMPLEMENTATION §6).
 3. Project overview: when the last queued distillation of a project finishes, regenerate `page(kind='overview')` from
    the source guides (one cheap call). Opening a project never starts model work.
 4. `src/context.ts` gains **claim mode**: when whole reading does not fit, the context is the guides plus the claim
@@ -341,9 +342,10 @@ revision.
 3. UI: move `packages/ui/src/features/studio` and `.../research/report`; map view (list/tree), comparison table,
    disagreement list with links to both quotes.
 
-**Acceptance — `pnpm eval k6`** on `arxiv-10`: topics cover residual connections, normalisation, optimisation,
-attention/positional encoding, scaling, efficient fine-tuning, vision transfer; the comparison table has numeric rows
-with conditions; replacing one paper marks only its dependent pages stale. Owner checks O1–O5 against the map.
+**Acceptance — `pnpm eval k6`** on `arxiv-10`. Script: ≥ 5 topics and every source in at least one; ≥ 3 comparison
+groups with values from ≥ 2 sources; after replacing one paper, exactly the pages whose `inputs_json` contain its old
+revision are `stale`. Owner: the topics cover residual connections, normalisation, optimisation, attention/positional
+encoding, scaling, efficient fine-tuning and vision transfer, and O1–O5 can be answered from the map.
 
 **Out of scope.** Graph database, centrality, automatic Wiki for every topic.
 
@@ -362,6 +364,7 @@ receive a cited report saved as a page, with web sources captured into the Libra
    usage, progress, result page, timestamps). IMPLEMENTATION §10.
 2. `ResearchWorkflow` — bounded loop (plan → search/read/claims → web search → capture → synthesize) over the shared
    toolset; web tools from the Agents SDK; capture through `IngestWorkflow`; progress written to the job row.
+   Rendered pages use Browser Run through a new `BROWSER` binding (converter `browser_markdown`, IMPLEMENTATION §4).
 3. UI: job list and detail with progress, partial findings and Stop.
 
 **Acceptance — `pnpm eval k7`**: two questions that need the web (e.g. LoRA variants since 2023 versus the LoRA paper's
@@ -385,7 +388,7 @@ Write the contour here before building it.
 1. Delete from Library: preview affected projects/pages, hide immediately (`state`, `deleted_at`), remove R2 objects and
    the AI Search item in the request or a daily cron sweep; old citations show "deleted".
 2. Detach and archive without deleting the shared source.
-3. Export: ZIP of originals, `text.md`, claims (JSON), pages (Markdown + citations) and chat list, streamed from R2.
+3. Export: ZIP of originals, `text.md`, claims (JSON), pages (Markdown + citations) and a manifest, streamed from R2.
 
 **Acceptance:** delete a paper from `arxiv-10` → its pages turn stale, citations show deleted, search no longer returns
 it; export of the project opens and contains every file listed.

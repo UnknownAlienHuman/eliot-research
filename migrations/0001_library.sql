@@ -40,7 +40,7 @@ CREATE TABLE source_revision (
   original_mime TEXT,
   readable_state TEXT NOT NULL DEFAULT 'pending'
     CHECK (readable_state IN ('pending', 'readable', 'readable_with_warnings', 'needs_conversion', 'failed')),
-  converter TEXT,                     -- local_text | workers_ai_markdown | owner_markdown
+  converter TEXT,                     -- local_text | workers_ai_markdown | owner_markdown | browser_markdown (K7)
   readable_size INTEGER,              -- bytes of source/<rev>/text.md
   block_count INTEGER,                -- entries in source/<rev>/blocks.json
   warning_summary TEXT,               -- one owner-readable line; NULL when clean

@@ -12,7 +12,7 @@ Files under `apps/`, `packages/`, `crates/`, `infra/` and their READMEs are lega
    next piece. No code, file, export, table, state or abstraction without a caller in the same PR.
 3. **Acceptance, not test sprawl.** Each contour has one `pnpm eval <contour>` script against the fixed material in
    `eval/`. Unit tests only for pure functions whose mistakes are silent (ranges, block scanning, label mapping, quote
-   checks, URL guard, budgets). A regression test only for a bug that happened. No tests or mocks for things that cannot
+   checks, URL guard, budgets) and for the Access checks. A regression test only for a bug that happened. No tests or mocks for things that cannot
    work yet.
 4. **Budgets.** Each contour has a code budget in MAP (new non-test lines in `src/`, moved UI excluded; the counting
    command is in MAP). Going over it needs a reason in the PR.

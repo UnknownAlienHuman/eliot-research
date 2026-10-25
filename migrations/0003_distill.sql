@@ -1,5 +1,7 @@
 -- K3 Distill: bibliographic fields filled by distillation, distillation state and report, claim cards.
 
+ALTER TABLE settings ADD COLUMN distill_model TEXT NOT NULL DEFAULT 'workers-ai:@cf/zai-org/glm-5.3-flash';
+
 ALTER TABLE source ADD COLUMN authors TEXT NOT NULL DEFAULT '';   -- display string
 ALTER TABLE source ADD COLUMN published TEXT;                    -- as given, possibly partial ('2017')
 
@@ -8,6 +10,7 @@ ALTER TABLE source_revision ADD COLUMN distill_state TEXT NOT NULL DEFAULT 'none
 ALTER TABLE source_revision ADD COLUMN distill_model TEXT;
 ALTER TABLE source_revision ADD COLUMN distill_input_tokens INTEGER;
 ALTER TABLE source_revision ADD COLUMN distill_output_tokens INTEGER;
+ALTER TABLE source_revision ADD COLUMN guide_summary TEXT;           -- first sentence of the guide, for lists
 
 -- Every card carries a verbatim quote that code located in text.md (IMPLEMENTATION §5).
 CREATE TABLE claim (

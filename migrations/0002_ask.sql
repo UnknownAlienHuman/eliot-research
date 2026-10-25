@@ -3,11 +3,9 @@
 CREATE TABLE settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   answer_model TEXT NOT NULL,        -- model route, see IMPLEMENTATION §11
-  distill_model TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
-INSERT INTO settings (id, answer_model, distill_model, updated_at)
-VALUES (1, 'workers-ai:@cf/zai-org/glm-5.3-flash', 'workers-ai:@cf/zai-org/glm-5.3-flash', 0);
+INSERT INTO settings (id, answer_model, updated_at) VALUES (1, 'workers-ai:@cf/zai-org/glm-5.3-flash', 0);
 
 ALTER TABLE project ADD COLUMN instructions TEXT NOT NULL DEFAULT '';  -- standing answer instructions
 ALTER TABLE project ADD COLUMN answer_model TEXT;                     -- NULL = settings.answer_model
