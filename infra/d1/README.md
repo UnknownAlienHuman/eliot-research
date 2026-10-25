@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../AGENTS.md) and `docs/`.
+
 # D1 schema ownership
 
 `core/migrations` is canonical compact state. `search/migrations` is a rebuildable exact/FTS safety

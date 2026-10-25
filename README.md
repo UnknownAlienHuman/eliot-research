@@ -1,27 +1,25 @@
 # Eliot Research
 
-A research workspace for one human owner and connected agents: a shared library, exact source passages,
-cited answers, document distillation, versioned reports, Wiki and explicit deep research on Cloudflare.
+A research workspace for one owner and the agents the owner connects: a shared library, readable sources with exact
+passages, automatic distillation of every document, cited answers, project knowledge pages, deep research and an MCP
+endpoint for external agents — on Cloudflare.
 
-**The compact replacement is specified; it is not yet implemented or deployed.** Existing application code
-is a donor and migration source. This documentation pass does not change the running application.
-
-Continue with [the root-package cut-in and stage 0](docs/MAP.md#delivery-order).
-The [review register](.github/audits/REVIEW-REGISTER.md) distinguishes completed source review from open implementation
-questions; its pending runtime checks are not prerequisites for starting the shell.
+**Status:** the replacement is specified and its shell is merged; product contours K1+ are not built yet. Code under
+`apps/`, `packages/`, `crates/` and `infra/` is the legacy system, kept as donor and data source until K10.
 
 | Document | Purpose |
 |---|---|
-| [Architecture](docs/ARCHITECTURE.md) | Product, required capabilities and boundaries; persistent developer context |
-| [Implementation](docs/IMPLEMENTATION.md) | Concrete storage, algorithms, platform APIs and failure behaviour |
-| [Map and work order](docs/MAP.md) | Current code → replacement responsibility; integration sequence |
-| [Donors and primary sources](docs/DONORS.md) | Ready-made APIs, useful donor mechanisms and what not to copy |
-| [Audits](.github/audits/README.md) | Current findings and preserved historical evidence |
-| [Review status](.github/audits/REVIEW-REGISTER.md) | Checked areas, remaining gaps and the current handoff |
-| [Working rules](AGENTS.md) | Reading, implementation, coordination and verification |
+| [AGENTS.md](AGENTS.md) | How work is done: contours, acceptance, budgets, what not to produce |
+| [Architecture](docs/ARCHITECTURE.md) | Product, principles, guarantees, system shape |
+| [Map](docs/MAP.md) | Contours K0–K10: what to build, where, acceptance, out of scope, budgets |
+| [Implementation](docs/IMPLEMENTATION.md) | Technical contracts: data, ingest, citations, distillation, tools, Ask, search, models, UI |
+| [Donors](docs/DONORS.md) | What to reuse per contour, with licences |
+| [Eval](eval/README.md) | Fixed material and acceptance scripts |
 
-[Issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) explains the earlier failure.
-Its dated counts and recommendations are checked against source in the current audit, not repeated as
-current production facts. Superseded specifications remain reachable through pinned historical links.
+Next step: [K0 — Shell](docs/MAP.md#k0--shell).
+
+Earlier audits and the review register are preserved at
+[`20400288/.github/audits`](https://github.com/UnknownAlienHuman/eliot-research/tree/204002889537de4af1583aa512cbb013cddccfe6/.github/audits);
+[issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) explains the earlier failure.
 
 MIT. See [LICENSE](LICENSE).

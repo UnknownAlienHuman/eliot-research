@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../AGENTS.md) and `docs/`.
+
 # Cloudflare desired state
 
 This directory is the versioned, account-neutral desired state for the Cloudflare contour. It contains

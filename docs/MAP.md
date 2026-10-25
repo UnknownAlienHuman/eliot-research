@@ -122,7 +122,8 @@ and without search.
    retype props against `src/shared/`; Projects home, Sources tab with multi-file drop and per-source state, reader
    with outline, highlighted range and copyable link.
 7. Unit tests: block scanner (Cyrillic, CRLF, BOM, fenced code, tables), range read helper, URL guard.
-8. `scripts/eval/k1.ts` and `pnpm eval k1` (see Acceptance).
+8. Eval harness: add `tsx` and the script `"eval": "tsx scripts/eval/run.ts"`; `scripts/eval/lib.ts` (HTTP client,
+   upload, polling, table) and `scripts/eval/k1.ts`, as described in [`eval/README.md`](../eval/README.md).
 
 **Acceptance — `pnpm eval k1`**
 

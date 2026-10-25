@@ -1,3 +1,6 @@
+> **Legacy (pre-replacement).** This file describes the old system, kept only as donor and data-import material.
+> It is not an instruction for current work — see [AGENTS.md](../../AGENTS.md) and `docs/`.
+
 # Current restore admission operator
 
 This path installs one reviewed, current permission for one exact `RESTORE_VERIFY` operation into the already migrated primary coordinator Core D1 database. Its target profile describes the isolated restore target and may name a different account, database, and failure domain. It does not create a public owner grant endpoint, start a restore, or qualify a restored controller for traffic.
