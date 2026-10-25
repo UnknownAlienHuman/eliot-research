@@ -10,7 +10,7 @@ relying on it (§15).
 | K0 Shell | §1, §2, §13 |
 | K1 Read | §1 (API), §3, §4, §5 |
 | K2 Ask | §5, §8, §11 |
-| K3 Distill | §6, §8 (claim mode) |
+| K3 Distill | §5, §6, §8 (claim mode) |
 | K4 Agents in | §7, §10 |
 | K5 Library scale | §7, §8 (search mode), §9 |
 | K6 Project knowledge | §12 |
@@ -42,7 +42,7 @@ WebSocket, the MCP endpoint, the chat Durable Object and the Workflows.
 | `src/search.ts` | AI Search projection (§9) | K5 |
 | `src/workflows/project.ts`, `src/workflows/research.ts` | ProjectKnowledgeWorkflow, ResearchWorkflow | K6, K7 |
 | `src/shared/` | types used by both Worker and web (API payloads only) | K1 |
-| `src/web/` | React app; `src/web/ui/` is the moved Material design system | K0 |
+| `src/web/` | React app; `src/web/ui/` is the moved Material design system; `src/web/api.ts` holds the fetch hooks | K0 |
 | `migrations/` | D1 migrations | K0 |
 | `scripts/eval/` | acceptance scripts, run with `pnpm eval <contour>` | K1 |
 
@@ -67,15 +67,30 @@ and Workflows.
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/agents/*", "/mcp"]
   },
+  // K1
   "d1_databases": [{ "binding": "DB", "database_name": "eliot", "database_id": "<from setup>", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "eliot" }],
-  "ai": { "binding": "AI" }
-  // K2: durable object ChatAgent (declarative exports, SQLite); K1/K3: workflows; K5: "ai_search": [{ "binding": "SEARCH", "instance_name": "library-v1" }]
+  "ai": { "binding": "AI" },
+  "workflows": [
+    { "binding": "INGEST", "name": "eliot-ingest", "class_name": "IngestWorkflow" }
+    // K3: { "binding": "DISTILL", "name": "eliot-distill", "class_name": "DistillWorkflow" }
+    // K6: PROJECT_KNOWLEDGE / ProjectKnowledgeWorkflow; K7: RESEARCH / ResearchWorkflow
+  ]
+  // K2: Durable Object binding "CHAT" for class ChatAgent (declarative exports, SQLite storage)
+  // K5: "ai_search": [{ "binding": "SEARCH", "instance_name": "library-v1" }]
 }
 ```
 
-Generate binding types with `wrangler types` and commit the output; never hand-write `Env`. Add `hono` and `jose` in
-K0. Dependency versions are pinned in `package.json`; do not bulk-upgrade them for an unrelated change.
+The `/agents/*` entry in `run_worker_first` and the `CHAT` binding arrive with K2; K0 only needs the assets, the
+Worker entry, `workers_dev: false` and `preview_urls: false`.
+
+Worker variables (plain vars unless marked secret): `ACCESS_TEAM`, `ACCESS_AUD_UI`, `ACCESS_AUD_MCP` (K4),
+`OWNER_EMAIL`, `UI_ORIGIN` (e.g. `https://research.example.org`), `OWNER_SERVICE_CLIENTS` (comma-separated Access
+service-token client IDs that act as the owner, for eval and automation), `MCP_ALLOWED_CLIENTS` (K4),
+`ELIOT_LOCAL_DEV` (only in `.dev.vars`).
+
+Generate binding types with `wrangler types` and commit the output; never hand-write `Env`. Add `hono`, `jose` and
+`vitest` in K0, `tsx` in K1 (eval scripts). Dependency versions are pinned in `package.json`; do not bulk-upgrade them for an unrelated change.
 
 Durable Object classes use the declarative `exports` lifecycle with SQLite storage; D1 schema changes are files in
 `migrations/`. Workflows are declared once and started through their bindings.
@@ -83,9 +98,10 @@ Durable Object classes use the declarative `exports` lifecycle with SQLite stora
 ### Account setup (once)
 
 1. `wrangler d1 create eliot`, `wrangler r2 bucket create eliot`; put the D1 ID into `wrangler.jsonc`.
-2. Custom domains `research.<domain>` (UI, API, chat WebSocket) and, in K4, `mcp.research.<domain>`, both on this Worker.
-3. Two Cloudflare Access applications, one per hostname (§2). Record each application's audience tag as Worker
-   variables `ACCESS_AUD_UI` and `ACCESS_AUD_MCP`, and the team domain as `ACCESS_TEAM`.
+2. Custom domain `research.<domain>` (UI, API, chat WebSocket) on this Worker; in K4 add `mcp.research.<domain>`.
+3. A self-hosted Cloudflare Access application for `research.<domain>` (owner email policy plus a service-token policy
+   for `OWNER_SERVICE_CLIENTS`); in K4 a second one for the MCP hostname. Record audience tags and the team domain in
+   the variables above.
 4. K5: `wrangler ai-search create library-v1 --type builtin` in the `default` namespace with the settings in §9.
 5. Model keys for external providers live in AI Gateway (BYOK) or Worker secrets — never in D1 or the browser.
 
@@ -103,20 +119,21 @@ by `:projectId` in the path.
 | Route | Purpose | Contour |
 |---|---|---|
 | `GET /api/health`, `GET /api/me` | liveness; actor and configured services | K0 |
-| `GET/POST /api/projects`, `GET/PATCH /api/projects/:projectId` | list, create, open (summary + sources + overview), rename, archive, instructions | K1 |
+| `GET/POST /api/projects`, `GET/PATCH /api/projects/:projectId` | list, create, open (summary and sources; K2 adds instructions, K3 the overview), rename, archive | K1 |
 | `POST /api/projects/:projectId/sources` | add files (`multipart/form-data`, one file per part), a URL or text; returns created sources | K1 |
-| `GET /api/projects/:projectId/sources` | sources with state, guide summary, distill state | K1 |
+| `GET /api/projects/:projectId/sources` | sources with readable state and `sha256` (K3 adds guide summary and distill state) | K1 |
 | `PUT/DELETE /api/projects/:projectId/sources/:sourceId` | attach existing source / enable-disable / detach | K1 |
-| `GET/PATCH /api/sources/:sourceId` | source metadata (title, authors, published) | K1 |
+| `GET/PATCH /api/sources/:sourceId` | source and its revisions; PATCH changes the title (authors and year are filled by K3) | K1 |
 | `POST /api/sources/:sourceId/revisions` | replace file, reconvert, or supply owner Markdown | K1 |
-| `GET /api/revisions/:revisionId` | outline, blocks, converter, warnings, distill state | K1 |
-| `GET /api/revisions/:revisionId/text?start=&end=` | exact UTF-8 byte range of `text.md` | K1 |
+| `GET /api/revisions/:revisionId` | outline, blocks, converter, warnings (K3 adds distill state) | K1 |
+| `GET /api/revisions/:revisionId/text?start=&end=` | exact UTF-8 byte range of `text.md`; without `start`/`end` the whole text | K1 |
 | `GET /api/revisions/:revisionId/original` | original file | K1 |
 | `GET/POST /api/projects/:projectId/chats`, `PATCH /api/chats/:chatId` | chat list, create, rename, archive | K2 |
-| `GET /agents/chat/:chatId` (WebSocket) | checked against D1, then routed to that chat's `ChatAgent` | K2 |
+| `GET /agents/chat/:chatId` (WebSocket) | checked against D1, then routed to that chat's `ChatAgent`; the browser streams here | K2 |
+| `POST /api/chats/:chatId/turns` | run one turn and wait for it: `{ turnId, question, scope, mode? }` → answer, citations, metrics (§8); used by eval and later tools | K2 |
 | `GET /api/settings`, `PATCH /api/settings` | default answer and distill models | K2 |
 | `GET/POST /api/projects/:projectId/pages`, `GET /api/pages/:pageId` | list, save answer / note, read page with citations | K2 |
-| `GET /api/revisions/:revisionId/knowledge` | guide, claims, digest, glossary | K3 |
+| `GET /api/revisions/:revisionId/knowledge` | guide, claims, digest, glossary and the distillation report | K3 |
 | `POST /api/page-revisions/:revisionId/decision` | accept or reject a proposal | K4 |
 | `POST /api/projects/:projectId/search` | search (same function as the `search` tool) | K5 |
 | `POST /api/projects/:projectId/map/refresh`, `POST /api/pages/:pageId/refresh` | rebuild map / refresh a stale page | K6 |
@@ -125,19 +142,50 @@ by `:projectId` in the path.
 
 The MCP endpoint (`POST /mcp` on the MCP hostname) exposes the toolset (§7); it is not a second API.
 
+### Payload shapes
+
+Types live in `src/shared/api.ts` and are the contract between Worker, web app and eval scripts. Core shapes:
+
+```ts
+type ReadableState = "pending" | "readable" | "readable_with_warnings" | "needs_conversion" | "failed";
+interface Project { id: string; title: string; description: string; archivedAt: number | null; updatedAt: number }
+interface SourceRow {
+  id: string; title: string; kind: "file" | "url" | "text"; language: string | null;
+  revisionId: string | null; readableState: ReadableState; warning: string | null; error: string | null;
+  sha256: string | null; enabled: boolean;
+  // K3: authors, published, distillState, guideSummary
+}
+interface Block { i: number; kind: "heading" | "para" | "list" | "table" | "code" | "quote"; heading: string; start: number; end: number }
+interface RevisionView { id: string; sourceId: string; converter: string | null; readableSize: number | null; blocks: Block[] }
+interface Citation { label: string; revisionId: string; block: number; start: number; end: number; sourceTitle: string }
+interface TurnResult {
+  turnId: string; answer: string; citations: Citation[]; contextMode: "whole" | "claims" | "search" | "none";
+  inputTokens: number | null; outputTokens: number | null; cachedTokens: number | null;
+  firstTokenMs: number | null; totalMs: number; invalidLabels: number; state: "completed" | "partial" | "failed"; error?: string;
+}
+type Scope = { mode: "project_default" } | { mode: "explicit"; sourceIds: string[] } | { mode: "empty" };
+```
+
+Upload: `POST /api/projects/:projectId/sources` with `multipart/form-data` parts `file` (repeatable), or JSON
+`{ "url": "..." }` / `{ "title": "...", "text": "..." }`; response `{ items: SourceRow[] }`.
+
 ## 2. Access and actor
 
-Cloudflare Access is the only sign-in. Each hostname has its own Access application: the UI hostname uses the owner's
-browser session; the MCP hostname uses Access service tokens for headless agents (K4) and may add Access Managed OAuth
-for interactive clients later. Do not use Worker-level Access for the UI hostname: it rejects WebSocket upgrades.
+Cloudflare Access is the only sign-in. Each hostname has its own self-hosted Access application: the UI hostname
+admits the owner's browser session and the owner-level service tokens in `OWNER_SERVICE_CLIENTS` (eval, automation);
+the MCP hostname (K4) admits agent service tokens and may add Access Managed OAuth for interactive clients later. An
+unauthenticated browser is redirected to the Access login and never reaches the Worker. Do not use Worker-level Access
+for the UI hostname: it rejects WebSocket upgrades.
 
 `src/auth.ts` runs once per request (and once per WebSocket upgrade):
 
 1. Read `Cf-Access-Jwt-Assertion`; verify signature, issuer `https://<ACCESS_TEAM>.cloudflareaccess.com`, the
    hostname's audience and expiry with `jose` and a cached JWKS (`/cdn-cgi/access/certs`).
-2. Map to an actor: owner email → `owner`; service token client ID in `MCP_ALLOWED_CLIENTS` → `agent:<client-id>`.
-   Anything else → 403.
-3. For browser mutations and WebSocket upgrades require the configured UI `Origin`.
+2. Map to an actor: `email` equal to `OWNER_EMAIL`, or a service-token `common_name` in `OWNER_SERVICE_CLIENTS` →
+   `owner`; a `common_name` in `MCP_ALLOWED_CLIENTS` (MCP hostname only) → `agent:<client-id>`. Anything else → 403.
+   Missing, invalid, expired or wrong-audience assertions → 403 (unit tests cover each).
+3. For requests carrying a browser session cookie (mutations and WebSocket upgrades) require `Origin` = `UI_ORIGIN`.
+   Service-token requests carry no cookie and need no Origin.
 4. Pass `actor` to product functions. No per-row or per-result permission checks inside: one owner, everything the
    owner can see is visible; agents can read everything and write only proposals.
 
@@ -149,9 +197,17 @@ all requests. Local runs use local D1/R2; AI and AI Search bindings use `remote:
 
 ### Tables
 
-`migrations/0001_initial.sql` holds the tables for K0–K3; it owns all column and state names. Later contours add:
-`0002_search.sql` (K5: `source_revision.search_item_id`, `search_state`), `0003_jobs.sql` (K7: `job`), plus whatever
-K6/K8/K9 need, written in that contour. Do not add a table before the contour that reads it.
+One migration per contour; the files own all column and state names:
+
+| File | Contour | Adds |
+|---|---|---|
+| `migrations/0001_library.sql` | K1 | `project`, `source`, `source_revision`, `project_source` |
+| `migrations/0002_ask.sql` | K2 | `settings` (seeded with the default models), `project.instructions`, `project.answer_model`, `chat`, `chat_turn`, `page`, `page_revision` |
+| `migrations/0003_distill.sql` | K3 | `source.authors`, `source.published`, distillation state and token columns, `claim`, `claim_fts` |
+| `0004_search.sql` (to write) | K5 | `source_revision.search_item_id`, `search_state` |
+| `0005_jobs.sql` (to write) | K7 | `job` |
+
+Do not add a table or column before the contour that reads it.
 
 | Table | Holds |
 |---|---|
@@ -196,10 +252,11 @@ page/<revision>/citations.json      resolved citations for that page revision
 ### Admission
 
 `POST /api/projects/:projectId/sources` accepts several files at once; each file becomes one source and one revision.
-For each: check size, create rows (`readable_state = 'pending'`), stream bytes to `source/<rev>/original` while hashing
-(SHA-256), return the created sources immediately, start `IngestWorkflow` with the revision ID as instance ID. An
-identical SHA-256 already in the Library is reported to the owner ("already in Library as …") with an Attach action;
-it is not merged silently.
+For each: check size, read the file into memory (≤ 25 MB), hash it with `crypto.subtle.digest("SHA-256")`, write
+`source/<rev>/original`, create rows (`readable_state = 'pending'`, shown as "Converting"), return the created sources
+immediately and start `IngestWorkflow` with instance ID `ingest-<revision>`. An identical SHA-256 already in the
+Library is reported ("already in Library as …") with an Attach action; it is not merged silently. Scripts and agents
+avoid duplicates by checking `sha256` in the sources list before uploading.
 
 Limits: file ≤ 25 MB; URL capture ≤ 10 MB; pasted text ≤ 2 MB; readable `text.md` ≤ 10 MiB (AI Search item limit).
 A larger readable text is kept and readable but marked `readable_with_warnings` ("too large to index").
@@ -209,9 +266,9 @@ A larger readable text is kept and readable but marked `readable_with_warnings` 
 | Input | Converter | `converter` value |
 |---|---|---|
 | `.md`, `.txt`, `.csv`, valid UTF-8 text | used as is (BOM removed, line endings kept) | `local_text` |
-| PDF, DOCX, XLSX, PPTX, ODT, HTML, images and other formats in the cached `env.AI.toMarkdown().supported()` list | `env.AI.toMarkdown([{ name, blob }])` | `workers_ai_markdown` |
+| PDF, DOCX, XLSX, PPTX, ODT, HTML, images and other formats in the cached `env.AI.toMarkdown().supported()` list | `env.AI.toMarkdown({ name, blob })` as in the legacy donor; confirm the signature in the generated types | `workers_ai_markdown` |
 | URL | `fetch` with `Accept: text/markdown, text/html;q=0.9`; Markdown response used as text, HTML converted with `toMarkdown` | `local_text` / `workers_ai_markdown` |
-| JavaScript-rendered page (owner asks to render) | Browser Run `/markdown` quick action | `browser_markdown` |
+| JavaScript-rendered page (K7, needs a `BROWSER` binding) | Browser Run `/markdown` quick action | `browser_markdown` |
 | Owner/agent-supplied Markdown for a scan | stored as a new revision | `owner_markdown` |
 
 Read only the documented result fields (`format`, `data` or `error`, `tokens`) and ignore unknown ones. Cache the
@@ -220,8 +277,10 @@ Read only the documented result fields (`format`, `data` or `error`, `tokens`) a
 Result states:
 
 - `readable` — non-empty UTF-8 text, no warnings.
-- `readable_with_warnings` — usable, with a one-line `warning_summary`: very low text density for the page count, image
-  descriptions present (generated, not literal text), first frame only for GIF, too large to index.
+- `readable_with_warnings` — usable, with a one-line `warning_summary` for exactly these cases: little text
+  extracted (readable bytes < 1 % of original bytes for a PDF over 100 KB), the input was an image (its text is a
+  generated description, not literal text), the input was a GIF (first frame only), `text.md` over 10 MiB (too large
+  to index).
 - `needs_conversion` — empty or unusable text (typically a scan). The original is kept; the reader shows "This file
   needs text conversion" with an action to upload Markdown. AI Search OCR output is never used as source text.
 - `failed` — conversion error; the reader shows the error and Retry.
@@ -263,9 +322,11 @@ alongside). No Markdown AST library is needed for this.
 
 - In Eliot's own chat and jobs: `[S<k>:<i>]`, where `S<k>` is a short alias the server assigns to each source revision
   in that turn or job (`S1`, `S2`, …) and `<i>` is the block index. Claim-mode citations use the claim's block.
-- In MCP tool outputs (agents call across stateless requests): `[<rev8>:<i>]`, where `<rev8>` is the first 8 hex
-  characters of the revision ID. Pages proposed by agents use this form.
-- The server keeps the alias table per turn/job and resolves both forms to `{ revision_id, block, start, end }`.
+- **Stored form** `[<rev8>:<i>]`, where `<rev8>` is the first 8 hex characters of the revision ID: used in everything
+  persisted across turns — saved answers and all pages — and in MCP tool outputs (agents call across stateless
+  requests). When an answer is saved, its turn aliases are rewritten to the stored form.
+- Inside one source's own artifacts (guide, digest) labels are `[<i>]`, the block index of that source.
+- The server keeps the alias table per turn/job and resolves every form to `{ revision_id, block, start, end }`.
 
 ### From answer to citation
 
@@ -320,7 +381,7 @@ Purpose: read each source once with a large model and keep what a researcher nee
    ```
 
    Prompt `src/prompts/distill-read.md` must ask for: 3–5 questions a reader would ask, each answerable from cited
-   blocks; 15–60 claims covering the main method, every headline result with its number, unit and conditions, every
+   blocks; 25–60 claims for a typical paper (fewer only for short texts) covering the main method, every headline result with its number, unit and conditions, every
    limitation the authors state, datasets and key definitions; quotes copied verbatim (≤ 300 characters); statements
    in the source language; nothing that is not in the text.
 3. **Verify** quotes and numbers (§5). Fill `title`/`authors`/`published` into `source` only if those fields are empty.
@@ -328,9 +389,11 @@ Purpose: read each source once with a large model and keep what a researcher nee
    `digest.md` with sections *Question and contribution*, *Method*, *Key results* (bullets with numbers and labels),
    *Limitations* (stated by authors), *Where it fits* (relation to other work as the paper states it); and
    `glossary.json` `[{ "term": "...", "en": "...", "ru": "...", "definition": "...", "block": 12 }]`. Every factual
-   sentence in the digest carries a claim's block label; labels that do not belong to a verified claim are removed.
-5. **Write** R2 artifacts, insert `claim` rows and `claim_fts` rows (`body` = statement + quote + task/metric/dataset),
-   set `distill_state` (`done`, or `partial` if the second call failed) and `distill_model`.
+   sentence in the digest carries a claim's block label in the `[<i>]` form; labels that do not belong to a verified
+   claim are removed.
+5. **Write** R2 artifacts (`distill.json` holds the raw output and the verification report: kept/dropped counts,
+   reasons), insert `claim` rows and `claim_fts` rows (`body` = statement + quote + task/metric/dataset), set
+   `distill_state` (`done`, or `partial` if the second call failed), `distill_model` and the token columns.
 6. **Project overview**: if no other revision of any project containing this source is `queued`/`running`, regenerate
    `page(kind='overview')` for those projects from their source guides (title, one paragraph per source, 5 suggested
    questions across sources).
@@ -381,7 +444,7 @@ Rules:
 `src/context.ts` chooses one mode per turn and records it in `chat_turn.context_mode`:
 
 1. **whole** — the selected readable texts, each wrapped as `<source alias="S1" title="..." year="...">` with `[i]`
-   block markers, fit within the whole-reading budget: `min(0.6 × model context, 250,000)` tokens minus history and
+   block markers, fit within the whole-reading budget: `min(0.6 × model context, 400,000)` tokens minus history and
    output reserve. Estimate tokens as `utf8_bytes / 3`, which is conservative for English and Russian.
 2. **claims** (K3) — whole does not fit: guides plus all verified claims of the selected sources, each claim rendered
    with its label. If even that exceeds the budget, include claims ranked by `claim_fts` match to the question until
@@ -389,6 +452,9 @@ Rules:
 3. **search** (K5) — the model gets the guides of the selected sources and the tools `search`, `read`, `find_claims`
    with at most 6 tool steps, then must answer.
 4. **none** — explicit empty scope: no sources; the answer says it uses no library material.
+
+The turns API may force a mode with `mode` (used by K3 acceptance to compare whole and claim mode); the browser never
+sets it.
 
 Scope: `project_default` = enabled sources of the project; `explicit` = the chosen sources; `empty` = none. The scope
 of each turn is stored in `chat_turn.scope_json` (revision IDs). History sent to the model: previous questions and
@@ -400,8 +466,11 @@ revisions are outside the current scope are left out.
 `ChatAgent extends AIChatAgent` from `@cloudflare/ai-chat`; the browser uses `useAgentChat` from
 `@cloudflare/ai-chat/react`.
 
-- `onChatMessage`: insert `chat_turn` (`started`), build context, call `streamText` with the turn's model, stream to the
-  client, then update tokens, `first_token_ms`, `total_ms`, `state`.
+- One turn function `runTurn(input)` used by both entry points: `onChatMessage` (browser, streaming over the WebSocket)
+  and the RPC method `ask(input)` behind `POST /api/chats/:chatId/turns` (waits for completion and returns
+  `TurnResult`). It inserts `chat_turn` (`started`), builds context, calls `streamText` with the turn's model, resolves
+  labels, stores the citations on the assistant message as a `data-citations` part, then updates tokens, `citations`,
+  `invalid_labels`, `first_token_ms`, `total_ms` and `state`.
 - One active turn per chat; a second submit while streaming waits in the SDK queue (`messageConcurrency: "queue"`).
 - Stop cancels the stream; closing the tab does not (`cancelOnClientAbort: false`, `resume: true`).
 - After a crash, keep the partial answer and mark the turn `partial` (`onChatRecovery` → `{ continue: false }`); no
@@ -424,8 +493,10 @@ the same question as a new turn. Reading sources never depends on the model bein
 
 ### Targets (K2 acceptance)
 
-On `eval/arxiv-10` with all ten papers (≈100k tokens, whole mode): first token ≤ 6 s on a cold prompt and ≤ 4 s when the
-prompt is cached; every answer complete ≤ 40 s; 100 % valid citations. The old system took 86–114 s and the model saw
+On `eval/arxiv-10` with all ten papers in whole mode (their readable text is expected around 600–800 KB; K1 prints
+the measured size and K2 the model-reported tokens): first token ≤ 10 s for the first question on a new source set
+(cold) and ≤ 4 s for later questions over the same sources (cached prompt); every answer complete ≤ 40 s;
+`invalid_labels` = 0 and every citation opens its passage. These are starting targets; K2 records the measurements. The old system took 86–114 s and the model saw
 16 fragments (≈60 KB of ≈800 KB), half irrelevant — whole reading exists to remove exactly that.
 
 ## 9. Search projection (K5)
@@ -495,7 +566,7 @@ providers. Model routes are strings `workers-ai:<model>` or `gateway:<provider>/
 holds, per route: context window, max output tokens, tool calling (yes/no), structured output (yes/no), price note.
 Unknown routes get conservative values (32k context, 4k output, no tools).
 
-Defaults (Workers AI pages checked 2026-10-24):
+Defaults (Workers AI pages checked 2026-10-24; fill the max-output column from the model pages when wiring K2):
 
 | Use | Model | Context | Tools | Price per 1M in / out (cached in) |
 |---|---|---|---|---|
@@ -551,9 +622,14 @@ outside `tokens/` are defects. When a contour ships a journey, move that feature
 class names, and change only prop types (to `src/shared/`) and copy. Do not move legacy query adapters, preview or
 regression fixtures, or the unused Tailwind import. `contrast.test.ts` keeps its contrast checks; drop its file hash.
 
-Routes: `/` (projects), `/p/:projectId/sources`, `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`,
-`/p/:projectId/source/:sourceId?start=&end=`, `/settings`. Every request and stream carries its project or chat ID;
-switching tabs never redirects a stream.
+Routes by contour: K0 `/` and `/settings` (placeholders in the moved frame); K1 `/p/:projectId/sources` and
+`/p/:projectId/source/:sourceId?start=&end=`; K2 `/p/:projectId/chat/:chatId?` and `/p/:projectId/studio`. Every
+request and stream carries its project or chat ID; switching tabs never redirects a stream.
+
+Moving rules: imports from `@eliotr/owner-api-client` and `apps/eliotr-web/src/query/**` are replaced by types from
+`src/shared/api.ts` and hooks in `src/web/api.ts`; Storybook stories and preview/regression files are not moved. The
+legacy `apps/eliotr-web` no longer builds at HEAD (the root package switched in PR #415); the pinned legacy commit keeps
+it reproducible, so `git mv` breaks no active build.
 
 Copy uses product words: project, source, question, answer, page, agent, model. Primary UI never shows engine, receipt,
 manifest, bytes, digest, qualification, admission or projection; technical detail goes behind a Details disclosure.
