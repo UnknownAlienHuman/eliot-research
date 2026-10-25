@@ -1,28 +1,34 @@
 ## Contour and slice
 
-Contour (K0–K10), exact Build items and owner-visible slice. Confirm the branch has one manager.
+Contour (K0–K10), exact MAP Build items, owner-visible slice, and branch/worktree manager.
 
 ## What the owner can do now
 
-## Acceptance
+## Hard acceptance
 
-Paste the `pnpm eval <contour>` table and browser/MCP checks. Separate hard functional/quality gates from measured
-p50/p95 latency. State anything not run.
+Paste the real `pnpm eval <contour>` table and browser/Agent/MCP checks. Separate functional and quality gates. State
+everything not run; do not replace missing product acceptance with unit-test volume.
 
-## Cost and Cloudflare usage
+## Paid effects and Cloudflare usage
 
-List new paid effects, call/token/time ceilings, measured model/search/Workflow usage, estimated cost and included-tier
-forecast. Confirm ordinary load/list/read/reconnect/save paths do not start paid work.
+List each new paid effect, atomic reservation bound, retry/fallback policy, normalized actual usage, reserved/settled
+cost, Workflow steps/storage and included-tier forecast. Confirm load/list/read/citation/reconnect/Save-existing paths do
+not dispatch paid work.
+
+## Evidence and data integrity
+
+State capture/provenance behaviour, R2 create-once verification, revision/citation identity, migration(s) added/applied,
+and any backfill/reconciliation. Confirm no production migration/data mutation ran unless explicitly authorised.
 
 ## Reuse
 
-For every donor used: repository, exact commit/path, licence, mechanism copied/adapted, donor layers removed and the
-acceptance check. State `none` when no donor code was used.
+For every donor: repository, exact commit/path, licence, mechanism moved/copied/adapted/dependent-on, discarded donor
+layers and acceptance check. State `none` when no donor code was used.
 
 ## Size
 
-New non-test lines in `src/` against the contour budget; moved UI is reported separately.
+New non-test lines in replacement `src/` against the contour ceiling; moved UI reported separately.
 
-## Deferred
+## Deferred and failed spikes
 
-Work intentionally left to later contours and fallback selected for any failed platform spike.
+Work intentionally left to later contours, selected fallback for failed platform spikes, and any known uncertainty.

@@ -34,11 +34,11 @@ Thumbs.db
 
 .eliotr-state/
 apps/eliotr-core/wrangler.deploy.jsonc
-
 apps/eliotr-core/wrangler.local.jsonc
 
 # Regenerated host/runtime declarations from the Core cf:types command.
 apps/eliotr-core/src/worker-configuration.d.ts
 
-# Eval run outputs (answers, timings); summaries go into PR descriptions.
+# Eval downloads and run output. Compact summaries belong in PR descriptions.
+eval/cache/
 eval/out/

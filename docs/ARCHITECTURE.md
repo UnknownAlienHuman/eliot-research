@@ -1,138 +1,154 @@
 # Eliot Research — Architecture
 
-This document defines the product and the invariants that implementation must preserve. It does not claim a capability
-is implemented. [MAP](MAP.md) orders delivery, [IMPLEMENTATION](IMPLEMENTATION.md) gives the technical contracts, and
-[DONORS](DONORS.md) records the mechanisms we may reuse.
+This document defines the product and its non-negotiable invariants. It does not claim that a capability is already
+implemented. [MAP](MAP.md) orders delivery, [IMPLEMENTATION](IMPLEMENTATION.md) defines executable contracts, and
+[DONORS](DONORS.md) limits reuse.
 
 ## Mission
 
-Eliot is a private, NotebookLM-style research workspace for one owner and the agents that owner connects. It turns a
-changing library of papers, reports, web pages and working documents into inspectable, cited knowledge without making
-the owner administer retrieval infrastructure.
+Eliot is a private research workspace for one owner and explicitly connected agents. It turns papers, reports, web
+captures and working documents into inspectable, cited knowledge without requiring the owner to operate a retrieval
+platform.
 
 > **collect → read → understand → ask → compare → save → revise**
 
-The ordinary path stays ordinary: select sources, ask a question, receive a streamed answer, open every citation at the
-exact passage. Long work is an explicit job with progress, limits and Stop. The system may automate conversion and
-one-time source understanding, but it must never hide recurring model work behind page loads, reconnects or saves.
-
-## Design principles
-
-1. **Canonical text before retrieval.** Keep original bytes and one immutable readable text per source revision. Search
-   indexes and model artifacts are disposable projections; they never become primary evidence.
-2. **Read whole sources when they fit.** Whole-reading is the default because it preserves context. Verified claims are
-   the compact fallback. Passage search is introduced only when measured library scale requires it.
-3. **Derive once, reuse everywhere.** A readable revision is converted and distilled once, independent of how many
-   projects attach it. Reopening a project, reconnecting a chat or saving an answer performs no paid recomputation.
-4. **One toolset for every agent.** Eliot chat, background jobs and external MCP clients use the same small product
-   functions: list, outline, read, find claims, search, get page and propose page.
-5. **Code controls risk.** Scope, permissions, byte ranges, citation resolution, quote verification, call limits and
-   spend admission are deterministic code. Models decide prose and semantic classification, not authority.
-6. **Paid effects are explicit and bounded.** Every model/search job has a caller, an upper bound, recorded usage and a
-   visible failure state. When a budget is exhausted, the system pauses before the call rather than completing it and
-   reporting the bill later.
-7. **Cloudflare-native first; optional services behind gates.** Use one Worker, D1, R2, Durable Objects, Workflows and
-   Workers AI directly. AI Search and Browser Run arrive only after their contour proves a need and a cost/quality win.
-   Do not add KV, Queues, Vectorize, a graph database or another backend without a measured requirement.
-8. **Copy mechanisms, not donor platforms.** A donor is pinned to a commit and exact path. Reuse the smallest proven
-   mechanism, adapt it to Eliot's data model, retain its licence notice when required, and delete donor-specific layers.
-9. **Build by usable contours.** Each contour produces an end-to-end owner capability with real acceptance material.
-   Nothing is built merely because a later section mentions it.
+The normal path remains simple: add sources, select scope, ask, receive a streamed answer, and open every citation at
+the exact passage. Longer work is an explicit bounded job with progress, cost and Stop.
 
 ## Product model
 
-A **project** groups sources, chats and knowledge pages. The shared **Library** owns each source once; projects attach it
-through memberships. A captured or reconverted representation is an immutable **source revision** containing the
-original and canonical `text.md`. Per-source **knowledge** consists of a guide, verified claim cards, digest and
-glossary. Per-project knowledge consists of an overview, saved answers, notes, reports, Wiki pages and the project map.
+A **project** groups sources, chats and knowledge pages. The shared **Library** owns a source once; projects attach it by
+membership. Every upload, paste, URL capture, rendered capture, replacement or owner-supplied correction creates an
+immutable **source revision** containing:
 
-A citation resolves to `{ revisionId, block, start, end }`, where `start` and `end` are UTF-8 byte offsets in that
-revision's `text.md`. Generated pages are derived material and never silently replace source evidence.
+- the exact captured bytes and provenance;
+- one deterministic canonical UTF-8 text when conversion succeeds;
+- a deterministic block/page map into that text;
+- optional derived guide, claims, digest, glossary and search projection.
 
-## Complete product capabilities
+Per-project knowledge consists of saved answers, notes, reports, Wiki pages and a project map. Derived material never
+silently replaces source evidence.
+
+A citation resolves to `{ revisionId, block, start, end }`, where `start` and `end` are UTF-8 byte offsets in that exact
+revision's canonical text. Old citations continue to identify old revisions after replacement or deletion.
+
+## Non-negotiable invariants
+
+### Evidence and provenance
+
+1. Original captured bytes are immutable and retained before conversion starts.
+2. A URL is fetched once per revision. The stored record distinguishes requested URL, final redirected URL, HTTP status,
+   capture time and capture method. A Workflow converts stored bytes; it never silently fetches the URL again.
+3. Canonical evidence contains deterministic extraction only. OCR, image captions, model summaries and AI Search chunks
+   are derived aids, not quotation authority.
+4. R2 objects use create-once conditional writes followed by exact size/SHA-256 readback. An ETag is transport metadata,
+   not content proof.
+5. Search indexes are disposable projections. Deleting or rebuilding one cannot change citation identity.
+
+### Scope and authority
+
+1. Every route, chat turn, tool call, job and write carries an explicit project or immutable revision scope. There is no
+   process-wide “current project”.
+2. Scope is frozen before retrieval and cannot be widened by a model, tool result or client-supplied label.
+3. Cloudflare Access is the only login boundary. The Worker verifies the Access JWT and derives the actor; request bodies,
+   headers, source text and tool output never mint authority.
+4. Owner writes accepted pages. Connected agents may read and propose; they do not silently accept their own output.
+
+### Paid work
+
+1. Page load, list, read, citation open, reconnect and saving an existing result are storage operations only.
+2. Before any model, Web Search, billable AI Search or Browser Run dispatch, Eliot atomically reserves a conservative
+   upper cost bound in D1 together with the concrete operation.
+3. Concurrent requests cannot independently pass a stale monthly-budget check. A failed admission makes no external call.
+4. Exact usage settles the reservation. If dispatch occurred but the provider outcome is unknowable, Eliot charges the
+   reserved bound rather than pretending the call was free. A reservation is released only when non-dispatch is proven.
+5. Automatic paid retries, fallback models and post-failure continuations are disabled. Retry is a new owner-visible
+   attempt with a new operation identity and a new budget reservation.
+
+### Durable execution
+
+1. Workflow instance IDs are attempt-scoped. A terminal Workflow is never restarted to perform paid or mutating work.
+2. Paid or mutating Workflow steps have platform retries disabled. Safe idempotent reads and create-once writes may use
+   bounded retries.
+3. D1 and R2 own reopen/history. Workflow retention and event streams are operational aids, not product storage.
+4. Stop is cooperative: it prevents the next external call and preserves the latest readable partial result.
+
+### Knowledge quality
+
+1. Eliot distinguishes a source statement from inference and names missing evidence instead of fabricating an answer.
+2. Every accepted source-derived claim has a server-resolved citation. Unknown, malformed or out-of-scope labels are
+   removed and counted.
+3. Numeric claim fields survive only when their digits and conditions are supported by the exact verified quote.
+4. Cross-source comparisons require compatible subject/task family, metric, dataset identity, split, protocol, unit and
+   direction. A model may suggest aliases; it cannot override incompatibility.
+5. Owner edits are never overwritten. Refresh writes a new page revision and marks dependent pages stale explicitly.
+
+### Graceful degradation
+
+- Reading works without models, AI Search or Browser Run.
+- Ordinary answering first uses whole sources, then verified claims. AI Search is optional and gated by measured need.
+- Static web capture precedes rendered capture.
+- When a service, budget or platform spike fails, Eliot exposes the cheaper available path instead of constructing a
+  replacement platform inside the application.
+
+## Complete owner capabilities
 
 | Area | Owner-visible result |
 |---|---|
-| Projects | Create, rename, archive and switch projects; stable project/chat URLs; independent source selection and settings. |
-| Library | Add files, URLs and text; keep originals; show conversion states; detect exact duplicates; attach one source to many projects; replace as a new revision; detach, archive or delete deliberately. |
-| Reading | Open original or readable text, navigate an outline, reopen exact passage links and old revisions even when models/search are unavailable. |
-| Understanding | Automatic guide, suggested questions, verified claims, digest and EN/RU glossary per readable revision; deterministic project overview. |
-| Ask | Russian or English questions over project default, explicit selection or empty scope; streamed answer, exact citations, stop/reconnect, chat history and Save as page. |
-| Retrieval | Whole reading when it fits; verified claims when it does not; AI Search only for scopes that still exceed those modes. Scope is frozen before retrieval and never widened. |
-| Knowledge | Versioned notes, answers, reports and Wiki pages; agent proposals; explicit staleness and refresh. |
-| Project map | Topics, comparable result tables, disagreement candidates, gaps and reading routes built from verified claims. |
-| Deep research | Explicit bounded job over the Library with optional web capture; progress, partial result, cost and Stop. Web material must enter the Library before citation. |
-| Agents | External agents connect through MCP, read through the shared tools and write proposals rather than accepted owner pages. |
-| Models | Owner chooses defaults and project overrides from known routes; credentials remain in Cloudflare; limits and dated prices are visible. |
-| Data ownership | Export originals, texts, claims and pages; delete with impact preview; missing/deleted evidence stays visibly missing. |
+| Projects | Create, rename, archive and switch projects; stable project/chat URLs; independent source selection and instructions. |
+| Library | Add files, URLs and text; retain originals; see conversion state; detect exact duplicates; attach one source to many projects; replace as a new revision; detach, archive or delete deliberately. |
+| Reading | Open original or canonical text, navigate outline/page blocks, copy exact passage links and reopen old revisions without a model. |
+| Understanding | One-time guide, suggested questions, verified claims, digest and EN/RU glossary for each readable revision. |
+| Ask | Ask in Russian or English over project default, explicit selection or empty scope; stream, Stop, reconnect, reopen history and save an answer. |
+| Retrieval | Whole-source reading, verified claims/FTS, and optional gated AI Search for scopes that still do not fit. |
+| Knowledge | Versioned notes, answers, reports and Wiki pages; agent proposals; visible dependencies, staleness and refresh. |
+| Project map | Topics, strict comparable-result tables, disagreement candidates, gaps and reading routes. |
+| Deep research | Explicit Library-first job with fixed limits, optional web discovery/capture, progress, partial result, cost and Stop. |
+| Agents | External MCP clients use the same bounded read/propose functions as Eliot. |
+| Models | Owner chooses only known routes with dated limits/prices; credentials stay in Cloudflare; private payload logging is off by default. |
+| Data ownership | Export originals, canonical texts, claims, pages and citations; preview deletion impact; keep missing evidence visibly missing. |
 
-## Owner guarantees
+## Cloudflare system shape
 
-**Evidence survives derived systems.** A new conversion creates a new revision. Existing citations continue to point to
-the old text. AI Search can be deleted and rebuilt without changing source truth.
+One Cloudflare Worker deployment contains the React/Vite owner app, Hono API, Access verification, Agents SDK chat
+routing, stateless MCP endpoint and Workflow classes. HTTP, chat, MCP and Workflows call the same product functions.
 
-**Answers are honest.** Eliot distinguishes source statements from inference, says when selected sources do not contain
-the answer, and never invents page numbers, labels or source names. Every accepted citation is server-resolved.
-
-**No hidden paid work.** Opening, listing, reading, reconnecting and saving existing output are storage operations only.
-An ordinary answer is one model call in whole/claim mode or a short capped tool loop in search mode. Distillation runs
-at most once for an unchanged revision. Research is an explicit job. Failed streams are not automatically continued.
-
-**Graceful degradation.** Reading works without any model. Whole/claim answering works without AI Search. When a paid
-service is unavailable or the budget is exhausted, the UI shows the blocked operation and the cheaper available path.
-
-**Projects do not interfere.** There is no process-wide current project. Every route, chat, job and write carries its
-project or immutable revision. Removing a project membership never deletes the shared Library source.
-
-**Knowledge changes visibly.** Replacing or deleting a source marks dependent pages stale. Refresh writes a new page
-revision. Owner edits are not overwritten; agent output is proposed.
-
-**Practical security.** Cloudflare Access is the only login. A hostname-based Access application protects the UI/API
-and supports the chat WebSocket; the Worker validates the JWT. One owner sees all data. Agent service tokens can read
-and propose only. Source text and tool output are untrusted data, never instructions.
-
-## System shape
-
-One Cloudflare Worker deployment contains the React/Vite owner app, Hono API, chat Durable Object classes, Workflows
-and the MCP endpoint. Product functions are shared by HTTP, chat, MCP and Workflows.
-
-| Service | Role | Introduced | Cost rule |
+| Service | Responsibility | First contour | Boundary |
 |---|---|---|---|
-| Worker + static assets | UI, API and routing | K0 | One deployment; no second backend. |
-| D1 | identities, relationships, states, claims and FTS | K1 | Relational metadata only; no duplicated document bodies. |
-| R2 | originals, `text.md`, block maps, artifacts and page bodies | K1 | Immutable keys; delete orphaned objects later. |
-| Workflows | conversion, distillation, project knowledge and research | K1+ | Few coarse steps; large bodies in R2, not Workflow state. |
-| Durable Objects / Agents SDK | one resumable chat per chat ID | K2 | Created only for active chats; no background loops. |
-| Workers AI | `toMarkdown` and default models | K1/K2 | Cheap default model; usage recorded; monthly model budget checked before calls. |
-| AI Gateway | provider routing, analytics, caching/rate limits and optional BYOK | K2 | No external provider by default. |
-| AI Search | disposable large-library projection | K5 only | Must pass offset, quality and monthly-usage gates first. |
-| Browser Run | rendered web capture | K7 only | Use static fetch first; render only when necessary. |
-| Cloudflare Access | owner and agent authentication | K0/K4 | Hostname applications; JWT verified by Worker. |
+| Worker + assets | UI, API, authentication and routing | K0 | one deployment; no second backend |
+| D1 | identities, relationships, state, claims, atomic cost reservations and FTS | K1/K2 | no large document bodies |
+| R2 | immutable originals, canonical text, block maps, artifacts and page bodies | K1 | create once; exact readback |
+| Workflows | ingest, distill, project map and deep research | K1+ | coarse steps; attempts are immutable |
+| Durable Objects / `AIChatAgent` | one resumable chat instance per chat ID | K2 | transcript/stream only; D1 owns operation accounting |
+| Workers AI + AI Gateway | default model execution and optional provider routing | K2 | explicit route; no automatic retry/fallback; payload logging off |
+| AI Search | optional large-library projection | K5 | must pass offset, filter, quality and cost gates |
+| Web Search API | web lead discovery | K7 | results are not evidence until captured |
+| Browser Run | explicit rendered capture after static fetch fails | K7 | separate paid effect, bounded duration |
+| Cloudflare Access | owner and service-token authentication | K0/K4 | hostname applications; Worker validates JWT |
 
-The target baseline is one Workers Paid account. Variable model and search spend is separately budgeted. Current
-Cloudflare prices and inclusions are dated in IMPLEMENTATION §15 and must be rechecked before implementation or a cost
-claim.
+The baseline target is one Workers Paid account. Variable model, search and browser usage is separately admitted and
+reported. Current prices and open platform checks are dated in IMPLEMENTATION §16.
 
 ## Owner interface
 
-The accepted Material 3 Expressive interface in legacy `packages/ui` and `apps/eliotr-web` is moved into the replacement,
-not redrawn. Keep its semantic tokens, Google Sans with Cyrillic, light/dark themes, navigation rail/bottom bar, touch
-targets and stable streaming geometry. Replace legacy data adapters with the new API; do not copy obsolete runtime or
-query layers. A different visual language requires an explicit owner decision.
+The accepted Material 3 Expressive interface in legacy `packages/ui` and `apps/eliotr-web` is moved, not redrawn. Keep
+its semantic tokens, Cyrillic-capable typography, light/dark themes, rail/bottom navigation, touch targets and stable
+streaming geometry. Replace legacy runtime/data adapters with the new contracts. A different visual language requires an
+explicit owner decision.
 
 ## Rules that keep implementation small
 
-1. Deliver caller → product function → stored result → reader in one contour.
-2. One owner per behaviour. Replace callers and delete predecessors; no speculative `v2` layers.
+1. Deliver caller → product function → durable result → owner-visible reader in one contour.
+2. One owner per behaviour. Replace callers and delete predecessors; do not create speculative `v2` layers.
 3. Add an abstraction only when it removes present duplication or isolates a platform API already in use.
-4. Keep SQL relational and short; keep decisions in readable TypeScript.
-5. Store bodies in R2 and IDs/counts in D1/Workflow state.
-6. Measure the assembled product on `eval/`; optimise the measured bottleneck.
-7. Reviews change the owning document or code. Do not add audit/report bureaucracy to the repository.
+4. Keep SQL relational and short; keep policy decisions in readable TypeScript.
+5. Store bodies in R2 and identities/counts/state in D1.
+6. Measure the assembled product on fixed eval material and optimise only the observed bottleneck.
+7. Correct the owning document or code; do not create parallel audit/status/receipt bureaucracy.
 
 ## Scope boundary
 
 The replacement includes the capabilities above in [MAP](MAP.md) order. Public multi-user sharing, tenancy, connector
-marketplaces, graph analytics, automatic personal-memory extraction, audio/video products and a Rust/Wasm rewrite are
-later choices. K10 imports useful legacy content before retiring the old implementation. Documentation authorises no
-production deployment, live-data mutation or legacy resource deletion by itself.
+marketplaces, automatic personal-memory extraction, graph analytics, audio/video products and a Rust/Wasm rewrite are
+later choices. K10 imports useful legacy content before predecessor retirement. Documentation authorises no production
+deployment, live-data mutation or legacy-resource deletion by itself.
