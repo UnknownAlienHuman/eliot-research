@@ -8,6 +8,7 @@ import "./ui/tokens/theme.css";
 import "./ui/primitives.css";
 import "./ui/controls.css";
 import "./shell.css";
+import "./library.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element is missing.");

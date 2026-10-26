@@ -115,6 +115,18 @@ The browser may select many files but sends one file/request with at most two co
 routes. Buffer once, hash SHA-256, store original, create pending rows and start deterministic `ingest-<revisionId>`.
 An exact duplicate returns the existing source plus Attach; never silently merge.
 
+The HTTP surface is `/api/projects`, `/api/projects/:id/sources/{file,text,url,attach}`, `/api/sources/:id` and
+`/api/revisions/:id/{text,range,outline,original}`. The file route accepts one multipart `file`; text/URL use separate,
+strict JSON shapes. An explicit `sourceId` replacement creates a new revision of that attached source, including a
+deliberate reconversion of identical bytes. Ordinary duplicate uploads return 409 plus the existing identity; a
+conditional insert in the D1 batch guards concurrent duplicates without a second identity store.
+
+Revision metadata records `conversion_calls` before dispatch, nullable `conversion_tokens` when the service returns
+usage, and `conversion_ms`. Every Workflow step has retries disabled; conversion is one call bounded to 60 seconds.
+The Blob sent to `toMarkdown` carries its stored MIME type: the real service rejected an empty type. PDF metadata and
+embedded-image conversion are disabled. Output containing only page headings is `needs_conversion`, never readable
+source evidence. Exactly one leading UTF-8 BOM is removed before canonical storage; readers preserve those stored bytes.
+
 `IngestWorkflow` converts native UTF-8 text locally. Cache `env.AI.toMarkdown().supported()` and call `toMarkdown` only
 for required document formats. K1 does not opt into model-assisted image/OCR conversion: retain scans/images and mark
 `needs_conversion`; owner-supplied Markdown creates a new revision. Static URL fetch is preferred; Browser Run is K7
@@ -123,6 +135,12 @@ canonical source text.
 
 URL guard: HTTPS by default; reject credentials, IP literals, localhost and private/link-local ranges; revalidate every
 redirect; cap redirects, body and wall time. Network content is untrusted data.
+
+K1 static capture uses HTTPS port 443, at most three redirects, a 15-second total deadline and a streamed 25 MiB cap.
+Hostname validation does not pin DNS resolution; DNS rebinding prevention is not claimed. No owner/model credentials
+are sent to captured sites or corpus download hosts. `ELIOT_REMOTE_BINDINGS=0 pnpm dev` disables remote services for
+local native-text work and CI; the production bindings and Access checks are unchanged. Only `0001_library.sql` is
+applied by `pnpm db:local`; later migrations wait for their callers. Remote D1/R2 provisioning and deployment are not run.
 
 ## 5. Blocks, labels, citations and quote verification
 

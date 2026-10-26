@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router";
+import { Link, NavLink, Outlet, useLocation } from "react-router";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
 import type { ThemeMode } from "./theme";
 
@@ -8,9 +8,10 @@ export interface ShellProps {
 }
 
 export function Shell({ theme, onThemeChange }: ShellProps) {
+  const pathname = useLocation().pathname;
   return (
     <div className="er-shell">
-      <a className="er-shell-skip" href="#workspace-heading">Skip to workspace</a>
+      <a className="er-shell-skip" href="#workspace-main">Skip to workspace</a>
       <header className="er-shell-header">
         <NavLink className="er-shell-brand" to="/" aria-label="Eliot Research">
           <span className="er-shell-brand-mark">
@@ -41,12 +42,12 @@ export function Shell({ theme, onThemeChange }: ShellProps) {
         </details>
       </header>
       <nav className="er-shell-nav" aria-label="Primary">
-        <NavLink className="er-shell-destination" to="/" end>
+        <Link className="er-shell-destination" to="/" aria-current={pathname === "/" || pathname.startsWith("/p/") ? "page" : undefined}>
           <span className="er-shell-destination-icon">
             <MaterialSymbol name="home" />
           </span>
           <span className="er-shell-destination-label">Projects</span>
-        </NavLink>
+        </Link>
         <NavLink className="er-shell-destination" to="/settings">
           <span className="er-shell-destination-icon">
             <MaterialSymbol name="settings" />
@@ -54,7 +55,7 @@ export function Shell({ theme, onThemeChange }: ShellProps) {
           <span className="er-shell-destination-label">Settings</span>
         </NavLink>
       </nav>
-      <main className="er-shell-reading" id="workspace-main">
+      <main className="er-shell-reading" id="workspace-main" tabIndex={-1}>
         <Outlet />
       </main>
     </div>

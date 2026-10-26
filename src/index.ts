@@ -1,7 +1,14 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { z, ZodError } from "zod";
 import { AuthError, assertOrigin, authenticate } from "./auth";
 import type { Actor } from "./auth";
 import type { ApiError, MeResponse } from "./shared/api";
+import { addSource, attachSource, createProject, getProject, getSource, LibraryError, listProjects, listSources, MAX_SOURCE_BYTES, updateProject } from "./library";
+import { readOriginal, readOutline, readText } from "./read";
+import { captureUrl, UrlGuardError } from "./url-guard";
+
+export { IngestWorkflow } from "./workflows/ingest";
 
 const app = new Hono<{ Bindings: Env; Variables: { actor: Actor } }>();
 
@@ -22,7 +29,68 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/api/me", (c) => c.json({ actor: c.get("actor") } satisfies MeResponse));
-app.get("/api/health", (c) => c.json({ service: "eliot-research", status: "ok", contour: "k0" }));
+app.get("/api/health", (c) => c.json({ service: "eliot-research", status: "ok", contour: "k1" }));
+app.use("/api/*", bodyLimit({ maxSize: MAX_SOURCE_BYTES + 65_536,
+  onError: (c) => c.json({ error: { code: "invalid", message: "Upload one file of at most 25 MiB per request." } } satisfies ApiError, 413),
+}));
+const uuid = z.uuid();
+const title = z.string().trim().min(1).max(200);
+const projectInput = z.object({ title, description: z.string().max(2000).optional() }).strict();
+const projectPatch = z.object({ title: title.optional(), archived: z.boolean().optional() }).strict();
+app.get("/api/projects", async (c) => c.json(await listProjects(c.env, c.get("actor"), uuid.optional().parse(c.req.query("cursor")))));
+app.post("/api/projects", async (c) => {
+  const input = projectInput.parse(await c.req.json());
+  return c.json({ project: await createProject(c.env, c.get("actor"), { title: input.title, ...(input.description === undefined ? {} : { description: input.description }) }) }, 201);
+});
+app.get("/api/projects/:id", async (c) => c.json({ project: await getProject(c.env, c.get("actor"), uuid.parse(c.req.param("id"))) }));
+app.patch("/api/projects/:id", async (c) => {
+  const input = projectPatch.parse(await c.req.json());
+  return c.json({ project: await updateProject(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
+    ...(input.title === undefined ? {} : { title: input.title }), ...(input.archived === undefined ? {} : { archived: input.archived }),
+  }) });
+});
+app.get("/api/projects/:id/sources", async (c) => c.json(await listSources(c.env, c.get("actor"), uuid.parse(c.req.param("id")), uuid.optional().parse(c.req.query("cursor")))));
+app.post("/api/projects/:id/sources/attach", async (c) => {
+  const input = z.object({ sourceId: uuid }).strict().parse(await c.req.json());
+  return c.json(await attachSource(c.env, c.get("actor"), uuid.parse(c.req.param("id")), input.sourceId));
+});
+app.post("/api/projects/:id/sources/file", async (c) => {
+  const form = await c.req.formData(), file = form.get("file");
+  if (!(file instanceof File) || form.getAll("file").length !== 1
+    || Array.from(form.values()).filter((value) => value instanceof File).length !== 1) {
+    throw new LibraryError("invalid", "Upload exactly one file per request.", 400);
+  }
+  if (file.size > MAX_SOURCE_BYTES) throw new LibraryError("invalid", "The file exceeds 25 MiB.", 413);
+  const sourceId = uuid.optional().parse(form.get("sourceId") ?? undefined);
+  return c.json(await addSource(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
+    title: title.parse((form.get("title") ?? file.name).toString().slice(0, 200)), kind: "file", bytes: await file.arrayBuffer(),
+    filename: file.name.slice(0, 255), mimeType: file.type || "application/octet-stream", ...(sourceId ? { sourceId } : {}),
+  }), 202);
+});
+app.post("/api/projects/:id/sources/text", async (c) => {
+  const input = z.object({ title, text: z.string().min(1), sourceId: uuid.optional() }).strict().parse(await c.req.json());
+  const bytes = new TextEncoder().encode(input.text);
+  return c.json(await addSource(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
+    title: input.title, kind: "text", bytes: bytes.buffer, filename: `${input.title}.md`, mimeType: "text/markdown", ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+  }), 202);
+});
+app.post("/api/projects/:id/sources/url", async (c) => {
+  const input = z.object({ url: z.string().max(2048), title: title.optional(), sourceId: uuid.optional() }).strict().parse(await c.req.json());
+  const projectId = uuid.parse(c.req.param("id"));
+  await getProject(c.env, c.get("actor"), projectId);
+  const captured = await captureUrl(input.url);
+  return c.json(await addSource(c.env, c.get("actor"), projectId, {
+    title: input.title ?? captured.filename.slice(0, 200), kind: "url", bytes: Uint8Array.from(captured.bytes).buffer,
+    filename: captured.filename, mimeType: captured.mimeType, url: captured.url, ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+  }), 202);
+});
+app.get("/api/sources/:id", async (c) => c.json(await getSource(c.env, c.get("actor"), uuid.parse(c.req.param("id")), uuid.optional().parse(c.req.query("revisionId")))));
+app.get("/api/revisions/:id/text", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id"))));
+app.get("/api/revisions/:id/range", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
+  start: z.coerce.number().int().nonnegative().parse(c.req.query("start")), end: z.coerce.number().int().positive().parse(c.req.query("end")),
+}));
+app.get("/api/revisions/:id/outline", async (c) => c.json(await readOutline(c.env, c.get("actor"), uuid.parse(c.req.param("id")))));
+app.get("/api/revisions/:id/original", async (c) => readOriginal(c.env, c.get("actor"), uuid.parse(c.req.param("id"))));
 app.all("/api/*", (c) => c.json({ error: { code: "not_found", message: "This API route does not exist." } } satisfies ApiError, 404));
 app.all("/mcp", (c) => c.json({ error: { code: "not_found", message: "This route does not exist." } } satisfies ApiError, 404));
 app.all("*", async (c) => {
@@ -33,6 +101,11 @@ app.all("*", async (c) => {
 });
 
 app.onError((error, c) => {
+  if (error instanceof UrlGuardError) {
+    return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, error.reason === "too_large" ? 413 : error.status);
+  }
+  if (error instanceof LibraryError) return c.json({ error: { code: error.code, message: error.message }, ...(error.duplicate ? { duplicate: error.duplicate } : {}) }, error.status);
+  if (error instanceof ZodError || error instanceof SyntaxError) return c.json({ error: { code: "invalid", message: "Check the request fields and try again." } } satisfies ApiError, 400);
   if (error instanceof AuthError) {
     return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, error.status);
   }

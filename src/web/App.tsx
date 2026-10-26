@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { Navigate, Route, Routes } from "react-router";
+import { Navigate, Route, Routes, useLocation } from "react-router";
 import { fetchMe } from "./api";
 import { Shell } from "./Shell";
 import { useTheme } from "./theme";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
+import { Library, Projects, Reader } from "./Library";
 
 export function App() {
+  const { pathname } = useLocation();
   const [theme, setTheme] = useTheme();
   const me = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => fetchMe(signal), retry: false });
   if (me.isPending) {
@@ -31,16 +33,9 @@ export function App() {
   return (
     <Routes>
       <Route element={<Shell theme={theme} onThemeChange={setTheme} />}>
-        <Route index element={
-          <>
-            <h1 id="workspace-heading" tabIndex={-1}>Projects</h1>
-            <div className="er-shell-empty">
-              <MaterialSymbol name="home" />
-              <h2>Your research starts here</h2>
-              <p>Your projects and sources will appear here.</p>
-            </div>
-          </>
-        } />
+        <Route index element={<Projects />} />
+        <Route path="p/:projectId/sources" element={<Library key={pathname} />} />
+        <Route path="p/:projectId/source/:sourceId" element={<Reader key={pathname} />} />
         <Route path="settings" element={
           <>
             <h1 id="workspace-heading" tabIndex={-1}>Settings</h1>

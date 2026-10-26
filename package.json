@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "db:local": "wrangler d1 migrations apply DB --local",
     "build": "vite build",
     "typecheck": "tsc --noEmit --pretty false",
     "lint": "eslint src vite.config.ts",

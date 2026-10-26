@@ -42,3 +42,4 @@ apps/eliotr-core/src/worker-configuration.d.ts
 
 # Eval run outputs (answers, timings); summaries go into PR descriptions.
 eval/out/
+eval/cache/

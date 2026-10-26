@@ -33,7 +33,7 @@ CREATE TABLE source_revision (
   id TEXT PRIMARY KEY,
   source_id TEXT NOT NULL REFERENCES source(id),
   revision_no INTEGER NOT NULL,
-  original_key TEXT,                  -- R2 source/<rev>/original; NULL for pasted text
+  original_key TEXT,                  -- R2 source/<rev>/original, including submitted UTF-8 text bytes
   original_sha256 TEXT,               -- exact-duplicate notice only
   original_size INTEGER,
   original_filename TEXT,
@@ -45,6 +45,9 @@ CREATE TABLE source_revision (
   block_count INTEGER,                -- entries in source/<rev>/blocks.json
   warning_summary TEXT,               -- one owner-readable line; NULL when clean
   error TEXT,                         -- owner-readable reason when failed
+  conversion_tokens INTEGER,
+  conversion_calls INTEGER NOT NULL DEFAULT 0,
+  conversion_ms INTEGER,
   deleted_at INTEGER,                 -- hidden from use; identity kept so old citations show "deleted"
   created_by TEXT NOT NULL,
   created_at INTEGER NOT NULL,

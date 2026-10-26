@@ -7,6 +7,7 @@ export default defineConfig({
     react(),
     cloudflare({
       configPath: "./wrangler.jsonc",
+      remoteBindings: process.env.ELIOT_REMOTE_BINDINGS !== "0",
     }),
   ],
   server: {

@@ -51,6 +51,16 @@ placeholder `src/client/` were removed from the replacement. These imports are c
 by the auth/contrast suite plus the real K0 browser eval. Eliot code retains MIT; fonts retain their OFL notices and
 Google SVG paths retain Apache-2.0 in `THIRD_PARTY_NOTICES.md` and `public/licenses/Apache-2.0.txt`.
 
+### K1 adoption — 2026-10-25
+
+At the same legacy pin, `structural-projector.ts` supplied the UTF-8 line/heading mechanism as an idea for the small
+typed scanner; no projection schema or chunk pipeline was imported. `markdown-conversion.ts` supplied the narrow
+`toMarkdown` call/result boundary, and `content-store.ts` supplied end-exclusive R2 range validation as an idea.
+The implementation uses installed Cloudflare binding types directly. Project/import/document markup and semantic
+styles were adapted from `packages/ui/src/features/sources/{projects,import,document}` into `src/web/Library.tsx` and
+`library.css`, without runtime/query adapters. All of this legacy Eliot material is MIT. Callers are the K1 owner API,
+IngestWorkflow and reader; verification is the fixed-corpus `pnpm eval k1` plus focused UTF-8/URL tests.
+
 ## Cloudflare primary donors
 
 ### Agents SDK and examples

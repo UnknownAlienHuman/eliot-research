@@ -7,6 +7,10 @@
   "upload_source_maps": true,
   "workers_dev": false,
   "preview_urls": false,
+  "d1_databases": [{ "binding": "DB", "database_name": "eliot-research-library", "migrations_dir": "migrations", "migrations_pattern": "migrations/0001_library.sql" }],
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "eliot-research-library" }],
+  "ai": { "binding": "AI" },
+  "workflows": [{ "binding": "INGEST", "name": "eliot-research-ingest", "class_name": "IngestWorkflow" }],
   "vars": {
     "ELIOT_ACCESS_TEAM_DOMAIN": "",
     "ELIOT_ACCESS_AUD": "",

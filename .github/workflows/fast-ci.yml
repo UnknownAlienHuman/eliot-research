@@ -18,6 +18,8 @@ jobs:
     name: Material shell, Access and package
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    env:
+      ELIOT_REMOTE_BINDINGS: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -46,9 +48,11 @@ jobs:
       - name: Exercise the actual local Worker and Material frame
         run: |
           cp .dev.vars.example .dev.vars
+          pnpm db:local
           pnpm dev > /tmp/eliot-k0.log 2>&1 &
           trap 'kill $!' EXIT
           pnpm eval k0
+          pnpm eval k1 --native-only
       - name: Upload checked build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

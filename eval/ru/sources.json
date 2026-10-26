@@ -1,0 +1,112 @@
+{
+  "corpus": "ru",
+  "verified_at": "2026-10-26",
+  "verification": "HEAD 200 on all three /pdf URLs 2026-10-26 (UTC); citation_* meta read from each CyberLeninka landing page; OpenAlex works API for OA/license/language/date. No invented entries. PDFs are the only file fixtures; ru-native-01 is inline public-domain text, explicitly NOT a PDF.",
+  "sources": [
+    {
+      "id": "ru-01",
+      "kind": "file",
+      "lang": "ru",
+      "title": "Цифровая коммуникация субъекта и ИИ: возможности и риски трансформации ценностей",
+      "title_en": "Digital Communication between a Subject and AI: Opportunities and Risks of Value Transformation",
+      "authors": [
+        "Зубков Николай Андреевич",
+        "Калинин Дмитрий Васильевич"
+      ],
+      "journal": "Общество: философия, история, культура",
+      "year": 2026,
+      "issue": "6",
+      "issn": "2221-2787",
+      "url": "https://cyberleninka.ru/article/n/tsifrovaya-kommunikatsiya-subekta-i-ii-vozmozhnosti-i-riski-transformatsii-tsennostey/pdf",
+      "landing": "https://cyberleninka.ru/article/n/tsifrovaya-kommunikatsiya-subekta-i-ii-vozmozhnosti-i-riski-transformatsii-tsennostey",
+      "doi": "10.24158/fik.2026.6.9",
+      "license": "cc-by",
+      "openalex_id": "W7169847825",
+      "verified": {
+        "head_pdf": 200,
+        "citation_title_match": true,
+        "citation_date": "2026",
+        "openalex_is_oa": true,
+        "openalex_lang": "ru",
+        "checked": "2026-10-26"
+      },
+      "expect20KiB": false,
+      "expect50Blocks": false,
+      "expected_state": "needs_conversion"
+    },
+    {
+      "id": "ru-02",
+      "kind": "file",
+      "lang": "ru",
+      "title": "Анализ тональности в исследованиях массовой коммуникации: систематический обзор методов и направлений",
+      "authors": [
+        "Козлова Анастасия Владимировна"
+      ],
+      "journal": "Вестник Российского университета дружбы народов. Серия: Литературоведение, журналистика",
+      "year": 2026,
+      "volume": "31",
+      "issue": "1",
+      "issn": "2312-9220",
+      "url": "https://cyberleninka.ru/article/n/analiz-tonalnosti-v-issledovaniyah-massovoy-kommunikatsii-sistematicheskiy-obzor-metodov-i-napravleniy/pdf",
+      "landing": "https://cyberleninka.ru/article/n/analiz-tonalnosti-v-issledovaniyah-massovoy-kommunikatsii-sistematicheskiy-obzor-metodov-i-napravleniy",
+      "license": "cc-by-nc",
+      "openalex_id": "W7165268872",
+      "verified": {
+        "head_pdf": 200,
+        "citation_title_match": true,
+        "citation_date": "2026",
+        "openalex_is_oa": true,
+        "checked": "2026-10-26"
+      },
+      "expect20KiB": false,
+      "expect50Blocks": false,
+      "expected_state": "readable"
+    },
+    {
+      "id": "ru-03",
+      "kind": "file",
+      "lang": "ru",
+      "title": "Искусственный интеллект в политическом анализе: записки умеренного оптимиста",
+      "authors": [
+        "Попова Ольга Валентиновна"
+      ],
+      "journal": "Вестник Российского университета дружбы народов. Серия: Политология",
+      "year": 2026,
+      "volume": "28",
+      "issue": "1",
+      "issn": "2313-1438",
+      "url": "https://cyberleninka.ru/article/n/iskusstvennyy-intellekt-v-politicheskom-analize-zapiski-umerennogo-optimista/pdf",
+      "landing": "https://cyberleninka.ru/article/n/iskusstvennyy-intellekt-v-politicheskom-analize-zapiski-umerennogo-optimista",
+      "license": "cc-by-nc",
+      "openalex_id": "W7165260962",
+      "verified": {
+        "head_pdf": 200,
+        "citation_title_match": true,
+        "citation_date": "2026",
+        "openalex_is_oa": true,
+        "checked": "2026-10-26"
+      },
+      "expect20KiB": false,
+      "expect50Blocks": false,
+      "expected_state": "readable"
+    },
+    {
+      "id": "ru-native-01",
+      "kind": "text",
+      "lang": "ru",
+      "is_pdf": false,
+      "is_native_fixture": true,
+      "title": "Евгений Онегин, глава 1, строфа I — native UTF-8 fixture (not a paper PDF)",
+      "author": "Александр Сергеевич Пушкин",
+      "work": "Евгений Онегин",
+      "written": "1823-1831",
+      "published": 1833,
+      "license": "public-domain",
+      "note": "Real public-domain excerpt for Cyrillic UTF-8 range checks. Exempt from the >=20KiB / >=50-blocks paper thresholds.",
+      "text": "Мой дядя самых честных правил,\nКогда не в шутку занемог,\nОн уважать себя заставил\nИ лучше выдумать не мог.\nЕго пример другим наука;\nНо, боже мой, какая скука\nС больным сидеть и день и ночь,\nНе отходя ни шагу прочь!\nКакое низкое коварство\nПолуживого забавлять,\nЕму подушки поправлять,\nПечально подносить лекарство,\nВздыхать и думать про себя:\nКогда же черт возьмет тебя!",
+      "expect20KiB": false,
+      "expect50Blocks": false,
+      "expected_state": "readable"
+    }
+  ]
+}

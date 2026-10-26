@@ -34,13 +34,15 @@ quotas.
 
 - K0 implementation uses `src/index.ts` (Hono), `src/auth.ts` (Access) and the moved Material shell in `src/web/`.
   `/api/me`, Projects/Settings navigation and System/Light/Dark appearance work locally. All assets pass through auth.
-- Local acceptance: `pnpm check`, 28 focused auth/contrast cases and `pnpm eval k0` pass; the real Worker/browser eval
+- Local acceptance includes 84 focused auth/contrast/block/URL cases and the real Worker/browser eval. K0
   covers 1440/390 px, both themes, explicit appearance persistence, navigation and Cyrillic fonts. Model/search calls: 0.
 - Owner chose to keep the existing `eliotr-core.kleymor-metal.workers.dev` address for now. Its hostname Access app
   remains in place; this change does not deploy over that legacy Worker. New-domain setup and live browser/service-token
   acceptance are **not run**, so full deployed K0 acceptance remains open. `scripts/setup.sh` records later custom-domain
   setup; it defaults to an offline plan.
-- No D1, R2, Workers AI, AI Search, Durable Object or Workflow binding exists on `main`.
+- K1 implements projects, shared Library membership, one-file uploads, pasted text/static URLs, immutable replacement
+  revisions, outline, original download and exact UTF-8 ranges. D1/R2/IngestWorkflow run locally; Workers AI `toMarkdown`
+  was exercised against the real service. AI Search, chat Durable Objects and later-contour bindings remain absent.
 - Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
 - The accepted Material tokens, local fonts, primitives and frame are adapted from the pinned legacy UI; future features
   remain in `packages/ui/src/**` and `apps/eliotr-web/src/app/Shell.tsx` until their contour.
@@ -117,10 +119,24 @@ open any readable source with outline and exact passage links.
 **Hard acceptance — `pnpm eval k1`**
 
 - Ingest the ten `eval/arxiv-10` PDFs and the Russian corpus with client concurrency 2.
-- All settle as readable/readable-with-warnings; expected papers produce at least 20 KiB and 50 blocks.
+- Ten arXiv and two text-based Russian PDFs settle as readable/readable-with-warnings; expected arXiv papers produce at
+  least 20 KiB and 50 blocks. The additional Russian scan fixture must settle as `needs_conversion`, keep the exact
+  original and perform no OCR. The native Russian text fixture must make zero conversion calls.
 - Three random ranges per source exactly match slices of the downloaded whole text.
 - Eval prints converter, original/text bytes, blocks, wall time and conversion tokens when Cloudflare returns them.
 - Owner opens three citations and one copied range link on phone.
+
+`pnpm eval k1` includes the real phone journey, immutable old-revision checks and recovery from an offline upload.
+`ELIOT_EVAL_LIMIT=1` adds the actual 25 MiB file and 25 MiB + 1 byte rejection cases. CI runs
+`pnpm eval k1 --native-only` with remote AI bindings disabled; it does not claim PDF-service acceptance.
+
+Local run on 2026-10-25: 13 readable sources, the scan negative, 52 exact ranges and the phone journey passed. The
+25 MiB native file was readable with zero conversion calls; 25 MiB + 1 byte returned 413. Readable PDF conversion
+p50/p95 was 1,697/4,604 ms from the recorded latest attempts. Those 14 corpus sources retain 13 conversion calls and
+189,269 reported conversion tokens; the native source used zero. Across deliberate diagnostics and corrected reruns,
+the local revision rows record 29 conversion attempts in total, with no automatic retry. Model/search calls were zero.
+The sampled local workerd-process RSS peak was 653,914,112 bytes across two processes; isolate peak heap was not
+available and production memory/deployment qualification is not claimed.
 
 **Measured budget.** Peak Worker memory is inspected during the 25 MiB case; no exceeded-memory event. Conversion count
 must equal the number of files that actually require conversion.
