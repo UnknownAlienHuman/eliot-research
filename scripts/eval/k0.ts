@@ -94,12 +94,13 @@ try {
       const settings = await page.locator('nav a[href="/settings"]').boundingBox();
       assert(settings && settings.width >= 48 && settings.height >= 48, "Navigation touch targets must be at least 48px.");
       await page.locator('summary[aria-label="Appearance"]').click();
-      await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption(theme === "light" ? "dark" : "light");
+      await page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true }).selectOption(theme === "light" ? "dark" : "light");
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "light" ? "dark" : "light");
+      await expect(page.getByRole("region", { name: "Workspace preferences", exact: true }).getByRole("combobox", { name: "Appearance", exact: true })).toHaveValue(theme === "light" ? "dark" : "light");
       await page.reload();
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "light" ? "dark" : "light");
       await page.locator('summary[aria-label="Appearance"]').click();
-      await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("system");
+      await page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true }).selectOption("system");
       await expect(page.locator("html")).not.toHaveAttribute("data-theme");
       await page.evaluate(() => document.fonts.load('16px "Google Sans"', "Исследования"));
       assert(await page.evaluate(() => document.fonts.check('16px "Google Sans"', "Исследования")), "Cyrillic font did not load.");
