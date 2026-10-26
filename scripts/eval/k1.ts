@@ -30,6 +30,7 @@ interface SourceRow {
 }
 const origin = new URL(process.env.ELIOT_URL || 'http://127.0.0.1:5173').origin;
 const nativeOnly = process.argv.includes('--native-only');
+const allowNetUrl = !nativeOnly || process.env.ELIOT_EVAL_NET === '1';
 const H: Record<string, string> = { Origin: origin };
 if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
   H['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID;
@@ -319,6 +320,7 @@ for (const f of fx) {
   rows.push('| ' + s.id + ' | ' + s.converter + ' | ' + s.originalSize + ' | ' + w.bytes.length + ' | ' + blocks.length + ' | ' + s.conversionCalls + ' | ' + s.conversionTokens + ' | ' + s.conversionMs + ' |');
 }
 rows.sort();
+let urlResult = 'Duplicate URL (browser form): NOT_RUN without network (needs ELIOT_EVAL_NET=1; the server URL guard rejects local fixtures, so no controllable local URL exists).';
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark', permissions: ['clipboard-read', 'clipboard-write'], extraHTTPHeaders: H });
 try {
@@ -383,6 +385,34 @@ try {
   await context.setOffline(false);
   await page.goto(copied);
   await expect(page.locator('.er-lib__excerpt pre')).toHaveText('Точный русский текст');
+  const mainPid = new URL(copied).pathname.split('/')[2] as string;
+  const dupeTextTitle = name + ' dupe text';
+  const dupeTextBody = '# \u0414\u0443\u0431\u043b\u0438\u043a\u0430\u0442\n\n\u0422\u043e\u0442 \u0436\u0435 \u0442\u0435\u043a\u0441\u0442 \u0434\u0432\u0430\u0436\u0434\u044b ' + name + '.\n';
+  const dupeUrl = 'https://example.com/';
+  let dupeUrlSrc: any = null;
+  await page.goto(origin + '/p/' + mainPid + '/sources');
+  await expect(page.locator('#er-lib-files')).toBeVisible();
+  await page.locator('#er-lib-text-title').fill(dupeTextTitle);
+  await page.locator('#er-lib-text-body').fill(dupeTextBody);
+  await page.getByRole('button', { name: 'Save text', exact: true }).click();
+  await expect(page.getByRole('link', { name: dupeTextTitle, exact: true })).toBeVisible({ timeout: 15000 });
+  const dupeTextSrc = (await apiJson('/api/projects/' + mainPid + '/sources')).body.sources.find((s: any) => s.title === dupeTextTitle);
+  assert(dupeTextSrc, 'Text source must exist in the main project.');
+  if (allowNetUrl) {
+    const probe = await apiJson('/api/projects/' + mainPid + '/sources/url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: dupeUrl }) });
+    if (probe.status === 409) {
+      assert(probe.body.duplicate && probe.body.duplicate.revisionId, 'Known URL must identify the existing revision.');
+      dupeUrlSrc = { revisionId: probe.body.duplicate.revisionId };
+    } else {
+      assert.equal(probe.status, 202, 'URL capture must be accepted.');
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const fetched = (await apiJson('/api/sources/' + probe.body.sourceId)).body.source;
+        if (fetched && fetched.readableState === 'readable') { dupeUrlSrc = fetched; break; }
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+      assert(dupeUrlSrc && dupeUrlSrc.readableState === 'readable', 'Example URL must settle readable.');
+    }
+  }
   const other = await apiJson('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: name + ' attached' }) });
   await page.goto(origin + '/p/' + other.body.project.id + '/sources');
   await expect(page.locator('#er-lib-files')).toBeVisible();
@@ -391,6 +421,36 @@ try {
   assert.equal((await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources.length, 0, 'A duplicate must not attach silently.');
   await page.getByRole('button', { name: /^Attach existing/ }).click();
   await expect(page.getByRole('link', { name: name + '-1.md', exact: true })).toBeVisible();
+  await page.locator('#er-lib-text-title').fill(dupeTextTitle);
+  await page.locator('#er-lib-text-body').fill(dupeTextBody);
+  await page.getByRole('button', { name: 'Save text', exact: true }).click();
+  const textRow = page.locator('.er-lib__progress li', { hasText: dupeTextTitle });
+  await expect(textRow.getByRole('button', { name: /^Attach existing/ })).toBeVisible({ timeout: 15000 });
+  assert.equal((await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources.length, 1, 'A text duplicate must not attach silently.');
+  await textRow.getByRole('button', { name: /^Attach existing/ }).click();
+  await expect(page.getByRole('link', { name: dupeTextTitle, exact: true })).toBeVisible();
+  const attachedText = (await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources.find((s: any) => s.title === dupeTextTitle);
+  assert(attachedText, 'Attached text must be listed.');
+  assert.equal(attachedText.revisionId, dupeTextSrc.revisionId, 'Attached text must reuse the original revision (no new source or conversion).');
+  assert.equal(attachedText.conversionCalls, 0, 'Attached text must perform zero conversions.');
+  if (allowNetUrl) {
+    const otherBefore = ((await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources).map((s: any) => s.id);
+    await page.locator('#er-lib-url').fill(dupeUrl);
+    await page.getByRole('button', { name: 'Add URL', exact: true }).click();
+    const urlRow = page.locator('.er-lib__progress li', { hasText: dupeUrl });
+    await expect(urlRow.getByRole('button', { name: /^Attach existing/ })).toBeVisible({ timeout: 30000 });
+    assert.equal((await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources.length, 2, 'A URL duplicate must not attach silently.');
+    await urlRow.getByRole('button', { name: /^Attach existing/ }).click();
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const listed = (await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources;
+      if (listed.length === 3) break;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    const attachedUrl = ((await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources).find((s: any) => !otherBefore.includes(s.id));
+    assert(attachedUrl, 'Attached URL must be listed.');
+    assert.equal(attachedUrl.revisionId, dupeUrlSrc.revisionId, 'Attached URL must reuse the original revision (no new source or capture).');
+    urlResult = 'Duplicate URL: explicit 409 plus Attach existing in the browser; attached revision matches the original; no new source or capture.';
+  }
   assert.equal(peakUploads, 2, 'Browser file upload concurrency must be two.');
   assert.deepEqual(pageErrors, [], 'Browser runtime errors');
   await page.screenshot({ path: outDir + '/phone-reader.png', fullPage: true });
@@ -426,6 +486,8 @@ const report = [
   '|---|---|---|---|---|---|---|---|', ...rows, '',
   'Exact ranges: ' + rangeTotal + '/' + (fx.filter((fixture) => fixture.expected !== 'needs_conversion').length * 4) + ' (prefix plus three random ranges per readable source).',
   'Phone: PASS, batch concurrency 2, exact links, old revision stable, offline recovery, explicit duplicate Attach.',
+  'Duplicate text: explicit 409 plus Attach existing in the browser; attached revision matches the original; no new source or conversion.',
+  urlResult,
   limitResult,
   'Readable PDF conversion p50/p95: ' + (times.length ? p50 + '/' + p95 + ' ms (recorded latest attempts)' : 'NOT_RUN (native-only)') + '.',
   'Model/search calls: 0. Conversion usage is listed above; no automatic retry.',
