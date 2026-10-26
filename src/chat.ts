@@ -7,7 +7,7 @@ import { buildContext } from "./context";
 import { persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn, estimateCost } from "./cost";
-import { DEFAULT_MODEL, requireModel } from "./models";
+import { DEFAULT_MODEL, modelOutputLimit, requireModel } from "./models";
 import type { ModelSpec } from "./models";
 import { modelFailure, resolveModelTransport } from "./model-transport";
 import { LibraryError } from "./library";
@@ -145,11 +145,12 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const render = (sentences: ({ text?: string | undefined; labels?: (string | undefined)[] | undefined } | undefined)[] | undefined) =>
         (sentences ?? []).flatMap((sentence) => sentence?.text ? [sentence.text.trimEnd() + "\n" + (sentence.labels ?? []).filter((token) => token !== undefined && allowed.has(token) && !sentence.text?.includes(token)).join(" ")] : []).join("\n\n");
       const formatRules = "Return the requested structured answer. Choose the exact supporting block labels first, then write one statement entailed by those blocks in the question language. Preserve the source's technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Text may use Markdown but must not contain citation tokens. Mark inference explicitly. With no sources, labels must be empty. Do not invent sources or labels.";
-      const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions, formatRules].filter(Boolean).join("\n\n");
+      const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions, formatRules,
+        ...(model.responseFormat === false ? ["Return one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema))] : [])].filter(Boolean).join("\n\n");
       const messages = context.messages.filter((message) => message.role !== "system");
       messages.push({ role: "user", content: input.question });
       const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages, labels })).byteLength / 3) + messages.length * 32 + 1024;
-      if (inputTokens + model.maxOutputTokens > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
+      if (inputTokens + modelOutputLimit(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
         .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
       this.writeTurn(turn);
@@ -157,7 +158,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
         output: Output.object({ schema, name: "cited_answer" }),
-        maxOutputTokens: model.maxOutputTokens, maxRetries: 0, abortSignal: this.controller.signal,
+        maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: this.controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
       let lastWrite = 0;

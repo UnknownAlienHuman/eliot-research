@@ -1,5 +1,6 @@
 import { LibraryError } from "./library";
 import type { ModelSpec } from "./models";
+import { modelOutputLimit } from "./models";
 
 const monthlyEstimate = `(SELECT COALESCE(SUM(estimated_cost_microusd),0) FROM chat_turn WHERE created_at>=?)
   +(SELECT COALESCE(SUM(distill_estimated_cost_microusd),0) FROM source_revision WHERE distill_started_at>=?)`;
@@ -17,7 +18,7 @@ export async function monthlyUsage(env: Env) {
   return { monthlyBudgetMicrousd: row.budget, monthlyUsedMicrousd: row.used, monthStart: start };
 }
 export async function admitTurn(env: Env, chatId: string, turnId: string, model: ModelSpec) {
-  const bound = estimateCost(model, model.contextTokens, 0, model.maxOutputTokens);
+  const bound = estimateCost(model, model.contextTokens, 0, modelOutputLimit(model));
   const { monthStart } = await monthlyUsage(env);
   // The owning turn holds the conservative reservation. The conditional update is atomic across chats.
   const result = await env.DB.prepare(`UPDATE chat_turn SET estimated_cost_microusd=?,pricing_checked_on=?
@@ -30,7 +31,7 @@ export async function admitTurn(env: Env, chatId: string, turnId: string, model:
 }
 
 export async function admitDistill(env: Env, revisionId: string, model: ModelSpec): Promise<boolean> {
-  const bound = 2 * estimateCost(model, model.contextTokens, 0, model.maxOutputTokens);
+  const bound = 2 * estimateCost(model, model.contextTokens, 0, modelOutputLimit(model));
   const { monthStart } = await monthlyUsage(env);
   const admitted = await env.DB.prepare(`UPDATE source_revision SET distill_state='running',distill_model=?,
     distill_started_at=?,distill_estimated_cost_microusd=?,distill_pricing_checked_on=?,distill_error=NULL

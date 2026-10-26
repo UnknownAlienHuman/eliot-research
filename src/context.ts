@@ -2,10 +2,12 @@ import type { Block } from "./blocks";
 import type { Actor } from "./auth";
 import { LibraryError } from "./library";
 import type { LabelSource } from "./citations.js";
+import { modelOutputLimit } from "./models";
 
 export interface ContextModel {
   contextTokens: number;
   maxOutputTokens: number;
+  outputReserveTokens?: number;
 }
 export interface ContextHistoryTurn {
   role: "user" | "assistant";
@@ -308,7 +310,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     throw new LibraryError("invalid", "Choose a project before asking.", 400);
   }
   const contextTokens = input.model?.contextTokens ?? 0;
-  const maxOutputTokens = input.model?.maxOutputTokens ?? 0;
+  const maxOutputTokens = input.model ? modelOutputLimit(input.model) : 0;
   if (
     !Number.isSafeInteger(contextTokens) ||
     contextTokens <= 0 ||

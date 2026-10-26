@@ -45,15 +45,17 @@ export function App() {
         <Route path="settings" element={
           <>
             <h1 id="workspace-heading" tabIndex={-1}>Settings</h1>
-            <section className="er-shell-settings-row">
-              <h2>Workspace access</h2>
-              <p>{identity}</p>
-            </section>
-            <section className="er-shell-settings-row">
-              <h2>Appearance</h2>
-              <p>Choose Light, Dark or System from the Appearance menu.</p>
-            </section>
-            <ModelSettings />
+            <div className="er-shell-settings-list">
+              <ModelSettings />
+              <section className="er-shell-settings-row er-shell-settings-row--preferences" aria-label="Workspace preferences">
+                <div><h2>Workspace</h2><p>{identity}</p></div>
+                <label>Appearance
+                  <select value={theme} onChange={(event) => setTheme(event.target.value as typeof theme)}>
+                    <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
+                  </select>
+                </label>
+              </section>
+            </div>
           </>
         } />
         <Route path="*" element={<Navigate to="/" replace />} />

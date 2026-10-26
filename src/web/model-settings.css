@@ -1,0 +1,24 @@
+/* Model settings cards. Layout only; every value is a committed semantic token. */
+.er-models { display: grid; gap: var(--eliot-space-panel); min-width: 0; color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family); font-size: var(--eliot-type-body-medium-size); line-height: var(--eliot-type-body-medium-line-height); }
+.er-models__card { display: grid; gap: var(--eliot-space-block-control); align-content: start; min-width: 0; padding: var(--eliot-space-panel) var(--eliot-space-group); border-radius: var(--eliot-shape-extra-large); background: var(--eliot-color-group); color: var(--md-sys-color-on-surface); }
+.er-models__head { display: grid; gap: var(--eliot-space-tight); }
+.er-models__title { margin: 0; font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); font-weight: var(--eliot-type-font-weight-medium); }
+.er-models__row { display: grid; gap: var(--eliot-space-tight); min-width: 0; margin: 0; }
+.er-models__label { display: grid; gap: var(--eliot-space-tight); font-size: var(--eliot-type-label-large-size); line-height: var(--eliot-type-label-large-line-height); font-weight: var(--eliot-type-font-weight-medium); letter-spacing: var(--eliot-type-letter-spacing-label); color: var(--md-sys-color-on-surface-variant); }
+.er-models__help { font-size: var(--eliot-type-body-small-size); line-height: var(--eliot-type-body-small-line-height); font-weight: var(--eliot-type-font-weight-regular); letter-spacing: var(--eliot-type-letter-spacing-body); color: var(--md-sys-color-on-surface-variant); }
+.er-models__row select, .er-models__row input, .er-models__row textarea { inline-size: 100%; max-inline-size: var(--eliot-type-reading-measure); }
+.er-models__check { display: flex; gap: var(--eliot-space-gutter); align-items: flex-start; min-width: 0; min-height: var(--eliot-size-control); cursor: pointer; }
+.er-models__check input { flex-shrink: 0; inline-size: var(--eliot-size-checkbox); block-size: var(--eliot-size-checkbox); margin-top: var(--eliot-space-tight); accent-color: var(--md-sys-color-primary); }
+.er-models__checktext { display: grid; gap: var(--eliot-space-tight); font-size: var(--eliot-type-body-medium-size); line-height: var(--eliot-type-body-medium-line-height); color: var(--md-sys-color-on-surface); }
+.er-models__details { display: grid; gap: var(--eliot-space-block-control); min-width: 0; }
+.er-models__details summary { display: flex; align-items: center; min-height: var(--eliot-size-control); cursor: pointer; color: var(--md-sys-color-on-surface-variant); font-weight: var(--eliot-type-font-weight-medium); }
+.er-models__actions { display: flex; flex-wrap: wrap; gap: var(--eliot-space-block-control); align-items: center; min-height: var(--eliot-size-control); }
+.er-models--compact { display: grid; gap: var(--eliot-space-block-control); }
+.er-models__chip { padding: var(--eliot-space-hairline) var(--eliot-space-block-control); border-radius: var(--eliot-shape-full); background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); font-size: var(--eliot-type-label-medium-size); line-height: var(--eliot-type-label-medium-line-height); font-weight: var(--eliot-type-font-weight-medium); white-space: nowrap; }
+.er-models__chip[data-status='uncertain'] { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+@media (min-width: 40rem) {
+  .er-models__row { grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr); gap: var(--eliot-space-gutter) var(--eliot-space-panel); align-items: start; }
+}
+@media (forced-colors: active) {
+  .er-models__card, .er-models__chip { border: var(--eliot-divider-width) solid CanvasText; }
+}

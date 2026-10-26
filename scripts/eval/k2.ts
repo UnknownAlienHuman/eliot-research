@@ -84,17 +84,38 @@ if (process.argv.includes('--models-only')) {
   assert.equal(connection.body.connection.gatewayId, null, 'Use a disconnected local namespace; this check never disables an existing connection.');
   const models = await apiJson('/api/models');
   assert.equal(models.status, 200);
-  const external = models.body.models.find((m) => m.route === 'gateway:google/gemini-2.5-flash');
-  assert(external && !external.enabled && external.unavailableReason, 'External model must be visibly disabled without owner credential opt-in.');
+  const EXPECTED_EXTERNAL = [
+    'gateway:openrouter/dots-studio/dots-3-note-preview:free',
+    'gateway:openrouter/thinkingmachines/inkling:free',
+    'gateway:openrouter/nvidia/nemotron-3.5-super-vl:free',
+  ];
+  const externals = models.body.models.filter((m) => m && typeof m.route === 'string' && m.route.startsWith('gateway:openrouter/'));
+  assert.deepEqual(externals.map((m) => m.route).sort(), [...EXPECTED_EXTERNAL].sort(), 'Models-only expects exactly the three free OpenRouter chat routes.');
+  for (const m of externals) assert(m && !m.enabled && m.unavailableReason, 'External model must be visibly disabled without owner credential opt-in (' + m.route + ').');
+  const external = externals[0];
+  assert(external, 'At least one external OpenRouter route is required.');
+  const embedders = models.body.models.filter((m) => m && /embed|rerank/i.test(m.route + ' ' + (m.id || '') + ' ' + (m.label || '')));
+  assert.deepEqual(embedders.map((m) => m.route), [], 'No embed/rerank model may be offered for selection.');
+  const flash = models.body.models.find((m) => m.route === 'workers-ai:@cf/zai-org/glm-5.3-flash');
+  assert(flash && flash.enabled, 'Native Flash default must stay enabled.');
+  assert.equal(before.body.settings.answerModel, flash.route, 'Default answer model stays Flash.');
   const denied = await apiJson('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gatewayId: 'unconfigured-eval-gateway' }) });
   assert.equal(denied.status, 400, 'Saving a Gateway without explicit credential consent must fail before mutation.');
   const invalid = await apiJson('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gatewayId: 'default' }) });
   assert.equal(invalid.status, 400, 'The auto-created default Gateway is not an allowed connection.');
   const changed = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: external.route, monthlyModelBudgetMicrousd: before.body.settings.monthlyModelBudgetMicrousd }) });
   assert.equal(changed.status, 503, 'A disconnected external route cannot become the default.');
+  const emptyDistill = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: before.body.settings.answerModel, monthlyModelBudgetMicrousd: before.body.settings.monthlyModelBudgetMicrousd, distillModel: '' }) });
+  assert.equal(emptyDistill.status, 400, 'An empty distillModel must fail before mutation (no truthiness bypass).');
+  const afterEmpty = await apiJson('/api/settings');
+  assert.deepEqual(afterEmpty.body.settings, before.body.settings, 'Rejected empty distillModel must leave global settings unchanged.');
   const project = await apiJson('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'External model admission ' + Date.now() }) });
   assert.equal(project.status, 201);
   const projectId = project.body.project.id;
+  const emptyProjectModel = await apiJson('/api/projects/' + projectId + '/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: '' }) });
+  assert.equal(emptyProjectModel.status, 400, 'An empty project answerModel must fail before mutation (no truthiness bypass).');
+  const projectAfterEmpty = await apiJson('/api/projects/' + projectId);
+  assert.equal(projectAfterEmpty.body.project.answerModel, null, 'Rejected empty project answerModel must leave the project override null.');
   const created = await apiJson('/api/projects/' + projectId + '/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(created.status, 201);
   const chatId = created.body.chat.id;
@@ -133,22 +154,51 @@ if (process.argv.includes('--models-only')) {
   const { chromium, expect } = await import('@playwright/test');
   const browser = await chromium.launch();
   try {
-    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, extraHTTPHeaders: H });
+    const context = await browser.newContext({ extraHTTPHeaders: H });
+    let settingsPuts = 0;
+    await context.route('**/api/settings', async (route) => {
+      if (route.request().method() === 'PUT') settingsPuts += 1;
+      await route.continue();
+    });
     const errors = [];
+    const desktop = await context.newPage({ viewport: { width: 1440, height: 900 } });
+    desktop.on('pageerror', (error) => errors.push(error.message));
+    await desktop.goto(origin + '/settings');
+    await expect(desktop.getByRole('region', { name: 'Models', exact: true })).toBeVisible();
+    await desktop.screenshot({ path: outDir + '/external-models-desktop.png', fullPage: true });
+    await desktop.close();
+    const page = await context.newPage({ viewport: { width: 390, height: 844 } });
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(origin + '/settings');
-    const gateway = page.getByRole('region', { name: 'AI Gateway', exact: true });
+    const gateway = page.getByRole('region', { name: 'Connection', exact: true });
     await expect(gateway).toBeVisible();
     await expect(gateway.getByRole('checkbox')).not.toBeChecked();
     await gateway.getByRole('textbox', { name: 'Gateway ID' }).fill('unconfigured-eval-gateway');
     await expect(gateway.getByRole('button', { name: 'Save connection' })).toBeDisabled();
-    await expect(page.getByRole('textbox', { name: 'Monthly model budget (USD)' })).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
+    await expect(page.getByRole('textbox', { name: 'Monthly budget (USD)', exact: true })).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
     await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(before.body.settings.answerModel);
     await expect(page.getByRole('combobox', { name: 'Answer model', exact: true }).locator('option[value="' + external.route + '"]')).toHaveJSProperty('disabled', true);
+    await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toHaveValue(before.body.settings.distillModel);
+    await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true }).locator('option[value="' + external.route + '"]')).toHaveJSProperty('disabled', true);
+    assert((await page.locator('#workspace-main details').count()) >= 1, 'Compact Settings must expose collapsed technical details.');
+    assert.strictEqual(await page.locator('#workspace-main details[open]').count(), 0, 'Compact default UI must not display expanded technical walls.');
+    const summaries = page.locator('#workspace-main details > summary');
+    for (let i = 0; i < await summaries.count(); i++) assert((await summaries.nth(i).innerText()).trim().length > 0, 'Every collapsed section must carry an accessible label.');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Settings must fit the 390px Material layout.');
     await gateway.getByRole('button', { name: 'Save connection' }).scrollIntoViewIfNeeded();
     await expect(gateway.getByRole('button', { name: 'Save connection' })).toBeVisible();
     await page.screenshot({ path: outDir + '/external-models-390.png', fullPage: true });
+    await page.setViewportSize({ width: 389, height: 844 });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Settings must fit the 389px Material layout.');
+    await page.setViewportSize({ width: 390, height: 844 });
+    const budget = page.getByRole('textbox', { name: 'Monthly budget (USD)', exact: true });
+    const modelsSection = page.getByRole('region', { name: 'Models', exact: true });
+    await budget.fill('1.0000001');
+    await modelsSection.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(modelsSection.getByRole('status')).toContainText('Use up to six decimal places for the monthly budget.');
+    assert.strictEqual(settingsPuts, 0, 'Seven-decimal budget must be rejected before any PUT /api/settings.');
+    await budget.fill(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
+    await expect(budget).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
     if (sourceId) {
       await page.goto(origin + '/p/' + projectId + '/source/' + sourceId);
       const understanding = page.getByRole('region', { name: 'Understanding', exact: true });

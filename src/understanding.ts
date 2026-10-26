@@ -6,7 +6,7 @@ import { LibraryError } from "./library";
 import type { Actor } from "./auth";
 import type { Block } from "./blocks";
 import { estimateCost } from "./cost";
-import { MODELS } from "./models";
+import { MODELS, modelOutputLimit } from "./models";
 import { hasAvailableUnderstanding } from "./workflows/distill";
 
 export type DistillState = "none" | "queued" | "running" | "paused" | "done" | "partial" | "failed";
@@ -104,7 +104,7 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
     canRecover: ["done", "partial", "failed"].includes(row.state) && row.reportKey !== `source/${revisionId}/checked/distill.json` && await hasAvailableUnderstanding(env, revisionId),
     authors: source.authors,
     published: source.published,
-    progress: { attempts: row.attempts, limit: 2, maximumCostMicrousd: model ? 2 * estimateCost(model, model.contextTokens, 0, model.maxOutputTokens) : null, model: model?.route ?? null },
+    progress: { attempts: row.attempts, limit: 2, maximumCostMicrousd: model ? 2 * estimateCost(model, model.contextTokens, 0, modelOutputLimit(model)) : null, model: model?.route ?? null },
     guide,
     digest,
     glossary: Array.isArray(glossary) ? glossary : [],

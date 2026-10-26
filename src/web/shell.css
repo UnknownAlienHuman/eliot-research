@@ -308,8 +308,8 @@ html, body { background: var(--eliot-color-canvas); }
 }
 .er-shell-settings-list {
   display: grid;
-  gap: var(--eliot-space-panel);
-  margin-block: var(--eliot-space-section);
+  gap: var(--eliot-space-group);
+  margin-block: 0;
   max-width: var(--eliot-layout-reading-max);
 }
 .er-shell-settings-row {
@@ -325,6 +325,11 @@ html, body { background: var(--eliot-color-canvas); }
   font-weight: var(--eliot-type-font-weight-medium);
 }
 .er-shell-settings-row p { color: var(--md-sys-color-on-surface-variant); }
+.er-shell-settings-row--preferences { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--eliot-space-group); }
+.er-shell-settings-row--preferences > div { display: grid; gap: var(--eliot-space-tight); }
+@media (max-width: 600px) {
+  .er-shell-settings-row--preferences { grid-template-columns: minmax(0, 1fr); }
+}
 .er-shell-settings-row label {
   display: grid;
   gap: var(--eliot-space-tight);

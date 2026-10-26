@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Block } from "../blocks";
 import { admitDistill, estimateCost, failUndispatchedDistill } from "../cost";
 import { LibraryError } from "../library";
-import { requireAvailableModel, requireModel } from "../models";
+import { modelOutputLimit, requireAvailableModel, requireModel } from "../models";
 import { modelFailure, resolveModelTransport } from "../model-transport";
 import { cleanDistillText, numbersSupported, resolveQuoteBlock, resultStatement, splitDistillStatements, verifyClaims } from "../quotes";
 import type { CandidateClaim, VerifiedClaim } from "../quotes";
@@ -81,16 +81,17 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   if (remaining <= 0) throw new Error("Source understanding reached its recovery deadline. No paid step will be repeated.");
   const model = requireModel(row.distill_model);
   const transport = await resolveModelTransport(env, model, `distill-${revisionId}`);
-  const inputBound = Math.ceil(new TextEncoder().encode(instructions + content + JSON.stringify(z.toJSONSchema(schema))).byteLength / 3) + 1024;
-  if (inputBound + model.maxOutputTokens > Math.min(model.contextTokens * 0.6, 400000)) throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
+  const modelInstructions = model.responseFormat === false ? instructions + "\nReturn one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema)) : instructions;
+  const inputBound = Math.ceil(new TextEncoder().encode(modelInstructions + content + JSON.stringify(z.toJSONSchema(schema))).byteLength / 3) + 1024;
+  if (inputBound + modelOutputLimit(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
   const dispatch = await env.DB.prepare(`UPDATE source_revision SET distill_calls=distill_calls+1
     WHERE id=? AND distill_state='running' AND distill_calls=? AND distill_started_at>?`)
     .bind(revisionId, ordinal - 1, Date.now() - DISTILL_DEADLINE_MS).run();
   if (!dispatch.meta.changes) throw new Error("This model call was already dispatched; it will not be repeated.");
   let result;
   try { result = await generateText({ model: transport,
-    instructions, messages: [{ role: "user", content }, { role: "user", content: `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }], output: Output.object({ schema }),
-    maxOutputTokens: model.maxOutputTokens, maxRetries: 0, abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
+    instructions: modelInstructions, messages: [{ role: "user", content }, { role: "user", content: `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }], output: Output.object({ schema }),
+    maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
   } catch (error) {
     // Provider errors can contain credentials; do not retain them as a Workflow error cause.
     // eslint-disable-next-line preserve-caught-error
@@ -99,7 +100,7 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   const usage = result.totalUsage;
   const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
   const estimatedCostMicrousd = inputTokens !== null && outputTokens !== null
-    ? estimateCost(model, inputTokens, cachedTokens ?? 0, outputTokens) : estimateCost(model, model.contextTokens, 0, model.maxOutputTokens);
+    ? estimateCost(model, inputTokens, cachedTokens ?? 0, outputTokens) : estimateCost(model, model.contextTokens, 0, modelOutputLimit(model));
   return { output: result.output, usage: { inputTokens, cachedTokens, outputTokens, estimatedCostMicrousd } };
 }
 
@@ -112,7 +113,7 @@ async function extract(env: Env, revisionId: string) {
     .bind(revisionId).first<{ readable_size: number; distill_model: string }>();
   if (!row) throw new Error("Source understanding is no longer running.");
   const model = requireModel(row.distill_model);
-  if (Math.ceil(row.readable_size / 3) + model.maxOutputTokens + 16384 > Math.min(model.contextTokens * 0.6, 400000))
+  if (Math.ceil(row.readable_size / 3) + modelOutputLimit(model) + 16384 > Math.min(model.contextTokens * 0.6, 400000))
     throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
   const object = await env.BUCKET.get(key(revisionId, "text.md"));
   if (!object) throw new Error("Readable text is missing.");
@@ -162,7 +163,7 @@ async function verifyAndStore(env: Env, revisionId: string) {
   await env.DB.batch([
     env.DB.prepare("UPDATE source_revision SET distill_input_tokens=?,distill_cached_tokens=?,distill_output_tokens=?,distill_estimated_cost_microusd=? WHERE id=?")
       .bind(raw.usage.inputTokens, raw.usage.cachedTokens, raw.usage.outputTokens,
-        raw.usage.estimatedCostMicrousd + estimateCost(model, model.contextTokens, 0, model.maxOutputTokens), revisionId),
+        raw.usage.estimatedCostMicrousd + estimateCost(model, model.contextTokens, 0, modelOutputLimit(model)), revisionId),
     env.DB.prepare("UPDATE source SET authors=?,published=? WHERE id=? AND current_revision_id=?")
       .bind(text.includes(raw.output.authors) ? raw.output.authors : "", raw.output.published && text.includes(raw.output.published) ? raw.output.published : null, owner.source_id, revisionId)]);
   return { kept: verified.claims.length, dropped: verified.dropped.length };

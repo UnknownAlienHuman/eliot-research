@@ -189,12 +189,15 @@ comparable runs rather than making one provider fluctuation invalidate the archi
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
-Local WIP on 2026-10-26 adds an opt-in nonsecret connection to an existing Google AI Studio default BYOK credential
-for fixed `gateway:google/gemini-2.5-flash`; native defaults stay unchanged. No credential input is added; saved
-configuration does not prove provider usability. Paid acceptance is **NOT_RUN**; see IMPLEMENTATION §11.
-Local `--models-only` checks passed for consent rejection, disconnected chat/distill before admission and the Material
-390px forms, with usage unchanged. The installed SDK was exercised over a fake binding for structured streaming,
-usage, exact request headers and one dispatch; that is a local transport contract check, not a Google service pass.
+Local WIP on 2026-10-26 registers only three external generation choices through the owner's existing OpenRouter
+default BYOK credential: `dots-studio/dots-3-note-preview:free`, `thinkingmachines/inkling:free`, and
+`nvidia/nemotron-3.5-super-vl:free`, each under `gateway:openrouter/<exact-id>`. Native defaults stay unchanged.
+Their real provider capacities remain visible in advanced details; current chat/distill jobs retain the existing
+8,192-token output bound. Zero catalog prices do not imply unlimited quota; unavailable models fail visibly with no
+paid fallback. Existing credential metadata grants no consent; the owner must connect explicitly, and saved connection
+configuration does not prove provider usability.
+OpenRouter service acceptance is **NOT_RUN**; earlier provider fake-binding checks do not qualify the new routes.
+See IMPLEMENTATION §11 for the transport, consent and Inkling plain-JSON contract.
 
 Local K2 run on 2026-10-26: all C1–C4/O1–O8 completed with zero invalid labels and byte-checked ranges, at
 $0.120236 estimated model cost. Cold first/total time was 25,724/27,763 ms; warm first-token p50/p95 was

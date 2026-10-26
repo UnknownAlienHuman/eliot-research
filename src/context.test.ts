@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildContext } from "./context.js";
 import { resolveCitations } from "./citations.js";
 import { LibraryError } from "./library.js";
+import { modelOutputLimit } from "./models.js";
 import type { Actor } from "./auth";
 
 const NL = String.fromCharCode(10);
@@ -339,6 +340,28 @@ describe("buildContext K2 whole scope", () => {
     expect(body).toContain("MARK5");
     expect(body).toContain("MARK4");
     expect(body).not.toContain("MARK1");
+  });
+
+  it("admits empty and small scopes on a high-output model via outputReserveTokens", async () => {
+    const dots = { contextTokens: 512000, maxOutputTokens: 460800, outputReserveTokens: 8192 };
+    expect(modelOutputLimit({ maxOutputTokens: 460800 })).toBe(460800);
+    expect(modelOutputLimit(dots)).toBe(8192);
+    const { env } = twoSourceEnv();
+    let err: unknown;
+    try {
+      await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [], model: { contextTokens: 512000, maxOutputTokens: 460800 } });
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LibraryError);
+    expect((err as LibraryError).code).toBe("invalid");
+    const empty = await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [], model: dots });
+    expect(empty.mode).toBe("none");
+    expect(empty.revisionIds).toEqual([]);
+    const small = await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s1"], model: dots });
+    expect(small.mode).toBe("whole");
+    expect(small.revisionIds).toEqual(["r1"]);
   });
 });
 

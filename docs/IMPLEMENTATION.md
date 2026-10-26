@@ -347,46 +347,73 @@ updated 2026-10-20); external facts below checked 2026-10-26:
 |---|---|---:|---:|---:|
 | default answer + distill | `workers-ai:@cf/zai-org/glm-5.3-flash` | 1,048,576 | 8,192 | 0.15 / 0.03 / 0.50 |
 | owner-selected hard synthesis | `workers-ai:@cf/zai-org/glm-5.3` | 1,048,576 | 8,192 | 1.40 / 0.26 / 4.40 |
-| optional Google BYOK; local WIP, paid acceptance NOT_RUN | `gateway:google/gemini-2.5-flash` | 1,000,000 | 65,536 | 0.30 / 0.03 / 2.50 |
+| optional OpenRouter; local WIP | `gateway:openrouter/dots-studio/dots-3-note-preview:free` | 512,000 | 460,800 | 0 / — / 0 |
+| optional OpenRouter; local WIP | `gateway:openrouter/thinkingmachines/inkling:free` | 1,048,576 | 262,144 | 0 / — / 0 |
+| optional OpenRouter; local WIP | `gateway:openrouter/nvidia/nemotron-3.5-super-vl:free` | 1,000,000 | 131,072 | 0 / — / 0 |
 
-The expensive route is never automatic. Native answer/distill defaults remain Flash. The optional external route uses
-installed `agents@0.30.1` / `agents/models/ai-sdk` `createAI({ binding: env.AI }).languageModel` with the fixed catalog
-ID `google/gemini-2.5-flash`. No fallback legs, dynamic routes or alternate model are selected on failure.
+OpenRouter `maxOutputTokens` preserves the verified provider cap. Ordinary chat/distill jobs separately retain the
+existing 8,192-token output bound in `outputReserveTokens`: `modelOutputLimit = min(outputReserveTokens ?? maxOutputTokens,
+maxOutputTokens)`. Use that result for request output, context fit and budget reservation. Context limits stay unchanged;
+the reserve does not redefine model capacity or force claim-mode overflow. Native configured output remains 8,192.
+Show model capacity and the job bound only in advanced model details, keeping ordinary Material controls/layout.
+
+Native answer/distill defaults remain Flash; the expensive native route is never automatic. These three exact `:free`
+IDs are the only registered external generation choices. The public catalog prices prompt/completion at zero and lists
+no separate cached-input rate. Their model-token estimate is zero, not a promise of unlimited quota or availability.
+Provider limits/errors remain visible failures; no artificial local quota, paid fallback or alternate model is added.
+`nvidia/nemotron-3.5-embed-8b:free` and `nvidia/nemotron-3.5-rerank-8b:free` are separate future K5 capabilities, not chat choices.
 
 Local connection contract: `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; null disables the
-external route. `GET /api/models/connection` returns `{ connection: { gatewayId, provider: "google-ai-studio",
+external routes. `GET /api/models/connection` returns `{ connection: { gatewayId, provider: "openrouter",
 alias: "default" } }`. Owner-only `PUT` accepts `{ gatewayId, confirmCredentialAccess: true }` to enable access to
-the existing credential, or `{ gatewayId: null }` to disconnect. The owner checkbox is mandatory when enabling.
-Only an exact existing named Gateway in the Worker's account is permitted; `default` is rejected because that name can
-create a Gateway implicitly. Saving records configuration without checking Gateway existence or provider usability.
-There is no secret input, credential creation, provider Authorization header or dummy key. Credentials stay in
-Cloudflare; this binding path consults only the provider's `default` BYOK alias.
+the owner's existing OpenRouter default BYOK credential, or `{ gatewayId: null }` to disconnect. The owner checkbox is
+mandatory when enabling; existing credential metadata grants no access by itself. Use an exact existing named Gateway
+in the Worker's account; `default` is rejected because that name can create a Gateway implicitly. Saving records
+configuration without checking Gateway existence or provider usability. No new credential, secret input, provider
+Authorization header or dummy key is needed. Credentials stay in Cloudflare; the app uses only the `default` BYOK alias.
 
-The external model's `headers` become top-level binding `extraHeaders`: `cf-aig-no-wholesale: true`,
-`cf-aig-max-attempts: 1`, `cf-aig-skip-cache: true`, `cf-aig-collect-log: false` (string header values). Gateway options
-also set the saved ID, `skipCache: true`, `collectLog: false` and `retries.maxAttempts: 1`. These request controls require
-BYOK and request one attempt without response caching or Gateway logs. Installed-adapter/workerd forwarding is source
-evidence, not proof that the live Gateway/provider enforces the controls. Paid provider acceptance remains **NOT_RUN**
-until owner credential access and explicit model opt-in; storing a connection is not that acceptance.
+External transport uses installed `agents@0.30.1` and `@ai-sdk/openai-compatible@3.0.79` (Apache-2.0). Build the vendor
+model with `createOpenAICompatible({ name: "openrouter", baseURL: "https://openrouter.ai/api/v1", includeUsage: true, ... })`
+and `openrouter.languageModel(model.id)`, then wrap the model object with
+`createAI({ binding: env.AI }).languageModel(vendor, { gateway: { id, ... }, vendorKey: "gateway", ... })`.
+The Agents adapter replaces the vendor fetch with the AI binding's provider-native `AI.fetch` path; it does not treat
+`openrouter/<id>` as a Cloudflare catalog model. No direct provider key, fallback legs or dynamic route is used.
+
+The request body sets `provider: { allow_fallbacks: false, require_parameters: true }`. Request headers set
+`cf-aig-no-wholesale: true`, `cf-aig-max-attempts: 1`, `cf-aig-skip-cache: true`, `cf-aig-collect-log: false` (strings).
+Gateway options also set the saved ID, `skipCache: true`, `collectLog: false` and `retries.maxAttempts: 1`. Forwarding
+these controls through the installed adapter/workerd is source evidence, not proof of live Gateway/provider enforcement.
+Current OpenRouter service acceptance is **NOT_RUN**; saving configuration or earlier provider fake-binding checks do not
+prove these routes usable. Owner credential access and model selection remain explicit.
+
+Dots and Nemotron advertise `response_format` and `structured_outputs`; Inkling advertises neither. Inkling's contract
+is ordinary JSON text: chat/distill add the schema to `instructions` before vendor conversion, the transport removes
+`response_format`, and `Output.object` validates locally. Invalid output fails without a repair model call.
+
+The OpenRouter usage converter preserves absent input/output counts as unknown rather than the provider SDK's
+zero defaults. Reported output includes reasoning; do not add reasoning again or subtract it for billing. Cached input
+remains part of input. When total and prompt counts are available, output uses the larger of reported completion and
+`total - prompt`; contradictory totals leave output unknown. Unknown usage retains the admitted estimate. These are
+local adapter contract checks; no Google `combinedUsage` or external service billing acceptance is claimed.
 
 Explicit Understand accepts optional `input.model` and freezes the selected route in that revision's `distill_model`.
 Connection availability is checked before budget admission; the call transport resolves before the dispatch counter.
 A disconnected external route already queued becomes `paused` with zero calls. Reconnecting does not resume it;
 the owner must request Understand explicitly. Completed/partial revisions are not re-distilled by changing the model.
-Chat and distill use AI SDK `maxRetries: 0`; paid Workflow steps use retry limit zero. Only deterministic storage steps
-may retry. Verify rendered request plus output reserve against the model schema before dispatch.
+Chat uses one model call and distill at most two; both use AI SDK `maxRetries: 0`, and model Workflow steps use retry
+limit zero. Only deterministic storage steps may retry. No continuation or repair call follows a failed model response.
 
-The [Cloudflare model catalog](https://developers.cloudflare.com/ai/models/google/gemini-2.5-flash/) supplies the 1M
-context and prices; its page exposes no modification date. [Google's model limits](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash)
-(updated 2026-09-22) supply the 65,536 output cap; Eliot uses the smaller Cloudflare context limit. Google's
-[standard pricing](https://ai.google.dev/gemini-api/docs/pricing#gemini-2.5-flash) (updated 2026-10-26) includes thinking
-tokens in output. With no cache discount, reserve **463,840 micro-USD/call**, **927,680 micro-USD/two-call distill**
-(`1,000,000 × 0.30 + 65,536 × 2.50` micro-USD). This is a conservative model-token bound, not measured provider cost.
-
-Official transport references checked 2026-10-26: [Worker binding](https://developers.cloudflare.com/ai-gateway/usage/worker-binding-methods/)
-(updated 2026-10-02), [Unified Billing / credential precedence](https://developers.cloudflare.com/ai-gateway/features/unified-billing/)
-(2026-09-30), [BYOK](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/) (2026-09-22), and
-[request handling](https://developers.cloudflare.com/ai-gateway/configuration/request-handling/) (2026-09-14).
+Official public metadata checked 2026-10-26 at 23:13 UTC: [OpenRouter catalog](https://openrouter.ai/api/v1/models) and
+the [Dots](https://openrouter.ai/api/v1/models/dots-studio/dots-3-note-preview:free/endpoints),
+[Inkling](https://openrouter.ai/api/v1/models/thinkingmachines/inkling:free/endpoints), and
+[Nemotron](https://openrouter.ai/api/v1/models/nvidia/nemotron-3.5-super-vl:free/endpoints) endpoint records. This is a
+retrieval date; those API records provide no `dateModified`.
+Transport references: [Agents AI SDK](https://developers.cloudflare.com/agents/models/ai-sdk/) (updated 2026-10-26),
+[Cloudflare OpenRouter provider](https://developers.cloudflare.com/ai-gateway/usage/providers/openrouter/) (2026-04-20),
+[BYOK](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/) (2026-09-22),
+[Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/) (2026-09-30),
+[request handling](https://developers.cloudflare.com/ai-gateway/configuration/request-handling/) (2026-09-14), and
+[OpenRouter provider routing](https://openrouter.ai/docs/guides/routing/provider-selection).
 
 ## 12. Project knowledge and research
 

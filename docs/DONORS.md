@@ -72,6 +72,9 @@ and `ModelSettings.tsx`. Legacy runtime/query/qualification/admin layers are dis
 `agents@0.30.1` (MIT) supplies the SQLite Agent and WebSocket lifecycle; `ai@7.0.152` (Apache-2.0) supplies one
 bounded streaming call and schema output. `react-markdown@10.1.0` and `remark-gfm@4.0.1` (MIT) render saved/streamed
 Markdown with raw HTML and automatic image loading disabled. No donor orchestration or provider configuration is copied.
+The settings correction reuses the tonal groups, labelled rows, spacing and responsive form layout from
+`apps/eliotr-web/src/app/settings.css` at the same MIT pin in `src/web/model-settings.css`. Provider administration,
+key-entry, qualification and catalog-management code is discarded; the existing Material tokens and controls remain.
 Callers are Send, read-only reconnect/history and Save existing answer. Verification is `pnpm eval k2`, exact range
 checks, focused context/citation/cost tests and the phone Stop/reconnect/Save journey; owner quality judgment remains
 separate from the automatic gates.
