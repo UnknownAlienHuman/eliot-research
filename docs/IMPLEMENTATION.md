@@ -51,7 +51,8 @@ JSON lives under `/api/`, validated with zod. Error shape:
 { "error": { "code": "invalid|not_found|conflict|busy|unavailable|budget", "message": "owner-readable text" } }
 ```
 
-Use cursor pagination. Add idempotency only where a natural key exists: turn ID, page-revision mutation ID and
+Use cursor pagination. Chat inventory uses immutable `(created_at,id)` descending so activity between pages cannot
+move an unseen chat above the cursor. Add idempotency only where a natural key exists: turn ID, page-revision mutation ID and
 deterministic Workflow ID. The MCP endpoint transports the shared toolset; it is not a second business API.
 
 ## 2. Access and actors
@@ -73,6 +74,9 @@ K0 configuration uses `ELIOT_ACCESS_TEAM_DOMAIN` (bare `<team>.cloudflareaccess.
 accepts only `localhost`, `127.0.0.1` or `[::1]`, and rejects Cloudflare edge requests carrying `cf-ray`. It never exempts
 mutations or WebSocket upgrades from exact Origin checks. All static assets use `run_worker_first: true` and private,
 no-store responses. `workers.dev` and previews are disabled for the replacement by default.
+HTTP privacy/security headers are applied after the final response is constructed, including R2 downloads and ASSETS
+responses. WebSocket 101 upgrade responses remain intact; they carry no cacheable document body. K0 checks HTML and
+its entry asset as well as JSON, and K1 checks text/range/original response headers.
 
 For local use, copy `.dev.vars.example` to `.dev.vars`, then `pnpm dev`. `pnpm cf:types` generates the checked-in Env;
 the example keeps variable order aligned with Wrangler configuration so generation is stable locally and in CI.
@@ -101,11 +105,15 @@ source/<revision>/original
 source/<revision>/text.md
 source/<revision>/blocks.json
 source/<revision>/{guide.md,digest.md,glossary.json,distill.json,chunks.json}
+source/<revision>/{distill-call1.json,distill-call2.json,distill-verified.json}
+source/<revision>/checked/{guide.md,digest.md,glossary.json,distill.json}
 page/<revision>/{body.md,citations.json,data.json}
 ```
 
 Objects are immutable. Write R2 first, then the D1 pointer. Advance current/head revision by compare-and-set and return
-`conflict` on a lost race. Old revisions remain readable for old citations. Use UUIDs and Unix milliseconds. Do not add
+`conflict` on a lost synchronous head race. Background ingest has already returned 202: an older completed conversion
+stays readable with a visible conflict warning and never replaces the newer head. Retrying a page Save with the same
+mutation UUID returns its already committed winner. Old revisions remain readable for old citations. Use UUIDs and Unix milliseconds. Do not add
 a generic effects ledger; each operation stores its own model route, usage and estimate.
 
 ## 4. Ingest and conversion
@@ -139,8 +147,9 @@ redirect; cap redirects, body and wall time. Network content is untrusted data.
 K1 static capture uses HTTPS port 443, at most three redirects, a 15-second total deadline and a streamed 25 MiB cap.
 Hostname validation does not pin DNS resolution; DNS rebinding prevention is not claimed. No owner/model credentials
 are sent to captured sites or corpus download hosts. `ELIOT_REMOTE_BINDINGS=0 pnpm dev` disables remote services for
-local native-text work and CI; the production bindings and Access checks are unchanged. Only `0001_library.sql` is
-applied by `pnpm db:local`; later migrations wait for their callers. Remote D1/R2 provisioning and deployment are not run.
+local native-text work and CI; the production bindings and Access checks are unchanged. `pnpm db:local` applies pending
+`0001`–`0003` and `0005_model_gateway.sql` through `migrations/000[1235]_*.sql`; future K4 `0004` stays excluded.
+Remote D1/R2 provisioning and deployment are not run.
 
 ## 5. Blocks, labels, citations and quote verification
 
@@ -157,6 +166,15 @@ For each candidate quote, search exact bytes in the stated block, then adjacent 
 whitespace/quote/dash/soft-hyphen normalization with a map back to original bytes. Prefer the stated block, mark
 ambiguous duplicates, and drop unmatched claims. Every digit group in a structured numeric value must occur in the
 verified quote or the structured numeric field is cleared.
+Decimal values additionally require a complete matching token, including any exponent: `41.0` and a separate `8` do
+not support `41.8` or `41,8`. Unambiguous decimal commas match decimal points; ambiguous comma-thousands keep the
+existing digit-group rule. This check also applies to statements, conditions, digest and glossary; existing integer,
+thousands and scientific-value checks remain in force.
+
+The verifier stores the original canonical slice, including original whitespace and punctuation, after normalized
+matching. Candidate statements with unsupported digit groups are dropped rather than retained with misleading prose.
+Digest/glossary numeric statements are checked against only the verified quotes selected by their labels; a valid
+label alone does not authorize a new number or experiment condition.
 
 Claims retain source-language task/metric/dataset, value text, optional parsed number/unit, conditions, quote and exact
 range. K6 owns cross-source normalization; K3 must not pretend raw multilingual strings are canonical.
@@ -170,12 +188,80 @@ against the existing instance instead of creating a retry service.
 
 `DistillWorkflow` uses two bounded calls:
 
-1. labelled canonical text → metadata, 3–5 sentence guide, 3–5 questions and candidate claims;
-2. verified guide + claims only → digest and EN/RU glossary.
+1. labelled canonical text → metadata, draft guide, 3–5 questions and candidate claims;
+2. verified original excerpts → supported claim selection, final 3–5 sentence guide, digest and EN/RU glossary.
 
-Code verifies quotes and numbers between calls. Store raw result/report in R2, compact verified claims in D1, and usage,
+Each input block is a separate JSON record containing its exact `quoteBlock` and text, so a label does not implicitly
+name following blocks or an entire section. The first output requests the source guide before detailed claims.
+Each claim still selects one `quoteBlock` from the closed compact label set for that immutable revision. Code resolves
+it to the full original block as its own quote, preserving PDF line-break hyphens, brackets and Markdown bytes;
+the model does not transcribe canonical evidence. Claim quote/range and numeric checks remain against that one block,
+and a statement that adds numbers absent from it is rejected.
+
+Draft guide items use `{ labels, text }`, with the closed `labels` array of 1–4 source-block selections before `text`.
+Code resolves every declared label to its exact canonical block and checks references and numbers against only the
+union of those selected quotes. It splits authored prose and retains at most the first numerically supported sentence
+per item, yielding at most five draft sentences; an early paragraph cannot consume the whole guide allowance.
+`Verified.guide` retains these `{ labels, text }` records as hypotheses. Call two receives them directly alongside
+candidate claims, with original excerpts as the sole evidence. The retained excerpt pool is exactly the union of
+declared claim `quoteBlock` selections and guide `labels`; code adds no inferred evidence bindings. Final guide and
+digest items also use `{ labels, text }` with 1–4 selected excerpts; glossary records likewise select labels first.
+Historical cached synthesis rechecks do not consume `Verified.guide` or expand its frozen evidence pool, so this new
+producer shape does not rebind or rewrite old artifacts. Raw selections are retained in R2, stored labels use the full
+revision UUID, and a final user task explicitly states the English/Russian response language in both calls. These
+request/validation changes do not establish paid-service or quality acceptance.
+
+Code verifies quotes and numbers between calls. Draft statements are hypotheses, not evidence: the second call checks
+each retained candidate against its own quote and can add a small number of atomic facts from the same frozen excerpts.
+Only its supported, code-checked output is committed to the claim reader. Result claims describe one scalar result
+per task/dataset/metric/condition instead of a compound table row. Citation annotations are resolved separately from
+factual numbers; an unknown annotation rejects its item. Paid steps have no retry; only deterministic storage steps
+may use bounded native Workflow retries, with immutable R2 writes and natural `(revision, ordinal)` claim keys.
+Store raw result/report in R2, compact verified claims in D1, and usage,
 cost and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
+`done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal
+filtering and remains diagnostic. `partial` records a missing required component or an interrupted/error outcome,
+not a nonzero drop percentage. The same exact-quote, numeric-support and anchor gates apply to both states.
+Guide/digest describe the paper for the owner rather than candidate review or model reasoning. Conflicting source
+values remain attributed to their separate source passages instead of being silently reconciled.
+Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels
+in guide/digest/glossary storage, including within sentence-level validation. Code literals remain literal; unknown
+annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.
+
+K3 records `distill_calls` (hard maximum two), `distill_started_at` and `distill_ms` on the owning revision. Admission
+reserves both full-context call bounds in the same monthly pool as chat, with at most two revisions running. Each
+Workflow paid step has zero retries; an atomic per-revision dispatch count prevents step replay from buying a duplicate
+call. Completed/partial revisions return existing artifacts on a repeated explicit request. Budget-paused work resumes
+only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
+Each background distillation call has a 180 s deadline (native paid-step deadline 4 minutes); the K2 chat ceiling stays
+90 s. The reader shows the current attempt count and the pre-dispatch maximum reservation. Long papers can use the
+same bounded two-call pipeline without a chat-sized timeout or a reduced quality target.
+An unconfirmed Workflow dispatch with zero paid calls is terminalized by a `running AND distill_calls=0` compare-and-set,
+releasing its concurrency slot and unused reservation. If paid dispatch already won, its usage/reservation is retained.
+A 15-minute product recovery ceiling (not a Cloudflare limit) prevents later paid dispatch; reconciliation finalizes
+expired or lost instances instead of holding both slots forever. Status/storage errors remain visible. Failed work is
+never recreated automatically, and uncertainty after a paid call never releases its conservative usage reservation.
+Raw call output and verification details remain in immutable R2 artifacts. The final artifact is written before its D1
+state; a lost D1 reply reconciles that same stored result without overwriting it or repeating inference. A conditional
+write that finds an existing artifact must verify equal content; different content is a conflict. Digest paragraphs
+are checked one authored sentence at a time with the same declared evidence, retaining supported sentences and
+rejecting unsupported numbers without rewriting them. Guide/digest links resolve against the immutable block map,
+while claim cards open their exact original quote ranges.
+
+If both bounded calls finished, the owner can explicitly **Save available output** after failure or **Recheck saved
+output** after a verifier correction. `POST /api/sources/:id/understanding` with `saveAvailable:true` validates the
+retained current-shape synthesis against frozen canonical excerpts and commits supported artifacts only. This path
+never admits, dispatches or retries a model call and works with no remaining model budget. Missing/incompatible output
+returns 409. Original `distill.json`, any earlier recovery report, and original derived bodies remain intact.
+
+The corrected guide, digest, glossary and report use fixed immutable `source/<revision>/checked/` keys. The report's
+`artifacts` map names those three bodies; nullable `source_revision.distill_report_key` selects the current report.
+Publish this head, `guide_summary`, `claim_count` and the current claim rows in one D1 batch guarded by the old head.
+Current claims are the ordinal prefix `[0, claim_count)`; upserts retain existing row IDs, and old trailing derived rows
+are retained but excluded by readers, context and later FTS queries. No original or legacy/live data is deleted.
+Calls, tokens, estimated cost and original model wall time remain unchanged. A repeated save of the checked head
+returns the same result. GET exposes `canRecover` from compatible stored output only; failed output is never re-queued.
 
 ## 7. Shared tools
 
@@ -194,6 +280,9 @@ Freeze current readable revision IDs at turn start. Context modes:
 2. `claims` (K3): guides plus verified claims fit when whole does not;
 3. `search` (K5): guides plus at most six shared-tool steps;
 4. `none`: explicit empty scope and no Library claim.
+
+Claims mode includes the stored guide with its exact quoted source passages, not an unlabelled summary that the
+answer cannot cite. Guide ranges are hydrated through R2 range reads; the whole source body is not loaded on this path.
 
 Estimate text conservatively as UTF-8 bytes / 3. History is newest prior turns, stripped of labels, capped at 10% of
 context and excludes answers whose cited revisions are outside scope. Keep source-prefix bytes stable for cache reuse.
@@ -251,16 +340,53 @@ call; an in-flight call may finish.
 ## 11. Models
 
 Routes are `workers-ai:<model>` or `gateway:<provider>/<model>`. `src/models.ts` owns context, output reserve,
-capabilities and dated unit prices. Unknown routes stay disabled. Routes rechecked 2026-10-26 (pricing page updated 2026-10-20):
+capabilities and dated unit prices. Unknown routes stay disabled. Native routes rechecked 2026-10-26 (pricing page
+updated 2026-10-20); external facts below checked 2026-10-26:
 
-| Use | Route | Context | $/1M input / cached / output |
-|---|---|---:|---:|
-| default answer + distill | `@cf/zai-org/glm-5.3-flash` | 1,048,576 | 0.15 / 0.03 / 0.50 |
-| owner-selected hard synthesis | `@cf/zai-org/glm-5.3` | 1,048,576 | 1.40 / 0.26 / 4.40 |
+| Use | Route | Context | Max output | $/1M input / cached / output |
+|---|---|---:|---:|---:|
+| default answer + distill | `workers-ai:@cf/zai-org/glm-5.3-flash` | 1,048,576 | 8,192 | 0.15 / 0.03 / 0.50 |
+| owner-selected hard synthesis | `workers-ai:@cf/zai-org/glm-5.3` | 1,048,576 | 8,192 | 1.40 / 0.26 / 4.40 |
+| optional Google BYOK; local WIP, paid acceptance NOT_RUN | `gateway:google/gemini-2.5-flash` | 1,000,000 | 65,536 | 0.30 / 0.03 / 2.50 |
 
-The expensive route is never automatic. External models require owner-supplied Gateway/BYOK credentials, explicit
-prices and eval. Chat has no SDK-level paid retry; Workflows own retries. Verify rendered request plus output reserve
-against the current model schema before dispatch.
+The expensive route is never automatic. Native answer/distill defaults remain Flash. The optional external route uses
+installed `agents@0.30.1` / `agents/models/ai-sdk` `createAI({ binding: env.AI }).languageModel` with the fixed catalog
+ID `google/gemini-2.5-flash`. No fallback legs, dynamic routes or alternate model are selected on failure.
+
+Local connection contract: `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; null disables the
+external route. `GET /api/models/connection` returns `{ connection: { gatewayId, provider: "google-ai-studio",
+alias: "default" } }`. Owner-only `PUT` accepts `{ gatewayId, confirmCredentialAccess: true }` to enable access to
+the existing credential, or `{ gatewayId: null }` to disconnect. The owner checkbox is mandatory when enabling.
+Only an exact existing named Gateway in the Worker's account is permitted; `default` is rejected because that name can
+create a Gateway implicitly. Saving records configuration without checking Gateway existence or provider usability.
+There is no secret input, credential creation, provider Authorization header or dummy key. Credentials stay in
+Cloudflare; this binding path consults only the provider's `default` BYOK alias.
+
+The external model's `headers` become top-level binding `extraHeaders`: `cf-aig-no-wholesale: true`,
+`cf-aig-max-attempts: 1`, `cf-aig-skip-cache: true`, `cf-aig-collect-log: false` (string header values). Gateway options
+also set the saved ID, `skipCache: true`, `collectLog: false` and `retries.maxAttempts: 1`. These request controls require
+BYOK and request one attempt without response caching or Gateway logs. Installed-adapter/workerd forwarding is source
+evidence, not proof that the live Gateway/provider enforces the controls. Paid provider acceptance remains **NOT_RUN**
+until owner credential access and explicit model opt-in; storing a connection is not that acceptance.
+
+Explicit Understand accepts optional `input.model` and freezes the selected route in that revision's `distill_model`.
+Connection availability is checked before budget admission; the call transport resolves before the dispatch counter.
+A disconnected external route already queued becomes `paused` with zero calls. Reconnecting does not resume it;
+the owner must request Understand explicitly. Completed/partial revisions are not re-distilled by changing the model.
+Chat and distill use AI SDK `maxRetries: 0`; paid Workflow steps use retry limit zero. Only deterministic storage steps
+may retry. Verify rendered request plus output reserve against the model schema before dispatch.
+
+The [Cloudflare model catalog](https://developers.cloudflare.com/ai/models/google/gemini-2.5-flash/) supplies the 1M
+context and prices; its page exposes no modification date. [Google's model limits](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash)
+(updated 2026-09-22) supply the 65,536 output cap; Eliot uses the smaller Cloudflare context limit. Google's
+[standard pricing](https://ai.google.dev/gemini-api/docs/pricing#gemini-2.5-flash) (updated 2026-10-26) includes thinking
+tokens in output. With no cache discount, reserve **463,840 micro-USD/call**, **927,680 micro-USD/two-call distill**
+(`1,000,000 × 0.30 + 65,536 × 2.50` micro-USD). This is a conservative model-token bound, not measured provider cost.
+
+Official transport references checked 2026-10-26: [Worker binding](https://developers.cloudflare.com/ai-gateway/usage/worker-binding-methods/)
+(updated 2026-10-02), [Unified Billing / credential precedence](https://developers.cloudflare.com/ai-gateway/features/unified-billing/)
+(2026-09-30), [BYOK](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/) (2026-09-22), and
+[request handling](https://developers.cloudflare.com/ai-gateway/configuration/request-handling/) (2026-09-14).
 
 ## 12. Project knowledge and research
 
@@ -282,7 +408,8 @@ font stacks, radii or timings outside tokens are defects. Move each feature with
 replace legacy adapters rather than copying old runtime/query layers.
 
 Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:sourceId?start=&end=`; K2
-`/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`. Every screen has loading, empty and actionable error states plus
+`/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
+Every screen has loading, empty and actionable error states plus
 stale/paused where relevant. Use one Markdown renderer with raw HTML disabled and resolved citation chips. Do not cache
 private text in localStorage or a service worker.
 
@@ -313,3 +440,36 @@ Checked against official Cloudflare documentation on 2026-10-24. Recheck before 
 | `$in` handles 500 revision IDs on the real binding | **open — K5 spike** |
 | Best Russian keyword tokenizer | **open — K5 spike** |
 | Prompt-cache behaviour and maximum output for each enabled route | **open — K2 measurement/schema check** |
+
+### Unmerged proposal PR #419 (explicitly unaccepted)
+
+[PR #419](https://github.com/UnknownAlienHuman/eliot-research/pull/419) (`docs/final-contract-audit` @
+`4dfcd8eb308e84f26c6c7e42a921aec25746a19c`) is **OPEN / CONFLICTING** (`mergeStateStatus: DIRTY`, not merged),
+checked live 2026-10-26 after the K1 duplicate-fix delivery. GitHub reports its base SHA, also the comparison merge base, as
+`397d04538dceca69eb975896513a6049f2d4a266`; current remote `main` and local `origin/main` are
+`ca4405576272a72654981d34b817c8f0ff7f8ef4`. Local `main` is `909c641ecd5af737d9c79ca650c2fb98f7160533`
+plus shared K3 WIP. The PR has one commit changing 18 documentation/migration files, including rewrites of
+`0001`–`0004` and new `0005_search.sql`, `0006_project.sql`, `0007_jobs.sql`; it supplies no converter runtime.
+Its proposed contracts are not accepted architecture or evidence that the current product implements them.
+
+The PR's §4 rejects `AI.toMarkdown` as canonical evidence and proposes deterministic UTF-8/PDF/HTML extraction.
+Current K1 code on `origin/main` and local WIP still uses native text or `env.AI.toMarkdown().transform()`;
+standalone images are rejected before conversion, and embedded HTML/DOCX/PDF images request
+`convert: false, maxConvertedImages: 0`, with PDF metadata disabled. Installed `@cloudflare/workers-types`
+`5.20261024.1` exposes those embedded-image controls; that type contract does not prove service output contains
+no generated descriptions. The PR's contrary platform claim is also not established by its documentation alone.
+Existing K1 corpus evidence belongs to the recorded converter/output, not an unimplemented replacement;
+no new image-heavy PDF check or conversion was run in this reconciliation.
+
+The proposed PDF donor is already pinned: `unjs/unpdf@87c7edc43ee99a17d2aa20acf271c4889332720b`, package
+`1.9.1`, MIT, paths `src/text.ts` and `examples/cloudflare/index.ts` verified at that commit. Its text helpers
+use `Promise.all` over pages, so the PR's sequential-page requirement still needs implementation and measurement.
+Both registries retain legacy Eliot `7c034569b908d3b03a8b821b7c537477a24b10f7` and Agents
+`321814b6c13f72cff82161e7eb20312574ac9b7a`; the current registry retains
+`packages/cloudflare-markdown/src/markdown-conversion.ts`, while the PR removes that converter donor.
+
+| Choice needing owner decision | Implication |
+|---|---|
+| Canonical converter: retain current K1 path or adopt deterministic extraction | Current instruction retains `toMarkdown`; adopting the pinned `unpdf`/HTML proposal requires an explicit converter change and fresh K1 acceptance. Existing canonical revisions/citations must remain intact. |
+| Image evidence: current no-OCR policy or a separately accepted OCR/description path | Keep originals and `needs_conversion`; embedded-image opt-out needs real output verification. Accepting derived image text as canonical evidence would require an explicit policy and a new revision, not a silent reinterpretation of old text. |
+| Schema: current revision-owned state or PR attempt/reservation tables | Reconcile deliberately with current callers and retained local data. PR `0001` excludes `workers_ai_markdown` and replaces `readable_size` with `canonical_size`; `0002` renames the budget field and adds `budget_month`/`budget_reservation`; `0003` adds `distill_run`/`claim.distill_run_id` and different paused states, whereas local WIP retains revision-owned `distill_started_at`, `distill_calls` and `distill_ms`. These are incompatible contracts, not append-only migrations ready to apply. |

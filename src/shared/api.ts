@@ -61,6 +61,7 @@ export interface TurnView {
   state: "started" | "completed" | "partial" | "failed" | "cancelled";
   model: string;
   scopeMode: "project_default" | "explicit" | "empty";
+  contextMode?: "whole" | "claims" | "none";
   revisionIds: string[];
   sourceIds: string[];
   citations: Citation[];

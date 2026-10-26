@@ -43,6 +43,12 @@ quotas.
 - K1 implements projects, shared Library membership, one-file uploads, pasted text/static URLs, immutable replacement
   revisions, outline, original download and exact UTF-8 ranges. D1/R2/IngestWorkflow run locally; Workers AI `toMarkdown`
   was exercised against the real service. AI Search and later-contour bindings remain absent.
+- K1 duplicate text/URL forms now retain the 409 source identity and offer explicit Attach existing, delivered to
+  `main` in `d84e8b51`. Both browser scenarios passed on the independent K1 checkout; exact revisions were reused.
+  Lint/typecheck, 84 tests, build and both GitHub CI workflows passed on that commit. No deployment was performed.
+- The protected-response header correction is delivered in `ca440557`: HTML/assets and source downloads now receive
+  private/no-store and framing protection after response construction. K0/K1 real local evals and fast-ci passed on
+  that exact commit; WebSocket read-only upgrades were checked separately in the K2/K3 WIP. No deployment was performed.
 - K2 is implemented locally with an Agents SDK chat, frozen whole-source scope, one structured streaming model call,
   exact citations, Stop/reconnect, model settings and storage-only Save. Its automatic corpus gates passed; the
   fresh NotebookLM comparison found answer-quality defects, so K2 quality acceptance and merge remain open.
@@ -130,6 +136,10 @@ open any readable source with outline and exact passage links.
 - Owner opens three citations and one copied range link on phone.
 
 `pnpm eval k1` includes the real phone journey, immutable old-revision checks and recovery from an offline upload.
+The browser journeys also exercise duplicate pasted text and duplicate static URLs through explicit Attach existing.
+`ELIOT_EVAL_NET=1 pnpm eval k1 --native-only` includes the real public static-URL case; without that opt-in its network
+journey is explicitly NOT_RUN. The 2026-10-26 run passed both duplicate journeys with the same stored revision and
+zero new conversion/model usage. The URL guard was unchanged.
 `ELIOT_EVAL_LIMIT=1` adds the actual 25 MiB file and 25 MiB + 1 byte rejection cases. CI runs
 `pnpm eval k1 --native-only` with remote AI bindings disabled; it does not claim PDF-service acceptance.
 
@@ -179,6 +189,13 @@ comparable runs rather than making one provider fluctuation invalidate the archi
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
+Local WIP on 2026-10-26 adds an opt-in nonsecret connection to an existing Google AI Studio default BYOK credential
+for fixed `gateway:google/gemini-2.5-flash`; native defaults stay unchanged. No credential input is added; saved
+configuration does not prove provider usability. Paid acceptance is **NOT_RUN**; see IMPLEMENTATION §11.
+Local `--models-only` checks passed for consent rejection, disconnected chat/distill before admission and the Material
+390px forms, with usage unchanged. The installed SDK was exercised over a fake binding for structured streaming,
+usage, exact request headers and one dispatch; that is a local transport contract check, not a Google service pass.
+
 Local K2 run on 2026-10-26: all C1–C4/O1–O8 completed with zero invalid labels and byte-checked ranges, at
 $0.120236 estimated model cost. Cold first/total time was 25,724/27,763 ms; warm first-token p50/p95 was
 7,361/23,601 ms and warm total p50/p95 was 23,161/40,703 ms. The initial 40 s p95 target was missed; the 90 s hard
@@ -224,9 +241,71 @@ re-distilled automatically.
 - Transformer, ResNet and LoRA anchor expectations in `eval/arxiv-10/questions.md` are present with correct conditions;
   no unsupported number is stored. Claim count and drop rate are reported, not quality gates.
 - Claim mode keeps C1–C4 correct and citations valid; overview lists every readable source without a model call.
+- The automatic claims path is exercised in a separate real overflow project: reuse the ten baseline sources and
+  attach the public papers in `eval/arxiv-10/overflow.json`. Measured source bytes must exceed the unchanged model
+  whole-reading cap, and all four turns must report `contextMode=claims`. The baseline PDFs/questions remain unchanged;
+  no forced mode, reduced model cap, repeated padding or K5 search infrastructure is used.
 - Eval prints per-revision calls, tokens, estimated cost, kept/dropped reasons and wall time.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
+
+Local K3 diagnostics on 2026-10-26 are **not acceptance**. Transformer ended `partial` after two calls (3 kept claims,
+3,123 micro-USD); BERT ended `failed` after one call (no verified claims, 4,444 micro-USD, no second call). Inspection
+of the raw output against canonical bytes found model-joined PDF hyphenation and changed brackets, plus claims with
+numbers absent from their quoted row. The strict verifier correctly rejected them. The second-stage numeric guard
+and closed block-selection request were corrected; that corrected model path has not yet passed service acceptance.
+Existing failed/partial attempts are retained, with no automatic paid retry. Re-requesting the unchanged Transformer
+revision returned identical output, two total calls and zero cost delta. Full K3 remains open, including all ten
+sources, anchors and real claim-mode C1–C4.
+
+A separate retained validation corpus now has ten pipeline-completed revisions. The real Flash service used twenty
+bounded calls (two per revision), totaling 64,651 micro-USD. BatchNorm's
+two saved responses initially failed deterministic digest validation; sentence-level checking recovered nine supported
+claims by explicit storage-only Save, with calls/tokens/cost and original/text bytes unchanged. The zero-headroom save,
+repeat-save idempotence and phone reader/citation journey passed locally. The full service eval failed A1 French
+41.8 BLEU and its 3.5-day/eight-GPU anchor; it did not retry any revision. Raw inspection found a stored statement
+41.8 quoting a passage with 41.0 plus a separate 8: the digit-group guard incorrectly accepted this combination.
+The decimal guard and regression now reject it; retained artifacts are diagnostic evidence, not quality-accepted
+knowledge. The original PDF itself has 41.8 in its abstract/Table 2 and 41.0 in §6.1, and canonical text preserves
+that conflict. This does not demonstrate a converter defect. Source-guide wording was also corrected to exclude
+candidate-review narration; that new request path is **not service-tested**. Automatic claim-mode C1–C4 remain
+**NOT_RUN**. No further paid work is started to turn this failed run green.
+Explicit cached rechecks on the three affected revisions now exclude four rejected claim assertions from the current
+read path: Transformer 10→9, GAN 17→16 and BERT 12→10. All 115 D1 rows remain; `claim_count` selects 111 current cards.
+Checked R2 bodies and the report head publish atomically with current claim metadata. Real phone/browser checks,
+zero-headroom save, exact ranges, unchanged originals/texts, repeat-save identity and unchanged usage passed. The latest
+stored eval has three open gates: the two A1 anchors and claim-mode NOT_RUN, with no numeric violations or new POST.
+
+Raw diagnosis found a general request-shape mismatch: all 14 first-pass Transformer claims were table results, while
+guide items contained 3–4 sentences (653–1,133 characters) assigned to one roughly 1 KiB block. The chosen excerpt pool
+omitted the abstract's headline-result block; call two could not recover material it never received. Label membership
+alone does not establish semantic support. JSON block boundaries, guide-first output and sentence-level guide bounds
+now make that contract explicit without source-specific branches or adding evidence to retained outputs. This changed
+paid request remains **NOT_RUN**; no further paid attempt is started merely to green the eval.
+
+The combined K0/K2/K3 and external-model slice measured before integration adds 1,831 non-test `src/` lines (generated bindings excluded), counting
+all shared UI additions conservatively. The K3 1,200-line target is exceeded; the excess covers exact quote/number
+checking, primary-passage hydration and owner-visible cached-output correction, without an additional platform or
+generic retry layer. This combined count supersedes the earlier approximate 1,440-line figure; it is not a claim that
+all changes belong to K3 or that the target was met.
+The earlier stored run on `.wrangler/state` exited nonzero with 25 violations. The latest stored-only run on the fresh
+ten-source corpus initially had seven violations. After the explicit correction it exits nonzero with three open
+gates. It adds no POST/model work and leaves 64,651 micro-USD unchanged.
+Anchors use only exact claim quotes from their actual source, never generated digest or unsupported conditions as
+evidence. Native-only smoke success and diagnostic-script exit codes are not K3 acceptance.
+
+Budget evidence is from the same local Worker at `127.0.0.1:5173`, local D1 `DB` under `.wrangler/state/v3/d1`:
+Transformer admission at 07:34:09 UTC reserved 322,766 micro-USD over 828,757 chat usage (1,151,523 total); settlement
+at 07:35:02 replaced that reservation with 3,123 (831,880 total). BERT ran 07:49:24–07:50:32 UTC, settling to 4,444;
+the 14:09 UTC storage check showed 836,324 total against the unchanged 5,000,000 budget. A reservation snapshot is not
+an additional bill. `admitDistill` updates the owning revision atomically before Workflow creation; each model dispatch
+then atomically increments its bounded call count before `generateText`.
+
+**Fresh-run cost bound (2026-10-26).** Ten baseline sources × two calls + two overflow sources × two calls + four
+claim answers = **28 calls**, reserving **4,518,724 micro-USD** at Flash's worst-case model-token bound, plus PDF
+conversion. The twenty-call baseline alone reserves 3,227,660 micro-USD; 24 calls / approximately $3.88 excludes overflow
+and is not the full-run total. The reported remaining 4,078,640 micro-USD cannot admit the full fresh bound; no budget
+increase is assumed.
 
 ---
 

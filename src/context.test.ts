@@ -19,24 +19,47 @@ interface MemRevision {
   id: string;
   readableState: string;
   readableSize: number | null;
+  distillState: string | null;
+  guideSummary: string | null;
   deletedAt: number | null;
+  reportKey?: string | null;
+  claimCount?: number | null;
 }
 interface MemMembership {
   projectId: string;
   sourceId: string;
   enabled: number;
 }
+interface MemBlock {
+  id: number;
+  type: string;
+  start: number;
+  end: number;
+  heading: string | null;
+}
+interface MemClaim {
+  ordinal: number;
+  statement: string;
+  quote: string;
+  conditions: string | null;
+  blockIndex: number;
+  ambiguous: number;
+}
 interface MemText {
-  text: string;
-  blocks: { id: number; type: string; start: number; end: number; heading: string | null }[];
+  text?: string;
+  guide?: string | undefined;
+  checkedGuide?: string | undefined;
+  report?: unknown;
+  blocks: MemBlock[];
 }
 
-function wholeBlock(text: string, id: number) {
+function wholeBlock(text: string, id: number): MemBlock {
   return { id, type: "paragraph", start: 0, end: text.length, heading: null as string | null };
 }
 
-function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; revisions: MemRevision[]; texts: Record<string, MemText> }) {
+function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; revisions: MemRevision[]; texts: Record<string, MemText>; claims?: Record<string, MemClaim[]> }) {
   let reads = 0;
+  const requested: string[] = [];
   const DB = {
     prepare(sql: string) {
       return {
@@ -56,11 +79,19 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
                 const s = opts.sources.find((x) => x.id === sourceId);
                 if (!s || s.state !== "active" || !s.currentRevisionId) return null;
                 const r = opts.revisions.find((x) => x.id === s.currentRevisionId);
-                return { id: s.id, title: s.title, revisionId: s.currentRevisionId, readableState: r ? r.readableState : null, readableSize: r ? r.readableSize : null };
+                return { id: s.id, title: s.title, revisionId: s.currentRevisionId, readableState: r ? r.readableState : null, readableSize: r ? r.readableSize : null, distillState: r ? r.distillState : null, guideSummary: r ? r.guideSummary : null, reportKey: r?.reportKey ?? null };
               }
               return null;
             },
             async all() {
+              if (sql.includes("FROM claim")) {
+                const rev = params[0] as string;
+                const head = opts.revisions.find((x) => x.id === rev)?.claimCount;
+                const rows = (opts.claims?.[rev] ?? [])
+                  .filter((c) => c.ambiguous === 0 && (typeof head !== "number" || c.ordinal < head))
+                  .sort((a, b) => a.ordinal - b.ordinal);
+                return { results: rows.map((c) => ({ ordinal: c.ordinal, statement: c.statement, quote: c.quote, conditions: c.conditions, blockIndex: c.blockIndex })) };
+              }
               const projectId = params[0] as string;
               const rows = opts.memberships
                 .filter((m) => m.projectId === projectId && m.enabled === 1)
@@ -73,7 +104,7 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
                 .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))
                 .map((s) => {
                   const r = opts.revisions.find((x) => x.id === s.currentRevisionId);
-                  return { id: s.id, title: s.title, revisionId: s.currentRevisionId as string, readableSize: r ? r.readableSize : null };
+                  return { id: s.id, title: s.title, revisionId: s.currentRevisionId as string, readableSize: r ? r.readableSize : null, distillState: r ? r.distillState : null, guideSummary: r ? r.guideSummary : null, reportKey: r?.reportKey ?? null };
                 });
               return { results: rows };
             },
@@ -86,23 +117,44 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
     },
   };
   const BUCKET = {
-    async get(key: string) {
+    async get(key: string, options?: { range?: { offset: number; length: number } }) {
       reads += 1;
+      const byteRange = options?.range;
+      requested.push(byteRange ? key + "#r" + byteRange.offset + "-" + (byteRange.offset + byteRange.length) : key);
       const parts = key.split("/");
-      if (parts.length !== 3 || parts[0] !== "source") return null;
+      if ((parts.length !== 3 && parts.length !== 4) || parts[0] !== "source") return null;
       const rev = parts[1] as string;
-      const kind = parts[2] as string;
+      const kind = parts.slice(2).join("/");
       const entry = opts.texts[rev];
       if (!entry) return null;
       if (kind === "text.md") {
-        const data = new TextEncoder().encode(entry.text);
+        if (entry.text === undefined) return null;
+        const bytes = new TextEncoder().encode(entry.text);
+        const view = byteRange ? bytes.subarray(byteRange.offset, byteRange.offset + byteRange.length) : bytes;
+        const exact = Uint8Array.from(view);
+        return { arrayBuffer: async () => exact.buffer as ArrayBuffer };
+      }
+      if (kind === "guide.md") {
+        if (entry.guide === undefined) return null;
+        const data = new TextEncoder().encode(entry.guide);
+        return { arrayBuffer: async () => data.buffer as ArrayBuffer };
+      }
+      if (kind === "checked/guide.md") {
+        if (entry.checkedGuide === undefined) return null;
+        const data = new TextEncoder().encode(entry.checkedGuide);
+        return { arrayBuffer: async () => data.buffer as ArrayBuffer };
+      }
+      if (kind === "checked/distill.json") {
+        if (entry.report === undefined) return null;
+        const raw = typeof entry.report === "string" ? entry.report : JSON.stringify(entry.report);
+        const data = new TextEncoder().encode(raw);
         return { arrayBuffer: async () => data.buffer as ArrayBuffer };
       }
       if (kind === "blocks.json") return { json: async () => entry.blocks };
       return null;
     },
   };
-  return { env: { DB, BUCKET } as unknown as Env, reads: () => reads };
+  return { env: { DB, BUCKET } as unknown as Env, reads: () => reads, requested };
 }
 
 function twoSourceEnv() {
@@ -120,9 +172,9 @@ function twoSourceEnv() {
       { id: "s3", title: "Hidden", state: "active", currentRevisionId: "r3", createdAt: 3 },
     ],
     revisions: [
-      { id: "r1", readableState: "readable", readableSize: 20, deletedAt: null },
-      { id: "r2", readableState: "readable_with_warnings", readableSize: 14, deletedAt: null },
-      { id: "r3", readableState: "readable", readableSize: 13, deletedAt: null },
+      { id: "r1", readableState: "readable", readableSize: 20, distillState: "done", guideSummary: null, deletedAt: null },
+      { id: "r2", readableState: "readable_with_warnings", readableSize: 14, distillState: "done", guideSummary: null, deletedAt: null },
+      { id: "r3", readableState: "readable", readableSize: 13, distillState: "done", guideSummary: null, deletedAt: null },
     ],
     texts: {
       r1: { text: textA, blocks: [{ id: 1, type: "paragraph", start: 0, end: 8, heading: null }, { id: 2, type: "paragraph", start: 10, end: 19, heading: null }] },
@@ -167,6 +219,27 @@ describe("buildContext K2 whole scope", () => {
     expect(res.estimatedInputTokens).toBeGreaterThan(0);
   });
 
+  it("narrowed scope keeps answers citing only A and drops answers citing B", async () => {
+    const { env } = twoSourceEnv();
+    const res = await buildContext(env, actor, {
+      projectId: "p1",
+      scopeMode: "explicit",
+      sourceIds: ["s1"],
+      model: MODEL,
+      history: [
+        { role: "user", content: "Question about A" },
+        { role: "assistant", content: "Cited A answer [S1:1] kept", revisionIds: ["r1"] },
+        { role: "assistant", content: "Cited B answer [S2:1] gone", revisionIds: ["r2"] },
+      ],
+    });
+    expect(res.mode).toBe("whole");
+    expect(res.revisionIds).toEqual(["r1"]);
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).toContain("Question about A");
+    expect(body).toContain("Cited A answer");
+    expect(body).not.toContain("Cited B answer");
+  });
+
   it("explicit empty scope never falls back and reads no storage", async () => {
     const { env, reads } = twoSourceEnv();
     const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [], model: MODEL });
@@ -193,12 +266,12 @@ describe("buildContext K2 whole scope", () => {
     expect((err as LibraryError).status).toBe(400);
   });
 
-  it("throws narrow-scope when whole text does not fit", async () => {
+  it("post-load overflow without sizes still throws narrow-scope", async () => {
     const big = "x".repeat(9000);
     const { env } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "Big", state: "active", currentRevisionId: "r1", createdAt: 1 }],
-      revisions: [{ id: "r1", readableState: "readable", readableSize: null, deletedAt: null }],
+      revisions: [{ id: "r1", readableState: "readable", readableSize: null, distillState: "queued", guideSummary: null, deletedAt: null }],
       texts: { r1: { text: big, blocks: [wholeBlock(big, 1)] } },
     });
     let err: unknown;
@@ -216,7 +289,7 @@ describe("buildContext K2 whole scope", () => {
     const { env, reads } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "Native25", state: "active", currentRevisionId: "r9", createdAt: 1 }],
-      revisions: [{ id: "r9", readableState: "readable", readableSize: 26214400, deletedAt: null }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: 26214400, distillState: "queued", guideSummary: null, deletedAt: null }],
       texts: {},
     });
     let err: unknown;
@@ -236,7 +309,7 @@ describe("buildContext K2 whole scope", () => {
     const { env } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "NoBlocks", state: "active", currentRevisionId: "r1", createdAt: 1 }],
-      revisions: [{ id: "r1", readableState: "readable", readableSize: 10, deletedAt: null }],
+      revisions: [{ id: "r1", readableState: "readable", readableSize: 10, distillState: "done", guideSummary: null, deletedAt: null }],
       texts: { r1: { text: "Orphan text.", blocks: [] } },
     });
     let err: unknown;
@@ -269,4 +342,307 @@ describe("buildContext K2 whole scope", () => {
   });
 });
 
+describe("buildContext K3 claims fallback", () => {
+  function claimsEnv() {
+    return makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: 26214400, distillState: "done", guideSummary: "Guide A.", deletedAt: null, claimCount: 4 }],
+      texts: { r9: { guide: "See [S9:9] and [R00000000-0000-0000-0000-000000000000:2].", blocks: [{ id: 1, type: "paragraph", start: 0, end: 9, heading: null }, { id: 2, type: "paragraph", start: 10, end: 19, heading: null }, { id: 3, type: "paragraph", start: 20, end: 29, heading: null }] } },
+      claims: {
+        r9: [
+          { ordinal: 1, statement: "First finding", quote: "quoted one", conditions: null, blockIndex: 2, ambiguous: 0 },
+          { ordinal: 2, statement: "Second finding", quote: "quoted two", conditions: "when calm", blockIndex: 3, ambiguous: 0 },
+          { ordinal: 3, statement: "Shaky finding", quote: "quoted three", conditions: null, blockIndex: 2, ambiguous: 1 },
+        ],
+      },
+    });
+  }
 
+  it("falls back to claims without loading whole text", async () => {
+    const { env, requested } = claimsEnv();
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+    expect(res.mode).toBe("claims");
+    expect(res.revisionIds).toEqual(["r9"]);
+    expect(res.sources.map((s) => s.alias)).toEqual(["S1"]);
+    expect(res.sources[0]?.blocks.map((b) => b.id)).toEqual([2, 3]);
+    expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
+    expect(res.messages[1]).toMatchObject({ role: "user" });
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).toContain("[S1:2] First finding");
+    expect(body).not.toContain("S9:9");
+    expect(body).not.toContain("Guide A.");
+    const resolved = resolveCitations("Claim holds [S1:3] but not [S1:1].", res.sources);
+    expect(resolved.citations.length).toBe(1);
+    expect(resolved.citations[0]?.sourceId).toBe("s1");
+    expect(resolved.invalidLabels).toBe(1);
+  });
+
+  it("reserved caller text pushes whole over cap and chooses claims", async () => {
+    const body = "T".repeat(600);
+    const { env, requested } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: 600, distillState: "done", guideSummary: "Guide: G.", deletedAt: null, claimCount: 2 }],
+      texts: { r9: { text: body, guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 300, heading: null }, { id: 2, type: "paragraph", start: 300, end: 600, heading: null }] } },
+      claims: { r9: [{ ordinal: 1, statement: "Finding one", quote: "quoted one", conditions: null, blockIndex: 2, ambiguous: 0 }] },
+    });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 1200, maxOutputTokens: 100 }, question: "Q" + "q".repeat(539), instructions: "I" + "i".repeat(539) });
+    expect(res.mode).toBe("claims");
+    expect(res.revisionIds).toEqual(["r9"]);
+    expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
+    expect(res.messages[1]).toMatchObject({ role: "user" });
+    const text = res.messages.map((m) => m.content).join(NL);
+    expect(text).toContain("[S1:2] Finding one");
+    expect(text).not.toContain("qqqq");
+    expect(res.estimatedInputTokens).toBeGreaterThan(0);
+  });
+
+  it("claims overflow errors instead of narrowing scope", async () => {
+    const big = "finding detail " + "x".repeat(160);
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: 26214400, distillState: "done", guideSummary: "Guide A.", deletedAt: null, claimCount: 6 }],
+      texts: { r9: { guide: "See nothing.", blocks: [1, 2, 3, 4, 5, 6].map((id) => ({ id, type: "paragraph", start: 0, end: 5, heading: null })) } },
+      claims: { r9: [1, 2, 3, 4, 5].map((n) => ({ ordinal: n, statement: "Finding " + n + " " + big, quote: "quoted " + n, conditions: null, blockIndex: n, ambiguous: 0 })) },
+    });
+    let err: unknown;
+    try {
+      await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 900, maxOutputTokens: 100 } });
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LibraryError);
+    expect((err as LibraryError).code).toBe("invalid");
+    expect((err as LibraryError).status).toBe(400);
+  });
+
+  it("undistilled scope reports understanding-needed, not silent whole", async () => {
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Big", state: "active", currentRevisionId: "r1", createdAt: 1 }],
+      revisions: [{ id: "r1", readableState: "readable", readableSize: 26214400, distillState: "queued", guideSummary: null, deletedAt: null }],
+      texts: {},
+      claims: {},
+    });
+    let err: unknown;
+    try {
+      await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LibraryError);
+    expect((err as LibraryError).code).toBe("invalid");
+    expect((err as LibraryError).message).toMatch(/understood/);
+  });
+
+  it("distilled scope without usable claims reports understanding-needed", async () => {
+    const { env, reads } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "NoClaims", state: "active", currentRevisionId: "r1", createdAt: 1 }],
+      revisions: [{ id: "r1", readableState: "readable", readableSize: 26214400, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 }],
+      texts: { r1: { blocks: [{ id: 1, type: "paragraph", start: 0, end: 5, heading: null }] } },
+      claims: { r1: [{ ordinal: 1, statement: "Maybe", quote: "maybe", conditions: null, blockIndex: 1, ambiguous: 1 }] },
+    });
+    let err: unknown;
+    try {
+      await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LibraryError);
+    expect((err as LibraryError).code).toBe("invalid");
+    expect((err as LibraryError).message).toMatch(/understood/);
+    expect(reads()).toBe(1);
+  });
+  it("prints only own-revision persistent guide refs as citable passages", async () => {
+    const rev = "9f3b1c2d-4a5e-4f6a-8b7c-9d0e1f2a3b4c";
+    const { env, requested } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: rev, createdAt: 1 }],
+      revisions: [{ id: rev, readableState: "readable", readableSize: 26214400, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 }],
+      texts: { [rev]: { text: "012345678901234567890123456789", blocks: [{ id: 1, type: "paragraph", start: 0, end: 9, heading: null }, { id: 2, type: "paragraph", start: 10, end: 19, heading: null }, { id: 3, type: "paragraph", start: 20, end: 29, heading: null }], guide: "Intro [S1:2] plus [R00000000-0000-0000-0000-000000000000:2] plus [R" + rev + ":2] plus [R" + rev + ":99] end." } },
+      claims: { [rev]: [{ ordinal: 1, statement: "Claimed", quote: "quoted", conditions: null, blockIndex: 3, ambiguous: 0 }] },
+    });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+    expect(res.mode).toBe("claims");
+    expect(res.sources[0]?.blocks.map((b) => b.id)).toEqual([2, 3]);
+    expect(requested.filter((k) => k.includes("text.md"))).toEqual(["source/" + rev + "/text.md#r10-19"]);
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).toContain("[S1:2] 012345678");
+    const resolved = resolveCitations("Guide says [S1:2] but not [S1:1].", res.sources);
+    expect(resolved.citations.length).toBe(1);
+    expect(resolved.citations[0]?.sourceId).toBe("s1");
+    expect(resolved.invalidLabels).toBe(1);
+  });
+
+  it("missing guide for a distilled revision is actionable unavailable", async () => {
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: 26214400, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 }],
+      texts: { r9: { text: "x".repeat(30), blocks: [{ id: 1, type: "paragraph", start: 0, end: 5, heading: null }] } },
+      claims: { r9: [{ ordinal: 1, statement: "Claimed", quote: "quoted", conditions: null, blockIndex: 1, ambiguous: 0 }] },
+    });
+    let err: unknown;
+    try {
+      await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LibraryError);
+    expect((err as LibraryError).code).toBe("unavailable");
+    expect((err as LibraryError).status).toBe(503);
+  });
+
+  it("claim head bound excludes retained trailing legacy rows", async () => {
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: 26214400, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 }],
+      texts: { r9: { text: "AAAAAAAAAABBBBBBBBBBCCCCCCCCCCDDDDDDDDDD", guide: "See nothing.", blocks: [1, 2, 3, 4].map((id) => ({ id, type: "paragraph", start: (id - 1) * 10, end: id * 10, heading: null })) } },
+      claims: {
+        r9: [
+          { ordinal: 0, statement: "Current A", quote: "quoted A", conditions: null, blockIndex: 3, ambiguous: 0 },
+          { ordinal: 1, statement: "Current B", quote: "quoted B", conditions: null, blockIndex: 4, ambiguous: 0 },
+          { ordinal: 2, statement: "Legacy X", quote: "quoted X", conditions: null, blockIndex: 1, ambiguous: 0 },
+          { ordinal: 3, statement: "Legacy Y", quote: "quoted Y", conditions: null, blockIndex: 1, ambiguous: 0 },
+        ],
+      },
+    });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+    expect(res.mode).toBe("claims");
+    expect(res.sources[0]?.blocks.map((b) => b.id)).toEqual([3, 4]);
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).toContain("Current A");
+    expect(body).toContain("Current B");
+    expect(body).not.toContain("Legacy");
+  });
+
+});
+
+describe("buildContext K3 report artifact guide", () => {
+  const rev = "9f3b1c2d-4a5e-4f6a-8b7c-9d0e1f2a3b4c";
+  const text = "AAAAAAAAAABBBBBBBBBBCCCCCCCCCC";
+  const blocks = [
+    { id: 1, type: "paragraph", start: 0, end: 10, heading: null as string | null },
+    { id: 2, type: "paragraph", start: 10, end: 20, heading: null as string | null },
+    { id: 3, type: "paragraph", start: 20, end: 30, heading: null as string | null },
+  ];
+  const claims = [{ ordinal: 1, statement: "Claimed", quote: "quoted", conditions: null, blockIndex: 3, ambiguous: 0 }];
+  const reportKey = "source/" + rev + "/checked/distill.json";
+  const checkedKey = "source/" + rev + "/checked/guide.md";
+  function reportEnv(opts: { report?: unknown; checkedGuide?: string; legacyGuide?: string; key?: string | null }) {
+    return makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: rev, createdAt: 1 }],
+      revisions: [{ id: rev, readableState: "readable", readableSize: 26214400, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2, reportKey: opts.key === undefined ? reportKey : opts.key }],
+      texts: { [rev]: { text, blocks, guide: opts.legacyGuide, checkedGuide: opts.checkedGuide, report: opts.report } },
+      claims: { [rev]: claims },
+    });
+  }
+  async function expectUnavailable(env: unknown) {
+    let err: unknown;
+    try {
+      await buildContext(env as Env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LibraryError);
+    expect((err as LibraryError).code).toBe("unavailable");
+    expect((err as LibraryError).status).toBe(503);
+  }
+  it("follows head report artifacts over a stale legacy guide", async () => {
+    const { env, requested } = reportEnv({
+      report: { artifacts: { guide: checkedKey } },
+      checkedGuide: "New [R" + rev + ":2] end.",
+      legacyGuide: "Old [R" + rev + ":1] end.",
+    });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+    expect(res.mode).toBe("claims");
+    expect(res.sources[0]?.blocks.map((b) => b.id)).toEqual([2, 3]);
+    expect(requested).toContain(reportKey);
+    expect(requested).toContain(checkedKey);
+    expect(requested.some((k) => k === "source/" + rev + "/guide.md")).toBe(false);
+    expect(requested.filter((k) => k.includes("text.md"))).toEqual(["source/" + rev + "/text.md#r10-20"]);
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).toContain("[S1:2] BBBBBBBBBB");
+    expect(body).not.toContain("AAAAAAAAAA");
+  });
+  it("missing pointed report is actionable unavailable", async () => {
+    const { env } = reportEnv({ legacyGuide: "Old [R" + rev + ":1] end." });
+    await expectUnavailable(env);
+  });
+  it("missing pointed guide is actionable unavailable", async () => {
+    const { env } = reportEnv({ report: { artifacts: { guide: checkedKey } }, legacyGuide: "Old [R" + rev + ":1] end." });
+    await expectUnavailable(env);
+  });
+  it("report without an artifact map falls back to the legacy guide", async () => {
+    const { env, requested } = reportEnv({ report: { digest: "d" }, legacyGuide: "Old [R" + rev + ":2] end." });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+    expect(res.mode).toBe("claims");
+    expect(res.sources[0]?.blocks.map((b) => b.id)).toEqual([2, 3]);
+    expect(requested).toContain("source/" + rev + "/guide.md");
+    expect(requested.some((k) => k === checkedKey)).toBe(false);
+  });
+  it("guide keys outside the revision prefix are rejected", async () => {
+    const { env: badReport } = reportEnv({ report: { artifacts: { guide: checkedKey } }, checkedGuide: "x", legacyGuide: "y", key: "source/other/guide.json" });
+    await expectUnavailable(badReport);
+    const { env: badGuide } = reportEnv({ report: { artifacts: { guide: "source/other/guide.md" } }, checkedGuide: "New [R" + rev + ":2]", legacyGuide: "Old [R" + rev + ":1]" });
+    await expectUnavailable(badGuide);
+  });
+});
+
+describe("orientation from stored guides", () => {
+  function orientEnv(distillState: string, guide: string) {
+    return makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r1", createdAt: 1 }],
+      revisions: [{ id: "r1", readableState: "readable", readableSize: 10, distillState, guideSummary: guide, deletedAt: null }],
+      texts: { r1: { text: "Alpha.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 6, heading: null }] } },
+    });
+  }
+  it("appends done-guide orientation within budget after the source prefix", async () => {
+    const { env } = orientEnv("done", "Guide text here.");
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
+    expect(res.mode).toBe("whole");
+    expect(res.messages.length).toBe(3);
+    expect(res.messages[1]).toMatchObject({ role: "user" });
+    expect(res.messages[2]).toMatchObject({ role: "user" });
+    expect(res.messages[1]?.content).toContain("[S1:1] Alpha.");
+    const orient = res.messages[2]?.content ?? "";
+    expect(orient).toContain("Derived orientation only");
+    expect(orient).toContain("Guide text here.");
+    expect(orient).not.toContain("[S1:1]");
+  });
+  it("omits orientation without headroom and keeps whole", async () => {
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r1", createdAt: 1 }],
+      revisions: [{ id: "r1", readableState: "readable", readableSize: 10, distillState: "done", guideSummary: "G".repeat(600), deletedAt: null }],
+      texts: { r1: { text: "Alpha.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 6, heading: null }] } },
+    });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 584, maxOutputTokens: 100 } });
+    expect(res.mode).toBe("whole");
+    expect(res.messages.length).toBe(2);
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).not.toContain("Derived orientation");
+    expect(body).not.toContain("GGGGGGGG");
+    expect(body).toContain("[S1:1] Alpha.");
+  });
+  it("never promotes partial gists to orientation", async () => {
+    const { env } = orientEnv("partial", "Partial gist here.");
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
+    expect(res.mode).toBe("whole");
+    expect(res.messages.length).toBe(2);
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).not.toContain("Derived orientation");
+    expect(body).not.toContain("Partial gist");
+  });
+});

@@ -25,12 +25,17 @@ for (let attempt = 0; attempt < 60; attempt++) {
 assert(ready, "Eliot did not become available. Start pnpm dev before the eval.");
 
 const latency: number[] = [];
+function protectedHeaders(response: Response) {
+  assert.equal(response.headers.get("cache-control"), "private, no-store", "Protected HTTP response must not be cached.");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(response.headers.get("x-frame-options"), "DENY");
+  assert(response.headers.get("content-security-policy")?.includes("frame-ancestors 'none'"), "Protected document must reject framing.");
+}
 for (let sample = 0; sample < 12; sample++) {
   const started = performance.now();
   const response = await fetch(`${origin}/api/me`, { headers });
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("cache-control"), "private, no-store");
-  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  protectedHeaders(response);
   const payload = await response.json() as { actor: { type: string; authentication: string } };
   assert.equal(payload.actor.type, "owner");
   assert(["local", "access", "service-token"].includes(payload.actor.authentication));
@@ -38,11 +43,26 @@ for (let sample = 0; sample < 12; sample++) {
 }
 const missing = await fetch(`${origin}/api/does-not-exist`, { headers });
 assert.equal(missing.status, 404);
+protectedHeaders(missing);
 assert.equal(((await missing.json()) as { error: { code: string } }).error.code, "not_found");
 const foreignOrigin = await fetch(`${origin}/api/me`, {
   method: "POST", headers: { ...headers, Origin: "https://untrusted.invalid" },
 });
 assert.equal(foreignOrigin.status, 403, "Foreign-origin mutations must fail closed.");
+protectedHeaders(foreignOrigin);
+const document = await fetch(origin, { headers });
+assert.equal(document.status, 200);
+protectedHeaders(document);
+const html = await document.text();
+const script = /<script\b[^>]*\bsrc="([^"]+\.(?:js|tsx|jsx))"/.exec(html)?.[1];
+assert(script, "Owner HTML must contain its application entry module.");
+const entry = new URL(script, origin);
+assert.equal(entry.origin, origin, "Owner credentials stay on the Eliot origin.");
+const asset = await fetch(entry, { headers });
+assert.equal(asset.status, 200);
+protectedHeaders(asset);
+assert(/javascript|ecmascript/.test(asset.headers.get("content-type") ?? ""), "Entry module must not fall back to SPA HTML.");
+await asset.body?.cancel();
 
 const browser = await chromium.launch();
 const screenshots: string[] = [];

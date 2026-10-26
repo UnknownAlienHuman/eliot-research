@@ -49,11 +49,14 @@ jobs:
         run: |
           cp .dev.vars.example .dev.vars
           pnpm db:local
+          pnpm exec wrangler d1 execute DB --local --command "UPDATE settings SET auto_distill=0 WHERE id=1"
           pnpm dev > /tmp/eliot-k0.log 2>&1 &
           trap 'kill $!' EXIT
           pnpm eval k0
           pnpm eval k1 --native-only
           pnpm eval k2 --native-only
+          pnpm eval k2 --models-only
+          pnpm eval k3 --native-only
       - name: Upload checked build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

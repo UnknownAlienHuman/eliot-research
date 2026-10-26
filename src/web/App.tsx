@@ -7,6 +7,7 @@ import { MaterialSymbol } from "./ui/MaterialSymbol";
 import { Library, Projects, Reader } from "./Library";
 import { ChatView, StudioView } from "./Chat";
 import { ModelSettings } from "./ModelSettings";
+import { ProjectOverview } from "./Understanding";
 
 export function App() {
   const { pathname } = useLocation();
@@ -40,6 +41,7 @@ export function App() {
         <Route path="p/:projectId/source/:sourceId" element={<Reader key={pathname} />} />
         <Route path="p/:projectId/chat/:chatId?" element={<ChatView key={pathname} />} />
         <Route path="p/:projectId/studio" element={<StudioView key={pathname} />} />
+        <Route path="p/:projectId/overview" element={<ProjectOverview key={pathname} />} />
         <Route path="settings" element={
           <>
             <h1 id="workspace-heading" tabIndex={-1}>Settings</h1>

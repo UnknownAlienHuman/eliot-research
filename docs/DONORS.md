@@ -76,6 +76,12 @@ Callers are Send, read-only reconnect/history and Save existing answer. Verifica
 checks, focused context/citation/cost tests and the phone Stop/reconnect/Save journey; owner quality judgment remains
 separate from the automatic gates.
 
+K3 reuses the registered paper-qa evidence-first idea without copying its Python code: candidate assertions are
+hypotheses, source excerpts remain evidence, and the second bounded call retains only supported candidates before
+synthesizing. The same installed Agents/AI SDK packages supply the model boundary. No agent framework or new backend
+is imported. The shared Markdown renderer is used by Chat, Studio and source knowledge, retaining the same Material
+styles and disabling raw HTML/images; only server-resolved source references become reader links.
+
 ### Agents SDK and examples
 
 Repository pin: [`cloudflare/agents@321814b6c13f72cff82161e7eb20312574ac9b7a`](https://github.com/cloudflare/agents/tree/321814b6c13f72cff82161e7eb20312574ac9b7a),

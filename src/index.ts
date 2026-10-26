@@ -9,22 +9,27 @@ import { addSource, attachSource, createProject, getProject, getSource, LibraryE
 import { readOriginal, readOutline, readText } from "./read";
 import { captureUrl, UrlGuardError } from "./url-guard";
 import { monthlyUsage } from "./cost";
-import { MODELS, requireModel } from "./models";
+import { availableModels, getModelConnection, requireAvailableModel, validGatewayId } from "./models";
 import { getPage, listPages, saveAnswer } from "./pages";
+import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
+import { getOverview, getUnderstanding } from "./understanding";
 
 export { IngestWorkflow } from "./workflows/ingest";
 export { ChatAgent } from "./chat";
+export { DistillWorkflow } from "./workflows/distill";
 
 const app = new Hono<{ Bindings: Env; Variables: { actor: Actor } }>();
 
 app.use("*", async (c, next) => {
+  await next();
+  // Preserve the platform's WebSocket upgrade response. It carries no cacheable document body.
+  if (c.res.status === 101) return;
   c.header("Cache-Control", "private, no-store");
   c.header("Cross-Origin-Opener-Policy", "same-origin");
   c.header("Referrer-Policy", "no-referrer");
   c.header("X-Content-Type-Options", "nosniff");
   c.header("X-Frame-Options", "DENY");
   c.header("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
-  await next();
 });
 
 app.use("*", async (c, next) => {
@@ -34,7 +39,7 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/api/me", (c) => c.json({ actor: c.get("actor") } satisfies MeResponse));
-app.get("/api/health", (c) => c.json({ service: "eliot-research", status: "ok", contour: "k2" }));
+app.get("/api/health", (c) => c.json({ service: "eliot-research", status: "ok", contour: "k3" }));
 app.use("/api/*", bodyLimit({ maxSize: MAX_SOURCE_BYTES + 65_536,
   onError: (c) => c.json({ error: { code: "invalid", message: "Upload one file of at most 25 MiB per request." } } satisfies ApiError, 413),
 }));
@@ -48,18 +53,29 @@ async function chatRecord(env: Env, projectId: string, chatId: string) {
   if (!chat) throw new LibraryError("not_found", "Chat not found in this project.", 404);
   return chat;
 }
-app.get("/api/models", async (c) => c.json({ models: MODELS, defaultModel: (await c.env.DB.prepare("SELECT answer_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model }));
-app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,monthly_model_budget_microusd AS monthlyModelBudgetMicrousd,updated_at AS updatedAt FROM settings WHERE id=1").first(), ...await monthlyUsage(c.env) }));
+app.get("/api/models", async (c) => c.json({ models: await availableModels(c.env), defaultModel: (await c.env.DB.prepare("SELECT answer_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model }));
+app.get("/api/models/connection", async (c) => c.json({ connection: await getModelConnection(c.env) }));
+app.put("/api/models/connection", async (c) => {
+  if (c.get("actor").type !== "owner") throw new AuthError("invalid", "Only the owner may allow access to a Gateway credential.");
+  const input = z.object({ gatewayId: z.string().refine(validGatewayId, "Use an existing named Gateway, not default.").nullable(), confirmCredentialAccess: z.boolean().optional() }).strict().parse(await c.req.json());
+  if (input.gatewayId !== null && input.confirmCredentialAccess !== true)
+    throw new LibraryError("invalid", "Explicitly allow this app to use the existing Google default BYOK credential before connecting.", 400);
+  await c.env.DB.prepare("UPDATE settings SET model_gateway_id=?,updated_at=? WHERE id=1").bind(input.gatewayId, Date.now()).run();
+  return c.json({ connection: await getModelConnection(c.env) });
+});
+app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,auto_distill AS autoDistill,monthly_model_budget_microusd AS monthlyModelBudgetMicrousd,updated_at AS updatedAt FROM settings WHERE id=1").first(), ...await monthlyUsage(c.env) }));
 app.put("/api/settings", async (c) => {
-  const input = z.object({ answerModel: z.string(), monthlyModelBudgetMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).strict().parse(await c.req.json());
-  requireModel(input.answerModel);
-  await c.env.DB.prepare("UPDATE settings SET answer_model=?,monthly_model_budget_microusd=?,updated_at=? WHERE id=1").bind(input.answerModel, input.monthlyModelBudgetMicrousd, Date.now()).run();
+  const input = z.object({ answerModel: z.string(), monthlyModelBudgetMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), distillModel: z.string().optional(), autoDistill: z.boolean().optional() }).strict().parse(await c.req.json());
+  await requireAvailableModel(c.env, input.answerModel);
+  if (input.distillModel) await requireAvailableModel(c.env, input.distillModel);
+  await c.env.DB.prepare("UPDATE settings SET answer_model=?,monthly_model_budget_microusd=?,distill_model=COALESCE(?,distill_model),auto_distill=COALESCE(?,auto_distill),updated_at=? WHERE id=1")
+    .bind(input.answerModel, input.monthlyModelBudgetMicrousd, input.distillModel ?? null, input.autoDistill === undefined ? null : input.autoDistill ? 1 : 0, Date.now()).run();
   return c.json({ settings: { ...input, updatedAt: Date.now() } });
 });
 app.patch("/api/projects/:id/settings", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), project = await getProject(c.env, c.get("actor"), projectId);
   const input = z.object({ instructions: z.string().max(10000).optional(), answerModel: z.string().nullable().optional() }).strict().parse(await c.req.json());
-  if (input.answerModel) requireModel(input.answerModel);
+  if (input.answerModel) await requireAvailableModel(c.env, input.answerModel);
   await c.env.DB.prepare("UPDATE project SET instructions=?,answer_model=?,updated_at=? WHERE id=?")
     .bind(input.instructions ?? project.instructions ?? "", input.answerModel === undefined ? project.answerModel ?? null : input.answerModel, Date.now(), projectId).run();
   return c.json({ project: await getProject(c.env, c.get("actor"), projectId) });
@@ -67,8 +83,11 @@ app.patch("/api/projects/:id/settings", async (c) => {
 app.put("/api/projects/:id/scope", async (c) => c.json(await setProjectScope(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), sourceIds: z.object({ sourceIds: z.array(uuid) }).strict().parse(await c.req.json()).sourceIds })));
 app.get("/api/projects/:id/chats", async (c) => {
   const projectId = uuid.parse(c.req.param("id")); await getProject(c.env, c.get("actor"), projectId);
-  const chats = await c.env.DB.prepare("SELECT id,title,updated_at AS updatedAt FROM chat WHERE project_id=? AND archived_at IS NULL ORDER BY updated_at DESC LIMIT 50").bind(projectId).all();
-  return c.json({ chats: chats.results });
+  const cursor = uuid.optional().parse(c.req.query("cursor"));
+  const chats = await c.env.DB.prepare(`SELECT id,title,updated_at AS updatedAt FROM chat WHERE project_id=? AND archived_at IS NULL
+    AND (? IS NULL OR (created_at,id)<(SELECT created_at,id FROM chat WHERE id=? AND project_id=?))
+    ORDER BY created_at DESC,id DESC LIMIT 51`).bind(projectId, cursor ?? null, cursor ?? null, projectId).all<{ id: string }>();
+  return c.json({ chats: chats.results.slice(0, 50), nextCursor: chats.results.length > 50 ? chats.results[49]?.id ?? null : null });
 });
 app.post("/api/projects/:id/chats", async (c) => {
   const projectId = uuid.parse(c.req.param("id")); await getProject(c.env, c.get("actor"), projectId);
@@ -153,6 +172,12 @@ app.post("/api/projects/:id/sources/url", async (c) => {
   }), 202);
 });
 app.get("/api/sources/:id", async (c) => c.json(await getSource(c.env, c.get("actor"), uuid.parse(c.req.param("id")), uuid.optional().parse(c.req.query("revisionId")))));
+app.get("/api/sources/:id/understanding", async (c) => c.json(await getUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), revisionId: uuid.optional().parse(c.req.query("revisionId")) })));
+app.post("/api/sources/:id/understanding", async (c) => {
+  const input = z.object({ revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional() }).strict().parse(await c.req.json());
+  return c.json(await requestUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), ...input }), 202);
+});
+app.get("/api/projects/:id/overview", async (c) => c.json(await getOverview(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")) })));
 app.get("/api/revisions/:id/text", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id"))));
 app.get("/api/revisions/:id/range", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
   start: z.coerce.number().int().nonnegative().parse(c.req.query("start")), end: z.coerce.number().int().positive().parse(c.req.query("end")),
@@ -181,4 +206,7 @@ app.onError((error, c) => {
   return c.json({ error: { code: "unavailable", message: "Eliot could not complete this request. Try again." } } satisfies ApiError, 503);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) { ctx.waitUntil(scheduleDistillation(env)); },
+} satisfies ExportedHandler<Env>;

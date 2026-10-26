@@ -1,6 +1,5 @@
 import { Agent } from "agents";
 import type { Connection, ConnectionContext } from "agents";
-import { createAI } from "agents/models/ai-sdk";
 import { Output, streamText } from "ai";
 import { z } from "zod";
 import type { LanguageModelUsage } from "ai";
@@ -9,6 +8,8 @@ import { persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn, estimateCost } from "./cost";
 import { DEFAULT_MODEL, requireModel } from "./models";
+import type { ModelSpec } from "./models";
+import { modelFailure, resolveModelTransport } from "./model-transport";
 import { LibraryError } from "./library";
 import type { RunTurnInput, TurnView } from "./shared/api";
 
@@ -111,7 +112,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     this.controller = new AbortController();
     if (this.state.stopRequested) this.controller.abort();
     const timer = setTimeout(() => this.controller?.abort(), 90_000);
-    let dispatched = false, rowInserted = false, usage: LanguageModelUsage | undefined;
+    let dispatched = false, rowInserted = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
     let labelSources: LabelSource[] = [], sourceMode = "none", streamError = "";
     try {
       const settings = await this.env.DB.prepare(`SELECT COALESCE(p.answer_model,s.answer_model) AS model,p.instructions
@@ -119,40 +120,46 @@ export class ChatAgent extends Agent<Env, ChatState> {
       if (!settings) throw new LibraryError("not_found", "Project or model settings not found.", 404);
       turn.model = input.model ?? settings.model;
       const model = requireModel(turn.model);
+      selectedModel = model;
+      const transport = await resolveModelTransport(this.env, model, this.name);
+      await this.env.DB.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at)
+        VALUES(?,?,?,?,?,'none','started',?)`).bind(this.name, turn.turnId, turn.model, turn.scopeMode, "[]", started).run();
+      rowInserted = true;
+      turn.estimatedCostMicrousd = await admitTurn(this.env, this.name, turn.turnId, model);
+      this.writeTurn(turn);
       const history = (await this.getTurns(input.projectId)).filter((item) => item.turnId !== turn.turnId && (item.state === "completed" || (item.state === "partial" && item.citations.length > 0)))
-        .flatMap((item) => [{ role: "user" as const, content: item.question, revisionIds: item.revisionIds }, { role: "assistant" as const, content: item.answer, revisionIds: item.revisionIds }]);
+        .flatMap((item) => [{ role: "user" as const, content: item.question, revisionIds: item.revisionIds },
+          { role: "assistant" as const, content: item.answer, revisionIds: [...new Set(item.citations.map((citation) => citation.revisionId))] }]);
       const context = await buildContext(this.env, { type: "owner", id: "owner", authentication: "access" }, {
-        projectId: input.projectId, scopeMode: input.scopeMode, model, history,
+        projectId: input.projectId, scopeMode: input.scopeMode, model, history, question: input.question, instructions: settings.instructions,
         ...(input.sourceIds === undefined ? {} : { sourceIds: input.sourceIds }),
       });
       turn.revisionIds = context.revisionIds;
+      turn.contextMode = context.mode;
       turn.sourceIds = context.sources.map((source) => source.sourceId);
       labelSources = context.sources; sourceMode = context.mode;
       const labels = labelSources.flatMap((source) => source.blocks.map((block) => `[${source.alias}:${block.id}]`));
       const allowed = new Set(labels);
       const label = labels.length ? z.enum(labels as [string, ...string[]]) : z.string();
-      const schema = z.object({ sentences: z.array(z.object({ text: z.string().min(1), labels: z.array(label).min(labels.length ? 1 : 0).max(labels.length ? 32 : 0) })).min(1).max(64) });
+      const schema = z.object({ sentences: z.array(z.object({ labels: z.array(label).min(labels.length ? 1 : 0).max(labels.length ? 32 : 0), text: z.string().min(1) })).min(1).max(64) });
       const render = (sentences: ({ text?: string | undefined; labels?: (string | undefined)[] | undefined } | undefined)[] | undefined) =>
         (sentences ?? []).flatMap((sentence) => sentence?.text ? [sentence.text.trimEnd() + "\n" + (sentence.labels ?? []).filter((token) => token !== undefined && allowed.has(token) && !sentence.text?.includes(token)).join(" ")] : []).join("\n\n");
-      const formatRules = "Return the requested structured answer. Each sentences item is one complete statement in the question language; text may use Markdown but must not contain citation tokens. Choose its exact supporting block labels from the allowed labels. Mark inference in the text. With no sources, labels must be empty. Do not invent sources or labels.";
+      const formatRules = "Return the requested structured answer. Choose the exact supporting block labels first, then write one statement entailed by those blocks in the question language. Preserve the source's technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Text may use Markdown but must not contain citation tokens. Mark inference explicitly. With no sources, labels must be empty. Do not invent sources or labels.";
       const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions, formatRules].filter(Boolean).join("\n\n");
       const messages = context.messages.filter((message) => message.role !== "system");
       messages.push({ role: "user", content: input.question });
       const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages, labels })).byteLength / 3) + messages.length * 32 + 1024;
       if (inputTokens + model.maxOutputTokens > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
-      await this.env.DB.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at)
-        VALUES(?,?,?,?,?,?,'started',?)`).bind(this.name, turn.turnId, turn.model, turn.scopeMode, JSON.stringify(turn.revisionIds), context.mode, started).run();
-      rowInserted = true;
-      turn.estimatedCostMicrousd = await admitTurn(this.env, this.name, turn.turnId, model);
+      await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
+        .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
       this.writeTurn(turn);
       if (this.controller.signal.aborted) throw new Error("Stopped before dispatch.");
-      const ai = createAI({ binding: this.env.AI });
       dispatched = true;
-      const result = streamText({ model: ai(model.id, { reasoningEffort: "low", sessionAffinity: this.name }), instructions, messages,
+      const result = streamText({ model: transport, instructions, messages,
         output: Output.object({ schema, name: "cited_answer" }),
         maxOutputTokens: model.maxOutputTokens, maxRetries: 0, abortSignal: this.controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
-          streamError = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "Model stream failed."; console.error("Chat model stream failed", streamError); } });
+          streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
       let lastWrite = 0;
       for await (const partial of result.partialOutputStream) {
         turn.answer = render(partial.sentences);
@@ -167,11 +174,11 @@ export class ChatAgent extends Agent<Env, ChatState> {
     } catch (error) {
       const stopped = this.controller.signal.aborted;
       turn.state = turn.answer ? "partial" : stopped ? "cancelled" : "failed";
-      turn.error = stopped ? "Stopped. A new Send starts a new turn." : streamError || (error instanceof Error ? error.message.slice(0, 300) : "The answer could not be completed.");
+      turn.error = stopped ? "Stopped. A new Send starts a new turn." : streamError || (error instanceof LibraryError ? error.message : selectedModel ? modelFailure(error, selectedModel) : "The answer could not be completed.");
     } finally { clearTimeout(timer); }
     const resolved = resolveCitations(turn.answer, labelSources);
     turn.answer = resolved.text; turn.citations = resolved.citations; turn.invalidLabels = resolved.invalidLabels;
-    if (turn.state === "completed" && ((sourceMode === "whole" && !turn.citations.length) || turn.invalidLabels)) {
+    if (turn.state === "completed" && ((sourceMode !== "none" && !turn.citations.length) || turn.invalidLabels)) {
       turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
     }
     if (usage) {
@@ -180,7 +187,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
         turn.estimatedCostMicrousd = estimateCost(requireModel(turn.model), turn.inputTokens, turn.cachedTokens ?? 0, turn.outputTokens);
       }
     }
-    if (!dispatched) turn.estimatedCostMicrousd = 0;
+    if (!dispatched) { turn.estimatedCostMicrousd = 0; turn.inputTokens = 0; turn.cachedTokens = 0; turn.outputTokens = 0; }
     turn.totalMs = Date.now() - started;
     if (turn.totalMs > 90000 && turn.state === "completed") { turn.state = "partial"; turn.error = "The answer exceeded the time bound."; }
     this.writeTurn(turn);

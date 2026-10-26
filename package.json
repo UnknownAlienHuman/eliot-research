@@ -20,7 +20,6 @@
     "cf:dry-run": "pnpm build && wrangler deploy --dry-run --outdir dist/worker"
   },
   "dependencies": {
-    "@cloudflare/ai-chat": "0.12.2",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/server": "2.3.1",
     "@tanstack/react-query": "5.104.1",
@@ -37,7 +36,6 @@
   },
   "devDependencies": {
     "@ai-sdk/provider": "4.0.33",
-    "@ai-sdk/react": "4.0.156",
     "@cloudflare/vite-plugin": "1.65.0",
     "@cloudflare/workers-types": "5.20261024.1",
     "@eslint/js": "10.0.1",

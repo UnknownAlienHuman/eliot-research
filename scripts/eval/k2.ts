@@ -21,6 +21,7 @@ if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
 if (process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.env.ELIOT_OWNER_JWT).trim();
 const nativeOnly = process.argv.includes('--native-only');
 const runModel = !nativeOnly && process.env.ELIOT_K2_MODEL === '1';
+const storedOnly = process.argv.includes('--stored-only');
 const resumeChat = process.env.ELIOT_EVAL_CHAT || null;
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
 const outDir = fileURLToPath(new URL('../../eval/out/k2/', import.meta.url));
@@ -74,6 +75,98 @@ const BUDGET_DEFAULT = 5000000;
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
+if (process.argv.includes('--models-only')) {
+  // Connection/admission checks only. Never enables a Gateway, submits a provider call or changes defaults/budget.
+  const before = await apiJson('/api/settings');
+  const connection = await apiJson('/api/models/connection');
+  assert.equal(before.status, 200);
+  assert.equal(connection.status, 200);
+  assert.equal(connection.body.connection.gatewayId, null, 'Use a disconnected local namespace; this check never disables an existing connection.');
+  const models = await apiJson('/api/models');
+  assert.equal(models.status, 200);
+  const external = models.body.models.find((m) => m.route === 'gateway:google/gemini-2.5-flash');
+  assert(external && !external.enabled && external.unavailableReason, 'External model must be visibly disabled without owner credential opt-in.');
+  const denied = await apiJson('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gatewayId: 'unconfigured-eval-gateway' }) });
+  assert.equal(denied.status, 400, 'Saving a Gateway without explicit credential consent must fail before mutation.');
+  const invalid = await apiJson('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gatewayId: 'default' }) });
+  assert.equal(invalid.status, 400, 'The auto-created default Gateway is not an allowed connection.');
+  const changed = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: external.route, monthlyModelBudgetMicrousd: before.body.settings.monthlyModelBudgetMicrousd }) });
+  assert.equal(changed.status, 503, 'A disconnected external route cannot become the default.');
+  const project = await apiJson('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'External model admission ' + Date.now() }) });
+  assert.equal(project.status, 201);
+  const projectId = project.body.project.id;
+  const created = await apiJson('/api/projects/' + projectId + '/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(created.status, 201);
+  const chatId = created.body.chat.id;
+  const turn = await apiJson('/api/projects/' + projectId + '/chats/' + chatId + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnId: randomUUID(), question: 'Disconnected model check', scopeMode: 'empty', model: external.route }) });
+  assert.equal(turn.status, 200);
+  assert.equal(turn.body.turn.state, 'failed');
+  assert.equal(turn.body.turn.estimatedCostMicrousd, 0);
+  assert.equal(turn.body.turn.inputTokens, 0);
+  assert.equal(turn.body.turn.outputTokens, 0);
+  assert.match(turn.body.turn.error, /disconnected|Gateway|credential/i);
+  let distill = 'NOT_RUN: auto-distill must already be disabled';
+  let sourceId = null;
+  if (before.body.settings.autoDistill === 0) {
+    const added = await apiJson('/api/projects/' + projectId + '/sources/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'External connection gate', text: 'Storage-only connection fixture ' + randomUUID() + '. This source has no model-derived knowledge.' }) });
+    assert.equal(added.status, 202);
+    sourceId = added.body.sourceId;
+    const revisionId = added.body.revisionId;
+    let view;
+    for (let i = 0; i < 40; i++) {
+      view = await apiJson('/api/sources/' + sourceId);
+      if (['readable', 'readable_with_warnings'].includes(view.body.source?.readableState)) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    assert(['readable', 'readable_with_warnings'].includes(view.body.source?.readableState), 'Text fixture must finish its native ingest.');
+    const path = '/api/sources/' + sourceId + '/understanding';
+    const prior = await apiJson(path + '?revisionId=' + revisionId);
+    assert.equal(prior.body.state, 'none');
+    assert.equal(prior.body.progress.attempts, 0);
+    const deniedDistill = await apiJson(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionId, model: external.route }) });
+    assert.equal(deniedDistill.status, 503, 'Disconnected external distillation must fail before queueing/admission/dispatch.');
+    const next = await apiJson(path + '?revisionId=' + revisionId);
+    assert.equal(next.body.state, 'none');
+    assert.equal(next.body.progress.attempts, 0);
+    distill = 'LOCAL_DISCONNECTED_BEFORE_ADMISSION_PASS';
+  }
+  const { chromium, expect } = await import('@playwright/test');
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, extraHTTPHeaders: H });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(origin + '/settings');
+    const gateway = page.getByRole('region', { name: 'AI Gateway', exact: true });
+    await expect(gateway).toBeVisible();
+    await expect(gateway.getByRole('checkbox')).not.toBeChecked();
+    await gateway.getByRole('textbox', { name: 'Gateway ID' }).fill('unconfigured-eval-gateway');
+    await expect(gateway.getByRole('button', { name: 'Save connection' })).toBeDisabled();
+    await expect(page.getByRole('textbox', { name: 'Monthly model budget (USD)' })).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
+    await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(before.body.settings.answerModel);
+    await expect(page.getByRole('combobox', { name: 'Answer model', exact: true }).locator('option[value="' + external.route + '"]')).toHaveJSProperty('disabled', true);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Settings must fit the 390px Material layout.');
+    await gateway.getByRole('button', { name: 'Save connection' }).scrollIntoViewIfNeeded();
+    await expect(gateway.getByRole('button', { name: 'Save connection' })).toBeVisible();
+    await page.screenshot({ path: outDir + '/external-models-390.png', fullPage: true });
+    if (sourceId) {
+      await page.goto(origin + '/p/' + projectId + '/source/' + sourceId);
+      const understanding = page.getByRole('region', { name: 'Understanding', exact: true });
+      await expect(understanding.getByRole('combobox', { name: 'Model', exact: true })).toBeVisible();
+      await expect(understanding.getByRole('combobox', { name: 'Model', exact: true }).locator('option[value="' + external.route + '"]')).toHaveJSProperty('disabled', true);
+    }
+    assert.deepEqual(errors, [], 'Settings/understanding must not throw browser errors.');
+  } finally { await browser.close(); }
+  const after = await apiJson('/api/settings');
+  assert.deepEqual(after.body.settings, before.body.settings, 'Native defaults, auto-distill, budget and settings timestamp must be unchanged.');
+  assert.equal(after.body.monthlyUsedMicrousd, before.body.monthlyUsedMicrousd);
+  assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
+  const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, consentRejected: true, disconnectedTurnCost: 0,
+    monthlyUsedMicrousd: after.body.monthlyUsedMicrousd, provider: 'NOT_RUN', streaming: 'NOT_RUN', distill, browser390: 'LOCAL_PASS', credentialAccess: 'NOT_ENABLED' };
+  await writeFile(outDir + '/external-models-native.json', JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(0);
+}
 const title = process.env.ELIOT_EVAL_PROJECT || (nativeOnly ? 'k1-eval' : 'Библиотека — PDF и точные ссылки');
 let projects = [], cursor = undefined;
 for (let i = 0; i < 5; i++) {
@@ -161,13 +254,66 @@ function reusableCandidate(qid, turns, used) {
   }
   return null;
 }
-if (!runModel) {
+if (!runModel && !storedOnly) {
   const h1 = await getChat('re-read');
   assert.equal(h1.turns.length, h0.turns.length, 'History re-read must not add turns.');
   assert.equal(h1.monthlyUsedMicrousd, m0, 'Pure history re-read must not change usage.');
   const md = ['# K2 native-only (storage, zero model calls)', '', '- project: ' + title, '- chat: ' + chatId + (resumeChat ? ' (resumed)' : ''), '- history: ' + h0.turns.length + ' turns, monthlyUsedMicrousd stable across re-reads', '- reader range self-check: 1 exact range', '- MODEL_NOT_RUN: set ELIOT_K2_MODEL=1 (root signal) for C1-4/O1-8 paid turns.', '- Stop/reconnect/Save: NOT_RUN here (root browser journey).', ''].join(EOL);
   await writeFile(outDir + '/k2-native-' + Date.now() + '.md', md);
   console.log(md);
+  process.exit(0);
+}
+if (storedOnly) {
+  assert(resumeChat, '--stored-only requires ELIOT_EVAL_CHAT set to an existing completed chat id; this mode never creates chats or submits turns (zero model calls by construction).');
+  const sRows = [];
+  let sFailed = 0;
+  const sUsed = new Set();
+  const sCompleted = new Set();
+  const revOwner = new Map(scoped.filter((s) => s && typeof s.currentRevisionId === 'string').map((s) => [s.currentRevisionId, s.id]));
+  for (const qid of order) {
+    const turn = reusableCandidate(qid, h0.turns, sUsed);
+    if (!turn) {
+      sFailed++;
+      sRows.push('| ' + qid + ' | NOT_REVALIDATED | - | - | - | - | - | - | - |');
+      continue;
+    }
+    sUsed.add(turn.turnId);
+    assert(typeof turn.answer === 'string', qid + ': stored turn.answer must be a string.');
+    assert(Array.isArray(turn.citations) && turn.citations.length >= 1, qid + ': stored completed answer needs >=1 citation.');
+    assert(typeof turn.invalidLabels === 'number' && turn.invalidLabels === 0, qid + ': stored invalidLabels must be 0.');
+    for (const c of turn.citations) {
+      assert(c && typeof c.revisionId === 'string', qid + ': citation needs full revisionId.');
+      assert(typeof c.sourceId === 'string', qid + ': citation needs sourceId.');
+      assert(typeof c.block === 'number', qid + ': citation needs numeric block.');
+      assert(typeof c.start === 'number' && typeof c.end === 'number', qid + ': citation needs numeric start/end.');
+      assert(Array.isArray(turn.revisionIds) && turn.revisionIds.includes(c.revisionId), qid + ': citation revisionId must belong to the turn frozen scope.');
+      assert(revOwner.get(c.revisionId) === c.sourceId, qid + ': citation sourceId must be the scoped source owning the cited revision.');
+      if (Array.isArray(turn.sourceIds)) assert(turn.sourceIds.includes(c.sourceId), qid + ': citation sourceId must belong to the turn frozen source scope.');
+      await checkRange(c.revisionId, c.start, c.end);
+    }
+    const doc = { chatId, qid, turnId: turn.turnId, reused: true, src: 'stored', question: Q.get(qid), answer: turn.answer ?? null, state: turn.state, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: null };
+    await writeFile(outDir + '/k2-stored-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
+    checkAnswer(qid, turn.answer);
+    sCompleted.add(qid);
+    for (const k of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) assert(typeof turn[k] === 'number', qid + ': stored turn.' + k + ' must be a number.');
+    assert(turn.totalMs <= 90000, qid + ': catastrophic ceiling 90s exceeded.');
+    sRows.push('| ' + qid + ' | stored-completed | ' + turn.citations.length + ' | 0 | ' + turn.inputTokens + '/' + turn.cachedTokens + '/' + turn.outputTokens + ' | ' + turn.estimatedCostMicrousd + ' | ' + turn.firstTokenMs + ' | ' + turn.totalMs + ' | stored |');
+  }
+  const hF = await getChat('stored-final');
+  const ownerGate = 'O1/O2/O3/O8 owner-quality gate: NOT_ACCEPTED (OWNER_REQUIRED) — the script never auto-passes human gates; observed defects below, owner judgment required.';
+  const defects = [
+    'O2 stored answer: unsupported Chinese fragment "下游" (model-introduced; cited English ranges say "transferred"). Terminology defect.',
+    'O2 stored answer: "растёт быстрее, чем модель" growth-rate phrasing has no same-range source basis. Inference defect.',
+    'O2 stored answer: chain-of-thought scale-emergence result absent although the eval expects it (CoT/S4 uncited). Coverage defect.',
+    'Recheck run recheck-O2.json (separate chat): LoRA "0,01% (4,7 млн вместо 175 млрд)" pairing is arithmetically inconsistent (0.01% of 175B = 17.5M); [S10:42] cites setup text, not the quoted demonstration sentence (sibling labels cover the claims).'
+  ];
+  const md = ['# K2 Ask eval — stored-only revalidation (zero model calls)', '', '- project: ' + title + ' (10 arxiv explicit scope, exact frozen scope enforced per turn)', '- chat: ' + chatId + ' (stored-only; ELIOT_EVAL_CHAT, never created or submitted)', '- mode: whole revalidation from storage only; new-turn delta must be 0 micro-USD', '- monthly before/after: ' + m0 + '/' + hF.monthlyUsedMicrousd + ' micro-USD (must be equal)', '- budget default $5, never overridden: ' + hF.monthlyBudgetMicrousd, '- ' + ownerGate, '- observed defects (mechanical PASS does not clear these):'].concat(defects.map((d) => '  - ' + d)).concat(['', '| q | state | cites | invalid | in/cached/out | cost_uUSD | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|']).concat(sRows).concat(['']).join(EOL);
+  await writeFile(outDir + '/k2-stored-only-' + Date.now() + '.md', md);
+  console.log(md);
+  assert.equal(hF.turns.length, h0.turns.length, 'Stored-only run must not add turns (zero submissions).');
+  assert.equal(hF.monthlyUsedMicrousd, m0, 'Stored-only run must not change monthly usage (zero new model calls).');
+  assert.equal(sFailed, 0, sFailed + ' question(s) have no exact-question/exact-frozen-scope completed stored turn; this mode never submits missing/failed turns.');
+  assert(order.every((q) => sCompleted.has(q)), 'All 12 questions must revalidate from storage.');
   process.exit(0);
 }
 const rows = [];

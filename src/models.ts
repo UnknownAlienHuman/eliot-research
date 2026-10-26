@@ -2,7 +2,7 @@ import { LibraryError } from "./library";
 
 export interface ModelSpec {
   route: string;
-  id: "@cf/zai-org/glm-5.3-flash" | "@cf/zai-org/glm-5.3";
+  id: string;
   label: string;
   contextTokens: number;
   maxOutputTokens: number;
@@ -11,6 +11,7 @@ export interface ModelSpec {
   outputMicrousdPerMillion: number;
   checkedOn: string;
   enabled: boolean;
+  unavailableReason?: string;
 }
 export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
 // Official model pages + pricing refreshed 2026-10-26; pricing page updated 2026-10-20.
@@ -19,9 +20,30 @@ export const MODELS: ModelSpec[] = [
     inputMicrousdPerMillion: 150000, cachedMicrousdPerMillion: 30000, outputMicrousdPerMillion: 500000, checkedOn: "2026-10-26", enabled: true },
   { route: "workers-ai:@cf/zai-org/glm-5.3", id: "@cf/zai-org/glm-5.3", label: "GLM 5.3", contextTokens: 1_048_576, maxOutputTokens: 8192,
     inputMicrousdPerMillion: 1400000, cachedMicrousdPerMillion: 260000, outputMicrousdPerMillion: 4400000, checkedOn: "2026-10-26", enabled: true },
+  { route: "gateway:google/gemini-2.5-flash", id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash · Google BYOK", contextTokens: 1_000_000, maxOutputTokens: 65_536,
+    inputMicrousdPerMillion: 300000, cachedMicrousdPerMillion: 30000, outputMicrousdPerMillion: 2500000, checkedOn: "2026-10-26", enabled: true },
 ];
 export function requireModel(route: string): ModelSpec {
   const model = MODELS.find((item) => item.route === route && item.enabled);
   if (!model) throw new LibraryError("unavailable", "This model is unavailable or its current price has not been verified.", 503);
+  return model;
+}
+
+// No credentials are stored here. A named Gateway enables only its Google default BYOK alias.
+export const validGatewayId = (id: string) => id !== "default" && /^[a-z0-9][a-z0-9-]{0,63}$/.test(id);
+export async function getModelConnection(env: Pick<Env, "DB">) {
+  const row = await env.DB.prepare("SELECT model_gateway_id AS gatewayId FROM settings WHERE id=1").first<{ gatewayId: string | null }>();
+  return { gatewayId: row?.gatewayId && validGatewayId(row.gatewayId) ? row.gatewayId : null,
+    provider: "google-ai-studio" as const, alias: "default" as const };
+}
+export async function availableModels(env: Pick<Env, "DB">): Promise<ModelSpec[]> {
+  const connection = await getModelConnection(env);
+  return MODELS.map((model) => model.route.startsWith("gateway:") && !connection.gatewayId
+    ? { ...model, enabled: false, unavailableReason: "Allow access to an existing Google default BYOK credential in Settings first." } : { ...model });
+}
+export async function requireAvailableModel(env: Pick<Env, "DB">, route: string): Promise<ModelSpec> {
+  const model = requireModel(route);
+  if (model.route.startsWith("gateway:") && !(await getModelConnection(env)).gatewayId)
+    throw new LibraryError("unavailable", "External models are disconnected. Allow access to the existing Gateway credential in Settings first.", 503);
   return model;
 }

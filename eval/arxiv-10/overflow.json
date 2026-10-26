@@ -1,0 +1,8 @@
+{
+  "purpose": "K3 automatic claims fallback: attach the unchanged ten baseline sources plus these real papers to a separate project, measure actual readable bytes, and require Chat contextMode=claims for the unchanged C1-C4 questions. No context-cap override or synthetic padding. This is not the K5 library-200 benchmark.",
+  "checkedOn": "2026-10-26",
+  "sources": [
+    { "id": "gpt3", "arxiv": "2005.14165", "title": "Language Models are Few-Shot Learners", "published": "2020-05-28", "url": "https://arxiv.org/pdf/2005.14165" },
+    { "id": "palm", "arxiv": "2204.02311", "title": "PaLM: Scaling Language Modeling with Pathways", "published": "2022-04-05", "url": "https://arxiv.org/pdf/2204.02311" }
+  ]
+}

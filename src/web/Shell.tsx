@@ -53,6 +53,7 @@ export function Shell({ theme, onThemeChange }: ShellProps) {
           <Link className="er-shell-destination" to={`/p/${projectId}/sources`} aria-current={pathname.includes("/source") ? "page" : undefined}><span className="er-shell-destination-icon"><MaterialSymbol name="home" /></span><span className="er-shell-destination-label">Sources</span></Link>
           <NavLink className="er-shell-destination" to={`/p/${projectId}/chat`}><span className="er-shell-destination-icon"><MaterialSymbol name="spark" /></span><span className="er-shell-destination-label">Chat</span></NavLink>
           <NavLink className="er-shell-destination" to={`/p/${projectId}/studio`}><span className="er-shell-destination-icon"><MaterialSymbol name="info" /></span><span className="er-shell-destination-label">Studio</span></NavLink>
+          <NavLink className="er-shell-destination" to={`/p/${projectId}/overview`}><span className="er-shell-destination-icon"><MaterialSymbol name="info" /></span><span className="er-shell-destination-label">Overview</span></NavLink>
         </> : null}
         <NavLink className="er-shell-destination" to="/settings">
           <span className="er-shell-destination-icon">

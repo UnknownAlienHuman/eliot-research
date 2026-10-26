@@ -4,9 +4,10 @@ A private research workspace for one owner and connected agents: shared Library,
 passages, budgeted one-time source distillation, cited answers, project knowledge, bounded deep research and MCP — on
 Cloudflare.
 
-**Status:** the replacement architecture and delivery contours are specified; the one-package Worker/Vite shell is
-merged, while product contours K0+ still require implementation. Legacy `apps/`, `packages/`, `crates/` and `infra/`
-remain donor/import material until K10 and are not implementation instructions.
+**Status:** K0/K1 are delivered on `main`, including the duplicate-attachment fix in `d84e8b51`. The active local
+K2/K3 work remains unaccepted; current evidence, open gates and deployment boundaries are in the
+[delivery map](docs/MAP.md). Legacy `apps/`, `packages/`, `crates/` and `infra/` remain donor/import material until
+K10 and are not implementation instructions.
 
 | Document | Purpose |
 |---|---|
@@ -17,8 +18,13 @@ remain donor/import material until K10 and are not implementation instructions.
 | [Donors](docs/DONORS.md) | exact reuse pins, paths, licences and boundaries |
 | [Eval](eval/README.md) | fixed material and real-product acceptance scripts |
 
-Start with [K0 — Shell](docs/MAP.md#k0--shell). Earlier audits and the review register remain available at
-[`20400288/.github/audits`](https://github.com/UnknownAlienHuman/eliot-research/tree/204002889537de4af1583aa512cbb013cddccfe6/.github/audits);
-[issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) records the earlier failure mode.
+Start with the [reading order](docs/START-HERE.md), then the active [K2](docs/MAP.md#k2--ask) or
+[K3](docs/MAP.md#k3--distill) contour. Architecture, Map, Implementation and Donors are the four product authorities;
+this page is navigation only.
+
+`pnpm dev` runs the local app; `pnpm check` runs lint, typecheck, focused tests and build. For the running app,
+Without the model opt-in, `pnpm eval k3` validates stored K3 hard gates without model calls and fails when required
+evidence is missing.
+See [eval modes and prerequisites](eval/README.md#runtime) before running a contour eval.
 
 MIT. See [LICENSE](LICENSE).

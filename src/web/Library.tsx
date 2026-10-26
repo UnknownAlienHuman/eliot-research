@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import type { Project, Revision, Source } from "../shared/api";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
+import { SourceUnderstanding } from "./Understanding";
 export interface OutlineItem { label: string; start: number; end: number; }
 const FILE_LIMIT = 25 * 1024 * 1024;
 const POLL_MS = 3000;
@@ -190,19 +191,33 @@ export function Library() {
       await load();
     } catch (err) { setFailure(err instanceof Error ? err.message : "Could not attach the source."); }
   }
+  async function submitDuplicate(path: string, label: string, payload: unknown): Promise<boolean> {
+    let res: Response;
+    try {
+      res = await fetch("/api/projects/" + encodeURIComponent(projectId ?? "") + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), credentials: "same-origin" });
+    } catch (err) { setFailure(err instanceof Error ? err.message : "The request failed before a response arrived."); return false; }
+    if (res.status === 409) {
+      let dupId = "", dupTitle = "";
+      try { const b = (await res.json()) as { duplicate?: { sourceId?: string; title?: string } }; dupId = b.duplicate?.sourceId ?? ""; dupTitle = b.duplicate?.title ?? ""; }
+      catch { /* keep row actionable without parsed duplicate */ }
+      if (!dupId) { setFailure("Duplicate details could not be read. Submit again to retry."); return false; }
+      setRows((prev) => [...prev, { name: label, state: "duplicate", detail: "Exact duplicate of " + (dupTitle || label) + ".", duplicateId: dupId, duplicateTitle: dupTitle }]);
+      return false;
+    }
+    if (!res.ok) { setFailure(await apiErrorMessage(res)); return false; }
+    return true;
+  }
   async function submitText() {
     if (!textTitle.trim() || !textBody.trim()) return;
-    try {
-      await apiJson("/api/projects/" + encodeURIComponent(projectId ?? "") + "/sources/text", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: textTitle.trim(), text: textBody }) });
-      setTextTitle(""); setTextBody(""); await load();
-    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not save the text."); }
+    const label = textTitle.trim();
+    if (!await submitDuplicate("/sources/text", label, { title: label, text: textBody })) return;
+    setTextTitle(""); setTextBody(""); await load();
   }
   async function submitUrl() {
     if (!url.trim()) return;
-    try {
-      await apiJson("/api/projects/" + encodeURIComponent(projectId ?? "") + "/sources/url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: url.trim(), title: urlTitle.trim() || undefined }) });
-      setUrl(""); setUrlTitle(""); await load();
-    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not add the URL."); }
+    const label = urlTitle.trim() || url.trim();
+    if (!await submitDuplicate("/sources/url", label, { url: url.trim(), title: urlTitle.trim() || undefined })) return;
+    setUrl(""); setUrlTitle(""); await load();
   }
   if (sources === undefined) return <LoadGate text="Loading sources…" failure={failure} onRetry={() => void load()} />;
   return (
@@ -345,6 +360,7 @@ export function Reader() {
           <pre className="er-lib__text" ref={preRef}>{textReady ? text : ""}</pre>
         </div>
       </div>
+      {(activeState === "readable" || activeState === "readable_with_warnings") && activeRevision ? <SourceUnderstanding key={(sourceId ?? "") + activeRevision} projectId={projectId ?? ""} sourceId={sourceId ?? ""} revisionId={activeRevision} /> : null}
     </section>
   );
 }

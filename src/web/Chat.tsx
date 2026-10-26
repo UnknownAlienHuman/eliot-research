@@ -7,11 +7,10 @@
 // restore from the last turn, project default otherwise. Send waits on chatReady.
 // No localStorage. Only Send POSTs; reconnect and route change only
 // GET + WS and never resubmit.
-import { Children, useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { Markdown } from './Markdown';
+import type { MarkdownReference } from './Markdown';
 import type { TurnView } from '../shared/api';
 import type { Citation } from '../citations';
 import type { Source } from '../shared/api';
@@ -36,39 +35,14 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 function hrefFor(projectId: string, c: Citation): string {
   return '/p/' + encodeURIComponent(projectId) + '/source/' + encodeURIComponent(c.sourceId) + '?revisionId=' + encodeURIComponent(c.revisionId) + '&start=' + c.start + '&end=' + c.end;
 }
-interface LabelRef { readonly text: string; readonly href: string; }
-function collectRefs(projectId: string, cites: readonly Citation[]): LabelRef[] {
-  const out: LabelRef[] = [];
+function collectRefs(projectId: string, cites: readonly Citation[]): MarkdownReference[] {
+  const out: MarkdownReference[] = [];
   for (const c of cites) {
     const href = hrefFor(projectId, c);
     const cands = [c.label, '[R' + c.revisionId + ':' + c.block + ']'];
     for (const t of cands) { if (t !== '' && !out.some((r) => r.text === t)) out.push({ text: t, href }); }
   }
   return out;
-}
-function linkify(text: string, refs: readonly LabelRef[]): ReactNode {
-  const hits: { at: number; len: number; ref: LabelRef }[] = [];
-  for (const ref of refs) {
-    let at = text.indexOf(ref.text, 0);
-    while (at !== -1) { hits.push({ at, len: ref.text.length, ref }); at = text.indexOf(ref.text, at + ref.text.length); }
-  }
-  if (hits.length === 0) return text;
-  hits.sort((a, b) => a.at - b.at);
-  const parts: ReactNode[] = [];
-  let pos = 0;
-  for (const h of hits) {
-    if (h.at < pos) continue;
-    if (h.at > pos) parts.push(text.slice(pos, h.at));
-    parts.push(<Link key={h.at + ':' + h.ref.text} to={h.ref.href}>{h.ref.text}</Link>);
-    pos = h.at + h.len;
-  }
-  if (pos < text.length) parts.push(text.slice(pos));
-  return parts;
-}
-function AnswerBody({ projectId, answer, cites }: { readonly projectId: string; readonly answer: string; readonly cites: readonly Citation[] }) {
-  const refs = collectRefs(projectId, cites);
-  const para = ({ children }: { readonly children?: ReactNode }) => (<p>{Children.map(children, (ch) => (typeof ch === 'string' ? linkify(ch, refs) : ch))}</p>);
-  return (<ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} components={{ img: () => null, p: para }}>{answer}</ReactMarkdown>);
 }
 function Cites({ projectId, cites }: { readonly projectId: string; readonly cites: readonly Citation[] }) {
   if (cites.length === 0) return <p className='er-chat__hint'>No citations recorded for this turn.</p>;
@@ -79,6 +53,8 @@ export function ChatView() {
   const navigate = useNavigate();
   const pid = projectId ?? '';
   const [chats, setChats] = useState<ChatRow[] | undefined>(undefined);
+  const [chatsCursor, setChatsCursor] = useState<string | null>(null);
+  const [chatsBusy, setChatsBusy] = useState(false);
   const [chatsError, setChatsError] = useState('');
   const [turns, setTurns] = useState<TurnView[]>([]);
   const [turnsError, setTurnsError] = useState('');
@@ -114,9 +90,22 @@ export function ChatView() {
   useEffect(() => {
     if (pid === '') return;
     let live = true;
-    void apiJson<{ chats: ChatRow[] }>('/api/projects/' + encodeURIComponent(pid) + '/chats').then((d) => { if (live) { setChats(d.chats); setChatsError(''); } }).catch((err: unknown) => { if (live) setChatsError(err instanceof Error ? err.message : 'Could not load chats.'); });
+    setChats(undefined); setChatsCursor(null); setChatsBusy(false); setChatsError('');
+    void apiJson<{ chats: ChatRow[]; nextCursor: string | null }>('/api/projects/' + encodeURIComponent(pid) + '/chats').then((d) => { if (live) { setChats(d.chats); setChatsCursor(d.nextCursor); setChatsError(''); } }).catch((err: unknown) => { if (live) setChatsError(err instanceof Error ? err.message : 'Could not load chats.'); });
     return () => { live = false; };
   }, [pid]);
+  async function moreChats() {
+    if (!chatsCursor || chatsBusy) return;
+    const requestProject = pid;
+    setChatsBusy(true);
+    try {
+      const data = await apiJson<{ chats: ChatRow[]; nextCursor: string | null }>('/api/projects/' + encodeURIComponent(pid) + '/chats?cursor=' + encodeURIComponent(chatsCursor));
+      if (pidRef.current !== requestProject) return;
+      setChats((current) => [...(current ?? []), ...data.chats.filter((chat) => !current?.some((existing) => existing.id === chat.id))]);
+      setChatsCursor(data.nextCursor); setChatsError('');
+    } catch (error) { if (pidRef.current === requestProject) setChatsError(error instanceof Error ? error.message : 'Could not load more chats.'); }
+    finally { if (pidRef.current === requestProject) setChatsBusy(false); }
+  }
   useEffect(() => {
     if (pid === '') return;
     let live = true;
@@ -251,6 +240,7 @@ export function ChatView() {
       {chatsError !== '' ? <p className='er-chat__error' role='alert'>{chatsError}</p> : null}
       {chats !== undefined && chats.length > 0 ? (<nav className='er-chat__chats' aria-label='Chats'>
         {chats.map((c) => (<Link key={c.id} className='er-chat__chatlink' to={'/p/' + encodeURIComponent(pid) + '/chat/' + encodeURIComponent(c.id)} aria-current={c.id === chatId ? 'page' : undefined}>{c.title === '' ? 'Untitled chat' : c.title}</Link>))}
+        {chatsCursor ? <button className='er-button er-button--text' type='button' disabled={chatsBusy} onClick={() => void moreChats()}>Load more chats</button> : null}
         <Link className='er-chat__chatlink' to={'/p/' + encodeURIComponent(pid) + '/chat'}>New chat</Link>
       </nav>) : null}
       <details className='er-chat__scope' open={chatId === undefined}>
@@ -273,8 +263,8 @@ export function ChatView() {
       <ol className='er-chat__turns'>
         {turns.map((t) => (<li key={t.turnId} className='er-chat__turn' data-state={t.state}>
           <p className='er-chat__question'>{t.question}</p>
-          <div className='er-chat__answer'>{t.answer === '' ? (t.state === 'started' ? <p className='er-chat__hint' role='status'>Streaming…</p> : <p className='er-chat__hint'>No answer text recorded.</p>) : <AnswerBody projectId={pid} answer={t.answer} cites={t.citations} />}</div>
-          <p className='er-chat__meta'><span>{stateLabel(t.state)}</span><span>{scopeLabel(t.scopeMode)}</span>{t.firstTokenMs != null ? <span>first token {t.firstTokenMs} ms</span> : null}{t.totalMs != null ? <span>total {t.totalMs} ms</span> : null}{t.inputTokens != null || t.outputTokens != null ? <span>{t.inputTokens ?? 0} in{t.cachedTokens != null && t.cachedTokens > 0 ? ' (' + t.cachedTokens + ' cached)' : ''} / {t.outputTokens ?? 0} out</span> : null}{t.estimatedCostMicrousd != null ? <span>{'$' + (t.estimatedCostMicrousd / 1000000).toFixed(4)} est.</span> : null}{t.invalidLabels > 0 ? <span className='er-chat__badge'>invalid labels: {t.invalidLabels}</span> : null}</p>
+          <div className='er-chat__answer'>{t.answer === '' ? (t.state === 'started' ? <p className='er-chat__hint' role='status'>Streaming…</p> : <p className='er-chat__hint'>No answer text recorded.</p>) : <Markdown text={t.answer} references={collectRefs(pid, t.citations)} />}</div>
+          <p className='er-chat__meta'><span>{stateLabel(t.state)}</span><span>{scopeLabel(t.scopeMode)}</span><span>context {t.contextMode ?? 'unknown'}</span>{t.firstTokenMs != null ? <span>first token {t.firstTokenMs} ms</span> : null}{t.totalMs != null ? <span>total {t.totalMs} ms</span> : null}{t.inputTokens != null || t.outputTokens != null ? <span>{t.inputTokens ?? 0} in{t.cachedTokens != null && t.cachedTokens > 0 ? ' (' + t.cachedTokens + ' cached)' : ''} / {t.outputTokens ?? 0} out</span> : null}{t.estimatedCostMicrousd != null ? <span>{'$' + (t.estimatedCostMicrousd / 1000000).toFixed(4)} est.</span> : null}{t.invalidLabels > 0 ? <span className='er-chat__badge'>invalid labels: {t.invalidLabels}</span> : null}</p>
           <Cites projectId={pid} cites={t.citations} />
           <span className='er-chat__actions'>
             {t.state === 'started' ? <button className='er-button er-button--tonal' type='button' onClick={() => void stopTurn(t.turnId)}>Stop</button> : null}
@@ -323,7 +313,7 @@ export function StudioView() {
       {pages === undefined ? <p className='er-chat__hint' role='status'>Loading pages…</p> : pages.length === 0 ? <p className='er-chat__hint'>Nothing saved yet. Save an answer from chat.</p> : (<ul className='er-chat__pages'>
         {pages.map((p) => (<li key={p.id}><button className='er-button er-button--text' type='button' onClick={() => setOpenId(p.id)} aria-current={p.id === openId ? 'page' : undefined}>{p.title}</button></li>))}
       </ul>)}
-      {openId !== '' && body !== '' ? (<article className='er-chat__page'><div className='er-chat__answer'><AnswerBody projectId={pid} answer={body} cites={cites} /></div><Cites projectId={pid} cites={cites} /></article>) : null}
+      {openId !== '' && body !== '' ? (<article className='er-chat__page'><div className='er-chat__answer'><Markdown text={body} references={collectRefs(pid, cites)} /></div><Cites projectId={pid} cites={cites} /></article>) : null}
     </section>
   );
 }

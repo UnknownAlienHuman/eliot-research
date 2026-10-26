@@ -1,7 +1,8 @@
 # Eval — fixed material for contour acceptance
 
-`pnpm eval <contour>` drives a running Eliot through its public API or MCP. These scripts test the assembled product,
-not mocks. Their Markdown output belongs in the contour PR.
+`pnpm eval <contour>` drives a running Eliot through its public API. The current dispatcher supports K0–K3;
+MCP acceptance belongs to the future K4 contour. These scripts test the assembled product, not mocks. Reports belong
+in the contour PR. [MAP](../docs/MAP.md) owns current status and acceptance; script presence is not a contour pass.
 
 ## Acceptance semantics
 
@@ -12,51 +13,79 @@ not mocks. Their Markdown output belongs in the contour PR.
 - **Platform spike:** verifies an uncertain Cloudflare contract before the product depends on it. Failure selects the
   documented fallback and blocks that optional contour, not the core product.
 
-An optional LLM judge may annotate output but never controls exit status. The owner judges open answers against the
-recorded expectations and baseline.
+The owner judges K2 open answers against the recorded expectations and baseline. Mechanical citation checks do not
+establish semantic support. K3 quote, numeric, anchor and claim-mode gates remain hard checks; a limited smoke pass
+does not close them.
 
 ## Material
 
 | Folder | Contents | Contours |
 |---|---|---|
-| `arxiv-10/` | ten fixed ML papers, O1–O8 open questions, C1–C4 exact calibration, K3 distillation anchors and NotebookLM/old-Eliot baseline | K1–K4, K6 |
-| `ru/` | 2–3 open-access Russian papers and expected facts, added in K1 | K1–K3 |
-| `library-200/` | 200 arXiv IDs and ten expected-paper/section needles, added only in K5 | K5 |
-| `golden/` | compact migrated legacy cases: question, sources, `must_contain`, `must_not_claim`; report-only until a contour promotes one | K2+ |
+| [`arxiv-10/`](arxiv-10/) | [source manifest](arxiv-10/sources.json), [O1–O8 / C1–C4 / A1–A3](arxiv-10/questions.md), [baseline](arxiv-10/baseline.md) | K1–K3 now; reuse in later contours per MAP |
+| [`arxiv-10/overflow.json`](arxiv-10/overflow.json) | additional public papers for the real K3 overflow/automatic-claims journey | K3 |
+| [`ru/`](ru/) | [Russian PDF and native-text manifest](ru/sources.json), including the scan negative case | K1–K3 |
 
 PDFs are downloaded from `sources.json`; do not commit them. Cache downloads under `eval/cache/` (git-ignored) by
 SHA-256 so repeated runs do not redownload unchanged material.
 
 ## Runtime
 
-Scripts live in `scripts/eval/<contour>.ts` and share only transport/upload/poll/table helpers in `scripts/eval/lib.ts`.
+The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `pnpm eval`. Implemented scripts are
+[`k0.ts`](../scripts/eval/k0.ts), [`k1.ts`](../scripts/eval/k1.ts), [`k2.ts`](../scripts/eval/k2.ts) and
+[`k3.ts`](../scripts/eval/k3.ts); each currently contains its own small transport/check helpers.
+
+| Command / mode | Actual scope |
+|---|---|
+| `pnpm eval k0` | Worker/Access/Material browser journey, zero model calls |
+| `pnpm eval k1 --native-only` | native-text ingest/reader/browser fixtures; PDF conversion not run |
+| `pnpm eval k1` | full K1 corpus and browser checks; document conversion may use the live service |
+| `pnpm eval k2 --native-only` | limited reader/history smoke, zero model calls |
+| `pnpm eval k2 --models-only` | disconnected Gateway consent/admission and 390px Settings/understanding; no credential enable or provider call, not external-model acceptance |
+| `pnpm eval k2 --stored-only` | existing chat hard-gate revalidation; requires `ELIOT_EVAL_CHAT`, no new chat or turn |
+| `pnpm eval k2` without model opt-in | limited storage smoke, not full K2 acceptance |
+| `pnpm eval k3 --native-only` | explicitly limited storage smoke, zero model calls; optional cached-output checks are separate fixtures |
+| `pnpm eval k3` without model opt-in | stored hard-gate validation; nonzero on missing/failed work, unsupported quotes/numbers, missing anchors or unverified claim-mode C1–C4 |
+
+The model opt-ins `ELIOT_K2_MODEL=1` and `ELIOT_K3_MODEL=1` enable paid paths only when the root explicitly releases
+that run. K2/K3 reuse existing readable corpus revisions; they do not repeat ingestion/conversion to fill missing
+evidence. K3 checks known failed/paused revisions before admitting work and does not automatically retry them.
+
 Environment:
 
-- `ELIOT_URL` — local or deployed base URL;
+- `ELIOT_URL` — running app base URL, default `http://127.0.0.1:5173`;
 - `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` — deployed owner service token;
-- `ELIOT_EVAL_PROJECT` — reusable project title, default corpus name.
+- `ELIOT_OWNER_JWT` — optional owner assertion for K1–K3;
+- `ELIOT_EVAL_PROJECT` — project title; native K2/K3 default to `k1-eval`, full/stored corpus modes to
+  `Библиотека — PDF и точные ссылки`;
+- `ELIOT_EVAL_CHAT` — existing K2 chat for resume or stored-only validation;
+- `ELIOT_K3_CLAIM_PROJECT`, `ELIOT_K3_CLAIM_CHAT` — existing overflow project/chat for stored claim-mode C1–C4 checks;
+- `ELIOT_EVAL_NET=1` — explicitly include K1 network URL checks in native mode;
+- `ELIOT_EVAL_LIMIT=1` — include K1 25 MiB boundary checks.
 
-Each script:
+Start the app with its matching local bindings/state before running eval. K2/K3 need K1 material already present.
+For native CI, [fast-ci](../.github/workflows/fast-ci.yml) disables remote bindings and auto-distill before starting
+the app, then runs K0 followed by native K1/K2/K3. Native fixtures mutate local storage; K3 native mode also disables
+auto-distill through the settings API and restores it afterward. Serialize these runs against other fixture/settings
+work. Stored K3 mode performs reads only against the app.
 
-1. creates/reuses its project;
-2. uploads **one file per request**, at most two concurrently, skipping known SHA-256 files;
-3. runs the contour checks through public contracts;
-4. prints a compact table and writes details to `eval/out/<contour>-<date>.md` (git-ignored);
-5. exits non-zero only for the hard gates/catastrophic ceilings defined in MAP.
+K1 uploads **one file per request**, at most two concurrently, and caches PDF downloads by SHA-256. K2/K3 select the
+existing source/revision identities. Results are written beneath `eval/out/k0/`, `eval/out/k1/`, `eval/out/k2/` and
+`eval/out/k3/` (git-ignored); filenames vary by mode. Nonzero means a check failed or required preparation/evidence is
+missing. No eval success implies deployment or future-contour acceptance.
 
-Every model/search row includes route/mode, input/cached/output tokens, estimated micro-USD, first-token/total time,
-citations/invalid labels and terminal state. Workflow evals include steps, retries, wall time and paused/budget state.
-Search evals include ingestion tokens, indexed bytes, semantic/full-text query counts and fallback count.
+K2 model rows report tokens, estimated micro-USD, first-token/total time, citations/invalid labels and terminal state.
+K3 reports persisted per-revision calls, tokens, cost, wall time and kept/dropped reasons; a second unchanged pass must
+show no dispatch. Cost already stored on a revision is not additional spend by a read-only run.
 
 ## Contour-specific rules
 
 - **K1:** compare three random R2 range reads per source byte-for-byte with the full canonical text.
 - **K2:** C1–C4 and O8 are hard. Open-answer review remains human. The first run establishes timing baselines.
 - **K3:** claim count and model self-reported confidence are diagnostics only. Hard checks are exact quote ranges,
-  numeric support and the anchor table in `arxiv-10/questions.md` for Transformer, ResNet and LoRA.
-- **K5:** run the offset/filter/Russian-tokenizer spike before provisioning becomes architecture. Compare AI Search to
-  claim/FTS fallback on the same needles and publish the monthly usage forecast.
-- **K6:** comparison rows must show normalized key, parsed value/unit, dataset and conditions; incompatible rows must
-  remain separate.
+  numeric support and the [anchor table](arxiv-10/questions.md#k3--якоря-дистилляции) for Transformer, ResNet and LoRA,
+  plus actual automatic claim-mode C1–C4. Anchors count only source-specific exact claim quotes with the required
+  conditions, never generated digest. Stored turns must report `contextMode=claims`; native smoke is not that journey.
+- **K4 and later:** material, commands and acceptance arrive with their contours. Follow [MAP](../docs/MAP.md);
+  planned search corpora and legacy golden tests are not current replacement acceptance.
 
 Keep one script per contour. Do not introduce a second test framework or mocks for capabilities that do not exist.

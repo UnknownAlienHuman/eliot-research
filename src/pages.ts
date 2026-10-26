@@ -114,6 +114,7 @@ export async function saveAnswer(env: Env, actor: Actor, input: { projectId: str
     const head = await env.DB.prepare("SELECT head_revision_id AS headRevisionId FROM page WHERE id=?").bind(pageId).first<{ headRevisionId: string | null }>();
     if (head?.headRevisionId !== revisionId) throw new LibraryError("conflict", "The page changed while saving. Try again.", 409);
   } catch (error) {
+    if (error instanceof LibraryError && error.code === "conflict") throw error;
     let committed: { pageId: string } | null | undefined;
     try {
       committed = await env.DB.prepare("SELECT page_id AS pageId FROM page_revision WHERE id=?").bind(revisionId).first<{ pageId: string }>();
