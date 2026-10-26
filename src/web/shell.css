@@ -1,0 +1,391 @@
+/*
+ * K0 owner frame — Material 3 Expressive canonical web-app layout adapted from
+ * apps/eliotr-web/src/app/Shell.tsx + shell.css at 7c034569b908d3b03a8b821b7c537477a24b10f7:
+ * a top app bar, a collapsed navigation rail on medium/expanded windows, a bottom
+ * navigation bar on compact windows, and one soft rounded reading pane that owns
+ * its vertical scroll. K0 serves two destinations (Projects, Settings); the donor
+ * sources/tools panes, research tabs and inbox/connections rules are not carried.
+ */
+html, body, #root { margin: 0; min-height: 100%; }
+html, body { background: var(--eliot-color-canvas); }
+[hidden] { display: none !important; }
+
+#privacy-guard, .er-access {
+  box-sizing: border-box;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--eliot-space-panel);
+  padding: var(--eliot-space-reading);
+  background: var(--eliot-color-canvas);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  text-align: center;
+}
+.er-access { color: var(--md-sys-color-on-surface); }
+.er-access > .er-symbol {
+  inline-size: var(--eliot-size-touch-target);
+  block-size: var(--eliot-size-touch-target);
+  padding: var(--eliot-space-block-control);
+  box-sizing: border-box;
+  border-radius: var(--eliot-shape-large);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.er-access h1, .er-access p { margin: 0; max-width: var(--eliot-layout-reading-max); }
+.er-access h1 {
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-headline-medium-size);
+  line-height: var(--eliot-type-headline-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
+}
+.er-access p { color: var(--md-sys-color-on-surface-variant); }
+.er-access :focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+
+/* ---- Frame: top app bar, collapsed navigation rail, one reading pane ---- */
+
+.er-shell {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: var(--eliot-layout-shell-max);
+  margin-inline: auto;
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr);
+  grid-template-rows: var(--eliot-layout-topbar-size) minmax(0, 1fr);
+  grid-template-areas: "header header" "nav reading";
+  column-gap: var(--eliot-space-gutter);
+  padding: 0 var(--eliot-space-panel) var(--eliot-space-panel) 0;
+  overflow: hidden;
+  background: var(--eliot-color-canvas);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.er-shell *, .er-shell *::before, .er-shell *::after { box-sizing: border-box; }
+:where(.er-shell) :where(h1, h2, h3, p) { margin: 0; }
+:where(.er-shell) :where(a) { color: inherit; }
+.er-shell :focus-visible, .er-access :focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+.er-shell [tabindex="-1"]:focus { outline: none; }
+.er-shell :is(select, textarea, input:not([type="checkbox"]):not([type="radio"]):not([type="file"])):focus-visible { outline: none; }
+
+/* ---- Top app bar ---- */
+
+.er-shell-header {
+  grid-area: header;
+  position: relative;
+  z-index: var(--eliot-z-header);
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-panel);
+  min-width: 0;
+  padding-inline-start: calc((var(--eliot-layout-rail-size) - var(--eliot-size-control)) / 2);
+}
+.er-shell-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eliot-space-panel);
+  flex-shrink: 0;
+  min-height: var(--eliot-size-touch-target);
+  padding-inline-end: var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  text-decoration: none;
+  color: var(--md-sys-color-on-surface);
+}
+.er-shell-brand-mark {
+  display: grid;
+  place-items: center;
+  inline-size: var(--eliot-size-control);
+  block-size: var(--eliot-size-control);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--eliot-brand-gradient);
+  color: var(--eliot-on-brand);
+  box-shadow: var(--eliot-elevation-1);
+}
+.er-shell-brand-mark > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
+.er-shell-brand-name {
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
+  white-space: nowrap;
+}
+
+/* Collapsed navigation rail (M3 Expressive): a 56x32 indicator above a 12sp label. */
+.er-shell-nav {
+  grid-area: nav;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--eliot-space-gutter);
+  min-width: 0;
+  padding-block: var(--eliot-space-tight) var(--eliot-space-panel);
+}
+.er-shell-destination {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--eliot-space-tight);
+  min-width: 0;
+  padding-block: var(--eliot-space-tight) var(--eliot-space-block-control);
+  color: var(--md-sys-color-on-surface-variant);
+  text-decoration: none;
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-shell .er-shell-destination:focus-visible { outline: none; }
+.er-shell-destination-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  inline-size: var(--eliot-layout-nav-indicator-width);
+  block-size: var(--eliot-layout-nav-indicator-height);
+  border-radius: var(--eliot-shape-full);
+  isolation: isolate;
+}
+.er-shell-destination-icon::before, .er-shell-destination-icon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.er-shell-destination-icon::before {
+  background: var(--eliot-color-selected);
+  transform: scaleX(0.4);
+  opacity: 0;
+  transition:
+    transform var(--eliot-motion-spatial) var(--eliot-motion-emphasized-easing),
+    opacity var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-shell-destination-icon::after {
+  background: currentcolor;
+  opacity: 0;
+  transition: opacity var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-shell-destination:hover .er-shell-destination-icon::after { opacity: var(--eliot-state-hover-opacity); }
+.er-shell-destination:active .er-shell-destination-icon::after { opacity: var(--eliot-state-pressed-opacity); }
+.er-shell-destination:focus-visible .er-shell-destination-icon { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+.er-shell-destination-icon > .er-symbol { inline-size: var(--eliot-icon-standard-size); block-size: var(--eliot-icon-standard-size); }
+.er-shell-destination-label { display: block; min-inline-size: 0; max-inline-size: 100%; white-space: nowrap; }
+.er-shell-destination[aria-current="page"] { color: var(--md-sys-color-secondary); }
+.er-shell-destination[aria-current="page"] .er-shell-destination-icon { color: var(--eliot-color-on-selected); }
+.er-shell-destination[aria-current="page"] .er-shell-destination-icon::before { transform: none; opacity: 1; }
+
+/* Preferences: an icon pill opening a Material menu surface. */
+.er-shell-preferences { position: relative; flex-shrink: 0; margin-inline-start: auto; z-index: var(--eliot-z-menu); }
+.er-shell-preferences > summary {
+  position: relative;
+  min-height: var(--eliot-size-control);
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  padding-inline: var(--eliot-space-gutter) var(--eliot-space-inline-control);
+  border-radius: var(--eliot-shape-full);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  white-space: nowrap;
+  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-shell-preferences > summary::before { display: none; }
+.er-shell-preferences > summary > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
+.er-shell-preferences > summary:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); color: var(--md-sys-color-on-surface); }
+.er-shell-preferences[open] > summary { background: var(--eliot-color-selected); color: var(--eliot-color-on-selected); }
+.er-shell-preferences-panel {
+  position: absolute;
+  inset-block-start: calc(100% + var(--eliot-space-block-control));
+  inset-inline-end: 0;
+  display: grid;
+  gap: var(--eliot-space-panel);
+  inline-size: var(--eliot-layout-menu-width);
+  max-inline-size: calc(100vw - var(--eliot-space-reading));
+  padding: var(--eliot-space-group);
+  background: var(--md-sys-color-surface-container-high);
+  border-radius: var(--eliot-shape-large-increased);
+  box-shadow: var(--eliot-elevation-2);
+  transform-origin: top right;
+  animation: er-menu-enter var(--eliot-motion-spatial) var(--eliot-motion-emphasized-easing);
+}
+.er-shell-preferences-title {
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-shell-preferences-panel label {
+  display: grid;
+  gap: var(--eliot-space-tight);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-shell-preferences-panel select { width: 100%; min-width: 0; background-color: var(--eliot-color-pane); }
+@keyframes er-menu-enter {
+  from { transform: scale(0.94) translateY(calc(var(--eliot-space-tight) * -1)); }
+  to { transform: none; }
+}
+
+/* ---- Reading pane: one vertical scroll owner, stable gutter, soft corners ---- */
+
+.er-shell-reading {
+  grid-area: reading;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: var(--eliot-color-pane);
+  border-radius: var(--eliot-shape-extra-large-increased);
+  padding: var(--eliot-space-reading) var(--eliot-space-reading) var(--eliot-space-section);
+}
+.er-shell .er-shell-reading > * { max-inline-size: var(--eliot-layout-reading-max); margin-inline: auto; }
+.er-shell .er-shell-reading > .er-status { display: flex; }
+.er-shell-eyebrow {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+}
+.er-shell-reading > .er-shell-eyebrow {
+  margin-block-end: var(--eliot-space-tight);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+.er-shell-reading h1 {
+  margin-block: 0 var(--eliot-space-section);
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-headline-medium-size);
+  line-height: var(--eliot-type-headline-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
+  overflow-wrap: anywhere;
+}
+.er-shell-lead { max-width: var(--eliot-layout-reading-max); color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-large-size); line-height: var(--eliot-type-body-large-line-height); }
+.er-shell-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: var(--eliot-space-panel);
+  margin-block: var(--eliot-space-section);
+  padding: var(--eliot-space-reading);
+  max-width: var(--eliot-layout-reading-max);
+  border-radius: var(--eliot-shape-extra-large);
+  background: var(--eliot-color-group);
+}
+.er-shell-empty > .er-symbol {
+  inline-size: var(--eliot-size-touch-target);
+  block-size: var(--eliot-size-touch-target);
+  padding: var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-large);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.er-shell-empty h2 {
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-headline-small-size);
+  line-height: var(--eliot-type-headline-small-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+}
+.er-shell-settings-list {
+  display: grid;
+  gap: var(--eliot-space-panel);
+  margin-block: var(--eliot-space-section);
+  max-width: var(--eliot-layout-reading-max);
+}
+.er-shell-settings-row {
+  display: grid;
+  gap: var(--eliot-space-tight);
+  padding: var(--eliot-space-group);
+  border-radius: var(--eliot-shape-extra-large);
+  background: var(--eliot-color-group);
+}
+.er-shell-settings-row h2 {
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-shell-settings-row p { color: var(--md-sys-color-on-surface-variant); }
+.er-shell-settings-row label {
+  display: grid;
+  gap: var(--eliot-space-tight);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-shell-skip {
+  position: fixed;
+  inset-block-start: var(--eliot-space-block-control);
+  inset-inline-start: var(--eliot-space-block-control);
+  z-index: var(--eliot-z-menu);
+  transform: translateY(-200%);
+  padding: var(--eliot-space-block-control) var(--eliot-space-inline-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary) !important;
+  font-weight: var(--eliot-type-font-weight-medium);
+  text-decoration: none;
+  isolation: isolate;
+}
+.er-shell-skip:focus { transform: none; }
+
+/* ---- Adaptive layout: rail on medium/expanded windows, bottom bar on compact ---- */
+
+@media (max-width: 64rem) {
+  .er-shell-preferences > summary > span:last-child { display: none; }
+  .er-shell-preferences > summary { padding-inline: var(--eliot-space-block-control); }
+}
+@media (max-width: 48rem) {
+  .er-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--eliot-layout-topbar-size) minmax(0, 1fr);
+    grid-template-areas: "header" "reading";
+    padding: 0 var(--eliot-space-block-control) calc(var(--eliot-layout-navbar-size) + env(safe-area-inset-bottom));
+  }
+  .er-shell-header { gap: var(--eliot-space-gutter); padding-inline: var(--eliot-space-tight); }
+  .er-shell-brand-name { font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); }
+  .er-shell-nav {
+    position: fixed;
+    inset-inline: 0;
+    inset-block-end: 0;
+    z-index: var(--eliot-z-header);
+    flex-direction: row;
+    justify-content: space-around;
+    gap: 0;
+    min-height: var(--eliot-layout-navbar-size);
+    padding: var(--eliot-space-block-control) var(--eliot-space-block-control) calc(var(--eliot-space-block-control) + env(safe-area-inset-bottom));
+    background: var(--md-sys-color-surface-container);
+  }
+  .er-shell-destination { flex: 1 1 0; min-inline-size: max-content; padding-block: 0; }
+  .er-shell-reading { padding: var(--eliot-space-group) var(--eliot-space-panel) var(--eliot-space-section); border-radius: var(--eliot-shape-extra-large); scrollbar-gutter: auto; }
+  .er-shell-reading h1 { margin-block-end: var(--eliot-space-group); font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); }
+  #privacy-guard, .er-access { padding: var(--eliot-space-panel); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .er-shell-preferences-panel { animation: none; }
+}
+@media (forced-colors: active) {
+  .er-shell-reading, .er-shell-preferences-panel { border: var(--eliot-divider-width) solid CanvasText; }
+  .er-shell-destination[aria-current="page"] .er-shell-destination-icon { outline: var(--eliot-divider-width) solid CanvasText; }
+}

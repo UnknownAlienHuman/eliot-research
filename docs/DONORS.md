@@ -41,6 +41,16 @@ Do **not** port legacy receipt/proof/qualification/admission/outbox/lease/author
 research/workflow frameworks, generic artifacts/navigation/federation packages, `owner-api-client`, PWA/query adapters,
 Rust crates or legacy SQL. K10 reads legacy stores only to import owner data.
 
+### K0 adoption — 2026-10-25
+
+At the legacy pin above, K0 moved `packages/ui/src/tokens/theme.css`, its `fonts/fonts.css` and self-hosted font files,
+the native button/control CSS from `packages/ui/src/primitives/`, and a small `catalog/MaterialSymbol.tsx` subset into
+`src/web/ui/` and `public/fonts/`. `Shell.tsx`/`shell.css` supplied the top bar, rail, compact bottom navigation and pane
+geometry. Only Projects/Settings are wired; old panes, stories, Tailwind token aliases, query/runtime adapters and
+placeholder `src/client/` were removed from the replacement. These imports are called by `src/web/main.tsx` and checked
+by the auth/contrast suite plus the real K0 browser eval. Eliot code retains MIT; fonts retain their OFL notices and
+Google SVG paths retain Apache-2.0 in `THIRD_PARTY_NOTICES.md` and `public/licenses/Apache-2.0.txt`.
+
 ## Cloudflare primary donors
 
 ### Agents SDK and examples

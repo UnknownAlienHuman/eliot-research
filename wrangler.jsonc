@@ -1,13 +1,23 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "eliot-research",
-  "main": "src/worker.ts",
+  "main": "src/index.ts",
   "compatibility_date": "2026-10-24",
   "compatibility_flags": ["nodejs_compat"],
   "upload_source_maps": true,
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "ELIOT_ACCESS_TEAM_DOMAIN": "",
+    "ELIOT_ACCESS_AUD": "",
+    "ELIOT_OWNER_EMAIL": "",
+    "ELIOT_OWNER_SERVICE_TOKEN": "",
+    "ELIOT_ORIGIN": "",
+    "ELIOT_LOCAL_DEV": "0"
+  },
   "assets": {
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/mcp"]
+    "run_worker_first": true
   }
 }

@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   product:
-    name: Replacement shell compile and package
+    name: Material shell, Access and package
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -29,19 +29,35 @@ jobs:
       - run: corepack prepare pnpm@11.23.0 --activate
       - name: Install frozen dependencies
         run: pnpm install --frozen-lockfile
+      - name: Check generated bindings
+        run: pnpm cf:types --check
       - name: Lint
         run: pnpm lint
       - name: Typecheck
         run: pnpm typecheck
+      - name: Focused Access and contrast tests
+        run: pnpm test
       - name: Build Worker and React shell
         run: pnpm build
       - name: Wrangler packaging smoke
-        run: pnpm exec wrangler deploy --dry-run --minify --outdir dist/worker
+        run: pnpm exec wrangler deploy --dry-run --outdir dist/worker
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Exercise the actual local Worker and Material frame
+        run: |
+          cp .dev.vars.example .dev.vars
+          pnpm dev > /tmp/eliot-k0.log 2>&1 &
+          trap 'kill $!' EXIT
+          pnpm eval k0
       - name: Upload checked build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: replacement-shell-${{ github.sha }}
-          path: dist
+          path: |
+            dist
+            eval/out/k0
+            !dist/**/.dev.vars*
+            !dist/**/.env*
           if-no-files-found: error
           retention-days: 7
           include-hidden-files: true

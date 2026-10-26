@@ -13,6 +13,7 @@ minimumReleaseAgeExclude:
   - 'agents@0.30.1'
   - 'ai@7.0.152'
   - 'wrangler@4.152.0'
+  - hono@4.13.14
 
 overrides:
   '@modelcontextprotocol/client': 2.3.1

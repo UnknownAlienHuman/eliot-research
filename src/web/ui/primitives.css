@@ -1,0 +1,361 @@
+/*
+ * Material 3 Expressive native primitive styles. Every value is a committed semantic
+ * token from src/tokens/theme.css; nothing here is a raw color, radius, size or duration.
+ *
+ * Native controls keep native semantics. Base looks for select, textarea, text inputs,
+ * checkboxes, radios, disclosures and scrollbars use :where() so they carry zero
+ * specificity: a feature class always wins without !important.
+ */
+
+/* ---- Document-level calm: stable scrollbars, thin tracks, smooth type ---- */
+
+:where(html) {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+:where(body) {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-synthesis-weight: none;
+}
+
+/* An element that selects a colour scheme also paints that scheme's surface and text, so a
+   dark wrapper never leaves dark-scheme text on a light page. Zero specificity: the shell's
+   own canvas and every feature surface still win. */
+:where([data-theme]) {
+  background-color: var(--eliot-color-pane);
+  color: var(--md-sys-color-on-surface);
+}
+
+:where(*) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--md-sys-color-outline-variant) transparent;
+}
+
+:where(*:hover) {
+  scrollbar-color: var(--md-sys-color-outline) transparent;
+}
+
+.er-symbol {
+  flex-shrink: 0;
+  inline-size: var(--eliot-icon-standard-size);
+  block-size: var(--eliot-icon-standard-size);
+}
+
+/* ---- Button and IconButton ---- */
+
+.er-button {
+  --er-button-shape: var(--eliot-shape-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--eliot-space-block-control);
+  flex-shrink: 0;
+  /* One line whenever the label fits; a label wider than its container (long Russian copy on a
+     phone) wraps in balanced lines inside the pill instead of pushing the page sideways. */
+  max-inline-size: 100%;
+  min-height: var(--eliot-size-control);
+  padding-block: var(--eliot-space-block-control);
+  padding-inline: calc(var(--eliot-space-inline-control) + var(--eliot-space-block-control));
+  border: none;
+  border-radius: var(--er-button-shape);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
+  text-align: center;
+  text-wrap: balance;
+  text-decoration: none;
+  cursor: pointer;
+  position: relative;
+  isolation: isolate;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  transition:
+    border-radius var(--eliot-motion-spatial) var(--eliot-motion-expressive-easing),
+    box-shadow var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+
+.er-button > .er-symbol {
+  inline-size: var(--eliot-icon-small-size);
+  block-size: var(--eliot-icon-small-size);
+  margin-inline-start: calc(var(--eliot-space-tight) * -1);
+}
+
+.er-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: currentcolor;
+  opacity: 0;
+  transition: opacity var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+  pointer-events: none;
+  z-index: var(--eliot-z-raised);
+}
+
+.er-button:hover:not(:disabled)::after { opacity: var(--eliot-state-hover-opacity); }
+.er-button:focus-visible::after { opacity: var(--eliot-state-focus-opacity); }
+.er-button:active:not(:disabled)::after { opacity: var(--eliot-state-pressed-opacity); }
+
+/* Expressive press: the full shape morphs toward a squarer corner and springs back. */
+.er-button:active:not(:disabled) { --er-button-shape: var(--eliot-shape-medium); }
+
+.er-button:focus-visible {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
+}
+
+.er-button:disabled {
+  cursor: default;
+  box-shadow: none;
+}
+
+.er-button--primary {
+  background-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+
+.er-button--primary:hover:not(:disabled) { box-shadow: var(--eliot-elevation-1); }
+
+.er-button--tonal {
+  background-color: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.er-button--primary:disabled,
+.er-button--tonal:disabled {
+  background-color: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
+  color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
+}
+
+.er-button--text {
+  background-color: transparent;
+  color: var(--md-sys-color-primary);
+  padding-inline: var(--eliot-space-inline-control);
+}
+
+.er-button--text:disabled {
+  color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
+}
+
+.er-button[aria-busy="true"] { cursor: progress; }
+
+/* Keep the system-color token pairs together, including transparent label descendants. */
+@media (forced-colors: active) {
+  .er-button { forced-color-adjust: none; border: var(--eliot-divider-width) solid ButtonText; }
+}
+
+.er-icon-button {
+  --er-button-shape: var(--eliot-shape-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--eliot-size-control);
+  height: var(--eliot-size-control);
+  padding: 0;
+  border: none;
+  border-radius: var(--er-button-shape);
+  background-color: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    border-radius var(--eliot-motion-spatial) var(--eliot-motion-expressive-easing),
+    color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+
+.er-icon-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: currentcolor;
+  opacity: 0;
+  transition: opacity var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+  pointer-events: none;
+}
+
+.er-icon-button:hover:not(:disabled)::after { opacity: var(--eliot-state-hover-opacity); }
+.er-icon-button:focus-visible::after { opacity: var(--eliot-state-focus-opacity); }
+.er-icon-button:active:not(:disabled)::after { opacity: var(--eliot-state-pressed-opacity); }
+.er-icon-button:active:not(:disabled) { --er-button-shape: var(--eliot-shape-medium); }
+.er-icon-button:hover:not(:disabled) { color: var(--md-sys-color-on-surface); }
+
+.er-icon-button:focus-visible {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
+}
+
+.er-icon-button:disabled {
+  cursor: default;
+  color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
+}
+
+/* ---- Field ---- */
+
+.er-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-tight);
+  font-family: var(--eliot-type-font-family);
+  text-align: start;
+}
+
+.er-field__label {
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-field__control {
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  color: var(--md-sys-color-on-surface);
+  min-height: var(--eliot-size-touch-target);
+}
+
+.er-field__control[aria-invalid="true"] {
+  border-color: var(--md-sys-color-error);
+}
+
+.er-field__hint {
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+  color: var(--md-sys-color-on-surface-variant);
+  padding-inline: var(--eliot-space-inline-control);
+}
+
+.er-field__error {
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+  color: var(--md-sys-color-error);
+  padding-inline: var(--eliot-space-inline-control);
+}
+
+/* A native checkbox stays native: token size, Material check, inherited visible focus. */
+.er-field__control[type="checkbox"] {
+  inline-size: var(--eliot-size-checkbox);
+  block-size: var(--eliot-size-checkbox);
+  min-height: var(--eliot-size-checkbox);
+  padding: 0;
+}
+
+/* ---- Status ---- */
+
+.er-status {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  color: var(--md-sys-color-on-surface-variant);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+
+.er-status > .er-symbol {
+  inline-size: var(--eliot-icon-small-size);
+  block-size: var(--eliot-icon-small-size);
+  flex-shrink: 0;
+}
+
+.er-status > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.er-status--error {
+  color: var(--md-sys-color-error);
+}
+
+/* ---- Dialog ---- */
+
+.er-dialog {
+  box-sizing: border-box;
+  margin: auto;
+  max-block-size: calc(100dvh - 2 * var(--eliot-space-section));
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border: none;
+  border-radius: var(--eliot-shape-extra-large);
+  background-color: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  padding: calc(var(--eliot-space-panel) + var(--eliot-space-block-control));
+  inline-size: var(--eliot-layout-reading-max);
+  max-inline-size: calc(100% - 2 * var(--eliot-space-panel));
+  box-shadow: var(--eliot-elevation-3);
+}
+
+.er-dialog[open] {
+  animation: er-dialog-enter var(--eliot-motion-spatial) var(--eliot-motion-emphasized-easing);
+}
+
+.er-dialog::backdrop {
+  background-color: color-mix(in srgb, var(--md-sys-color-scrim) 32%, transparent);
+}
+
+/* Spatial entry only: the surface is never transparent, so it is visible from the first frame. */
+@keyframes er-dialog-enter {
+  from { transform: translateY(var(--eliot-space-panel)) scale(0.97); }
+  to { transform: none; }
+}
+
+.er-dialog__title {
+  margin: 0 0 var(--eliot-space-panel);
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-headline-small-size);
+  line-height: var(--eliot-type-headline-small-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
+  color: var(--md-sys-color-on-surface);
+  overflow-wrap: anywhere;
+}
+
+/* Accessibility geometry: keep the persistent text in the accessibility tree without layout. */
+.er-operation-announcement {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.er-dialog__body {
+  display: grid;
+  gap: var(--eliot-space-panel);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-dialog__body > .er-button {
+  justify-self: start;
+}
+
+.er-dialog__body > .er-button:last-child {
+  justify-self: end;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .er-dialog[open] { animation: none; }
+}

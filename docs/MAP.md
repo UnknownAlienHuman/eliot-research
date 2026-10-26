@@ -30,13 +30,20 @@ actually occurred. Product tests remain the contour evals.
 Code budgets count new non-test lines under `src/`, excluding UI moved without semantic changes. They are ceilings, not
 quotas.
 
-## Current state — 2026-10-24
+## Current state — 2026-10-25
 
-- PR #415 merged the one-package Vite/Worker shell. `src/worker.ts` serves `/api/health`; `src/client/` is still a
-  placeholder UI.
+- K0 implementation uses `src/index.ts` (Hono), `src/auth.ts` (Access) and the moved Material shell in `src/web/`.
+  `/api/me`, Projects/Settings navigation and System/Light/Dark appearance work locally. All assets pass through auth.
+- Local acceptance: `pnpm check`, 28 focused auth/contrast cases and `pnpm eval k0` pass; the real Worker/browser eval
+  covers 1440/390 px, both themes, explicit appearance persistence, navigation and Cyrillic fonts. Model/search calls: 0.
+- Owner chose to keep the existing `eliotr-core.kleymor-metal.workers.dev` address for now. Its hostname Access app
+  remains in place; this change does not deploy over that legacy Worker. New-domain setup and live browser/service-token
+  acceptance are **not run**, so full deployed K0 acceptance remains open. `scripts/setup.sh` records later custom-domain
+  setup; it defaults to an offline plan.
 - No D1, R2, Workers AI, AI Search, Durable Object or Workflow binding exists on `main`.
 - Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
-- The accepted Material interface remains in `packages/ui/src/**` and `apps/eliotr-web/src/app/Shell.tsx`.
+- The accepted Material tokens, local fonts, primitives and frame are adapted from the pinned legacy UI; future features
+  remain in `packages/ui/src/**` and `apps/eliotr-web/src/app/Shell.tsx` until their contour.
 - PR #417 is the authoritative replacement-documentation history and supersedes the stacked plan in PR #416.
 
 ## Contour overview

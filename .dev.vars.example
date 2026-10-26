@@ -1,0 +1,14 @@
+# Local development variables for eliot-research (copy to .dev.vars; never commit secrets).
+# IMPLEMENTATION section 2: local bypass needs ELIOT_LOCAL_DEV=1 AND a localhost origin.
+# Deployed runs (ELIOT_LOCAL_DEV=0) fail closed without the ACCESS vars plus the exact https origin.
+ELIOT_ACCESS_TEAM_DOMAIN=
+ELIOT_ACCESS_AUD=
+ELIOT_OWNER_EMAIL=
+ELIOT_OWNER_SERVICE_TOKEN=
+ELIOT_ORIGIN=http://127.0.0.1:5173
+ELIOT_LOCAL_DEV=1
+# Production values live in wrangler vars/secrets (root-owned), not in this file:
+# ELIOT_LOCAL_DEV=0, ELIOT_ORIGIN=https://research.<domain>,
+# ELIOT_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com, ELIOT_ACCESS_AUD=<app aud>,
+# ELIOT_OWNER_EMAIL=<owner email>, ELIOT_OWNER_SERVICE_TOKEN=<signed common_name>.
+# Client ID/secret belong only to the calling client, never the Worker.

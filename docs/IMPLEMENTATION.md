@@ -67,6 +67,20 @@ owner service-token `common_name` becomes `owner`; approved MCP token becomes `a
 403. Browser mutations and WebSocket upgrades require the exact configured Origin. Agents may read and propose pages;
 only owner accepts. Local bypass requires `ELIOT_LOCAL_DEV=1` and localhost; a deployed request seeing it fails closed.
 
+K0 configuration uses `ELIOT_ACCESS_TEAM_DOMAIN` (bare `<team>.cloudflareaccess.com`), `ELIOT_ACCESS_AUD`,
+`ELIOT_OWNER_EMAIL`, `ELIOT_OWNER_SERVICE_TOKEN` (the signed `common_name`, not a client secret), and `ELIOT_ORIGIN`.
+`exp` is mandatory; only RS256 assertions are accepted. Local bypass runs before production configuration validation,
+accepts only `localhost`, `127.0.0.1` or `[::1]`, and rejects Cloudflare edge requests carrying `cf-ray`. It never exempts
+mutations or WebSocket upgrades from exact Origin checks. All static assets use `run_worker_first: true` and private,
+no-store responses. `workers.dev` and previews are disabled for the replacement by default.
+
+For local use, copy `.dev.vars.example` to `.dev.vars`, then `pnpm dev`. `pnpm cf:types` generates the checked-in Env;
+the example keeps variable order aligned with Wrangler configuration so generation is stable locally and in CI.
+`pnpm eval k0` exercises the actual running Worker and writes viewport screenshots to ignored `eval/out/k0/`.
+On 2026-10-25 the owner retained the existing legacy `eliotr-core.kleymor-metal.workers.dev` hostname Access application;
+no replacement deployment or new-domain setup has been performed. Live browser and deployed owner-token acceptance
+remain separate from local/signed-fixture checks.
+
 ## 3. Data and immutable writes
 
 Migrations own schema names:

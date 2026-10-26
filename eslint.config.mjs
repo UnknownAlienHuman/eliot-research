@@ -5,7 +5,7 @@ const tsFiles = ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"];
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", ".wrangler/**", "coverage/**", "apps/**", "packages/**", "scripts/**", "tests/**"],
+    ignores: ["dist/**", ".wrangler/**", "coverage/**", "apps/**", "packages/**", "scripts/**", "tests/**", "src/worker-configuration.d.ts"],
   },
   {
     ...js.configs.recommended,
@@ -23,7 +23,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/client/**/*.ts", "src/client/**/*.tsx"],
+    files: ["src/web/**/*.ts", "src/web/**/*.tsx"],
     languageOptions: {
       globals: {
         document: "readonly",
@@ -35,7 +35,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/worker.ts"],
+    files: ["src/index.ts", "src/auth.ts", "src/**/*.test.ts"],
     languageOptions: {
       globals: {
         Headers: "readonly",
