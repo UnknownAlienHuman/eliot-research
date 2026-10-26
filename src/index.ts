@@ -13,13 +13,15 @@ export { IngestWorkflow } from "./workflows/ingest";
 const app = new Hono<{ Bindings: Env; Variables: { actor: Actor } }>();
 
 app.use("*", async (c, next) => {
+  await next();
+  // Preserve the platform's WebSocket upgrade response. It carries no cacheable document body.
+  if (c.res.status === 101) return;
   c.header("Cache-Control", "private, no-store");
   c.header("Cross-Origin-Opener-Policy", "same-origin");
   c.header("Referrer-Policy", "no-referrer");
   c.header("X-Content-Type-Options", "nosniff");
   c.header("X-Frame-Options", "DENY");
   c.header("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
-  await next();
 });
 
 app.use("*", async (c, next) => {

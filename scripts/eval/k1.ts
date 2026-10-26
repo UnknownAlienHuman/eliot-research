@@ -60,6 +60,9 @@ async function apiJson(path: string, init?: any): Promise<any> {
 }
 async function apiBytes(path: string): Promise<any> {
   const r = await fetch(origin + path, { headers: { ...H } });
+  assert.equal(r.headers.get('cache-control'), 'private, no-store', 'Source bytes must not be publicly cached.');
+  assert.equal(r.headers.get('x-frame-options'), 'DENY');
+  assert(r.headers.get('content-security-policy')?.includes("frame-ancestors 'none'"));
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
 }
 function sha(b: any): string {
