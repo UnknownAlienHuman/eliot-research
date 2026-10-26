@@ -1,14 +1,19 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z, ZodError } from "zod";
+import { getAgentByName, routeAgentRequest } from "agents";
 import { AuthError, assertOrigin, authenticate } from "./auth";
 import type { Actor } from "./auth";
 import type { ApiError, MeResponse } from "./shared/api";
-import { addSource, attachSource, createProject, getProject, getSource, LibraryError, listProjects, listSources, MAX_SOURCE_BYTES, updateProject } from "./library";
+import { addSource, attachSource, createProject, getProject, getSource, LibraryError, listProjects, listSources, MAX_SOURCE_BYTES, setProjectScope, updateProject } from "./library";
 import { readOriginal, readOutline, readText } from "./read";
 import { captureUrl, UrlGuardError } from "./url-guard";
+import { monthlyUsage } from "./cost";
+import { MODELS, requireModel } from "./models";
+import { getPage, listPages, saveAnswer } from "./pages";
 
 export { IngestWorkflow } from "./workflows/ingest";
+export { ChatAgent } from "./chat";
 
 const app = new Hono<{ Bindings: Env; Variables: { actor: Actor } }>();
 
@@ -29,7 +34,7 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/api/me", (c) => c.json({ actor: c.get("actor") } satisfies MeResponse));
-app.get("/api/health", (c) => c.json({ service: "eliot-research", status: "ok", contour: "k1" }));
+app.get("/api/health", (c) => c.json({ service: "eliot-research", status: "ok", contour: "k2" }));
 app.use("/api/*", bodyLimit({ maxSize: MAX_SOURCE_BYTES + 65_536,
   onError: (c) => c.json({ error: { code: "invalid", message: "Upload one file of at most 25 MiB per request." } } satisfies ApiError, 413),
 }));
@@ -37,6 +42,69 @@ const uuid = z.uuid();
 const title = z.string().trim().min(1).max(200);
 const projectInput = z.object({ title, description: z.string().max(2000).optional() }).strict();
 const projectPatch = z.object({ title: title.optional(), archived: z.boolean().optional() }).strict();
+async function chatRecord(env: Env, projectId: string, chatId: string) {
+  const chat = await env.DB.prepare("SELECT id,project_id AS projectId,title,updated_at AS updatedAt FROM chat WHERE id=? AND project_id=? AND archived_at IS NULL")
+    .bind(chatId, projectId).first<{ id: string; projectId: string; title: string; updatedAt: number }>();
+  if (!chat) throw new LibraryError("not_found", "Chat not found in this project.", 404);
+  return chat;
+}
+app.get("/api/models", async (c) => c.json({ models: MODELS, defaultModel: (await c.env.DB.prepare("SELECT answer_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model }));
+app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,monthly_model_budget_microusd AS monthlyModelBudgetMicrousd,updated_at AS updatedAt FROM settings WHERE id=1").first(), ...await monthlyUsage(c.env) }));
+app.put("/api/settings", async (c) => {
+  const input = z.object({ answerModel: z.string(), monthlyModelBudgetMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).strict().parse(await c.req.json());
+  requireModel(input.answerModel);
+  await c.env.DB.prepare("UPDATE settings SET answer_model=?,monthly_model_budget_microusd=?,updated_at=? WHERE id=1").bind(input.answerModel, input.monthlyModelBudgetMicrousd, Date.now()).run();
+  return c.json({ settings: { ...input, updatedAt: Date.now() } });
+});
+app.patch("/api/projects/:id/settings", async (c) => {
+  const projectId = uuid.parse(c.req.param("id")), project = await getProject(c.env, c.get("actor"), projectId);
+  const input = z.object({ instructions: z.string().max(10000).optional(), answerModel: z.string().nullable().optional() }).strict().parse(await c.req.json());
+  if (input.answerModel) requireModel(input.answerModel);
+  await c.env.DB.prepare("UPDATE project SET instructions=?,answer_model=?,updated_at=? WHERE id=?")
+    .bind(input.instructions ?? project.instructions ?? "", input.answerModel === undefined ? project.answerModel ?? null : input.answerModel, Date.now(), projectId).run();
+  return c.json({ project: await getProject(c.env, c.get("actor"), projectId) });
+});
+app.put("/api/projects/:id/scope", async (c) => c.json(await setProjectScope(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), sourceIds: z.object({ sourceIds: z.array(uuid) }).strict().parse(await c.req.json()).sourceIds })));
+app.get("/api/projects/:id/chats", async (c) => {
+  const projectId = uuid.parse(c.req.param("id")); await getProject(c.env, c.get("actor"), projectId);
+  const chats = await c.env.DB.prepare("SELECT id,title,updated_at AS updatedAt FROM chat WHERE project_id=? AND archived_at IS NULL ORDER BY updated_at DESC LIMIT 50").bind(projectId).all();
+  return c.json({ chats: chats.results });
+});
+app.post("/api/projects/:id/chats", async (c) => {
+  const projectId = uuid.parse(c.req.param("id")); await getProject(c.env, c.get("actor"), projectId);
+  const input = z.object({ title: title.optional() }).strict().parse(await c.req.json());
+  const id = crypto.randomUUID(), now = Date.now();
+  await c.env.DB.prepare("INSERT INTO chat(id,project_id,title,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?)").bind(id, projectId, input.title ?? "New chat", c.get("actor").type, now, now).run();
+  return c.json({ chat: { id, title: input.title ?? "New chat", updatedAt: now } }, 201);
+});
+app.get("/api/projects/:id/chats/:chatId", async (c) => {
+  const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId"));
+  const chat = await chatRecord(c.env, projectId, chatId), agent = await getAgentByName(c.env.CHAT, chatId);
+  return c.json({ chat, ...await agent.getSnapshot(projectId), ...await monthlyUsage(c.env) });
+});
+app.post("/api/projects/:id/chats/:chatId/turns", async (c) => {
+  const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId")); await chatRecord(c.env, projectId, chatId);
+  const input = z.object({ turnId: uuid, question: z.string().trim().min(1).max(400000), scopeMode: z.enum(["project_default", "explicit", "empty"]), sourceIds: z.array(uuid).optional(), model: z.string().optional() }).strict().parse(await c.req.json());
+  const agent = await getAgentByName(c.env.CHAT, chatId), wait = c.req.query("wait") === "1";
+  const result = await agent.submitTurn({ projectId, chatId, turnId: input.turnId, question: input.question, scopeMode: input.scopeMode,
+    ...(input.sourceIds === undefined ? {} : { sourceIds: input.sourceIds }), ...(input.model === undefined ? {} : { model: input.model }) }, wait);
+  if ("busy" in result) return c.json({ error: { code: "busy", message: result.message } } satisfies ApiError, 409);
+  return wait ? c.json({ turn: result }) : c.json(result, 202);
+});
+app.post("/api/projects/:id/chats/:chatId/turns/:turnId/stop", async (c) => {
+  const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId")); await chatRecord(c.env, projectId, chatId);
+  return c.json(await (await getAgentByName(c.env.CHAT, chatId)).stopTurn(projectId, uuid.parse(c.req.param("turnId"))));
+});
+app.get("/agents/chat-agent/:chatId", async (c) => {
+  const chatId = uuid.parse(c.req.param("chatId")), projectId = uuid.parse(c.req.query("projectId")); await chatRecord(c.env, projectId, chatId);
+  return await routeAgentRequest(c.req.raw, { ChatAgent: c.env.CHAT }) ?? c.json({ error: { code: "not_found", message: "Chat connection not found." } } satisfies ApiError, 404);
+});
+app.post("/api/projects/:id/pages/from-turn", async (c) => {
+  const input = z.object({ chatId: uuid, turnId: uuid, title, mutationId: uuid }).strict().parse(await c.req.json());
+  return c.json({ page: await saveAnswer(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...input }) }, 201);
+});
+app.get("/api/projects/:id/pages", async (c) => c.json(await listPages(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...(c.req.query("cursor") ? { cursor: uuid.parse(c.req.query("cursor")) } : {}) })));
+app.get("/api/projects/:id/pages/:pageId", async (c) => c.json({ page: await getPage(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), pageId: uuid.parse(c.req.param("pageId")) }) }));
 app.get("/api/projects", async (c) => c.json(await listProjects(c.env, c.get("actor"), uuid.optional().parse(c.req.query("cursor")))));
 app.post("/api/projects", async (c) => {
   const input = projectInput.parse(await c.req.json());

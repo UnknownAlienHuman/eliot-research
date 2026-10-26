@@ -1,0 +1,35 @@
+/* K2 Ask chat/studio views. Presentation adapted (tokens only) from the
+ * pinned legacy donor 7c034569: research-run.css (cover, conversation,
+ * docked composer) + evidence.css (citation rail). Semantic tokens only;
+ * no raw colours, radii, spacing or fonts. Root wires routes/imports. */
+.er-chat { display: grid; gap: var(--eliot-space-panel); min-width: 0; color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family); font-size: var(--eliot-type-body-medium-size); line-height: var(--eliot-type-body-medium-line-height); }
+.er-chat__head { display: grid; gap: var(--eliot-space-block-control); justify-items: start; min-width: 0; }
+.er-chat__title { margin: 0; color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family-display); font-size: var(--eliot-type-title-large-size); line-height: var(--eliot-type-title-large-line-height); font-weight: var(--eliot-type-font-weight-regular); letter-spacing: var(--eliot-type-letter-spacing-headline); }
+.er-chat__socket { margin: 0; max-width: var(--eliot-type-reading-measure); color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-large-size); line-height: var(--eliot-type-label-large-line-height); }
+.er-chat__error { margin: 0; color: var(--md-sys-color-error); overflow-wrap: anywhere; }
+.er-chat__hint { margin: 0; max-width: var(--eliot-type-reading-measure); color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-medium-size); line-height: var(--eliot-type-body-medium-line-height); overflow-wrap: anywhere; }
+.er-chat__chats { display: flex; flex-wrap: wrap; gap: var(--eliot-space-block-control); min-width: 0; }
+.er-chat__chatlink { display: inline-flex; align-items: center; min-height: var(--eliot-size-control); padding-inline: var(--eliot-space-gutter); border-radius: var(--eliot-shape-full); background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-size: var(--eliot-type-label-large-size); overflow-wrap: anywhere; }
+.er-chat__chatlink[aria-current='page'] { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.er-chat__scope { display: grid; gap: var(--eliot-space-block-control); min-width: 0; padding: var(--eliot-space-panel) var(--eliot-space-group); border-radius: var(--eliot-shape-large-increased); background: var(--eliot-color-group); }
+.er-chat__scope summary { display: flex; align-items: center; min-height: var(--eliot-size-control); cursor: pointer; color: var(--md-sys-color-on-surface-variant); font-weight: var(--eliot-type-font-weight-medium); }
+.er-chat__sources { display: grid; gap: var(--eliot-space-tight); margin: 0; padding: 0; list-style: none; min-width: 0; }
+.er-chat__sources label { display: flex; align-items: center; gap: var(--eliot-space-gutter); min-height: var(--eliot-size-control); overflow-wrap: anywhere; }
+.er-chat__model { display: grid; gap: var(--eliot-space-block-control); justify-items: start; max-width: var(--eliot-type-reading-measure); }
+.er-chat__turns { display: grid; gap: var(--eliot-space-panel); margin: 0; padding: 0; list-style: none; min-width: 0; }
+.er-chat__turn { display: grid; gap: var(--eliot-space-block-control); min-width: 0; padding-block: var(--eliot-space-panel); }
+.er-chat__turn + .er-chat__turn { border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); }
+.er-chat__question { margin: 0; justify-self: end; max-inline-size: min(100%, 85%); padding: var(--eliot-space-gutter) var(--eliot-space-group); border-radius: var(--eliot-shape-large-increased) var(--eliot-shape-large-increased) var(--eliot-shape-extra-small) var(--eliot-shape-large-increased); background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); font-size: var(--eliot-type-body-large-size); overflow-wrap: anywhere; }
+.er-chat__answer { display: grid; gap: var(--eliot-space-block-control); min-width: 0; max-width: var(--eliot-type-reading-measure); overflow-wrap: anywhere; }
+.er-chat__answer pre { margin: 0; padding: var(--eliot-space-panel) var(--eliot-space-group); border-radius: var(--eliot-shape-large); background: var(--eliot-color-group); white-space: pre-wrap; overflow-wrap: anywhere; }
+.er-chat__meta { display: flex; flex-wrap: wrap; gap: var(--eliot-space-inline-control) var(--eliot-space-gutter); margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); }
+.er-chat__badge { display: inline-block; padding-inline: var(--eliot-space-block-control); border-radius: var(--eliot-shape-full); background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); font-size: var(--eliot-type-label-medium-size); }
+.er-chat__cites { display: grid; gap: var(--eliot-space-tight); margin: 0; padding: var(--eliot-space-panel) var(--eliot-space-group); border-radius: var(--eliot-shape-large); background: var(--eliot-color-group); list-style: none; min-width: 0; }
+.er-chat__cite { min-width: 0; overflow-wrap: anywhere; }
+.er-chat__cite a { color: var(--md-sys-color-primary); }
+.er-chat__actions { display: flex; flex-wrap: wrap; gap: var(--eliot-space-block-control); min-height: var(--eliot-size-control); }
+.er-chat__composer { display: grid; gap: var(--eliot-space-block-control); justify-items: start; position: sticky; bottom: 0; padding-block: var(--eliot-space-panel); background: color-mix(in srgb, var(--md-sys-color-surface) 92%, transparent); }
+.er-chat__asklabel { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.er-chat__composer textarea { inline-size: 100%; max-width: var(--eliot-type-reading-measure); }
+.er-chat__pages { display: grid; gap: var(--eliot-space-tight); margin: 0; padding: 0; list-style: none; min-width: 0; }
+.er-chat__page { display: grid; gap: var(--eliot-space-panel); min-width: 0; padding: var(--eliot-space-panel) var(--eliot-space-group); border-radius: var(--eliot-shape-large-increased); background: var(--eliot-color-group); }

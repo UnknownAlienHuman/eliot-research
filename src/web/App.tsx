@@ -5,6 +5,8 @@ import { Shell } from "./Shell";
 import { useTheme } from "./theme";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
 import { Library, Projects, Reader } from "./Library";
+import { ChatView, StudioView } from "./Chat";
+import { ModelSettings } from "./ModelSettings";
 
 export function App() {
   const { pathname } = useLocation();
@@ -36,6 +38,8 @@ export function App() {
         <Route index element={<Projects />} />
         <Route path="p/:projectId/sources" element={<Library key={pathname} />} />
         <Route path="p/:projectId/source/:sourceId" element={<Reader key={pathname} />} />
+        <Route path="p/:projectId/chat/:chatId?" element={<ChatView key={pathname} />} />
+        <Route path="p/:projectId/studio" element={<StudioView key={pathname} />} />
         <Route path="settings" element={
           <>
             <h1 id="workspace-heading" tabIndex={-1}>Settings</h1>
@@ -47,6 +51,7 @@ export function App() {
               <h2>Appearance</h2>
               <p>Choose Light, Dark or System from the Appearance menu.</p>
             </section>
+            <ModelSettings />
           </>
         } />
         <Route path="*" element={<Navigate to="/" replace />} />

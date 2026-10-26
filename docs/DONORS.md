@@ -63,6 +63,19 @@ IngestWorkflow and reader; verification is the fixed-corpus `pnpm eval k1` plus 
 
 ## Cloudflare primary donors
 
+### K2 adoption — 2026-10-26
+
+K2 adapts the composer, answer/evidence presentation and model-selection interaction from legacy Eliot pin
+`7c034569b908d3b03a8b821b7c537477a24b10f7`, paths `packages/ui/src/features/research/{run,evidence}` and
+`apps/eliotr-web/src/app/{ChatModelPicker.tsx,ModelSettingsPanel.tsx}` (MIT), into `src/web/Chat.tsx`, `chat.css`
+and `ModelSettings.tsx`. Legacy runtime/query/qualification/admin layers are discarded. The installed maintained
+`agents@0.30.1` (MIT) supplies the SQLite Agent and WebSocket lifecycle; `ai@7.0.152` (Apache-2.0) supplies one
+bounded streaming call and schema output. `react-markdown@10.1.0` and `remark-gfm@4.0.1` (MIT) render saved/streamed
+Markdown with raw HTML and automatic image loading disabled. No donor orchestration or provider configuration is copied.
+Callers are Send, read-only reconnect/history and Save existing answer. Verification is `pnpm eval k2`, exact range
+checks, focused context/citation/cost tests and the phone Stop/reconnect/Save journey; owner quality judgment remains
+separate from the automatic gates.
+
 ### Agents SDK and examples
 
 Repository pin: [`cloudflare/agents@321814b6c13f72cff82161e7eb20312574ac9b7a`](https://github.com/cloudflare/agents/tree/321814b6c13f72cff82161e7eb20312574ac9b7a),

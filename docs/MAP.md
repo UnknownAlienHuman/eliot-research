@@ -30,7 +30,7 @@ actually occurred. Product tests remain the contour evals.
 Code budgets count new non-test lines under `src/`, excluding UI moved without semantic changes. They are ceilings, not
 quotas.
 
-## Current state — 2026-10-25
+## Current state — 2026-10-26
 
 - K0 implementation uses `src/index.ts` (Hono), `src/auth.ts` (Access) and the moved Material shell in `src/web/`.
   `/api/me`, Projects/Settings navigation and System/Light/Dark appearance work locally. All assets pass through auth.
@@ -42,7 +42,10 @@ quotas.
   setup; it defaults to an offline plan.
 - K1 implements projects, shared Library membership, one-file uploads, pasted text/static URLs, immutable replacement
   revisions, outline, original download and exact UTF-8 ranges. D1/R2/IngestWorkflow run locally; Workers AI `toMarkdown`
-  was exercised against the real service. AI Search, chat Durable Objects and later-contour bindings remain absent.
+  was exercised against the real service. AI Search and later-contour bindings remain absent.
+- K2 is implemented locally with an Agents SDK chat, frozen whole-source scope, one structured streaming model call,
+  exact citations, Stop/reconnect, model settings and storage-only Save. Its automatic corpus gates passed; the
+  fresh NotebookLM comparison found answer-quality defects, so K2 quality acceptance and merge remain open.
 - Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
 - The accepted Material tokens, local fonts, primitives and frame are adapted from the pinned legacy UI; future features
   remain in `packages/ui/src/**` and `apps/eliotr-web/src/app/Shell.tsx` until their contour.
@@ -175,6 +178,21 @@ p95 total ≤ 40 s. Catastrophic ceiling: a completed answer taking > 90 s fails
 comparable runs rather than making one provider fluctuation invalidate the architecture.
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
+
+Local K2 run on 2026-10-26: all C1–C4/O1–O8 completed with zero invalid labels and byte-checked ranges, at
+$0.120236 estimated model cost. Cold first/total time was 25,724/27,763 ms; warm first-token p50/p95 was
+7,361/23,601 ms and warm total p50/p95 was 23,161/40,703 ms. The initial 40 s p95 target was missed; the 90 s hard
+ceiling passed. Phone Stop/reload restored the empty scope, partial Save and reconnect added no model work; one active
+plus one queued input accepted and the third returned 409. The focused suite has 108 passing cases.
+
+A fresh private Gemini Notebook/NotebookLM notebook received the same ten SHA-256-matched PDFs and the same twelve
+questions without gold hints. All completed; C1–C4 values were correct and O8 abstained. Three representative citations
+opened their source passages. Browser capture did not instrument service latency or expose provider usage/cost.
+Content review found unsupported terminology and an overstatement in Eliot O1, unsupported inferences and a Chinese
+fragment in O2, and training/fine-tuning confusion plus coverage gaps in O3. A three-call prompt experiment cost
+$0.043536 and improved coverage but retained a language defect and introduced a numeric inconsistency; the experimental
+prompt was reverted. No quality pass or owner acceptance is claimed. Do not repeat successful paid turns to tune these
+examples; resolve the evidence/quality failure before accepting K2.
 
 ---
 

@@ -9,6 +9,7 @@ export interface ShellProps {
 
 export function Shell({ theme, onThemeChange }: ShellProps) {
   const pathname = useLocation().pathname;
+  const projectId = /^\/p\/([^/]+)/.exec(pathname)?.[1];
   return (
     <div className="er-shell">
       <a className="er-shell-skip" href="#workspace-main">Skip to workspace</a>
@@ -42,12 +43,17 @@ export function Shell({ theme, onThemeChange }: ShellProps) {
         </details>
       </header>
       <nav className="er-shell-nav" aria-label="Primary">
-        <Link className="er-shell-destination" to="/" aria-current={pathname === "/" || pathname.startsWith("/p/") ? "page" : undefined}>
+        <Link className="er-shell-destination" to="/" aria-current={pathname === "/" ? "page" : undefined}>
           <span className="er-shell-destination-icon">
             <MaterialSymbol name="home" />
           </span>
           <span className="er-shell-destination-label">Projects</span>
         </Link>
+        {projectId ? <>
+          <Link className="er-shell-destination" to={`/p/${projectId}/sources`} aria-current={pathname.includes("/source") ? "page" : undefined}><span className="er-shell-destination-icon"><MaterialSymbol name="home" /></span><span className="er-shell-destination-label">Sources</span></Link>
+          <NavLink className="er-shell-destination" to={`/p/${projectId}/chat`}><span className="er-shell-destination-icon"><MaterialSymbol name="spark" /></span><span className="er-shell-destination-label">Chat</span></NavLink>
+          <NavLink className="er-shell-destination" to={`/p/${projectId}/studio`}><span className="er-shell-destination-icon"><MaterialSymbol name="info" /></span><span className="er-shell-destination-label">Studio</span></NavLink>
+        </> : null}
         <NavLink className="er-shell-destination" to="/settings">
           <span className="er-shell-destination-icon">
             <MaterialSymbol name="settings" />

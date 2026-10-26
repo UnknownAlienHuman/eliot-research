@@ -7,10 +7,12 @@
   "upload_source_maps": true,
   "workers_dev": false,
   "preview_urls": false,
-  "d1_databases": [{ "binding": "DB", "database_name": "eliot-research-library", "migrations_dir": "migrations", "migrations_pattern": "migrations/0001_library.sql" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "eliot-research-library", "migrations_dir": "migrations", "migrations_pattern": "migrations/000[12]_*.sql" }],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "eliot-research-library" }],
   "ai": { "binding": "AI" },
   "workflows": [{ "binding": "INGEST", "name": "eliot-research-ingest", "class_name": "IngestWorkflow" }],
+  "durable_objects": { "bindings": [{ "name": "CHAT", "class_name": "ChatAgent" }] },
+  "migrations": [{ "tag": "k2-chat", "new_sqlite_classes": ["ChatAgent"] }],
   "vars": {
     "ELIOT_ACCESS_TEAM_DOMAIN": "",
     "ELIOT_ACCESS_AUD": "",

@@ -205,6 +205,16 @@ Stop stores partial text. Closing a tab does not cancel. Failed streams are neve
 turn. Prompt rules: answer in question language, lead with answer, cite each source-derived factual sentence,
 distinguish inference, abstain with missing evidence, and never invent labels.
 
+K2 uses the installed Agents SDK 0.30.1 `Agent` with SQLite turn storage and read-only WebSocket snapshots; HTTP Send
+is the paid caller. SDK state is server-owned, reconnect never resubmits, and a third input returns `409/busy` while
+one turn is active and one is queued. Stop and queued cancellation are visible; partial text remains saveable.
+AI SDK 7.0.152 receives system rules through `instructions`, with source text in an untrusted user message.
+One structured streaming output contains statements and labels constrained to the frozen block set; server code
+renders and resolves those model-selected labels. There is no repair call or fabricated fallback citation.
+The real Workers AI GLM 5.3 Flash structured streaming call was exercised on 2026-10-26. Admission reserves the full
+model context at uncached input price plus maximum output, then settles to reported SDK usage; unknown usage retains
+the reservation. Saving rewrites aliases outside code fences and uses a page mutation UUID without model work.
+
 ## 9. AI Search projection — K5 only
 
 AI Search is optional and must pass the K5 spike: exact byte-offset mapping, revision-scope filters including 500 IDs,
@@ -241,7 +251,7 @@ call; an in-flight call may finish.
 ## 11. Models
 
 Routes are `workers-ai:<model>` or `gateway:<provider>/<model>`. `src/models.ts` owns context, output reserve,
-capabilities and dated unit prices. Unknown routes stay disabled. Initial routes checked 2026-10-24:
+capabilities and dated unit prices. Unknown routes stay disabled. Routes rechecked 2026-10-26 (pricing page updated 2026-10-20):
 
 | Use | Route | Context | $/1M input / cached / output |
 |---|---|---:|---:|

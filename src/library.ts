@@ -4,11 +4,11 @@ import type { Project, Revision, Source } from "./shared/api";
 export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 type Duplicate = { sourceId: string; title: string; revisionId: string };
 export class LibraryError extends Error {
-  constructor(readonly code: "invalid" | "not_found" | "conflict" | "unavailable", message: string,
+  constructor(readonly code: "invalid" | "not_found" | "conflict" | "unavailable" | "budget" | "busy", message: string,
     readonly status: 400 | 404 | 409 | 413 | 503, readonly duplicate?: Duplicate) { super(message); }
 }
 
-const PROJECT_FIELDS = "id,title,description,archived_at AS archivedAt,created_at AS createdAt,updated_at AS updatedAt";
+const PROJECT_FIELDS = "id,title,description,archived_at AS archivedAt,created_at AS createdAt,updated_at AS updatedAt,instructions,answer_model AS answerModel";
 const SOURCE_FIELDS = `s.id,s.title,s.kind,s.current_revision_id AS currentRevisionId,r.id AS revisionId,
   r.readable_state AS readableState,r.original_filename AS originalFilename,r.original_size AS originalSize,
   r.readable_size AS readableSize,r.block_count AS blockCount,r.warning_summary AS warningSummary,r.error,
@@ -41,11 +41,20 @@ export async function updateProject(env: Env, actor: Actor, id: string, input: {
 }
 export async function listSources(env: Env, actor: Actor, projectId: string, cursor: string | undefined) {
   await getProject(env, actor, projectId);
-  const result = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM project_source ps JOIN source s ON s.id=ps.source_id
+  const result = await env.DB.prepare(`SELECT ${SOURCE_FIELDS},ps.enabled FROM project_source ps JOIN source s ON s.id=ps.source_id
     ${LATEST_REVISION} WHERE ps.project_id=? AND s.state='active'
     AND (? IS NULL OR (s.created_at,s.id)<(SELECT created_at,id FROM source WHERE id=?))
     ORDER BY s.created_at DESC,s.id DESC LIMIT 51`).bind(projectId, cursor ?? null, cursor ?? null).all<Source>();
-  return { sources: result.results.slice(0, 50), nextCursor: result.results.length > 50 ? result.results[49]?.id : null };
+  return { sources: result.results.slice(0, 50).map((source) => ({ ...source, enabled: Boolean(source.enabled) })), nextCursor: result.results.length > 50 ? result.results[49]?.id : null };
+}
+export async function setProjectScope(env: Env, actor: Actor, input: { projectId: string; sourceIds: string[] }) {
+  await getProject(env, actor, input.projectId);
+  const members = await env.DB.prepare("SELECT source_id FROM project_source WHERE project_id=?").bind(input.projectId).all<{ source_id: string }>();
+  const allowed = new Set(members.results.map((member) => member.source_id));
+  if (input.sourceIds.some((id) => !allowed.has(id))) throw new LibraryError("invalid", "A selected source is outside this project.", 400);
+  await env.DB.prepare("UPDATE project_source SET enabled=CASE WHEN source_id IN (SELECT value FROM json_each(?)) THEN 1 ELSE 0 END WHERE project_id=?")
+    .bind(JSON.stringify(input.sourceIds), input.projectId).run();
+  return { sourceIds: input.sourceIds };
 }
 export async function getSource(env: Env, _actor: Actor, id: string, requestedRevisionId?: string) {
   const source = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION} WHERE s.id=? AND s.state!='deleted'`)

@@ -16,9 +16,12 @@ export interface Project {
   archivedAt: number | null;
   createdAt: number;
   updatedAt: number;
+  instructions?: string;
+  answerModel?: string | null;
 }
 
 export interface Source {
+  enabled?: boolean;
   id: string;
   title: string;
   kind: "file" | "url" | "text";
@@ -50,3 +53,35 @@ export interface ApiError {
     message: string;
   };
 }
+
+export interface TurnView {
+  turnId: string;
+  question: string;
+  answer: string;
+  state: "started" | "completed" | "partial" | "failed" | "cancelled";
+  model: string;
+  scopeMode: "project_default" | "explicit" | "empty";
+  revisionIds: string[];
+  sourceIds: string[];
+  citations: Citation[];
+  invalidLabels: number;
+  inputTokens: number | null;
+  cachedTokens: number | null;
+  outputTokens: number | null;
+  estimatedCostMicrousd: number | null;
+  firstTokenMs: number | null;
+  totalMs: number | null;
+  error: string | null;
+}
+
+export interface RunTurnInput {
+  projectId: string;
+  chatId: string;
+  turnId: string;
+  question: string;
+  scopeMode: TurnView["scopeMode"];
+  sourceIds?: string[];
+  model?: string;
+}
+import type { Citation } from "../citations";
+
