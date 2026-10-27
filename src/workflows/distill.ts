@@ -1,3 +1,4 @@
+import { numbersSupported } from "../numbers";
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { generateText, Output } from "ai";
@@ -10,7 +11,7 @@ import { modelOutputLimit, requireAvailableModel } from "../models";
 import type { ModelSpec } from "../models";
 import type { DistillInput } from "../shared/api";
 import { modelFailure, resolveModelTransport } from "../model-transport";
-import { cleanDistillText, numbersSupported, resolveQuoteBlock, resultStatement, splitDistillStatements, verifyClaims } from "../quotes";
+import { cleanDistillText, resolveQuoteBlock, resultStatement, splitDistillStatements, verifyClaims } from "../quotes";
 import type { CandidateClaim, VerifiedClaim } from "../quotes";
 import { AuthError } from "../auth";
 import type { Actor } from "../auth";

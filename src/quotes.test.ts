@@ -1,5 +1,6 @@
+import { numbersSupported } from "./numbers.js";
 import { describe, expect, it } from "vitest";
-import { cleanDistillText, numbersSupported, resolveQuoteBlock, resultStatement, splitDistillStatements, verifyClaims } from "./quotes.js";
+import { cleanDistillText, resolveQuoteBlock, resultStatement, splitDistillStatements, verifyClaims } from "./quotes.js";
 import type { CandidateClaim, VerifiedClaim } from "./quotes.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
@@ -232,6 +233,18 @@ describe("numbersSupported", () => {
     expect(numbersSupported("1E8", "1e8")).toBe(true);
     expect(numbersSupported("1e−8", "1e-8")).toBe(true);
     expect(numbersSupported("1e8", "1e8")).toBe(true);
+  });
+
+  it("keeps explicit multiplication powers atomic across caret and superscript forms", () => {
+    const superscript = "Computation is 7.6×10⁹.";
+    expect(numbersSupported(superscript, "Values 7.6×10⁹.")).toBe(true);
+    expect(numbersSupported(superscript, "Values 7.6×10^9.")).toBe(true);
+    expect(numbersSupported("Computation is 7.6×10^9.", "Values 7.6×10⁹.")).toBe(true);
+    expect(numbersSupported(superscript, "Values 7.6×10^8.")).toBe(false);
+    expect(numbersSupported(superscript, "Values 7.6×109. A 10-layer model and 9 other entries.")).toBe(false);
+    expect(numbersSupported(superscript, "Values 7.6. A 10-layer model and 9 other entries.")).toBe(false);
+    expect(numbersSupported("Only 10 and 9.", "The value is 7.6×10^9.")).toBe(false);
+    expect(numbersSupported("Operations are 31·10^6.", "Operations are 31·10⁶.")).toBe(true);
   });
 
   it("verifies a nonatomic guide hypothesis against the union of declared quotes only", () => {

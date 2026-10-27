@@ -1,3 +1,4 @@
+import { unsupportedNumbers, parseSingleNumber } from "../../src/numbers.ts";
 // K3 Distill eval harness (docs/MAP.md K3; docs/IMPLEMENTATION.md 6, 8, 10, 11).
 // Interface assumptions (backend contract under test):
 //   GET  /api/sources/:sourceId/understanding?revisionId=<rev>
@@ -110,31 +111,19 @@ async function apiBytes(path) {
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function runsOf(s) { return String(s).match(/[0-9]+/g) || []; }
-function decimalTokens(s) {
-  return new Set((String(s).match(/[0-9]+(?:[.,][0-9]+)*(?:[eE][+\-\u2212]?[0-9]+)?/g) ?? []).filter((token) => {
-    const mantissa = token.split(/[eE]/)[0] ?? "";
-    return mantissa.includes(".") || (/^\d+,\d+$/.test(mantissa) && !/^[1-9]\d{0,2},\d{3}$/.test(mantissa));
-  }).map((token) => token.replace(",", ".").replace("\u2212", "-").toLowerCase()));
-}
 function scalarNumberOk(text, num) {
-  if (typeof text !== 'string') return false;
-  const t = text.trim();
-  if (!/^[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?%?$/.test(t)) return false;
-  if (typeof num !== 'number' || !Number.isFinite(num)) return false;
-  return Number(t.replace(/,/g, '').replace(/%$/, '')) === num;
+  return typeof text === 'string' && typeof num === 'number' && Number.isFinite(num) && parseSingleNumber(text) === num;
 }
 function numericsUnsupported(quote, valueText, valueNumber, ...texts) {
-  const supported = new Set(runsOf(quote));
   const bad = [];
-  const checkRuns = (t) => { if (typeof t === 'string') for (const r of runsOf(t)) if (!supported.has(r)) bad.push(r); };
-  checkRuns(valueText);
-  for (const t of texts) checkRuns(t);
-  if (valueNumber !== null && valueNumber !== undefined && !scalarNumberOk(valueText, valueNumber)) bad.push(...runsOf(String(valueNumber)));
-  if (bad.length === 0) {
-    const atomic = decimalTokens(quote);
-    const checkAtomic = (t) => { if (typeof t === 'string') for (const d of decimalTokens(t)) if (!atomic.has(d)) bad.push(d); };
-    checkAtomic(valueText);
-    for (const t of texts) checkAtomic(t);
+  const check = (text) => {
+    if (typeof text === 'string') bad.push(...unsupportedNumbers(text, quote));
+  };
+  check(valueText);
+  for (const text of texts) check(text);
+  if (valueNumber !== null && valueNumber !== undefined && !scalarNumberOk(valueText, valueNumber)) {
+    const groups = runsOf(String(valueNumber));
+    bad.push(...(groups.length ? groups : ['value-number']));
   }
   return [...new Set(bad)];
 }
