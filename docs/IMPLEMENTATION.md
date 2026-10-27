@@ -94,9 +94,12 @@ Migrations own schema names:
 | `0001_library.sql` | project, source, immutable revision, membership |
 | `0002_ask.sql` | settings, chat/turn, page/revision, answer usage/cost |
 | `0003_distill.sql` | distillation state/usage, source metadata, typed claims |
-| `0004_agents.sql` | trigram claim FTS and backfill |
-| `0005_search.sql` | K5 item state and monthly counters |
-| `0006_jobs.sql` | K7 bounded jobs |
+| `0004_agents.sql` | future K4 trigram claim FTS and backfill; excluded from current selection |
+| `0005_model_gateway.sql` | nullable `settings.model_gateway_id`; existing-Gateway opt-in |
+| `0006_integrity.sql` | approved #420 guards for source/page ownership and terminal-turn/capture-identity immutability |
+
+Current `migrations/000[12356]_*.sql` selects `0001`–`0003`, `0005_model_gateway.sql` and `0006_integrity.sql`;
+future K4 `0004_agents.sql` remains excluded.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:
 
@@ -148,7 +151,8 @@ K1 static capture uses HTTPS port 443, at most three redirects, a 15-second tota
 Hostname validation does not pin DNS resolution; DNS rebinding prevention is not claimed. No owner/model credentials
 are sent to captured sites or corpus download hosts. `ELIOT_REMOTE_BINDINGS=0 pnpm dev` disables remote services for
 local native-text work and CI; the production bindings and Access checks are unchanged. `pnpm db:local` applies pending
-`0001`–`0003` and `0005_model_gateway.sql` through `migrations/000[1235]_*.sql`; future K4 `0004` stays excluded.
+`0001`–`0003`, `0005_model_gateway.sql` and `0006_integrity.sql` through `migrations/000[12356]_*.sql`;
+future K4 `0004` stays excluded.
 Remote D1/R2 provisioning and deployment are not run.
 
 ## 5. Blocks, labels, citations and quote verification
