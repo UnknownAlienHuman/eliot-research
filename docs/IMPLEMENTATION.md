@@ -296,8 +296,11 @@ Freeze current readable revision IDs at turn start. Context modes:
 3. `search` (K5): guides plus at most six shared-tool steps;
 4. `none`: explicit empty scope and no Library claim.
 
-Claims mode includes the stored guide with its exact quoted source passages, not an unlabelled summary that the
-answer cannot cite. Guide ranges are hydrated through R2 range reads; the whole source body is not loaded on this path.
+Claims mode includes the stored guide with its exact quoted source passages. Passage labels carry only original
+source quotes. Derived claim statements and conditions are supplied in a separate orientation message explicitly marked
+as non-evidence. Identical (block, quote) pairs are emitted once per frozen revision; distinct quotes from the same
+block remain available. Source and orientation text both count toward the existing context budget. Scope and citation
+ranges remain frozen; this formatting performs storage reads only and starts no model or search work.
 
 Estimate text conservatively as UTF-8 bytes / 3. History is newest prior turns, stripped of labels, capped at 10% of
 context and excludes answers whose cited revisions are outside scope. Keep source-prefix bytes stable for cache reuse.

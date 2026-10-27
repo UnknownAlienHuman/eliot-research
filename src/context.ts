@@ -277,6 +277,7 @@ async function buildClaims(
   cap: number,
 ): Promise<ContextResult> {
   const sections: string[] = [];
+  const orientations: string[] = [];
   const sources: LabelSource[] = [];
   for (let i = 0; i < frozen.length; i++) {
     const entry = frozen[i];
@@ -290,21 +291,30 @@ async function buildClaims(
     const supported = claims.filter((claim) => byId.has(claim.blockIndex));
     if (supported.length === 0) throw new LibraryError("invalid", NEEDS_UNDERSTANDING, 400);
     const used = new Set<number>();
+    const quoted = new Set<string>();
     const lines = ["[" + alias + "] " + entry.title];
+    const claimsOrientation = ["[" + alias + "] " + entry.title];
     for (const guide of await loadGuideBlocks(env, entry, byId)) {
       used.add(guide.id);
+      quoted.add(JSON.stringify([guide.id, guide.passage]));
       lines.push("[" + alias + ":" + guide.id + "] " + guide.passage);
     }
     for (const claim of supported) {
       used.add(claim.blockIndex);
       const when = claim.conditions && claim.conditions.trim() ? " [" + claim.conditions.trim() + "]" : "";
-      lines.push("[" + alias + ":" + claim.blockIndex + "] " + claim.statement + when + ' "' + claim.quote + '"');
+      claimsOrientation.push(stripLabels(claim.statement + when));
+      const key = JSON.stringify([claim.blockIndex, claim.quote]);
+      if (quoted.has(key)) continue;
+      quoted.add(key);
+      lines.push("[" + alias + ":" + claim.blockIndex + "] " + claim.quote);
     }
     sections.push(lines.join("\n"));
+    orientations.push(claimsOrientation.join("\n"));
     sources.push({ sourceId: entry.sourceId, revisionId: entry.revisionId, title: entry.title, blocks: blocks.filter((block) => used.has(block.id)), alias });
   }
   const sourcesText = SOURCES_HEADER + sections.join("\n\n");
-  const sourceTokens = estimateTokens(sourcesText);
+  const orientationText = "Derived claim orientation only; these statements and conditions are not source evidence. Verify facts against the labelled original excerpts above, including their actual experiment conditions.\n\n" + orientations.join("\n\n");
+  const sourceTokens = estimateTokens(sourcesText) + estimateTokens(orientationText);
   const estimatedInputTokens = systemTokens + sourceTokens + history.tokens;
   if (estimatedInputTokens + callerTokens + maxOutputTokens > cap) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   return {
@@ -314,6 +324,7 @@ async function buildClaims(
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: sourcesText },
+      { role: "user", content: orientationText },
       ...history.messages,
     ],
     estimatedInputTokens,

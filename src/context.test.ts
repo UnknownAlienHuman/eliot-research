@@ -392,12 +392,67 @@ describe("buildContext K3 claims fallback", () => {
     expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
     expect(res.messages[1]).toMatchObject({ role: "user" });
     const body = res.messages.map((m) => m.content).join(NL);
-    expect(body).toContain("[S1:2] First finding");
+    expect(res.messages[1]?.content).toContain("[S1:2] quoted one");
+    expect(res.messages[1]?.content).not.toContain("First finding");
+    expect(res.messages[2]?.content).toContain("First finding");
     expect(body).not.toContain("S9:9");
     expect(body).not.toContain("Guide A.");
     const resolved = resolveCitations("Claim holds [S1:3] but not [S1:1].", res.sources);
     expect(resolved.citations.length).toBe(1);
     expect(resolved.citations[0]?.sourceId).toBe("s1");
+    expect(resolved.invalidLabels).toBe(1);
+  });
+
+  it("keeps derived drafts separate and deduplicates only identical original quotes in one block", async () => {
+    const quote = "Model Alpha uses the reference training procedure.";
+    const otherQuote = "The experiment retains its original evaluation conditions.";
+    const passage = quote + NL + otherQuote;
+    const text = passage + NL + "Unselected source material. ".repeat(400);
+    const passageEnd = new TextEncoder().encode(passage).byteLength;
+    const byteLength = new TextEncoder().encode(text).byteLength;
+    const wrongStatement = "Model Alpha was evaluated on an unrelated benchmark.";
+    const wrongConditions = "using invented evaluation settings";
+    const { env, requested } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: byteLength, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 3 }],
+      texts: { r9: { text, guide: "No guide passages selected.", blocks: [
+        { id: 2, type: "paragraph", start: 0, end: passageEnd, heading: null },
+        { id: 3, type: "paragraph", start: passageEnd + 1, end: byteLength, heading: null },
+      ] } },
+      claims: { r9: [
+        { ordinal: 0, statement: wrongStatement, quote, conditions: wrongConditions, blockIndex: 2, ambiguous: 0 },
+        { ordinal: 1, statement: "A derived method description.", quote, conditions: null, blockIndex: 2, ambiguous: 0 },
+        { ordinal: 2, statement: "A derived evaluation description.", quote: otherQuote, conditions: null, blockIndex: 2, ambiguous: 0 },
+      ] },
+    });
+    const model = { contextTokens: 5000, maxOutputTokens: 100 };
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s1"], model });
+    expect(res.mode).toBe("claims");
+    expect(res.revisionIds).toEqual(["r9"]);
+    expect(res.sources).toMatchObject([{ sourceId: "s1", revisionId: "r9", alias: "S1" }]);
+    expect(res.sources[0]?.blocks).toEqual([{ id: 2, type: "paragraph", start: 0, end: passageEnd, heading: null }]);
+    expect(res.messages[1]?.role).toBe("user");
+    const source = res.messages[1]?.content ?? "";
+    expect(source).toContain("[S1:2] " + quote);
+    expect(source).toContain("[S1:2] " + otherQuote);
+    expect(source.split(quote).length - 1).toBe(1);
+    expect(source.split(otherQuote).length - 1).toBe(1);
+    expect(source).not.toContain(wrongStatement);
+    expect(source).not.toContain(wrongConditions);
+    expect(source).not.toContain("A derived");
+    expect(res.messages[2]?.role).toBe("user");
+    const orientation = res.messages[2]?.content ?? "";
+    expect(orientation).toMatch(/orientation/i);
+    expect(orientation).toContain("not source evidence");
+    expect(orientation).toContain(wrongStatement);
+    expect(orientation).toContain(wrongConditions);
+    expect(orientation).not.toMatch(/\[S\d+:\d+\]/);
+    expect(requested.filter((key) => key.includes("text.md"))).toEqual([]);
+    expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + Math.ceil(new TextEncoder().encode(message.content).byteLength / 3), 0));
+    expect(res.estimatedInputTokens + model.maxOutputTokens).toBeLessThanOrEqual(Math.min(Math.floor(model.contextTokens * 0.6), 400000));
+    const resolved = resolveCitations("Original [S1:2], unseen [S1:3].", res.sources);
+    expect(resolved.citations).toMatchObject([{ sourceId: "s1", revisionId: "r9", block: 2, start: 0, end: passageEnd }]);
     expect(resolved.invalidLabels).toBe(1);
   });
 
@@ -416,7 +471,9 @@ describe("buildContext K3 claims fallback", () => {
     expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
     expect(res.messages[1]).toMatchObject({ role: "user" });
     const text = res.messages.map((m) => m.content).join(NL);
-    expect(text).toContain("[S1:2] Finding one");
+    expect(res.messages[1]?.content).toContain("[S1:2] quoted one");
+    expect(res.messages[1]?.content).not.toContain("Finding one");
+    expect(res.messages[2]?.content).toContain("Finding one");
     expect(text).not.toContain("qqqq");
     expect(res.estimatedInputTokens).toBeGreaterThan(0);
   });
