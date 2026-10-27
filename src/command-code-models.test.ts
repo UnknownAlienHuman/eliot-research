@@ -5,6 +5,9 @@ import type { CatalogModel } from "./models";
 
 vi.mock("./model-catalog", () => ({ discoverGatewayModels: vi.fn(), enrichSelectedModel: vi.fn(async (model: CatalogModel) => model) }));
 import { discoverGatewayModels } from "./model-catalog";
+vi.mock("./native-model-catalog", () => ({ discoverNativeModels: vi.fn() }));
+import { discoverNativeModels } from "./native-model-catalog";
+const discoverNative = vi.mocked(discoverNativeModels);
 const discover = vi.mocked(discoverGatewayModels);
 
 function localConnection(gatewayId: string | null) {
@@ -14,6 +17,18 @@ function localConnection(gatewayId: string | null) {
   return { env, prepare };
 }
 
+function nativeConnection(gatewayId: string | null) {
+  const local = localConnection(gatewayId);
+  return { ...local, env: { ...local.env, AI: {} as Env["AI"] } };
+}
+
+function flashCatalogueModel(overrides: Partial<CatalogModel> = {}): CatalogModel {
+  const seed = MODELS[0];
+  if (!seed) throw new Error("The native fallback is missing.");
+  const fallback = { ...seed };
+  delete fallback.nativeReasoningEffort;
+  return { ...fallback, ...overrides };
+}
 let model: CatalogModel;
 beforeEach(() => {
   vi.clearAllMocks();
@@ -23,6 +38,7 @@ beforeEach(() => {
     responseFormat: false, structuredOutputs: false, inputMicrousdPerMillion: 100000,
     cachedMicrousdPerMillion: 2000, outputMicrousdPerMillion: 200000, checkedOn: "2026-10-27" };
   discover.mockResolvedValue([model]);
+  discoverNative.mockResolvedValue([]);
 });
 
 describe("Command Code catalogue model admission", () => {
@@ -55,6 +71,83 @@ describe("Command Code catalogue model admission", () => {
     expect(discover).not.toHaveBeenCalled();
   });
 
+  describe("native Flash fallback", () => {
+    it("uses live native context and rates for Flash without external catalogue discovery", async () => {
+      const local = nativeConnection(null);
+      const live = flashCatalogueModel({
+        contextTokens: 64_000,
+        inputMicrousdPerMillion: 240_000,
+        cachedMicrousdPerMillion: 20_000,
+        outputMicrousdPerMillion: 900_000,
+      });
+      discoverNative.mockResolvedValue([live]);
+
+      const admitted = await requireAvailableModel(local.env, DEFAULT_MODEL);
+
+      expect(admitted).toMatchObject({
+        route: DEFAULT_MODEL,
+        contextTokens: 64_000,
+        inputMicrousdPerMillion: 240_000,
+        cachedMicrousdPerMillion: 20_000,
+        outputMicrousdPerMillion: 900_000,
+      });
+      expect(discoverNative).toHaveBeenCalledWith(local.env.AI);
+      expect(discover).not.toHaveBeenCalled();
+    });
+
+    it("keeps unknown live prices selectable but rejects paid admission", async () => {
+      const local = nativeConnection(null);
+      const unknown = flashCatalogueModel({
+        inputMicrousdPerMillion: null,
+        outputMicrousdPerMillion: null,
+      });
+      discoverNative.mockResolvedValue([unknown]);
+
+      const listed = await availableModels(local.env);
+      expect(listed.find((entry) => entry.route === DEFAULT_MODEL)).toMatchObject({
+        enabled: true,
+        inputMicrousdPerMillion: null,
+        outputMicrousdPerMillion: null,
+      });
+
+      discover.mockClear();
+      discoverNative.mockClear();
+      await expect(requireCatalogModel(local.env, DEFAULT_MODEL)).resolves.toMatchObject({
+        inputMicrousdPerMillion: null,
+        outputMicrousdPerMillion: null,
+      });
+      await expect(requireAvailableModel(local.env, DEFAULT_MODEL)).rejects.toMatchObject({
+        code: "unavailable",
+        status: 503,
+      });
+      expect(discover).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["not published", false],
+      ["published", true],
+    ] as const)("uses low reasoning effort only when %s", async (_label, published) => {
+      const local = nativeConnection(null);
+      const live = flashCatalogueModel(published ? { nativeReasoningEffort: "low" } : {});
+      discoverNative.mockResolvedValue([live]);
+
+      const admitted = await requireAvailableModel(local.env, DEFAULT_MODEL);
+
+      if (published) expect(admitted.nativeReasoningEffort).toBe("low");
+      else expect(admitted).not.toHaveProperty("nativeReasoningEffort");
+      expect(discover).not.toHaveBeenCalled();
+    });
+
+    it.each(["absent", "failed"] as const)("retains the explicit Flash fallback when native discovery is %s", async (state) => {
+      const local = nativeConnection(null);
+      if (state === "absent") discoverNative.mockResolvedValue([]);
+      else discoverNative.mockRejectedValue(new Error("Native catalogue unavailable"));
+
+      await expect(requireAvailableModel(local.env, DEFAULT_MODEL)).resolves.toEqual(MODELS[0]);
+      expect(discoverNative).toHaveBeenCalledWith(local.env.AI);
+      expect(discover).not.toHaveBeenCalled();
+    });
+  });
   it("lists disconnected discovered models without inventing zero prices", async () => {
     const local = localConnection(null);
     expect((await availableModels(local.env)).find((entry) => entry.route === model.route)).toMatchObject({

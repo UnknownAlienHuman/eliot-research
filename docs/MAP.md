@@ -173,7 +173,7 @@ stop/reconnect, reopen chat and save an answer as a page.
 4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.
 5. Use one `runTurn` for WebSocket and eval RPC; persist turn before the model call, stream, resolve labels, store
    citations/tokens/timings/cost and never auto-continue a paid failed stream.
-6. Add chat/page APIs, minimal model selector, saved answers and the moved chat/evidence UI.
+6. Add chat/page APIs, the shared legacy Material catalogue picker, saved answers and the moved chat/evidence UI.
 7. Add label/context/cost tests and `pnpm eval k2`.
 
 The model-choice slice uses Cloudflare, Command Code and OpenRouter discovery with independent provider warnings and
@@ -190,6 +190,15 @@ because it supplied no citations. Failed/interrupted turns remain retained; O1�
 The retained local Muse run completed C1–C4 with valid labels, but O1/O2 stopped at `length` and remained partial.
 An immutable build of published `main` then failed O3 with unknown usage, retaining its 106,496 micro-USD reservation.
 No failed turn was auto-retried; complete K2 quality, remaining open questions and owner acceptance are unqualified.
+
+The shared-picker correction checked on 2026-10-27 passes lint/types, 225 tests and build. `pnpm eval k2
+--models-browser` passes at 1440/390 px against 559 live catalogue rows, plus intercepted metadata cases: catalogue
+search/provider changes and refresh preserve selection; a complete nested native ID reaches the intercepted Send
+payload; Enter in model search sends nothing. The source Understanding browser check also passes the delayed-response,
+unknown-price and switch-after-metadata-failure cases. These checks perform no inference or real chat POST; settings,
+Gateway and monthly usage (449,781 micro-USD) are unchanged. Native-default regressions verify live metadata takes
+precedence over the fallback. This slice adds 57 non-test `src/` lines and removes 20, reusing the registered Material
+picker and OpenCodex discovery; it does not close the answer-quality or owner-acceptance gates above.
 
 **Hard acceptance — `pnpm eval k2`**
 

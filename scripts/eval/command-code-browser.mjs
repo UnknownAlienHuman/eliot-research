@@ -436,6 +436,75 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
         globalDefaultsChanged: false, modelCalls: 0, fixtureRetained: true };
     }
 
+    // Chat uses live catalogue identity plus intercepted metadata/mutations. No inference.
+    const chatProjectId = process.env.ELIOT_EVAL_PROJECT?.trim() || (await get('/api/projects')).projects[0]?.id;
+    assert(typeof chatProjectId === 'string' && chatProjectId.length > 0, 'An existing project is required for the CHAT scenario.');
+    const chatView = '/p/' + encodeURIComponent(chatProjectId) + '/chat';
+    const chatTail = (await get('/api/models')).models.find((model) => model.route === report.live[0].selectedRoute);
+    assert(chatTail?.enabled, 'Use the dynamic catalogue row selected in the live browser.');
+    const nestedId = 'nested/provider/' + 'long-native-id-'.repeat(12) + 'variant';
+    const nested = { ...fixtureModels[0], id: nestedId, route: 'gateway:catalogue-fixture-a/' + nestedId,
+      label: 'Nested model with unknown pricing' };
+    report.chat = { projectId: chatProjectId, metadata: 'LIVE_ID_AND_INTERCEPTED_FIXTURES', viewports: [] };
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      const context = await contextFor(viewport);
+      const sentBodies = [], chatId = crypto.randomUUID(); let chatPosts = 0;
+      const chatsPath = '/api/projects/' + chatProjectId + '/chats';
+      await context.route('**/api/**', async (route) => {
+        const request = route.request(), endpoint = new URL(request.url()).pathname;
+        if (request.method() === 'GET' && endpoint === '/api/models') {
+          report.requests.fixtureGets++;
+          await json(route, catalogueBody([...fixtureModels, chatTail, nested])); return;
+        }
+        if (request.method() === 'GET' && endpoint === '/api/projects/' + chatProjectId + '/sources') {
+          report.requests.fixtureGets++;
+          await json(route, { sources: [{ id: crypto.randomUUID(), title: 'Browser scope fixture', enabled: true }], nextCursor: null }); return;
+        }
+        if (request.method() === 'POST' && endpoint === chatsPath) {
+          chatPosts++;
+          await json(route, { chat: { id: chatId, title: 'Intercepted browser chat', updatedAt: 0 } }, 201); return;
+        }
+        if (request.method() === 'POST' && endpoint === chatsPath + '/' + chatId + '/turns') {
+          sentBodies.push(request.postDataJSON());
+          await json(route, { error: { code: 'unavailable', message: 'Intercepted browser request; no inference.' } }, 409); return;
+        }
+        await route.fallback();
+      });
+      try {
+        const chatPage = activePage = await context.newPage();
+        await chatPage.goto(origin + chatView);
+        const row = chatPage.locator('.er-chat__model');
+        const model = row.getByRole('combobox', { name: 'Model', exact: true });
+        await expect(model).toBeEnabled(); await expect(model).toHaveValue('');
+        await row.locator('.er-model-picker__find > summary').click();
+        const search = row.getByRole('searchbox', { name: 'Model: search models', exact: true });
+        const provider = row.getByRole('combobox', { name: 'Model: provider', exact: true });
+        await search.fill(chatTail.id); await model.selectOption(chatTail.route);
+        await provider.selectOption(providerOf(nested)); await expect(model).toHaveValue(chatTail.route);
+        await search.fill(nested.id); await model.selectOption(nested.route);
+        await expect(model).toHaveValue(nested.route);
+        await row.locator('.er-models__details > summary').click();
+        await expect(row.locator('.er-models__details')).toContainText('Unknown in / Unknown cached / Unknown out');
+        await chatPage.getByLabel('Question').fill('Browser-only check; Enter must not send.');
+        await search.press('Enter');
+        await chatPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(chatPosts, 0, 'Searching must not create a chat.'); assert.equal(sentBodies.length, 0);
+        const refreshed = chatPage.waitForResponse((r) => new URL(r.url()).pathname === '/api/models' && r.request().method() === 'GET');
+        await row.getByRole('button', { name: 'Reload catalog', exact: true }).click(); await refreshed;
+        await expect(model).toBeEnabled(); await expect(model).toHaveValue(nested.route);
+        const submitted = chatPage.waitForResponse((r) => new URL(r.url()).pathname.endsWith('/turns') && r.request().method() === 'POST');
+        await chatPage.getByRole('button', { name: 'Send', exact: true }).click();
+        assert.equal((await submitted).status(), 409);
+        assert.equal(chatPosts, 1); assert.equal(sentBodies.length, 1);
+        assert.equal(sentBodies[0].model, nested.route, 'Send preserves the complete native ID.');
+        assert.equal(typeof sentBodies[0].turnId, 'string'); assert(sentBodies[0].turnId.length > 0);
+        await expect(model).toHaveValue(nested.route);
+        await fitted(chatPage); await model.scrollIntoViewIfNeeded(); await shot(chatPage, 'chat-picker-' + viewport.width + '.png');
+        report.chat.viewports.push({ viewport, liveRoute: chatTail.route, sentRoute: nested.route,
+          enterNoPost: true, providerChangePreserved: true, reloadPreserved: true, unknownPriceSelectable: true,
+          sendPayloadExact: true, interceptedChatPosts: chatPosts, interceptedTurnPosts: sentBodies.length });
+      } finally { await context.close(); }
+    }
     const after = await get('/api/settings');
     assert.deepEqual(await get('/api/models/connection'), connectionBefore, 'Actual Gateway connection must be unchanged.');
     assert.deepEqual(after, before, 'Actual defaults, monthly usage, budget and settings timestamp must be unchanged.');

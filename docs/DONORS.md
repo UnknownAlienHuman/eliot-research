@@ -98,6 +98,8 @@ orchestration are discarded; the original history is not mutated and no failed c
 No local proxy/backend, cache/registry, model-selection policy/default seed or vendored/cross-provider pricing is
 imported; missing prices stay null. Picker interaction/layout retains the approved legacy MIT pin and paths above,
 with provider/native-ID pair identity and dynamic API data instead of legacy qualification/admin layers.
+The same `src/web/ModelPicker.tsx` now serves Settings, the chat composer and source Understanding; the latter two
+discard their separate plain-select implementations. No model-name policy or additional picker family is introduced.
 `src/native-model-catalog.ts` separately consumes the installed AI binding's `models()` metadata API, not a static
 native model set; page1/per100 returned 73 rows / 39 text-generation rows on 2026-10-27
 (`eval/out/catalogue-native/page1.json`), with zero inference. No other donor architecture is adopted.
