@@ -206,6 +206,33 @@ describe("modelFailure", () => {
     expect(namedText).toContain("(cause: TypeError)");
     expect(namedText).not.toContain("inner detail");
   });
+
+  it("adds only fixed field names for a 400 without raw provider text", () => {
+    const bad = new Error("outer sk-live-SECRET123");
+    (bad as unknown as Record<string, unknown>).statusCode = 400;
+    (bad as unknown as Record<string, unknown>).responseBody = JSON.stringify({ error: {
+      message: "Invalid 'messages[0].reasoning_content': sk-live-SECRET123 and DROP TABLE secrets; plus bogus-field",
+      param: "messages",
+      code: "secret-code-123", type: "secret-type",
+    } });
+    (bad as unknown as Record<string, unknown>).data = { error: { param: "reasoning_content",
+      message: "bad 'thought_signature' plus sk-live-SECRET123" } };
+    const text = modelFailure(bad, DOTS);
+    expect(text.startsWith("External model request failed (HTTP 400). Check the Gateway connection and provider status; no retry was started."));
+    expect(text).toContain("Validation mentions fields: messages, reasoning_content, thought_signature.");
+    expect(text).not.toContain("SECRET");
+    expect(text).not.toContain("sk-live");
+    expect(text).not.toContain("DROP TABLE");
+    expect(text).not.toContain("bogus-field");
+    expect(text).not.toContain("secret-code-123");
+    expect(text).not.toContain("secret-type");
+    expect(text).not.toContain("Invalid");
+    const other = new Error("outer");
+    (other as unknown as Record<string, unknown>).statusCode = 502;
+    (other as unknown as Record<string, unknown>).responseBody = JSON.stringify({ error: { message: "bad messages" } });
+    expect(modelFailure(other, DOTS)).toBe(
+      "External model request failed (HTTP 502). Check the Gateway connection and provider status; no retry was started.");
+  });
 });
 
 describe("real SDK streamText over a fake binding (contract fixture, no provider)", () => {
@@ -292,6 +319,59 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     expect(seen.gateway).not.toHaveBeenCalled();
     expect(seen.run).not.toHaveBeenCalled();
     expect(seen.catalogRun).not.toHaveBeenCalled();
+  });
+
+  it("marks bare assistant history with an empty protocol marker without touching the caller array", async () => {
+    await useRealSDK();
+    const seen = fakeCommandCode(new Response(sse([
+      chunk({ content: JSON.stringify({ sentences: ["ok"] }) }, "stop"),
+    ]), { headers: { "content-type": "text/event-stream" } }));
+    const model = await commandCodeModel(seen.binding);
+    const history: Array<{ role: "user" | "assistant"; content: string }> = [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "previous answer" },
+      { role: "user", content: "second" },
+    ];
+    const frozen = JSON.parse(JSON.stringify(history)) as unknown;
+    const result = streamText({ model: model as Parameters<typeof streamText>[0]["model"], messages: history,
+      output: Output.object({ schema: z.object({ sentences: z.array(z.string()) }) }), maxOutputTokens: 64, maxRetries: 0 });
+    await expect(result.output).resolves.toEqual({ sentences: ["ok"] });
+    expect(seen.fetch).toHaveBeenCalledTimes(1);
+    expect(history).toEqual(frozen);
+    const sent = JSON.parse(String((seen.fetch.mock.calls[0]?.[1] as { body?: unknown }).body)) as { messages?: Array<Record<string, unknown>> };
+    expect(sent.messages?.[0]).toEqual({ role: "user", content: "first" });
+    expect(sent.messages?.[1]).toEqual({ role: "assistant", content: "previous answer", reasoning_content: " " });
+    expect(sent.messages?.[2]).toEqual({ role: "user", content: "second" });
+  });
+
+  it("keeps existing reasoning fields, user/system messages and history-free bodies unchanged", async () => {
+    const seen = fakeCommandCode(new Response(sse([
+      chunk({ content: JSON.stringify({ sentences: ["ok"] }) }, "stop"),
+    ]), { headers: { "content-type": "text/event-stream" } }));
+    const model = (await commandCodeModel(seen.binding)) as unknown as { config: { fetch: typeof fetch;
+      transformRequestBody: (body: Record<string, unknown>) => Record<string, unknown> } };
+    const withReasoning = [
+      { role: "assistant", content: "a", reasoning_content: "kept" },
+      { role: "assistant", content: "b", reasoning_details: [{ type: "x" }] },
+    ];
+    await model.config.fetch("https://api.commandcode.ai/provider/v1/chat/completions", { method: "POST",
+      body: JSON.stringify(model.config.transformRequestBody({ model: "x", stream: true, messages: withReasoning })) });
+    const kept = JSON.parse(String((seen.fetch.mock.calls[0]?.[1] as { body?: unknown }).body)) as { messages?: unknown };
+    expect(kept.messages).toEqual(withReasoning);
+    seen.fetch.mockClear();
+    const plain = [
+      { role: "system", content: "rules" },
+      { role: "user", content: "hi" },
+    ];
+    await model.config.fetch("https://api.commandcode.ai/provider/v1/chat/completions", { method: "POST",
+      body: JSON.stringify(model.config.transformRequestBody({ model: "x", stream: true, messages: plain })) });
+    const untouched = JSON.parse(String((seen.fetch.mock.calls[0]?.[1] as { body?: unknown }).body)) as { messages?: unknown };
+    expect(untouched.messages).toEqual(plain);
+    seen.fetch.mockClear();
+    await model.config.fetch("https://api.commandcode.ai/provider/v1/chat/completions", { method: "POST",
+      body: JSON.stringify(model.config.transformRequestBody({ model: "x", stream: true })) });
+    const noHistory = JSON.parse(String((seen.fetch.mock.calls[0]?.[1] as { body?: unknown }).body)) as { messages?: unknown };
+    expect(noHistory).not.toHaveProperty("messages");
   });
 
   it.each([
@@ -396,6 +476,23 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     expect("response_format" in sent).toBe(false);
     // The explicit schema instruction is the caller codec job (chat/distill add
     // z.toJSONSchema when model.responseFormat is false); transport only strips.
+    expect(sent.messages).toEqual([{ role: "system", content: "rules" }, { role: "user", content: "hi" }]);
+  });
+
+  it("keeps response_format json_object when the entry allows it without structured outputs", async () => {
+    await useRealSDK();
+    const allowed = { ...INKLING, responseFormat: true };
+    const noUsage = sse([chunk({ role: "assistant", content: JSON.stringify({ sentences: ["ok"] }) }, "stop")]);
+    const seen = fakeBinding(noUsage);
+    const model = await resolveModelTransport(
+      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, allowed, "sess");
+    const result = runStructured(model);
+    await expect(result.output).resolves.toEqual({ sentences: ["ok"] });
+    assertProviderNative(seen.wire);
+    const sent = sentBody(seen.wire);
+    expect(sent.model).toBe("thinkingmachines/inkling:free");
+    expect(sent.provider).toEqual({ allow_fallbacks: false, require_parameters: true });
+    expect(sent.response_format).toEqual({ type: "json_object" });
     expect(sent.messages).toEqual([{ role: "system", content: "rules" }, { role: "user", content: "hi" }]);
   });
 

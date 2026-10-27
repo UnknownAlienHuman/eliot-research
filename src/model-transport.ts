@@ -73,16 +73,17 @@ const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
 };
 
 // Narrow OpenRouter body transform (pinned provider contract): disable upstream
-// paid fallback and require declared parameters. For specs without JSON-schema
-// support (Inkling) the vendor emits response_format json_object, which the
-// provider contract forbids, so strip it. The caller adds the explicit schema
-// instruction when model.responseFormat is false; Output.object parses locally
-// either way and failures stay local with no repair calls.
-function openRouterBody(structured: boolean, reasoning?: ModelSpec["reasoning"]) {
+// paid fallback and require declared parameters. responseFormatAllowed means the
+// catalog entry explicitly allows a response_format field (json_object for
+// non-schema models); otherwise the vendor-emitted field is stripped because the
+// provider contract forbids it. The caller adds the explicit schema instruction
+// when model.responseFormat is false; Output.object parses locally either way
+// and failures stay local with no repair calls.
+function openRouterBody(responseFormatAllowed: boolean, reasoning?: ModelSpec["reasoning"]) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
     const provider = { ...(args.provider as Record<string, unknown> | undefined), allow_fallbacks: false, require_parameters: true };
     const out: Record<string, unknown> = { ...args, provider, ...(reasoning ? { reasoning } : {}) };
-    if (!structured) delete out.response_format;
+    if (!responseFormatAllowed) delete out.response_format;
     return out;
   };
 }
@@ -113,6 +114,18 @@ export async function resolveModelTransport(
           const out = { ...args };
           delete out.provider;
           delete out.response_format;
+          const messages = Array.isArray(out.messages) ? out.messages : null;
+          if (messages) {
+            let touched = false;
+            const next = messages.map((entry) => {
+              if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;
+              const message = entry as Record<string, unknown>;
+              if (message.role !== "assistant" || "reasoning_content" in message || "reasoning_details" in message) return entry;
+              touched = true;
+              return { ...message, reasoning_content: " " };
+            });
+            if (touched) out.messages = next;
+          }
           return out;
         },
         fetch: async (input, init) => {
@@ -131,12 +144,13 @@ export async function resolveModelTransport(
       }).languageModel(model.id);
     }
     const structured = model.structuredOutputs === true;
+    const responseFormatAllowed = model.responseFormat === true;
     const openrouter = createOpenAICompatible<string, string, string, string>({
       name: "openrouter",
       baseURL: OPENROUTER_BASE_URL,
       includeUsage: true,
       supportsStructuredOutputs: structured,
-      transformRequestBody: openRouterBody(structured, model.reasoning),
+      transformRequestBody: openRouterBody(responseFormatAllowed, model.reasoning),
       convertUsage: convertCompatibleUsage,
     });
     const vendor = openrouter.languageModel(model.id);
@@ -164,7 +178,8 @@ export function modelFailure(error: unknown, model: ModelSpec): string {
   }
   const status = errorStatusCode(error);
   if (status !== undefined) {
-    return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started.";
+    const hint = status === 400 ? validationFieldHint(error) : "";
+    return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started." + hint;
   }
   const cause = errorCauseName(error);
   if (cause !== undefined) {
@@ -183,6 +198,42 @@ function errorStatusCode(error: unknown): number | undefined {
 
 function checkStatusCode(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 100 && value <= 599 ? value : undefined;
+}
+
+// Minimal 400-only validation hint: report only fixed OpenAI request field
+// names that literally appear in the provider error's param/message. Never
+// include raw message/body text, codes, types, keys, headers, data or prompt.
+const VALIDATION_FIELDS = ["messages", "role", "content", "reasoning_content",
+  "reasoning_details", "thought_signature", "max_tokens", "response_format", "stream_options"] as const;
+
+function validationFieldHint(error: unknown): string {
+  const seen: string[] = [];
+  const haystacks: string[] = [];
+  const pushText = (value: unknown) => {
+    if (typeof value === "string" && value.length > 0) haystacks.push(value.slice(0, 8192));
+  };
+  const err = error as { data?: unknown; responseBody?: unknown } | null | undefined;
+  pushText(err?.responseBody);
+  const data = err?.data;
+  if (typeof data === "string") pushText(data);
+  else if (data !== null && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    pushText(record.param);
+    pushText(record.message);
+    const nested = record.error;
+    if (nested !== null && typeof nested === "object") {
+      const inner = nested as Record<string, unknown>;
+      pushText(inner.param);
+      pushText(inner.message);
+    }
+  }
+  if (error instanceof Error) pushText(error.message);
+  for (const field of VALIDATION_FIELDS) {
+    const token = '"' + field + '"';
+    const bare = new RegExp("(^|[^a-zA-Z0-9_])" + field + "([^a-zA-Z0-9_]|$)");
+    if (haystacks.some((text) => text.includes(token) || bare.test(text))) seen.push(field);
+  }
+  return seen.length > 0 ? " Validation mentions fields: " + seen.join(", ") + "." : "";
 }
 
 function errorCauseName(error: unknown): string | undefined {

@@ -45,6 +45,10 @@ exceed `settings.monthly_model_budget_microusd` (default $5). Unknown input/outp
 actual input/cached/output tokens and estimated micro-USD on the row that owns the operation. Distillation runs once per
 immutable revision; ordinary whole/claim answers use one model call; search/tool loops and explicit jobs have hard caps.
 
+Understanding readers preserve the revision's stored model route even when it is absent from the live catalogue.
+`progress.configuredModel` separately names the current default for an explicit new/resumed job. Unknown preview
+metadata stays null; the UI never turns it into a zero price. The storage reader starts no discovery or generation.
+
 JSON lives under `/api/`, validated with zod. Error shape:
 
 ```json
@@ -321,7 +325,7 @@ Stop stores partial text. Closing a tab does not cancel. Failed streams are neve
 turn. Prompt rules: answer in question language, lead with answer, cite each source-derived factual sentence,
 distinguish inference, abstain with missing evidence, and never invent labels.
 
-During structured streaming, persist and broadcast the first nonempty rendered answer immediately and set
+During either output mode, persist and broadcast the first nonempty rendered answer immediately and set
 `firstTokenMs` then, bypassing the 100 ms coalescing used for later updates. Empty structured partials do not count
 as first text. The terminal turn is always persisted/broadcast. This timing measures rendered answer text, not the
 first network/SSE event; reconnect remains a read-only snapshot.
@@ -339,8 +343,11 @@ K2 uses the installed Agents SDK 0.30.1 `Agent` with SQLite turn storage and rea
 is the paid caller. SDK state is server-owned, reconnect never resubmits, and a third input returns `409/busy` while
 one turn is active and one is queued. Stop and queued cancellation are visible; partial text remains saveable.
 AI SDK 7.0.152 receives system rules through `instructions`, with source text in an untrusted user message.
-One structured streaming output contains statements and labels constrained to the frozen block set; server code
-renders and resolves those model-selected labels. There is no repair call or fabricated fallback citation.
+Select the output format before the one model call. For declared JSON-response support (and the native SDK default),
+structured output contains statements and frozen block labels. With unsupported/unconfirmed JSON-response support,
+use the SDK text stream with inline source labels; formulas remain ordinary Markdown rather than JSON string literals.
+Both modes use the same server citation resolver and persisted turn shape. Missing citations or invalid labels make
+the answer partial; no parse-repair generation, second call, or fabricated fallback citation is added.
 The real Workers AI GLM 5.3 Flash structured streaming call was exercised on 2026-10-26. Admission reserves the full
 model context at uncached input price plus maximum output, then settles to reported SDK usage; unknown usage retains
 the reservation. Saving rewrites aliases outside code fences and uses a page mutation UUID without model work.
@@ -410,6 +417,12 @@ the pinned Agents `packages/agents/src/models/core/transport.ts`. It sends POST 
 the SDK body, abort signal and session header. Explicit no-wholesale, one-attempt, skip-cache and no-log controls remain;
 no credential, fallback, resume or additional binding is introduced. The pinned Ai declaration lacks `fetch`, so the
 narrow receiver-preserving cast follows the SDK mechanism and the real binding check. Model quality is still open.
+
+CC assistant-history serialization adapts only OpenCodex's missing `reasoning_content` blank wire marker. Existing
+reasoning fields are preserved; no reasoning text, cache, model-family policy or replay framework is imported.
+The original C2/C3 HTTP 400 states remain; after the serializer correction, math generation reached the service but
+failed local JSON parsing. The capability-selected text path completed separate C2/C3 turns with 1/2 resolved citations;
+C4 remained partial with no citations. This is not complete K2 acceptance; Beam O1–O8 and owner quality remain open.
 
 Native discovery uses `env.AI.models`, mapping text-generation `row.name` to `workers-ai:<row.name>`, published
 `context_window` and USD price[] units `per M input tokens`, `per M cached input tokens`, `per M output tokens`.

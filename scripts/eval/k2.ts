@@ -23,6 +23,7 @@ const nativeOnly = process.argv.includes('--native-only');
 const runModel = !nativeOnly && process.env.ELIOT_K2_MODEL === '1';
 const storedOnly = process.argv.includes('--stored-only');
 const resumeChat = process.env.ELIOT_EVAL_CHAT || null;
+const evalModel = (process.env.ELIOT_EVAL_MODEL ?? '').trim() || null;
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
 const outDir = fileURLToPath(new URL('../../eval/out/k2/', import.meta.url));
 await mkdir(outDir, { recursive: true });
@@ -71,7 +72,6 @@ function checkAnswer(qid, ans) {
   if (qid === 'C4') assert((m.includes('синус') || m.includes('sinus')) && (m.includes('обуч') || m.includes('learn')), 'C4: sinusoidal vs learned.');
   if (qid === 'O8') assert(/нет в корпусе|в корпусе нет|не решают|не содержат|ни одн(?:а|ой|ого|у)|abstain|not in (the )?corpus|no paper/i.test(ans), 'O8 must abstain: the corpus does not solve hallucinations.');
 }
-const BUDGET_DEFAULT = 5000000;
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
@@ -445,14 +445,16 @@ if (!chatId) {
   chatId = cj.body.chat.id;
 }
 const chatPath = '/api/projects/' + encodeURIComponent(proj.id) + '/chats/' + encodeURIComponent(chatId);
+let configuredBudgetMicrousd = null;
 async function getChat(what) {
   const h = await apiJson(chatPath);
   assert.equal(h.status, 200, 'GET chat must be 200 and storage-only (' + what + ').');
   assert(h.body && typeof h.body.chat === 'object', 'GET chat must return {chat, turns, monthlyUsedMicrousd, monthlyBudgetMicrousd}.');
   assert(Array.isArray(h.body.turns), 'GET chat must return turns array.');
   assert(typeof h.body.monthlyUsedMicrousd === 'number', 'GET chat must return monthlyUsedMicrousd.');
-  assert(typeof h.body.monthlyBudgetMicrousd === 'number', 'GET chat must return monthlyBudgetMicrousd.');
-  assert.equal(h.body.monthlyBudgetMicrousd, BUDGET_DEFAULT, 'Monthly budget must stay at the $5 default; this script never overrides it.');
+  assert(Number.isSafeInteger(h.body.monthlyBudgetMicrousd) && h.body.monthlyBudgetMicrousd >= 0, 'GET chat must return a valid configured monthly budget.');
+  if (configuredBudgetMicrousd === null) configuredBudgetMicrousd = h.body.monthlyBudgetMicrousd;
+  assert.equal(h.body.monthlyBudgetMicrousd, configuredBudgetMicrousd, 'Monthly budget must stay at the first-observed configured snapshot; this script never writes or raises it.');
   return h.body;
 }
 const h0 = await getChat(resumeChat ? 'resume' : 'before');
@@ -476,12 +478,13 @@ async function checkRange(rev, st, en) {
   await checkRange(s0.currentRevisionId, 0, end);
 }
 async function saveTurn(qid, turn, extra) {
-  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, answer: turn.answer ?? null, state: turn.state, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
+  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
   await writeFile(outDir + '/k2-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
 }
 function reusableCandidate(qid, turns, used) {
   for (const t of turns) {
     if (!t || typeof t.turnId !== 'string' || used.has(t.turnId) || t.state !== 'completed') continue;
+    if (evalModel !== null && t.model !== evalModel) continue;
     if (!Array.isArray(t.citations) || t.citations.length < 1 || t.invalidLabels !== 0) continue;
     if (typeof t.answer !== 'string') continue;
     if (!t.citations.every((c) => c && revSet.has(c.revisionId))) continue;
@@ -490,6 +493,19 @@ function reusableCandidate(qid, turns, used) {
     return t;
   }
   return null;
+}
+if (evalModel !== null && runModel && !storedOnly) {
+  const selected = await apiJson('/api/models?selected=' + encodeURIComponent(evalModel));
+  assert.equal(selected.status, 200, 'GET /api/models?selected must be 200 for ELIOT_EVAL_MODEL.');
+  const entry = (selected.body.models || []).find((m) => m && m.route === evalModel);
+  assert(entry, 'ELIOT_EVAL_MODEL must match one live catalogue route; no alias fallback.');
+  assert(typeof entry.id === 'string' && entry.id.trim().length > 0, 'Selected catalogue entry must carry a native ID.');
+  assert(entry.enabled === true, 'Selected model must be enabled for ELIOT_EVAL_MODEL; no fallback or connection write.');
+  assert(Number.isSafeInteger(entry.contextTokens) && entry.contextTokens > 0, 'Selected model context must be usable (unknown context is not admitted).');
+  for (const field of ['inputMicrousdPerMillion', 'outputMicrousdPerMillion']) {
+    const price = entry[field];
+    assert(typeof price === 'number' && Number.isFinite(price) && price >= 0, 'Selected model ' + field + ' must be known (unknown cached pricing is allowed).');
+  }
 }
 if (!runModel && !storedOnly) {
   const h1 = await getChat('re-read');
@@ -544,7 +560,7 @@ if (storedOnly) {
     'O2 stored answer: chain-of-thought scale-emergence result absent although the eval expects it (CoT/S4 uncited). Coverage defect.',
     'Recheck run recheck-O2.json (separate chat): LoRA "0,01% (4,7 млн вместо 175 млрд)" pairing is arithmetically inconsistent (0.01% of 175B = 17.5M); [S10:42] cites setup text, not the quoted demonstration sentence (sibling labels cover the claims).'
   ];
-  const md = ['# K2 Ask eval — stored-only revalidation (zero model calls)', '', '- project: ' + title + ' (10 arxiv explicit scope, exact frozen scope enforced per turn)', '- chat: ' + chatId + ' (stored-only; ELIOT_EVAL_CHAT, never created or submitted)', '- mode: whole revalidation from storage only; new-turn delta must be 0 micro-USD', '- monthly before/after: ' + m0 + '/' + hF.monthlyUsedMicrousd + ' micro-USD (must be equal)', '- budget default $5, never overridden: ' + hF.monthlyBudgetMicrousd, '- ' + ownerGate, '- observed defects (mechanical PASS does not clear these):'].concat(defects.map((d) => '  - ' + d)).concat(['', '| q | state | cites | invalid | in/cached/out | cost_uUSD | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|']).concat(sRows).concat(['']).join(EOL);
+  const md = ['# K2 Ask eval — stored-only revalidation (zero model calls)', '', '- project: ' + title + ' (10 arxiv explicit scope, exact frozen scope enforced per turn)', '- chat: ' + chatId + ' (stored-only; ELIOT_EVAL_CHAT, never created or submitted)', '- mode: whole revalidation from storage only; new-turn delta must be 0 micro-USD', '- monthly before/after: ' + m0 + '/' + hF.monthlyUsedMicrousd + ' micro-USD (must be equal)', '- configured budget, never written or raised: ' + hF.monthlyBudgetMicrousd, '- ' + ownerGate, '- observed defects (mechanical PASS does not clear these):'].concat(defects.map((d) => '  - ' + d)).concat(['', '| q | state | cites | invalid | in/cached/out | cost_uUSD | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|']).concat(sRows).concat(['']).join(EOL);
   await writeFile(outDir + '/k2-stored-only-' + Date.now() + '.md', md);
   console.log(md);
   assert.equal(hF.turns.length, h0.turns.length, 'Stored-only run must not add turns (zero submissions).');
@@ -568,15 +584,17 @@ for (const qid of order) {
   if (!turn) {
     const turnId = randomUUID();
     const t0 = Date.now();
-    const r = await apiJson(chatPath + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(90000), body: JSON.stringify({ turnId, question: Q.get(qid), scopeMode: 'explicit', sourceIds }) });
+    const r = await apiJson(chatPath + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(90000), body: JSON.stringify({ turnId, question: Q.get(qid), scopeMode: 'explicit', sourceIds, ...(evalModel !== null ? { model: evalModel } : {}) }) });
     wall = Date.now() - t0;
     assert(r.status === 200 || r.status === 201, 'POST turns?wait=1 must be 200/201 for ' + qid + '.');
     assert(r.body && typeof r.body.turn === 'object', 'POST turns?wait=1 must return {turn} for ' + qid + '.');
     turn = r.body.turn;
     assert.equal(turn.turnId, turnId, qid + ': turn.turnId must echo the request turnId.');
+    if (evalModel !== null) assert.equal(turn.model, evalModel, qid + ': stored turn.model must equal ELIOT_EVAL_MODEL; no cross-model mixing.');
     newCount++;
   } else {
     assert(typeof turn.turnId === 'string' && turn.turnId.length > 0, qid + ': reused turn.turnId required.');
+    if (evalModel !== null) assert.equal(turn.model, evalModel, qid + ': reused turn.model must equal ELIOT_EVAL_MODEL; no cross-model mixing.');
   }
   assert(typeof turn.answer === 'string', qid + ': turn.answer must be a string.');
   if (turn.state !== 'completed') { await saveTurn(qid, turn, { src, wall, question: Q.get(qid) }); failed++; rows.push('| ' + qid + ' | ' + turn.state + ' | - | - | - | - | - | - | ' + (wall ===null ? '-' : wall) + ' |'); break; }
@@ -602,7 +620,7 @@ for (const qid of order) {
 const h1 = await getChat('after turns');
 const h2 = await getChat('final re-read');
 const usdNew = newCostMicro / 1e6;
-const md = ['# K2 Ask eval', '', '- project: ' + title + ' (10 arxiv explicit scope)', '- chat: ' + chatId + (resumeChat ? ' (resumed, no paid retry)' : ''), '- mode: whole, one call/turn, no paid retry', '- reported cost all turns: ' + reportedMicro + ' micro-USD; new-turn delta: ' + newCostMicro + ' micro-USD ($' + usdNew.toFixed(4) + ', budget default $5, never overridden)', '- monthly: ' + h1.monthlyUsedMicrousd + '/' + h1.monthlyBudgetMicrousd + ' micro-USD', '- cold first/total: ' + firstMs[0] + '/' + totalMs[0] + ' ms', '- warm first p50/p95: ' + pct(firstMs.slice(1), 0.5) + '/' + pct(firstMs.slice(1), 0.95) + ' ms', '- warm total p50/p95: ' + pct(totalMs.slice(1), 0.5) + '/' + pct(totalMs.slice(1), 0.95) + ' ms', '- O1/O2/O3/O8 quality vs eval/arxiv-10/baseline.md: OWNER_JUDGMENT_REQUIRED (script never auto-passes human gates)', '- Stop/reconnect/Save: NOT_RUN here (root browser journey).', '', '| q | state | cites | invalid | in/cached/out | cost_uUSD | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|'].concat(rows).concat(['']).join(EOL);
+const md = ['# K2 Ask eval', '', '- project: ' + title + ' (10 arxiv explicit scope)', '- chat: ' + chatId + (resumeChat ? ' (resumed, no paid retry)' : ''), '- model override: ' + (evalModel ?? '(none; product default)'), '- mode: whole, one call/turn, no paid retry', '- reported cost all turns: ' + reportedMicro + ' micro-USD; new-turn delta: ' + newCostMicro + ' micro-USD ($' + usdNew.toFixed(4) + ', configured budget, never written or raised)', '- monthly: ' + h1.monthlyUsedMicrousd + '/' + h1.monthlyBudgetMicrousd + ' micro-USD', '- cold first/total: ' + firstMs[0] + '/' + totalMs[0] + ' ms', '- warm first p50/p95: ' + pct(firstMs.slice(1), 0.5) + '/' + pct(firstMs.slice(1), 0.95) + ' ms', '- warm total p50/p95: ' + pct(totalMs.slice(1), 0.5) + '/' + pct(totalMs.slice(1), 0.95) + ' ms', '- O1/O2/O3/O8 quality vs eval/arxiv-10/baseline.md: OWNER_JUDGMENT_REQUIRED (script never auto-passes human gates)', '- Stop/reconnect/Save: NOT_RUN here (root browser journey).', '', '| q | state | cites | invalid | in/cached/out | cost_uUSD | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|'].concat(rows).concat(['']).join(EOL);
 await writeFile(outDir + '/k2-' + Date.now() + '.md', md);
 console.log(md);
 assert.equal(failed, 0, failed + ' paid turn(s) did not complete; no retry by design. Operator must create any manual new turn separately.');

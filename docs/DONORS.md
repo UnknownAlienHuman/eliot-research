@@ -92,6 +92,9 @@ selected official-pricing read have the limited evidence in IMPLEMENTATION §11.
 `packages/agents/src/models/core/transport.ts` from the registered Agents pin below (MIT): receiver-bound `AI.fetch`,
 provider-native path, raw body, headers, method and signal. No SDK retry/resume framework is copied. The retained
 universal attempt failed; the separate native-path caller smoke passed, without model-quality acceptance.
+The same OpenCodex pin's `src/adapters/openai-chat/messages.ts` and `reasoning-replay.ts` supply only the blank
+missing-reasoning wire marker for CC assistant history. Cache/TTL, model-family lists, thought storage and replay
+orchestration are discarded; the original history is not mutated and no failed call is retried.
 No local proxy/backend, cache/registry, model-selection policy/default seed or vendored/cross-provider pricing is
 imported; missing prices stay null. Picker interaction/layout retains the approved legacy MIT pin and paths above,
 with provider/native-ID pair identity and dynamic API data instead of legacy qualification/admin layers.

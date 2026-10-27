@@ -30,7 +30,7 @@ export interface DistillReport { questions: string[]; usage: DistillUsage; kept:
 export interface Understanding { sourceId: string; revisionId: string; state: DistillState; error: string | null;
   canRecover: boolean;
   authors: string; published: string | null;
-  progress: { attempts: number; limit: number; maximumCostMicrousd: number | null; model: string | null };
+  progress: { attempts: number; limit: number; maximumCostMicrousd: number | null; model: string | null; configuredModel: string | null };
   guide: string | null; digest: string | null; glossary: GlossaryEntry[]; claims: UnderstandingClaim[];
   report: DistillReport | null; citations: { block: number; start: number; end: number }[] }
 
@@ -75,7 +75,8 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
     .bind(revisionId, input.sourceId).first<{ id: string; state: DistillState; error: string | null; attempts: number; reportKey: string | null; model: string | null }>();
   if (!row) throw new LibraryError("not_found", "Source revision not found.", 404);
   const settings = await env.DB.prepare("SELECT distill_model AS model FROM settings WHERE id=1").first<{ model: string }>();
-  const model = MODELS.find((m) => m.route === (row.model ?? settings?.model) && m.enabled);
+  const configuredModel = settings?.model ?? null;
+  const model = MODELS.find((m) => m.route === configuredModel && m.enabled);
   const report = await r2Json<DistillReport>(env, row.reportKey ?? `source/${revisionId}/distill.json`);
   if (row.reportKey && !report) throw new LibraryError("unavailable", "The current saved report is missing. Restore storage and reload understanding.", 503);
   const artifact = (name: "guide" | "digest" | "glossary", file: string) => {
@@ -105,7 +106,8 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
     canRecover: ["done", "partial", "failed"].includes(row.state) && row.reportKey !== `source/${revisionId}/checked/distill.json` && await hasAvailableUnderstanding(env, revisionId),
     authors: source.authors,
     published: source.published,
-    progress: { attempts: row.attempts, limit: 2, maximumCostMicrousd: model ? 2 * estimateCost(model, model.contextTokens, 0, modelOutputLimit(model)) : null, model: model?.route ?? null },
+    progress: { attempts: row.attempts, limit: 2, maximumCostMicrousd: model ? 2 * estimateCost(model, model.contextTokens, 0, modelOutputLimit(model)) : null,
+      model: row.model ?? configuredModel, configuredModel },
     guide,
     digest,
     glossary: Array.isArray(glossary) ? glossary : [],

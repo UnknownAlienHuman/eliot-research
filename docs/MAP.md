@@ -184,6 +184,9 @@ PATCH/GET preserved the canonical choice without changing defaults/Gateway. The 
 HTTP 502 and remains retained. A separate provider-native Beam caller smoke completed in 3,843 ms with 415/0/134
 tokens and zero estimated cost; its one-turn manifest cannot redispatch. This **CALLER_SMOKE_PASS** does not close
 K2/K3 quality or deployment gates; 0006's 75-case SQL proof is a separate config result.
+The subsequent Beam corpus run passed C1, then stopped at C2 HTTP 400 without retry. A narrow donor history marker
+and capability-selected text streaming were checked separately: new C2/C3 turns completed, while C4 stayed partial
+because it supplied no citations. Failed/interrupted turns remain retained; O1–O8 on Beam and owner acceptance stay open.
 
 **Hard acceptance — `pnpm eval k2`**
 

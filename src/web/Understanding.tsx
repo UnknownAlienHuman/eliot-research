@@ -3,15 +3,34 @@
 // only, paper-qa ideas only. Wire types imported from the root server
 // contract src/understanding.ts. All reads are storage-only GETs; the only
 // paid trigger is the explicit Understand button.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { Markdown } from './Markdown';
 import type { DistillState, Overview, OverviewSource, Understanding } from '../understanding';
 import './understanding.css';
 // Wire types above come from src/understanding.ts; no local duplicates.
-interface ModelOption { readonly route: string; readonly label: string; readonly enabled: boolean; readonly unavailableReason?: string | null; readonly contextTokens: number; readonly maxOutputTokens: number; readonly inputMicrousdPerMillion: number; readonly cachedMicrousdPerMillion: number; readonly outputMicrousdPerMillion: number; readonly checkedOn: string; }
+interface ModelOption { readonly route: string; readonly label: string; readonly enabled: boolean; readonly unavailableReason?: string | null; readonly contextTokens: number | null; readonly maxOutputTokens: number | null; readonly outputReserveTokens?: number | null; readonly inputMicrousdPerMillion: number | null; readonly cachedMicrousdPerMillion: number | null; readonly outputMicrousdPerMillion: number | null; readonly checkedOn: string; }
 function optionLabel(m: ModelOption): string { return m.enabled ? m.label : m.label + ' — unavailable' + (m.unavailableReason ? ': ' + m.unavailableReason : ''); }
-function twoCallBound(m: ModelOption): number { return 2 * Math.ceil((m.contextTokens * m.inputMicrousdPerMillion + m.maxOutputTokens * m.outputMicrousdPerMillion) / 1000000); }
+function outputCapOf(m: Pick<ModelOption, 'outputReserveTokens' | 'maxOutputTokens'>): number | null {
+  const reserve = m.outputReserveTokens ?? null;
+  const max = m.maxOutputTokens ?? null;
+  const bound = reserve ?? max;
+  if (bound === null) return null;
+  if (max === null) return bound;
+  return Math.min(bound, max);
+}
+function twoCallBound(m: ModelOption): number | null {
+  const context = m.contextTokens;
+  if (!Number.isSafeInteger(context) || (context ?? 0) <= 0) return null;
+  const cap = outputCapOf(m);
+  if (!Number.isSafeInteger(cap) || (cap ?? 0) <= 0) return null;
+  const input = m.inputMicrousdPerMillion;
+  const output = m.outputMicrousdPerMillion;
+  if (input === null || output === null) return null;
+  if (![input, output].every((n) => Number.isFinite(n) && n >= 0)) return null;
+  if (context === null || cap === null) return null;
+  return 2 * Math.ceil((context * input + cap * output) / 1000000);
+}
 async function apiErrorMessage(res: Response): Promise<string> {
   try { const b = (await res.json()) as { error?: { message?: string } }; if (b.error && b.error.message) return b.error.message; } catch { /* status text */ }
   return 'Request failed with status ' + res.status + '.';
@@ -38,15 +57,35 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId }: { reado
   const [readVersion, setReadVersion] = useState(0);
   const [models, setModels] = useState<readonly ModelOption[]>([]);
   const [modelChoice, setModelChoice] = useState('');
+  const [catalogueLoaded, setCatalogueLoaded] = useState(false);
+  const latestSelected = useRef('');
   const base = '/api/sources/' + encodeURIComponent(sourceId) + '/understanding';
   const url = base + '?revisionId=' + encodeURIComponent(revisionId);
   const state = view?.state;
   useEffect(() => { setModelChoice(''); }, [sourceId, revisionId]);
   useEffect(() => {
     let live = true;
-    void apiJson<{ models: ModelOption[] }>('/api/models').then((d) => { if (live) setModels(d.models); }).catch(() => { if (live) setModels([]); });
+    void apiJson<{ models: ModelOption[] }>('/api/models').then((d) => { if (live) { setModels(d.models); setCatalogueLoaded(true); } }).catch(() => { if (live) { setModels([]); setCatalogueLoaded(true); } });
     return () => { live = false; };
   }, []);
+  const effectiveRoute = modelChoice !== '' ? modelChoice : (view?.progress.configuredModel ?? '');
+  useEffect(() => {
+    if (!catalogueLoaded || view === undefined || effectiveRoute === '' || !effectiveRoute.startsWith('gateway:command-code/')) return;
+    latestSelected.current = effectiveRoute;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const d = await apiJson<{ models: ModelOption[] }>('/api/models?selected=' + encodeURIComponent(effectiveRoute), { signal: controller.signal });
+        if (controller.signal.aborted || latestSelected.current !== effectiveRoute) return;
+        const enriched = d.models.find((m) => m.route === effectiveRoute);
+        if (enriched === undefined) return;
+        setModels((prev) => prev.some((m) => m.route === effectiveRoute) ? prev.map((m) => m.route === effectiveRoute ? enriched : m) : [...prev, enriched]);
+      } catch (err) {
+        if (!controller.signal.aborted) window.console.warn('Model metadata refresh failed: ' + (err instanceof Error ? err.message : String(err)));
+      }
+    })();
+    return () => { controller.abort(); };
+  }, [catalogueLoaded, view, effectiveRoute]);
   useEffect(() => {
     if (sourceId === '' || revisionId === '' || (state !== undefined && state !== 'queued' && state !== 'running')) return;
     let live = true;
@@ -68,6 +107,8 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId }: { reado
     if (sourceId === '' || revisionId === '' || busy) return;
     const chosen = models.find((m) => m.route === modelChoice);
     if (modelChoice !== '' && (!chosen || !chosen.enabled)) { setNote(chosen && chosen.unavailableReason ? 'Selected model is unavailable: ' + chosen.unavailableReason : 'Selected model is unavailable.'); return; }
+    if (modelChoice === '' && configuredBound === null) { setNote('Model pricing is unavailable.'); return; }
+    if (modelChoice !== '' && chosen !== undefined && chosen.enabled && twoCallBound(chosen) === null) { setNote('Model pricing is unavailable for the selected model.'); return; }
     setBusy(true);
     setNote('');
     try {
@@ -108,21 +149,25 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId }: { reado
     href: '/p/' + encodeURIComponent(projectId) + '/source/' + encodeURIComponent(sourceId) + '?revisionId=' + encodeURIComponent(view.revisionId) + '&start=' + c.start + '&end=' + c.end }));
   const chosen = models.find((m) => m.route === modelChoice);
   const chosenDisabled = modelChoice !== '' && (!chosen || !chosen.enabled);
-  const progressModel = view.progress.model;
-  const progressSpec = progressModel === null ? undefined : models.find((m) => m.route === progressModel);
+  const chosenBound = chosen !== undefined && chosen.enabled ? twoCallBound(chosen) : null;
+  const configuredRoute: string | null | undefined = view.progress.configuredModel;
+  const configuredSpec = typeof configuredRoute === "string" ? models.find((m) => m.route === configuredRoute) : undefined;
+  const configuredLabel = configuredSpec?.label ?? configuredRoute ?? null;
+  const revisionModel = view.progress.model;
+  const configuredBound = configuredSpec !== undefined ? (configuredSpec.enabled ? twoCallBound(configuredSpec) : null) : view.progress.maximumCostMicrousd;
   return (
     <section className='er-und' aria-label='Understanding'>
       <h2 className='er-und__title'>Understanding</h2>
       {view.authors || view.published ? <p className='er-und__meta'>{[view.authors, view.published].filter(Boolean).join(' · ')}</p> : null}
       <p className='er-und__hint' role='status'>{stateLabel(view.state)}{view.state === 'paused' ? ' — resume explicitly after resolving the shown reason.' : ''}{active ? ' — refreshes on its own.' : ''}</p>
-      {progressModel !== null ? <p className='er-und__meta'>Model: {progressSpec !== undefined ? progressSpec.label : progressModel} — cost bound uses this revision route.</p> : null}
+      {revisionModel !== null ? <p className='er-und__meta'>Historical revision model: {revisionModel} — the two-call bound above uses the current configured default.</p> : null}
       {active ? <p className='er-und__meta'>Model attempts {view.progress.attempts}/{view.progress.limit}; each call is bounded to 3 minutes.</p> : null}
       {view.error !== null && view.error !== '' ? <p className='er-und__error' role='alert'>{view.error}</p> : null}
       {view.state === 'failed' ? <p className='er-und__hint'>Terminal failure is not re-queued; the two-call bound holds and nothing retries automatically.</p> : null}
       {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : null}
       {view.report !== null ? (<p className='er-und__meta'><span>{view.report.usage.calls} calls</span><span>{view.report.usage.inputTokens === null ? 'unknown' : view.report.usage.inputTokens} in / {view.report.usage.outputTokens === null ? 'unknown' : view.report.usage.outputTokens} out</span><span>{'$' + (view.report.usage.estimatedCostMicrousd / 1000000).toFixed(4)}</span><span>{view.report.usage.wallMs} ms</span></p>) : null}
       {view.report && view.report.dropped.length > 0 ? <p className='er-und__hint'>{view.report.dropped.length} unsupported candidates were omitted; {view.report.clearedNumbers} numeric fields cleared. No automatic paid retry.</p> : null}
-      {canStart ? (<><label className='er-chat__model'>Model<select value={modelChoice} onChange={(e) => setModelChoice(e.currentTarget.value)}><option value=''>Use configured default</option>{models.map((m) => (<option key={m.route} value={m.route} disabled={!m.enabled}>{optionLabel(m)}</option>))}</select></label>{modelChoice === '' ? (<p className='er-und__hint'>{view.progress.maximumCostMicrousd === null ? 'Model pricing is unavailable.' : 'At most $' + (view.progress.maximumCostMicrousd / 1000000).toFixed(4) + ' reserved for two bounded calls; settles to reported usage.'}</p>) : chosen !== undefined && chosen.enabled ? (<p className='er-und__hint'>At most {'$' + (twoCallBound(chosen) / 1000000).toFixed(4)} reserved for two bounded {chosen.label} calls at current prices; settles to reported usage.</p>) : (<p className='er-und__error' role='alert'>Selected model is unavailable{chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.'}</p>)}<span className='er-und__actions'><button className='er-button er-button--tonal' type='button' disabled={busy || chosenDisabled || (modelChoice === '' && view.progress.maximumCostMicrousd === null)} onClick={() => void understand()}>Understand source</button></span></>) : null}
+      {canStart ? (<><label className='er-chat__model'>Model<select value={modelChoice} onChange={(e) => setModelChoice(e.currentTarget.value)}><option value=''>Use configured default{configuredLabel !== null ? ' (' + configuredLabel + ')' : ''}</option>{models.map((m) => (<option key={m.route} value={m.route} disabled={!m.enabled}>{optionLabel(m)}</option>))}</select></label>{modelChoice === '' ? (<p className='er-und__hint'>{configuredBound === null ? 'Model pricing is unavailable.' : 'At most $' + (configuredBound / 1000000).toFixed(4) + ' reserved for two bounded calls; settles to reported usage.'}</p>) : chosen !== undefined && chosen.enabled && chosenBound !== null ? (<p className='er-und__hint'>At most {'$' + (chosenBound / 1000000).toFixed(4)} reserved for two bounded {chosen.label} calls at current prices; settles to reported usage.</p>) : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'Model pricing is unavailable.'}</p>)}<span className='er-und__actions'><button className='er-button er-button--tonal' type='button' disabled={busy || (modelChoice === '' ? configuredBound === null : chosenDisabled || chosenBound === null)} onClick={() => void understand()}>Understand source</button></span></>) : null}
       {!active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial') ? (<><span className='er-und__actions'><button className='er-button er-button--tonal' type='button' disabled={busy} onClick={() => void saveAvailable()}>{view.state === 'failed' ? 'Save available output' : 'Recheck saved output'}</button></span><p className='er-und__hint'>Storage-only recheck; starts no model work and never re-queues the model.</p></>) : null}
       {note !== '' ? <p className='er-und__hint' role='status'>{note}</p> : null}
       {(view.state === 'done' || view.state === 'partial') ? (<>

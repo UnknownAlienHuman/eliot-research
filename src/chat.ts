@@ -169,9 +169,12 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const schema = z.object({ sentences: z.array(z.object({ labels: z.array(label).min(labels.length ? 1 : 0).max(labels.length ? 32 : 0), text: z.string().min(1) })).min(1).max(64) });
       const render = (sentences: ({ text?: string | undefined; labels?: (string | undefined)[] | undefined } | undefined)[] | undefined) =>
         (sentences ?? []).flatMap((sentence) => sentence?.text ? [sentence.text.trimEnd() + "\n" + (sentence.labels ?? []).filter((token) => token !== undefined && allowed.has(token) && !sentence.text?.includes(token)).join(" ")] : []).join("\n\n");
-      const formatRules = "Return the requested structured answer. Choose the exact supporting block labels first, then write one statement entailed by those blocks in the question language. Preserve the source's technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Text may use Markdown but must not contain citation tokens. Mark inference explicitly. With no sources, labels must be empty. Do not invent sources or labels.";
+      const structured = model.responseFormat !== false;
+      const formatRules = structured
+        ? "Return the requested structured answer. Choose the exact supporting block labels first, then write one statement entailed by those blocks in the question language. Preserve the source's technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Text may use Markdown but must not contain citation tokens. Mark inference explicitly. With no sources, labels must be empty. Do not invent sources or labels."
+        : "Write a plain Markdown answer in the question language. Cite each source-supported statement immediately with the exact supplied [Sx:block] labels. Preserve technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Mark inference explicitly. With no selected sources, include no citation tokens. Do not invent sources or labels.";
       const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions, formatRules,
-        ...(model.responseFormat === false ? ["Return one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema))] : [])].filter(Boolean).join("\n\n");
+        ...(structured && model.structuredOutputs === false ? ["Return one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema))] : [])].filter(Boolean).join("\n\n");
       const messages = context.messages.filter((message) => message.role !== "system");
       messages.push({ role: "user", content: input.question });
       const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages, labels })).byteLength / 3) + messages.length * 32 + 1024;
@@ -182,19 +185,26 @@ export class ChatAgent extends Agent<Env, ChatState> {
       if (this.controller.signal.aborted) throw new Error("Stopped before dispatch.");
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
-        output: Output.object({ schema, name: "cited_answer" }),
+        ...(structured ? { output: Output.object({ schema, name: "cited_answer" }) } : {}),
         maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: this.controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
       let lastWrite = 0;
-      for await (const partial of result.partialOutputStream) {
-        turn.answer = render(partial.sentences);
-        const firstText = turn.firstTokenMs === null && turn.answer.length > 0;
+      const publish = () => {
+        const firstText = turn.firstTokenMs === null && turn.answer.trim().length > 0;
         if (firstText) turn.firstTokenMs = Date.now() - started;
         if (firstText || Date.now() - lastWrite > 100) { this.writeTurn(turn); lastWrite = Date.now(); }
+      };
+      if (structured) for await (const partial of result.partialOutputStream) {
+        turn.answer = render(partial.sentences);
+        publish();
+      }
+      else for await (const text of result.textStream) {
+        turn.answer += text;
+        publish();
       }
       usage = await result.totalUsage;
-      turn.answer = render((await result.output).sentences);
+      turn.answer = structured ? render((await result.output).sentences) : await result.text;
       const finish = await result.finishReason;
       if (finish === "stop" && !streamError) turn.state = "completed";
       else {
