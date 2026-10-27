@@ -13,10 +13,13 @@ import { availableModels, getModelConnection, requireCatalogModel, validGatewayI
 import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
 import { getOverview, getUnderstanding } from "./understanding";
+import { getProjectKnowledge } from "./knowledge";
+import { requestProjectKnowledge } from "./workflows/knowledge";
 
 export { IngestWorkflow } from "./workflows/ingest";
 export { ChatAgent } from "./chat";
 export { DistillWorkflow } from "./workflows/distill";
+export { ProjectKnowledgeWorkflow } from "./workflows/knowledge";
 
 const app = new Hono<{ Bindings: Env; Variables: { actor: Actor } }>();
 
@@ -182,6 +185,15 @@ app.post("/api/sources/:id/understanding", async (c) => {
   return c.json(await requestUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), ...input }), 202);
 });
 app.get("/api/projects/:id/overview", async (c) => c.json(await getOverview(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")) })));
+app.get("/api/projects/:id/knowledge", async (c) => c.json(await getProjectKnowledge(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")) })));
+app.post("/api/projects/:id/knowledge", async (c) => {
+  const input = z.object({ mutationId: uuid, model: z.string().min(1).max(1100).optional() }).strict().parse(await c.req.json());
+  return c.json(await requestProjectKnowledge(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...input }), 202);
+});
+app.post("/api/projects/:id/knowledge/wiki", async (c) => {
+  const input = z.object({ mutationId: uuid, topicId: z.string().min(1).max(80), model: z.string().min(1).max(1100).optional() }).strict().parse(await c.req.json());
+  return c.json(await requestProjectKnowledge(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...input }), 202);
+});
 app.get("/api/revisions/:id/text", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id"))));
 app.get("/api/revisions/:id/range", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
   start: z.coerce.number().int().nonnegative().parse(c.req.query("start")), end: z.coerce.number().int().positive().parse(c.req.query("end")),

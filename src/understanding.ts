@@ -62,7 +62,7 @@ async function revisionQuestions(env: Env, revisionId: string, reportKey: string
   return raw && Array.isArray(raw.questions) ? raw.questions : [];
 }
 
-export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceId: string; revisionId?: string | undefined }): Promise<Understanding> {
+export async function getUnderstanding(env: Env, _actor: Actor | null, input: { sourceId: string; revisionId?: string | undefined }): Promise<Understanding> {
   if (!input.sourceId) throw new LibraryError("invalid", "Check the request fields and try again.", 400);
   const source = await env.DB.prepare("SELECT id, authors, published, current_revision_id AS currentRevisionId FROM source WHERE id=? AND state!='deleted'")
     .bind(input.sourceId).first<{ id: string; authors: string; published: string | null; currentRevisionId: string | null }>();

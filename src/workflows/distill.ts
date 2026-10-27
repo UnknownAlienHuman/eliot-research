@@ -15,6 +15,7 @@ import type { CandidateClaim, VerifiedClaim } from "../quotes";
 import { AuthError } from "../auth";
 import type { Actor } from "../auth";
 import type { DistillReport, GlossaryEntry } from "../understanding";
+import { expireProjectKnowledge, refreshAfterDistillation } from "./knowledge";
 
 const once = { retries: { limit: 0, delay: "1 second" }, timeout: "4 minutes" } as const;
 const store = { retries: { limit: 2, delay: "1 second" }, timeout: "30 seconds" } as const;
@@ -331,18 +332,22 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
 export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillInput> {
   async run(event: Readonly<WorkflowEvent<DistillInput>>, step: WorkflowStep) {
     const { revisionId: id, model } = event.payload;
+    let completed = false;
     try {
       await step.do("extract source", once, () => extract(this.env, id, model));
       await step.do("verify source excerpts", store, () => verifyAndStore(this.env, id, model));
       await step.do("review and synthesize", once, () => synthesize(this.env, id, model));
       const projection = await step.do("store understanding", store, () => commitSynthesis(this.env, id));
       await step.do("finish understanding", store, () => finish(this.env, id, undefined, projection));
+      completed = true;
     } catch (error) { await finish(this.env, id, error); }
+    if (completed) await step.do("refresh completed project batch", store, () => refreshAfterDistillation(this.env, id));
     return { revisionId: id };
   }
 }
 
 export async function scheduleDistillation(env: Env) {
+  await expireProjectKnowledge(env);
   const running = await env.DB.prepare("SELECT id,distill_started_at AS startedAt FROM source_revision WHERE distill_state='running' AND distill_started_at<? LIMIT 2")
     .bind(Date.now() - 300_000).all<{ id: string; startedAt: number }>();
   for (const row of running.results) {

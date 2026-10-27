@@ -443,6 +443,22 @@ map and inspect evidence for every comparison.
 
 **Cost.** Incremental: unchanged source/topic assignments are reused. No full-corpus re-read.
 
+Local K6 implementation on 2026-10-27 wires explicit Refresh/Wiki callers, the post-distillation batch caller,
+bounded Workflows, revision-owned usage, immutable R2 publication and the existing Material overview reader.
+Lint/typecheck, 269 tests, build and generated-binding checks pass. Native SQLite cases cover historical spend,
+concurrent admission, replacement/detachment staleness, immutable writes and guarded accepted-head publication.
+The real local GET returns the empty `KnowledgeView` without model work; three warm reads measured p50/p95
+12.364/13.562 ms (only three loopback storage reads, excluding generation). Settings and usage stayed unchanged.
+The actual `pnpm eval k6` stored-only run exits nonzero because no map is generated yet. Model synthesis, three real
+comparison groups, source-replacement HTTP acceptance and O1–O5 owner usefulness remain NOT_RUN. This is not K6
+acceptance or a deployment. Fresh no-cache 1440/390 px captures show the map reader first in the accepted Material
+frame, with no overflow or overlay. Earlier dimming was not reproduced; its capture cause remains unverified.
+
+Conservative additions are 1,608 non-test `src/` lines (13 removed), including all new UI/CSS. This exceeds the
+1,200-line ceiling: the excess implements strict numeric/condition compatibility, current-input and R2/head publication
+guards, and the complete owner reader. No new backend, generic job/effects ledger or optional search dependency is
+introduced; the ceiling is not raised.
+
 **Not now.** Graph database, centrality, automatic Wiki for every topic.
 
 ---

@@ -16,7 +16,7 @@ const SOURCE_FIELDS = `s.id,s.title,s.kind,s.current_revision_id AS currentRevis
   r.conversion_ms AS conversionMs,s.created_at AS createdAt`;
 const LATEST_REVISION = "JOIN source_revision r ON r.source_id=s.id AND r.revision_no=(SELECT MAX(revision_no) FROM source_revision WHERE source_id=s.id AND deleted_at IS NULL)";
 
-export async function getProject(env: Env, _actor: Actor, id: string): Promise<Project> {
+export async function getProject(env: Env, _actor: Actor | null, id: string): Promise<Project> {
   const project = await env.DB.prepare(`SELECT ${PROJECT_FIELDS} FROM project WHERE id=?`).bind(id).first<Project>();
   if (!project) throw new LibraryError("not_found", "Project not found.", 404);
   return project;

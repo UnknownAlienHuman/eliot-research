@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Navigate, Route, Routes, useLocation } from "react-router";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { fetchMe } from "./api";
 import { Shell } from "./Shell";
 import { useTheme } from "./theme";
@@ -8,6 +8,12 @@ import { Library, Projects, Reader } from "./Library";
 import { ChatView, StudioView } from "./Chat";
 import { ModelSettings } from "./ModelSettings";
 import { ProjectOverview } from "./Understanding";
+import { ProjectKnowledge } from "./ProjectKnowledge";
+
+function KnowledgeOverview() {
+  const { projectId = "" } = useParams();
+  return <><ProjectKnowledge projectId={projectId} /><ProjectOverview projectId={projectId} /></>;
+}
 
 export function App() {
   const { pathname } = useLocation();
@@ -41,7 +47,7 @@ export function App() {
         <Route path="p/:projectId/source/:sourceId" element={<Reader key={pathname} />} />
         <Route path="p/:projectId/chat/:chatId?" element={<ChatView key={pathname} />} />
         <Route path="p/:projectId/studio" element={<StudioView key={pathname} />} />
-        <Route path="p/:projectId/overview" element={<ProjectOverview key={pathname} />} />
+        <Route path="p/:projectId/overview" element={<KnowledgeOverview key={pathname} />} />
         <Route path="settings" element={
           <>
             <h1 id="workspace-heading" tabIndex={-1}>Settings</h1>

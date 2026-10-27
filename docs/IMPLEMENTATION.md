@@ -580,6 +580,28 @@ unit/dataset/condition incompatibility. Comparison rows require at least two com
 show both exact quotes. Store body, structured data, full input revision IDs and citations. Source change marks only
 dependent pages stale; Refresh writes a new revision. Generate Wiki pages only on request.
 
+K6's explicit callers are `POST /api/projects/:id/knowledge` (Refresh) and `/knowledge/wiki` (one selected topic), with
+a natural page-revision `mutationId`. `GET /knowledge` reads only stored state, accepted map and R2 data. The owning
+`page_revision` stores generation state, frozen-input key, admitted model, call count, nullable token counts and
+estimated micro-USD; `0007_project_knowledge.sql` owns these column names. Monthly admission includes every historical
+generated revision, alongside chat/distill estimates; a later Refresh cannot erase earlier spend.
+After a successful distillation completes the project's batch, the trusted Workflow also starts its map update with
+a mutation key derived from the compact input snapshot. Repeated completion notifications return that same attempt;
+a failed attempt is not retried. This internal call records `actor='workflow'`; it does not fabricate an authenticated
+owner. Checked-output Save and read/reconnect paths never start this caller. Missing metadata or budget is a visible
+paused page revision with no dispatch, and Studio lists only pages with an accepted head.
+The existing scheduler and an explicit Refresh expire abandoned running revisions after the operation deadline,
+retaining reservations for any dispatched call. Expiration performs no model or Workflow retry; GET remains read-only.
+The map has at most two model calls: one assignment of changed sources plus questions/routes, and at most one optional
+EN/RU task/metric synonym call. Code retains unchanged source assignments and still checks dataset/unit/condition
+compatibility. Wiki has one call only after its explicit owner action. Each call has zero SDK/Workflow retries, the
+existing model output bound, a three-minute dispatch timeout and a 15-minute operation deadline. Metadata failure,
+context overflow or invalid output fails visibly; no repair or continuation model call is bought.
+Frozen guides/current verified claims live at `page/<revision>/inputs.json`; body, citations and structured data are
+written to immutable sibling R2 keys before a guarded accepted-head update. Replacement or a checked-understanding
+head change stales only accepted pages whose full revision inputs include that revision; attachment stales the project
+map, and detachment also stales dependent pages in that project. No original source or retained attempt is deleted.
+
 Deep research is an explicit bounded Workflow: Library first, optional web lead generation, capture selected pages
 through K1, then synthesize. Prefer static fetch; use Browser Run only when rendering is necessary. Never cite an
 uncaptured web result. Check stop/budget before every external call and preserve readable partial findings.

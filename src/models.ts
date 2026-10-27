@@ -37,7 +37,7 @@ export const modelOutputLimit = (model: Pick<CatalogModel, "outputReserveTokens"
   const bound = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
   return Math.min(bound, model.maxOutputTokens ?? bound);
 };
-function missingMetadata(model: CatalogModel): string | null {
+export function missingMetadata(model: CatalogModel): string | null {
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
     !Number.isSafeInteger(modelOutputLimit(model)) || modelOutputLimit(model) <= 0)
     return "The provider has not published usable context/output metadata.";

@@ -1,9 +1,10 @@
 import { LibraryError } from "./library";
 import type { ModelSpec } from "./models";
-import { modelOutputLimit } from "./models";
+import { missingMetadata, modelOutputLimit } from "./models";
 
 const monthlyEstimate = `(SELECT COALESCE(SUM(estimated_cost_microusd),0) FROM chat_turn WHERE created_at>=?)
-  +(SELECT COALESCE(SUM(distill_estimated_cost_microusd),0) FROM source_revision WHERE distill_started_at>=?)`;
+  +(SELECT COALESCE(SUM(distill_estimated_cost_microusd),0) FROM source_revision WHERE distill_started_at>=?)
+  +(SELECT COALESCE(SUM(model_estimated_cost_microusd),0) FROM page_revision WHERE model_started_at>=?)`;
 
 export function estimateCost(model: ModelSpec, input: number, cached: number, output: number): number {
   if (![input, cached, output].every((n) => Number.isSafeInteger(n) && n >= 0) || cached > input) throw new RangeError("Invalid model usage.");
@@ -14,7 +15,7 @@ export async function monthlyUsage(env: Env) {
   const now = new Date(), start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
   const row = await env.DB.prepare(`SELECT monthly_model_budget_microusd AS budget,
     ${monthlyEstimate} AS used FROM settings WHERE id=1`)
-    .bind(start, start).first<{ budget: number; used: number }>();
+    .bind(start, start, start).first<{ budget: number; used: number }>();
   if (!row) throw new LibraryError("unavailable", "Model settings are unavailable.", 503);
   return { monthlyBudgetMicrousd: row.budget, monthlyUsedMicrousd: row.used, monthStart: start };
 }
@@ -26,7 +27,7 @@ export async function admitTurn(env: Env, chatId: string, turnId: string, model:
     WHERE chat_id=? AND turn_id=? AND state='started' AND estimated_cost_microusd IS NULL
     AND ?+(${monthlyEstimate})
       <=(SELECT monthly_model_budget_microusd FROM settings WHERE id=1)`)
-    .bind(bound, model.checkedOn, chatId, turnId, bound, monthStart, monthStart).run();
+    .bind(bound, model.checkedOn, chatId, turnId, bound, monthStart, monthStart, monthStart).run();
   if (!result.meta.changes) throw new LibraryError("budget", "The monthly budget cannot admit this model's upper bound. Choose a cheaper model or change the budget in Settings.", 409);
   return bound;
 }
@@ -39,11 +40,28 @@ export async function admitDistill(env: Env, revisionId: string, model: ModelSpe
     WHERE id=? AND distill_state='queued' AND distill_calls=0
       AND (SELECT COUNT(*) FROM source_revision WHERE distill_state='running')<2
       AND ?+(${monthlyEstimate})<=(SELECT monthly_model_budget_microusd FROM settings WHERE id=1)`)
-    .bind(model.route, Date.now(), bound, model.checkedOn, revisionId, bound, monthStart, monthStart).run();
+    .bind(model.route, Date.now(), bound, model.checkedOn, revisionId, bound, monthStart, monthStart, monthStart).run();
   if (admitted.meta.changes) return true;
   await env.DB.prepare(`UPDATE source_revision SET distill_state='paused',distill_error='Monthly model budget cannot admit two bounded calls. Resume explicitly after changing the budget or month.'
     WHERE id=? AND distill_state='queued' AND ?+(${monthlyEstimate})>(SELECT monthly_model_budget_microusd FROM settings WHERE id=1)`)
-    .bind(revisionId, bound, monthStart, monthStart).run();
+    .bind(revisionId, bound, monthStart, monthStart, monthStart).run();
+  return false;
+}
+export async function admitKnowledge(env: Env, revisionId: string, model: ModelSpec | null, calls: 0 | 1 | 2): Promise<boolean> {
+  if (calls > 0 && (model === null || !model.enabled || missingMetadata(model) !== null))
+    throw new LibraryError("unavailable", "Known model context, output bound and prices are required before admission.", 503);
+  const bound = model ? calls * estimateCost(model, model.contextTokens, 0, modelOutputLimit(model)) : 0;
+  const { monthStart } = await monthlyUsage(env);
+  const admitted = await env.DB.prepare(`UPDATE page_revision SET generation_state='running',model=?,model_started_at=?,
+    model_estimated_cost_microusd=?,model_pricing_checked_on=?,generation_error=NULL
+    WHERE id=? AND generation_state='none' AND model_calls=0
+      AND EXISTS(SELECT 1 FROM project p WHERE p.knowledge_active_revision_id=page_revision.id)
+      AND ?+(${monthlyEstimate})<=(SELECT monthly_model_budget_microusd FROM settings WHERE id=1)`)
+    .bind(model?.route ?? null, Date.now(), bound, model?.checkedOn ?? null, revisionId, bound, monthStart, monthStart, monthStart).run();
+  if (admitted.meta.changes) return true;
+  await env.DB.prepare(`UPDATE page_revision SET generation_state='paused',generation_error='The monthly budget cannot admit this project update.',
+    model_estimated_cost_microusd=0 WHERE id=? AND generation_state='none'`)
+    .bind(revisionId).run();
   return false;
 }
 export async function failUndispatchedDistill(env: Env, revisionId: string, error: string): Promise<boolean> {
