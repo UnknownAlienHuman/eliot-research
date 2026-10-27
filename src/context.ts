@@ -12,7 +12,7 @@ export interface ContextModel {
 export interface ContextHistoryTurn {
   role: "user" | "assistant";
   content: string;
-  /** Actual resolved citation revision IDs for this answer, not the turn's full source scope. The caller populates these from resolved citations; an assistant answer citing any revision outside the frozen scope is dropped. */
+  /** Actual resolved citation revision IDs for this answer, not the turn's full source scope. The caller populates these from resolved citations; an assistant answer citing any revision outside the frozen scope is dropped with its user question. */
   revisionIds?: string[];
 }
 export interface ContextInput {
@@ -130,22 +130,37 @@ function selectHistory(
   frozen: Set<string>,
   budget: number,
 ): { messages: ContextMessage[]; tokens: number } {
-  const cleaned: ContextMessage[] = [];
-  for (const turn of history ?? []) {
-    if (turn.role === "assistant" && (turn.revisionIds ?? []).some((id) => !frozen.has(id))) continue;
-    const content = stripLabels(turn.content).trim();
-    if (!content) continue;
-    cleaned.push({ role: turn.role, content });
+  const exchanges: ContextMessage[][] = [];
+  const turns = history ?? [];
+  for (let i = 0; i < turns.length;) {
+    const user = turns[i];
+    if (!user || user.role !== "user") { i += 1; continue; }
+    const assistant = turns[i + 1];
+    if (!assistant || assistant.role !== "assistant") {
+      const content = stripLabels(user.content).trim();
+      if (content) exchanges.push([{ role: "user", content }]);
+      i += 1;
+      continue;
+    }
+    i += 2;
+    if ((assistant.revisionIds ?? []).some((id) => !frozen.has(id))) continue;
+    const userContent = stripLabels(user.content).trim();
+    const assistantContent = stripLabels(assistant.content).trim();
+    if (!userContent || !assistantContent) continue;
+    exchanges.push([
+      { role: "user", content: userContent },
+      { role: "assistant", content: assistantContent },
+    ]);
   }
   const picked: ContextMessage[] = [];
   let used = 0;
-  for (let i = cleaned.length - 1; i >= 0; i--) {
-    const turn = cleaned[i];
-    if (!turn) continue;
-    const cost = estimateTokens(turn.content);
+  for (let i = exchanges.length - 1; i >= 0; i--) {
+    const exchange = exchanges[i];
+    if (!exchange) continue;
+    const cost = exchange.reduce((sum, turn) => sum + estimateTokens(turn.content), 0);
     if (used + cost > budget) break;
     used += cost;
-    picked.unshift(turn);
+    picked.unshift(...exchange);
   }
   return { messages: picked, tokens: used };
 }
