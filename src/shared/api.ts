@@ -54,6 +54,15 @@ export interface ApiError {
   };
 }
 
+export interface ProviderUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  cachedTokens: number | null;
+  reasoningTokens: number | null;
+  costUsd: number | null;
+}
+
 export interface TurnView {
   turnId: string;
   question: string;
@@ -69,6 +78,7 @@ export interface TurnView {
   inputTokens: number | null;
   cachedTokens: number | null;
   outputTokens: number | null;
+  providerUsage?: ProviderUsage | null;
   estimatedCostMicrousd: number | null;
   firstTokenMs: number | null;
   totalMs: number | null;

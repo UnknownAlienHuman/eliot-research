@@ -1,9 +1,10 @@
 import { createAI } from "agents/models/ai-sdk";
-import type { LanguageModel } from "ai";
+import type { LanguageModel, LanguageModelUsage } from "ai";
 import type { JSONObject } from "@ai-sdk/provider";
 import { createOpenAICompatible, type OpenAICompatibleProviderSettings } from "@ai-sdk/openai-compatible";
 import { LibraryError } from "./library";
 import { getModelConnection, type ModelSpec } from "./models";
+import type { ProviderUsage } from "./shared/api";
 
 const OPENROUTER_PREFIX = "gateway:openrouter/";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -14,8 +15,19 @@ const NATIVE_FAILURE = "Model stream failed.";
 
 type ProviderConvertUsage = NonNullable<OpenAICompatibleProviderSettings["convertUsage"]>;
 
-function count(value: number | null | undefined): number | undefined {
+function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+export function reportedProviderUsage(usage: LanguageModelUsage): ProviderUsage | null {
+  const raw = usage.raw;
+  if (!raw) return null;
+  const input = raw.prompt_tokens_details, output = raw.completion_tokens_details;
+  const cached = input && typeof input === "object" && "cached_tokens" in input ? input.cached_tokens : undefined;
+  const reasoning = output && typeof output === "object" && "reasoning_tokens" in output ? output.reasoning_tokens : undefined;
+  return { inputTokens: count(raw.prompt_tokens) ?? null, outputTokens: count(raw.completion_tokens) ?? null,
+    totalTokens: count(raw.total_tokens) ?? null, cachedTokens: count(cached) ?? null, reasoningTokens: count(reasoning) ?? null,
+    costUsd: typeof raw.cost === "number" && Number.isFinite(raw.cost) && raw.cost >= 0 ? raw.cost : null };
 }
 
 // Narrow OpenRouter usage fix (pinned @ai-sdk/openai-compatible 3.0.79): the bundled
@@ -119,5 +131,32 @@ export function modelFailure(error: unknown, model: ModelSpec): string {
   if (!model.route.startsWith("gateway:")) {
     return error instanceof Error ? (error.name + ": " + error.message).slice(0, 300) : NATIVE_FAILURE;
   }
+  const status = errorStatusCode(error);
+  if (status !== undefined) {
+    return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started.";
+  }
+  const cause = errorCauseName(error);
+  if (cause !== undefined) {
+    return "External model request failed (cause: " + cause + "). Check the Gateway connection and provider status; no retry was started.";
+  }
   return EXTERNAL_FAILURE;
+}
+
+function errorStatusCode(error: unknown): number | undefined {
+  const direct = (error as { statusCode?: unknown } | null | undefined)?.statusCode;
+  const checked = checkStatusCode(direct);
+  if (checked !== undefined) return checked;
+  const cause = error instanceof Error ? error.cause : undefined;
+  return checkStatusCode((cause as { statusCode?: unknown } | null | undefined)?.statusCode);
+}
+
+function checkStatusCode(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 100 && value <= 599 ? value : undefined;
+}
+
+function errorCauseName(error: unknown): string | undefined {
+  const cause = error instanceof Error ? error.cause : undefined;
+  if (error instanceof Error && error.name === "AI_NoObjectGeneratedError" && cause instanceof Error && cause.name === "AI_JSONParseError") return "AI_JSONParseError";
+  const names = ["Error", "TypeError", "AbortError", "TimeoutError", "AI_APICallError", "AI_StreamProviderError", "AI_NoObjectGeneratedError", "AI_NoOutputGeneratedError", "AI_InvalidResponseDataError", "AI_TypeValidationError", "AiGatewayError", "AiError", "ZodError"];
+  return cause instanceof Error && names.includes(cause.name) ? cause.name : undefined;
 }

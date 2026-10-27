@@ -196,8 +196,20 @@ Their real provider capacities remain visible in advanced details; current chat/
 8,192-token output bound. Zero catalog prices do not imply unlimited quota; unavailable models fail visibly with no
 paid fallback. Existing credential metadata grants no consent; the owner must connect explicitly, and saved connection
 configuration does not prove provider usability.
-OpenRouter service acceptance is **NOT_RUN**; earlier provider fake-binding checks do not qualify the new routes.
-See IMPLEMENTATION §11 for the transport, consent and Inkling plain-JSON contract.
+Owner-authorized NASA smoke through the local Worker and real OpenRouter provider is **LIMITED**: Dots chat completed
+and distill reached `done` (four claims, two calls); Nemotron chat completed with a mixed-language defect. Its distill
+initially failed; explicit cached publication then produced readable `partial` with five guide sentences, digest and
+zero claims, preserving both model calls and original usage. Repeat Save was identical and source text unchanged.
+Semantic source review on 2026-10-27 UTC leaves both glossaries **LIMITED**: Dots adds an unsupported rocky-surface
+definition and mixed-script Russian terminology; Nemotron adds unsupported orbit/wobble qualifiers. Its five guide
+sentences and digest are entailed, but numeric/label validity alone does not establish a fully grounded glossary.
+Inkling chat failed with the original cause unknown; its separate non-streaming distill was refused with HTTP 403
+after one attempt, with no retry/bypass. Including two later distinct Dots questions, receipts record five chat attempts
+and five distill steps at zero estimated model cost. Dots client RUN1 observed `started:13 → completed:126` characters
+from one explicit POST (`browser-1793060247504.json`); stored reload/Save proof is separate (`browser-1793058845678.json`).
+Monthly spend/budget stayed 79,537/4,158,177 micro-USD. This single live sample supplies no p50/p95, full K2/K3 acceptance
+or negative fallback proof. OpenRouter `is_byok: false` describes its upstream-key layer, not a Cloudflare wholesale
+verdict; see IMPLEMENTATION §6/§8/§11 for contracts, metrics and boundaries.
 
 Local K2 run on 2026-10-26: all C1–C4/O1–O8 completed with zero invalid labels and byte-checked ranges, at
 $0.120236 estimated model cost. Cold first/total time was 25,724/27,763 ms; warm first-token p50/p95 was

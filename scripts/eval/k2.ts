@@ -217,6 +217,136 @@ if (process.argv.includes('--models-only')) {
   console.log(JSON.stringify(result, null, 2));
   process.exit(0);
 }
+if (process.argv.includes('--openrouter-stored')) {
+  const smokeDir = fileURLToPath(new URL('../../eval/out/openrouter-smoke/', import.meta.url));
+  await mkdir(smokeDir, { recursive: true });
+  let ids = null;
+  try {
+    ids = JSON.parse(await readFile(smokeDir + '/ids.json', 'utf8'));
+  } catch {
+    console.log('OPENROUTER_STORED_NOT_RUN: eval/out/openrouter-smoke/ids.json is missing (root records job handles after the three provider jobs are final).');
+    process.exit(2);
+  }
+  const violations = [];
+  const rows = [];
+  const perModel = [];
+  const entries = Array.isArray(ids.models) ? ids.models : [];
+  if (typeof ids.projectId !== 'string' || entries.length === 0) violations.push('ids.json must carry projectId and a non-empty models array.');
+  const smokeWhole = new Map();
+  async function smokeRange(rev, st, en, tag) {
+    let w = smokeWhole.get(rev);
+    if (!w) {
+      const t = await apiBytes('/api/revisions/' + encodeURIComponent(rev) + '/text');
+      assert.equal(t.status, 200, 'GET revision text must be 200, got ' + t.status + ' (' + tag + ').');
+      w = t.bytes;
+      smokeWhole.set(rev, w);
+    }
+    const r = await apiBytes('/api/revisions/' + encodeURIComponent(rev) + '/range?start=' + st + '&end=' + en);
+      assert.equal(r.status, 200, 'Each cited range must open, got ' + r.status + ' (GET range 200) (' + tag + ').');
+    assert(r.bytes.equals(w.subarray(st, en)), 'Cited range must equal the whole-text slice (' + tag + ').');
+    assert(Buffer.from(r.bytes.toString('utf8'), 'utf8').equals(r.bytes), 'Cited range must be clean native UTF-8 (' + tag + ').');
+    return r.bytes;
+  }
+  for (const m of entries) {
+    const tag = (m && m.route) || 'unknown-route';
+    let chatStatus = 'NOT_RUN', distillStatus = 'NOT_RUN';
+    let usage = { inputTokens: null, cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, firstTokenMs: null, totalMs: null };
+    let providerUsageRaw = null;
+    let distillUsage = null;
+    const providerCosts = { chatUsd: null, distillUsd: null };
+    let usageCompleteness = 'partial', nullFields = ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs'];
+    let aInfo = '---', dInfo = '---';
+    if (!(m && typeof m.chatId === 'string' && typeof m.turnId === 'string' && typeof m.sourceId === 'string' && typeof m.revisionId === 'string')) {
+      violations.push(tag + ': ids.json entry must carry chatId, turnId, sourceId and revisionId.');
+      perModel.push({ route: tag, status: 'FAIL', chatStatus, distillStatus, usage, usageCompleteness, providerUsage: null, providerCosts, distillUsage, answer: aInfo, distill: dInfo });
+      rows.push('| ' + tag + ' | FAIL | partial | ' + aInfo + ' | ' + dInfo + ' |');
+      continue;
+    }
+    try {
+      const h = await apiJson('/api/projects/' + encodeURIComponent(ids.projectId) + '/chats/' + encodeURIComponent(m.chatId));
+      if (h.status !== 200) throw new Error('NOT_RUN: GET chat snapshot must be 200, got ' + h.status + ' (' + tag + ').');
+      const turns = Array.isArray(h.body.turns) ? h.body.turns : [];
+      const t = turns.find((x) => x && x.turnId === m.turnId) || null;
+      if (!t) throw new Error('NOT_RUN: recorded turn missing (' + tag + ').');
+      for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) assert(t[kk] === null || typeof t[kk] === 'number', 'Turn usage must be known or honestly null (' + tag + ' ' + kk + ').');
+      usage = { inputTokens: t.inputTokens ?? null, cachedTokens: t.cachedTokens ?? null, outputTokens: t.outputTokens ?? null, estimatedCostMicrousd: t.estimatedCostMicrousd ?? null, firstTokenMs: t.firstTokenMs ?? null, totalMs: t.totalMs ?? null };
+      if (t.providerUsage && typeof t.providerUsage === 'object' && !Array.isArray(t.providerUsage)) {
+        providerUsageRaw = Object.fromEntries(['inputTokens', 'outputTokens', 'totalTokens', 'cachedTokens', 'reasoningTokens', 'costUsd'].map((key) =>
+          [key, typeof t.providerUsage[key] === 'number' && Number.isFinite(t.providerUsage[key]) && t.providerUsage[key] >= 0 ? t.providerUsage[key] : null]));
+        providerCosts.chatUsd = providerUsageRaw.costUsd;
+      }
+      nullFields = Object.keys(usage).filter((k) => usage[k] === null || typeof usage[k] !== 'number');
+      usageCompleteness = nullFields.length === 0 ? 'known' : 'partial';
+      if (t.state === 'failed') throw new Error(tag + ': provider turn failed: ' + (t.error || 'unknown error'));
+      if (t.state !== 'completed') throw new Error('NOT_RUN: recorded turn state=' + t.state + ' (' + tag + ').');
+      assert(Array.isArray(t.citations) && t.citations.length >= 1, 'Completed answer needs >=1 citation (' + tag + ').');
+      assert.equal(t.invalidLabels, 0, 'Completed answer must resolve every label (' + tag + ').');
+      for (const c of t.citations) {
+        assert(c && c.revisionId === m.revisionId && c.sourceId === m.sourceId, 'Citation must reference the recorded revision (' + tag + ').');
+        assert(Number.isSafeInteger(c.block) && Number.isSafeInteger(c.start) && Number.isSafeInteger(c.end) && c.end > c.start, 'Citation needs block and exact byte range (' + tag + ').');
+        await smokeRange(m.revisionId, c.start, c.end, tag);
+      }
+      aInfo = t.citations.length + ' cites, 0 invalid';
+      chatStatus = 'completed';
+    } catch (e) {
+      const cmsg = String((e && e.message) || e).split('\n')[0];
+      if (cmsg.indexOf('NOT_RUN: ') >= 0) violations.push(tag + ': chat NOT_RUN (' + cmsg.slice(9) + ').');
+      else { chatStatus = 'failed'; violations.push(tag + ': chat FAIL (' + cmsg + ').'); }
+    }
+    try {
+      const u = await apiJson('/api/sources/' + encodeURIComponent(m.sourceId) + '/understanding?revisionId=' + encodeURIComponent(m.revisionId));
+      if (u.status !== 200) throw new Error('NOT_RUN: GET understanding must be 200, got ' + u.status + ' (' + tag + ').');
+      distillUsage = u.body.report?.usage ?? null;
+      const reported = distillUsage?.providerUsage;
+      if (Array.isArray(reported) && reported.length > 0 && reported.length === distillUsage.calls && reported.every((item) => item && typeof item.cost === 'number' && Number.isFinite(item.cost) && item.cost >= 0))
+        providerCosts.distillUsd = reported.reduce((sum, item) => sum + item.cost, 0);
+      if (u.body.state === 'failed') throw new Error(tag + ': provider distillation failed: ' + (u.body.error || 'unknown error'));
+      if (u.body.state !== 'done' && u.body.state !== 'partial') throw new Error('NOT_RUN: distill state=' + u.body.state + ' (' + tag + ').');
+      assert(u.body.report && typeof u.body.report === 'object', 'Distilled revision must carry its report (' + tag + ').');
+      assert(u.body.report.usage && typeof u.body.report.usage.calls === 'number' && u.body.report.usage.calls <= 2, 'Distill usage.calls must be numeric and bounded at most 2 (' + tag + ').');
+      const uclaims = Array.isArray(u.body.claims) ? u.body.claims : [];
+      assert(uclaims.length <= 32, 'Distill claims capped at 32 (' + tag + ').');
+      for (const c of uclaims) {
+        assert(c && typeof c.quote === 'string' && c.quote.length > 0, 'Distilled claim needs a non-empty quote (' + tag + ').');
+        assert(Number.isSafeInteger(c.start) && Number.isSafeInteger(c.end) && c.end > c.start, 'Distilled claim needs an exact byte range (' + tag + ').');
+        const qb = await smokeRange(m.revisionId, c.start, c.end, tag + ' claim');
+        assert.equal(qb.toString('utf8'), c.quote, 'Distilled quote must equal the range bytes exactly (' + tag + ').');
+      }
+      assert(typeof u.body.guide === 'string' && u.body.guide.length > 0, 'Distilled guide must be readable (' + tag + ').');
+      assert(u.body.digest === null || (typeof u.body.digest === 'string' && u.body.digest.length > 0), 'Distilled digest must be null or readable (' + tag + ').');
+      assert(Array.isArray(u.body.glossary), 'Distilled glossary must be an array (' + tag + ').');
+      if (uclaims.length === 0) {
+        distillStatus = 'PARTIAL_NO_CLAIMS';
+        dInfo = '0 claims, ' + u.body.report.usage.calls + ' calls';
+        violations.push(tag + ': PARTIAL_NO_CLAIMS (partial, 0 claims; limited, never full PASS).');
+      } else {
+        distillStatus = u.body.state;
+        dInfo = uclaims.length + ' claims, ' + u.body.report.usage.calls + ' calls';
+      }
+    } catch (e) {
+      const dmsg = String((e && e.message) || e).split('\n')[0];
+      if (dmsg.indexOf('NOT_RUN: ') >= 0) { distillStatus = 'NOT_RUN'; violations.push(tag + ': distill NOT_RUN (' + dmsg.slice(9) + ').'); }
+      else { distillStatus = 'failed'; violations.push(tag + ': distill FAIL (' + dmsg + ').'); }
+    }
+    let modelStatus = 'PASS';
+    if (chatStatus === 'failed' || distillStatus === 'failed') modelStatus = 'FAIL';
+    else if (chatStatus === 'NOT_RUN' || distillStatus === 'NOT_RUN') modelStatus = 'NOT_RUN';
+    else if (distillStatus === 'PARTIAL_NO_CLAIMS') modelStatus = 'PARTIAL_NO_CLAIMS';
+    const usageCell = usageCompleteness + (usageCompleteness === 'known' ? '' : ' (' + nullFields.map((k) => k + ': null').join(', ') + ')');
+    perModel.push({ route: tag, status: modelStatus, chatStatus, distillStatus, usage, usageCompleteness, providerUsage: providerUsageRaw, providerCosts, distillUsage, answer: aInfo, distill: dInfo });
+    rows.push('| ' + tag + ' | ' + modelStatus + ' | ' + usageCell + ' | ' + aInfo + ' | ' + dInfo + ' |');
+  }
+  const costs = perModel.flatMap((p) => [p.providerCosts.chatUsd, p.providerCosts.distillUsd]);
+  const providerReportedCost = (costs.length > 0 && costs.every((c) => typeof c === 'number')) ? costs.reduce((n, c) => n + c, 0) : 'UNKNOWN';
+  const overall = violations.length > 0 ? 'FAIL' : 'LIMITED';
+  const stamp = Date.now();
+  const md = ['# OpenRouter stored revalidation (real provider jobs, zero new model calls)', '', '- project: ' + ids.projectId, '- handles: eval/out/openrouter-smoke/ids.json' + (ids.publicUrl ? ' / ' + ids.publicUrl : ''), '- probe: ' + (ids.text || '(recorded)'), '- overall: ' + overall, '- provider reported cost: ' + providerReportedCost].concat(['', '| model | status | usageCompleteness | answer | distill |', '|---|---|---|---|---|']).concat(rows).concat(['', '## Open gates / failures']).concat(violations.length > 0 ? violations.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
+  console.log(md);
+  await writeFile(smokeDir + '/openrouter-stored-' + stamp + '.md', md);
+  await writeFile(smokeDir + '/openrouter-stored-' + stamp + '.json', JSON.stringify({ projectId: ids.projectId, overall, providerReportedCost, models: perModel, violations }, null, 2));
+  assert.equal(violations.length, 0, 'OpenRouter stored gates OPEN (' + violations.length + '): ' + violations.join('; '));
+  process.exit(0);
+}
 const title = process.env.ELIOT_EVAL_PROJECT || (nativeOnly ? 'k1-eval' : 'Библиотека — PDF и точные ссылки');
 let projects = [], cursor = undefined;
 for (let i = 0; i < 5; i++) {

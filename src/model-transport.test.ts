@@ -6,7 +6,7 @@ vi.mock("agents/models/ai-sdk", () => ({ createAI: vi.fn() }));
 
 import { createAI } from "agents/models/ai-sdk";
 import type * as agentsSdk from "agents/models/ai-sdk";
-import { modelFailure, resolveModelTransport } from "./model-transport";
+import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
 import { Output, streamText } from "ai";
 import { z } from "zod";
 
@@ -131,6 +131,24 @@ describe("modelFailure", () => {
     expect(modelFailure("boom", NATIVE)).toBe("Model stream failed.");
     expect(modelFailure(undefined, NATIVE)).toBe("Model stream failed.");
   });
+
+  it("surfaces a typed HTTP status for external failures without raw details", () => {
+    const rateLimited = new Error("irrelevant provider text");
+    (rateLimited as unknown as Record<string, unknown>).statusCode = 429;
+    expect(modelFailure(rateLimited, DOTS)).toBe(
+      "External model request failed (HTTP 429). Check the Gateway connection and provider status; no retry was started.");
+    const nested = new Error("outer", { cause: Object.assign(new Error("inner"), { statusCode: 503 }) });
+    expect(modelFailure(nested, DOTS)).toBe(
+      "External model request failed (HTTP 503). Check the Gateway connection and provider status; no retry was started.");
+    const badStatus = new Error("bad");
+    (badStatus as unknown as Record<string, unknown>).statusCode = "429";
+    expect(modelFailure(badStatus, DOTS)).toBe(
+      "External model request failed. Check the Gateway connection and provider status; no retry was started.");
+    const named = new Error("outer", { cause: new TypeError("inner detail") });
+    const namedText = modelFailure(named, DOTS);
+    expect(namedText).toContain("(cause: TypeError)");
+    expect(namedText).not.toContain("inner detail");
+  });
 });
 
 describe("real SDK streamText over a fake binding (contract fixture, no provider)", () => {
@@ -198,6 +216,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     expect(usage?.outputTokens).toBe(5);
     expect(usage?.outputTokenDetails?.reasoningTokens).toBe(3);
     expect(usage?.outputTokenDetails?.textTokens).toBeUndefined();
+    expect(reportedProviderUsage(usage)).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15, cachedTokens: 2, reasoningTokens: 3, costUsd: null });
     assertProviderNative(seen.wire);
     const sent = sentBody(seen.wire);
     expect(sent.model).toBe(id);
@@ -225,6 +244,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     expect(usage?.outputTokens).toBeUndefined();
     expect(usage?.inputTokenDetails?.cacheReadTokens).toBeUndefined();
     expect(usage?.outputTokenDetails?.reasoningTokens).toBeUndefined();
+    expect(reportedProviderUsage(usage)).toEqual({ inputTokens: 10, outputTokens: null, totalTokens: null, cachedTokens: null, reasoningTokens: null, costUsd: null });
     assertProviderNative(seen.wire);
   });
 
@@ -289,7 +309,11 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
       expect.unreachable();
     } catch (e) { err = e; }
     expect(err).toBeInstanceOf(Error);
-    expect(modelFailure(err, DOTS)).toBe("External model request failed. Check the Gateway connection and provider status; no retry was started.");
+    const text = modelFailure(err, DOTS);
+    expect(text.startsWith("External model request failed (cause: ")).toBe(true);
+    expect(text).toContain("no retry was started.");
+    expect(text).not.toContain("provider exploded");
+    expect(text.length).toBeLessThanOrEqual(200);
     expect(seen.wire.calls).toBe(1);
   });
 });

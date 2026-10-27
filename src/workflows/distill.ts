@@ -1,6 +1,7 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { generateText, Output } from "ai";
+import type { JSONObject } from "@ai-sdk/provider";
 import { z } from "zod";
 import type { Block } from "../blocks";
 import { admitDistill, estimateCost, failUndispatchedDistill } from "../cost";
@@ -29,7 +30,7 @@ function extractionSchema(labels: [string, ...string[]]) {
     authors: z.string().max(1000), published: z.string().max(100).nullable() });
 }
 type Extraction = z.infer<ReturnType<typeof extractionSchema>>;
-interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; estimatedCostMicrousd: number }
+interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; estimatedCostMicrousd: number; providerUsage?: JSONObject | null }
 interface Raw<T> { output: T; usage: Usage; validation?: { dropped: { index: number; reason: string }[] } }
 interface Evidence { label: string; block: number; quote: string }
 interface GuideItem { labels: string[]; text: string }
@@ -101,7 +102,7 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
   const estimatedCostMicrousd = inputTokens !== null && outputTokens !== null
     ? estimateCost(model, inputTokens, cachedTokens ?? 0, outputTokens) : estimateCost(model, model.contextTokens, 0, modelOutputLimit(model));
-  return { output: result.output, usage: { inputTokens, cachedTokens, outputTokens, estimatedCostMicrousd } };
+  return { output: result.output, usage: { inputTokens, cachedTokens, outputTokens, estimatedCostMicrousd, providerUsage: usage.raw ?? null } };
 }
 
 function documentLanguage(text: string): "English" | "Russian" {
@@ -252,7 +253,7 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
     }
     return [{ ...item, definition: cleanDistillText(item.definition, item.labels, revisionId, true).text }];
   });
-  if (!guide.length || !digest.length || !claims.length) throw new Error("The retained source material did not produce supported understanding. No paid step will be repeated.");
+  if (!guide.length || !digest.length) throw new Error("The retained source material did not produce supported understanding. No paid step will be repeated.");
   const persistent = (labels: string[]) => labels.map((label) => {
     const passage = byLabel.get(label);
     if (!passage) throw new Error("A generated reference is outside the frozen evidence.");
@@ -314,7 +315,8 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
   const wallMs = Date.now() - row.distill_started_at;
   await put(env, revisionId, "distill.json", { state, questions: verified?.questions ?? [],
     usage: { calls: row.distill_calls, inputTokens: completeUsage ? sum("inputTokens") : null, cachedTokens: completeUsage ? sum("cachedTokens") : null,
-      outputTokens: completeUsage ? sum("outputTokens") : null, estimatedCostMicrousd: cost, wallMs },
+      outputTokens: completeUsage ? sum("outputTokens") : null, estimatedCostMicrousd: cost, wallMs,
+      providerUsage: measured.map((item) => item.usage.providerUsage ?? null) },
     kept, dropped, clearedNumbers: projection?.clearedNumbers ?? verified?.clearedNumbers ?? 0,
     raw: { first: first ? key(revisionId, "distill-call1.json") : null, second: second ? key(revisionId, "distill-call2.json") : null }, error: error ? message(error) : null } satisfies FinalReport);
   report = await json<FinalReport>(env, revisionId, "distill.json");
@@ -399,7 +401,7 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: { sour
       const previous = await previousObject.json<FinalReport>();
       const prepared = await prepareSynthesis(env, row.id);
       const artifacts = await storeSynthesis(env, row.id, prepared, true);
-      const state = prepared.guideSentences >= 3 ? "done" : "partial";
+      const state = prepared.guideSentences >= 3 && prepared.kept > 0 ? "done" : "partial";
       const report: FinalReport = { ...previous, state, kept: prepared.kept, dropped: prepared.dropped,
         clearedNumbers: prepared.clearedNumbers, artifacts, error: null };
       await put(env, row.id, "checked/distill.json", report);

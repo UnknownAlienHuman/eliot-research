@@ -9,7 +9,7 @@ import type { LabelSource } from "./citations";
 import { admitTurn, estimateCost } from "./cost";
 import { DEFAULT_MODEL, modelOutputLimit, requireModel } from "./models";
 import type { ModelSpec } from "./models";
-import { modelFailure, resolveModelTransport } from "./model-transport";
+import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
 import { LibraryError } from "./library";
 import type { RunTurnInput, TurnView } from "./shared/api";
 
@@ -164,8 +164,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
       let lastWrite = 0;
       for await (const partial of result.partialOutputStream) {
         turn.answer = render(partial.sentences);
-        if (turn.firstTokenMs === null && turn.answer) turn.firstTokenMs = Date.now() - started;
-        if (Date.now() - lastWrite > 100) { this.writeTurn(turn); lastWrite = Date.now(); }
+        const firstText = turn.firstTokenMs === null && turn.answer.length > 0;
+        if (firstText) turn.firstTokenMs = Date.now() - started;
+        if (firstText || Date.now() - lastWrite > 100) { this.writeTurn(turn); lastWrite = Date.now(); }
       }
       usage = await result.totalUsage;
       turn.answer = render((await result.output).sentences);
@@ -183,6 +184,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
     }
     if (usage) {
+      turn.providerUsage = reportedProviderUsage(usage);
       turn.inputTokens = usage.inputTokens ?? null; turn.cachedTokens = usage.inputTokenDetails.cacheReadTokens ?? null; turn.outputTokens = usage.outputTokens ?? null;
       if (turn.inputTokens !== null && turn.outputTokens !== null) {
         turn.estimatedCostMicrousd = estimateCost(requireModel(turn.model), turn.inputTokens, turn.cachedTokens ?? 0, turn.outputTokens);

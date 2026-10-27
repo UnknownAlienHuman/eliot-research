@@ -5,6 +5,7 @@
 import { LibraryError } from "./library";
 import type { Actor } from "./auth";
 import type { Block } from "./blocks";
+import type { JSONObject } from "@ai-sdk/provider";
 import { estimateCost } from "./cost";
 import { MODELS, modelOutputLimit } from "./models";
 import { hasAvailableUnderstanding } from "./workflows/distill";
@@ -19,7 +20,7 @@ export interface UnderstandingClaim { id: string; kind: ClaimKind; statement: st
   dataset: string | null; valueText: string | null; valueNumber: number | null; unit: string | null; conditions: string | null }
 
 export interface DistillUsage { calls: number; inputTokens: number | null; cachedTokens: number | null;
-  outputTokens: number | null; estimatedCostMicrousd: number; wallMs: number }
+  outputTokens: number | null; estimatedCostMicrousd: number; wallMs: number; providerUsage?: (JSONObject | null)[] }
 
 export interface DistillReport { questions: string[]; usage: DistillUsage; kept: number;
   dropped: { index: number; reason: string }[]; clearedNumbers: number;

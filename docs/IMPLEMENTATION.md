@@ -220,9 +220,18 @@ may use bounded native Workflow retries, with immutable R2 writes and natural `(
 Store raw result/report in R2, compact verified claims in D1, and usage,
 cost and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
+Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.providerUsage` from AI SDK `usage.raw`
+as a JSON object or null. The final report retains `usage.providerUsage` as an array of at most two such entries for
+saved call responses; older artifacts may omit the field. This is provider usage telemetry, not request bodies,
+headers or credentials, and adds no table, ledger or model call. Missing token counts remain unknown.
 `done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal
 filtering and remains diagnostic. `partial` records a missing required component or an interrupted/error outcome,
 not a nonzero drop percentage. The same exact-quote, numeric-support and anchor gates apply to both states.
+In particular, nonempty validated final guide and digest may be stored with zero claims as `partial`; missing claims
+alone must not discard those readable artifacts. Zero claims never produces `done`: both normal finish and storage-only
+Save available output require at least three guide sentences and at least one kept final claim for `done`. Only the
+second call's supported selections/additions become cards; first-call draft candidates are never promoted to fill an
+empty final claim set. A readable zero-claim partial result is not full K3 acceptance or proof of semantic quality.
 Guide/digest describe the paper for the owner rather than candidate review or model reasoning. Conflicting source
 values remain attributed to their separate source passages instead of being silently reconciled.
 Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels
@@ -260,8 +269,14 @@ The corrected guide, digest, glossary and report use fixed immutable `source/<re
 Publish this head, `guide_summary`, `claim_count` and the current claim rows in one D1 batch guarded by the old head.
 Current claims are the ordinal prefix `[0, claim_count)`; upserts retain existing row IDs, and old trailing derived rows
 are retained but excluded by readers, context and later FTS queries. No original or legacy/live data is deleted.
-Calls, tokens, estimated cost and original model wall time remain unchanged. A repeated save of the checked head
-returns the same result. GET exposes `canRecover` from compatible stored output only; failed output is never re-queued.
+Calls, tokens, estimated cost, original model wall time and retained provider usage telemetry remain unchanged.
+A repeated save of the checked head returns the same result. GET exposes `canRecover` from compatible stored output
+only; failed output is never re-queued.
+The NASA/Nemotron cached-publication check (`eval/out/openrouter-smoke/partial-save.json`) changed `failed` to `partial`
+with five guide sentences, readable digest and zero claims. Calls stayed at two; input/output stayed 1,511/8,888,
+cost zero and original model wall time 107,635 ms. Repeated Save was identical, canonical text SHA-256 unchanged,
+and monthly spend/budget stayed 79,537/4,158,177 micro-USD. This verifies storage-only partial publication, not a complete
+claim set or full K3 acceptance.
 
 ## 7. Shared tools
 
@@ -293,6 +308,20 @@ first-token/total time, cost, invalid-label count and terminal state. One active
 Stop stores partial text. Closing a tab does not cancel. Failed streams are never auto-continued; Retry creates a new
 turn. Prompt rules: answer in question language, lead with answer, cite each source-derived factual sentence,
 distinguish inference, abstain with missing evidence, and never invent labels.
+
+During structured streaming, persist and broadcast the first nonempty rendered answer immediately and set
+`firstTokenMs` then, bypassing the 100 ms coalescing used for later updates. Empty structured partials do not count
+as first text. The terminal turn is always persisted/broadcast. This timing measures rendered answer text, not the
+first network/SSE event; reconnect remains a read-only snapshot.
+
+2026-10-27 UTC: future turns with SDK usage retain optional `TurnView.providerUsage: ProviderUsage | null` in the
+existing private turn payload/API. `reportedProviderUsage` selects only six fields from SDK `usage.raw`:
+`inputTokens`, `outputTokens`, `totalTokens`, `cachedTokens`, `reasoningTokens`, `costUsd`. Counts are nonnegative safe
+integers or null; cost is a nonnegative finite number or null. No recursive provider JSON, headers, keys or request
+bodies are exposed through this field. Private R2 distill-call usage and the report array in §6 retain the full provider
+usage JSON as reported; the chat projection does not change those artifacts. This field required no additional
+inference. Historical smoke-chat raw stats remain unavailable: normalized null output does not establish whether
+raw usage was missing or inconsistent. Do not backfill that uncertainty or repeat a model call for telemetry.
 
 K2 uses the installed Agents SDK 0.30.1 `Agent` with SQLite turn storage and read-only WebSocket snapshots; HTTP Send
 is the paid caller. SDK state is server-owned, reconnect never resubmits, and a third input returns `409/busy` while
@@ -383,8 +412,55 @@ The request body sets `provider: { allow_fallbacks: false, require_parameters: t
 `cf-aig-no-wholesale: true`, `cf-aig-max-attempts: 1`, `cf-aig-skip-cache: true`, `cf-aig-collect-log: false` (strings).
 Gateway options also set the saved ID, `skipCache: true`, `collectLog: false` and `retries.maxAttempts: 1`. Forwarding
 these controls through the installed adapter/workerd is source evidence, not proof of live Gateway/provider enforcement.
-Current OpenRouter service acceptance is **NOT_RUN**; saving configuration or earlier provider fake-binding checks do not
-prove these routes usable. Owner credential access and model selection remain explicit.
+Current OpenRouter service acceptance is **LIMITED** to the owner-authorized local Worker + real provider smoke on
+2026-10-26–27 UTC, using three distinct excerpts from NASA's public Earth facts article. Retained handles/results are
+`eval/out/openrouter-smoke/{ids,chat-0,chat-1,chat-2,distill-0,distill-1,distill-2}.json`. Chat time below is stored
+`totalMs`; distill time is `report.usage.wallMs`. Token triples are input/cached/output; unknown is not zero.
+
+- Dots: initial chat `completed`, 14,067 ms, 459/0/unknown tokens, two citations and zero invalid labels. All three
+  successful stream-chat records have input counts 459/537/764 and `outputTokens: null`. Their old TurnView payloads
+  did not retain raw provider usage, so provider omission versus inconsistent counts is unknown. Separate distill raw
+  usage is fully retained: `done` after two model calls, 82,072 ms, 1,777/0/6,075 tokens and four kept claims.
+  Semantic source review on 2026-10-27 UTC found the glossary **LIMITED**: `Terrestrial planets` adds a rocky-surface
+  definition absent from its declared block 4, and the Russian terminology contains mixed-script `терrestrial`.
+  Pipeline `done` does not establish a fully source-grounded glossary.
+- Inkling: chat `failed` in 160 ms with no usage; the original cause/status was not retained and remains unknown.
+  Its separate non-streaming distill request was refused with HTTP 403 after one attempt (699 ms), with unknown token
+  usage and no second call. Public endpoint availability does not establish this account/key's request access;
+  the specific reason for the 403 is unverified. Do not repeat the identical denial automatically.
+- Nemotron: chat `completed`, 78,910 ms, 425/0/1,234 tokens, two citations and zero invalid labels; Russian quality is
+  **LIMITED** by the mixed-language word `capturированные`. The native Workflow completed two model steps with one
+  attempt each, 107,635 ms and 1,511/0/8,888 tokens. Product understanding initially failed; after semantic review,
+  explicit cached Save published `partial` with five guide sentences, readable digest and zero claims. Both original
+  raw responses and model usage remain unchanged. Repeated Save was identical; platform Workflow `complete` and
+  readable zero-claim `partial` do not establish a complete distill or full K3 acceptance.
+  Semantic source review found all five guide sentences and the digest entailed by their declared passages, while
+  the glossary remains **LIMITED**: `Orbit` adds “around Earth” beyond declared block 4; `Wobble` adds axis/small-motion
+  qualifiers not stated in declared block 3. Valid numbers and labels alone do not establish semantic support.
+
+The initial manifest smoke records three chat attempts plus five distill model attempts. Two later distinct Dots
+questions add one call each: the light-travel-time turn in `chat-stream.json`, and the natural AU question in client
+RUN1. Thus retained receipts account for five chat attempts and five distill steps, with zero estimated model cost
+and no automatic model retry. Inkling's 403 remains terminal without a retry or bypass.
+
+Client RUN1 (`eval/out/openrouter-smoke/browser-1793060247504.json`) observed a genuine nonempty WebSocket
+`started` frame (13 characters) followed by `completed` (126 characters, one citation, zero invalid labels), from one
+explicit POST for the new AU question. This is live local Worker + real Dots provider evidence for one run, not a
+p50/p95 measurement. The earlier `browser-1793058845678.json` separately proves stored-answer reload and Save with
+an exact citation range; it opened an already terminal answer and is not live-stream evidence. Storage actions and
+the NV partial save left monthly spend/budget at 79,537/4,158,177 micro-USD and canonical source text unchanged.
+These checks do not establish full K2/K3 acceptance or a negative no-wholesale/fallback test. Native Flash defaults,
+auto-distill, budget and credentials are not changed by this evidence or by reading/saving these results.
+
+There are two credential layers. Cloudflare Gateway BYOK concerns the **OpenRouter API key**; OpenRouter
+[`usage.is_byok`](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion) instead reports whether
+OpenRouter used an owner-supplied **upstream provider key**, as defined by its
+[BYOK contract](https://openrouter.ai/docs/guides/overview/auth/byok). Dots' two retained usage objects report
+`cost: 0`, `is_byok: false` and `cost_details.upstream_inference_cost: 0`. Those fields do not prove Cloudflare wholesale
+or fallback: for generation-metadata lookups, OpenRouter documents zero/null upstream cost for non-BYOK requests in
+[usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting). The request code remains
+keyless with `vendorKey: "gateway"`, the named Gateway and `cf-aig-no-wholesale: true`; live enforcement of the
+Cloudflare rejection boundary is still **NOT_RUN**. Official layer semantics checked 2026-10-27 UTC.
 
 Dots and Nemotron advertise `response_format` and `structured_outputs`; Inkling advertises neither. Inkling's contract
 is ordinary JSON text: chat/distill add the schema to `instructions` before vendor conversion, the transport removes
