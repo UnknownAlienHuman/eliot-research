@@ -280,6 +280,9 @@ re-distilled automatically.
 - Every stored quote is an exact byte range; numeric result fields are cleared when not supported by their quote.
 - Transformer, ResNet and LoRA anchor expectations in `eval/arxiv-10/questions.md` are present with correct conditions;
   no unsupported number is stored. Claim count and drop rate are reported, not quality gates.
+- An anchor must be expressed by a stored claim statement and supported by that same claim's exact quote; a matching
+  phrase only inside a broad quote does not establish that the claim card contains the fact. Guides/digests are not
+  anchor evidence.
 - Claim mode keeps C1–C4 correct and citations valid; overview lists every readable source without a model call.
 - The automatic claims path is exercised in a separate real overflow project: reuse the ten baseline sources and
   attach the public papers in `eval/arxiv-10/overflow.json`. Measured source bytes must exceed the unchanged model
@@ -333,6 +336,10 @@ ten-source corpus initially had seven violations. After the explicit correction 
 gates. It adds no POST/model work and leaves 64,651 micro-USD unchanged.
 Anchors use only exact claim quotes from their actual source, never generated digest or unsupported conditions as
 evidence. Native-only smoke success and diagnostic-script exit codes are not K3 acceptance.
+The separate 2026-10-27 stored-only check of `Библиотека — PDF и точные ссылки` applies the same-card statement/quote
+gate and exits nonzero with six open items: three ResNet anchors, LoRA's frozen/low-rank mechanism and latency anchor,
+and claim-mode C1–C4 NOT_RUN. Its A1 and LoRA quantitative anchors pass. It changes no stored source, model usage or
+budget. The generic central/qualitative extraction request is corrected, but has not yet passed service acceptance.
 
 Budget evidence is from the same local Worker at `127.0.0.1:5173`, local D1 `DB` under `.wrangler/state/v3/d1`:
 Transformer admission at 07:34:09 UTC reserved 322,766 micro-USD over 828,757 chat usage (1,151,523 total); settlement

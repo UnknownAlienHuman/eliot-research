@@ -225,6 +225,12 @@ Only its supported, code-checked output is committed to the claim reader. Result
 per task/dataset/metric/condition instead of a compound table row. Citation annotations are resolved separately from
 factual numbers; an unknown annotation rejects its item. Paid steps have no retry; only deterministic storage steps
 may use bounded native Workflow retries, with immutable R2 writes and natural `(revision, ordinal)` claim keys.
+Both existing calls request central mechanism and material qualitative claim statements when the paper states them.
+Guide text and a fact merely occurring inside a quoted block do not substitute for an owner-visible claim. When the
+unchanged 32-card bound binds, supported central explanatory/qualitative coverage takes priority over duplicate or
+secondary result rows; no per-kind quotas or paper-specific rules are introduced. Call two checks guide leads against
+the supplied original excerpts and can select a smaller supported subset to leave room for missing atomic facts.
+These request changes add no call, evidence binding, stored field or fallback claim and do not prove service quality.
 Store raw result/report in R2, compact verified claims in D1, and usage,
 cost and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.

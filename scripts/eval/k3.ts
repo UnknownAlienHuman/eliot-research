@@ -162,24 +162,33 @@ async function assertStoredQuote(rev, c, tag) {
   assert.equal(r.status, 200, 'Each claim quote must open (GET range 200) ' + tag + '.');
   assert.equal(r.bytes.toString('utf8'), c.quote, 'Each claim quote must equal the range bytes exactly ' + tag + '.');
 }
+function anchorHay(byFile) {
+  // Keep statement and this same card's quote separate; never pool fields or cards.
+  const normalize = (value) => (typeof value === 'string' ? value : '').toLowerCase().replace(/-\s*\n\s*/g, '').replace(/\s+/g, ' ');
+  return (file) => (byFile.get(file) || []).map((c) => ({
+    statement: normalize(c && c.statement),
+    quote: normalize(c && c.quote),
+  }));
+}
 function checkAnchors(byFile) {
   const missing = [];
-  // Semantic keyword matching may join PDF word wraps; byte equality is checked separately, without normalization.
-  const quotes = (file) => (byFile.get(file) || []).map((q) => q.toLowerCase().replace(/-\s*\n\s*/g, '').replace(/\s+/g, ' '));
-  const q01 = quotes('arxiv-01.pdf'), q03 = quotes('arxiv-03.pdf'), q07 = quotes('arxiv-07.pdf');
+  // Every independent anchor must be stated by one owner-visible card and supported by that card's own exact quote.
+  const cards = anchorHay(byFile);
+  const q01 = cards('arxiv-01.pdf'), q03 = cards('arxiv-03.pdf'), q07 = cards('arxiv-07.pdf');
   const wmt = (q) => /wmt\s*(?:2014|14)/.test(q);
   const french = (q) => /english.{0,25}french|en[-– ]fr/.test(q);
-  if (!q01.some((q) => q.includes('28.4') && q.includes('bleu') && wmt(q) && /english.{0,25}german|en[-– ]de/.test(q))) missing.push('A1-English-German-28.4-BLEU');
-  if (!q01.some((q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && french(q))) missing.push('A1-English-French-41.8-BLEU');
-  if (!q01.some((q) => q.includes('41.8') && french(q) && /3\.5\s*days?/.test(q) && /(?:\b8\b|\beight\b).{0,30}gpus?/.test(q))) missing.push('A1-compute(3.5d/8GPU-for-French-result)');
-  if (!q03.some((q) => q.includes('residual') && q.includes('function') && /reformulat|learn|mapping/.test(q))) missing.push('A2-residual-functions');
-  if (!q03.some((q) => runsOf(q).includes('152') && /layer/.test(q))) missing.push('A2-152-layers');
-  if (!q03.some((q) => q.includes('3.57') && q.includes('ensemble') && q.includes('imagenet') && q.includes('test') && q.includes('error'))) missing.push('A2-ensemble-3.57%-ImageNet-test-error');
-  if (!q07.some((q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q))) missing.push('A3-frozen-weights-trained-lowrank');
+  const paired = (items, predicate) => items.some((card) => predicate(card.statement) && predicate(card.quote));
+  if (!paired(q01, (q) => q.includes('28.4') && q.includes('bleu') && wmt(q) && /english.{0,25}german|en[-– ]de/.test(q))) missing.push('A1-English-German-28.4-BLEU');
+  if (!paired(q01, (q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && french(q))) missing.push('A1-English-French-41.8-BLEU');
+  if (!paired(q01, (q) => q.includes('41.8') && french(q) && /3\.5\s*days?/.test(q) && /(?:\b8\b|\beight\b).{0,30}gpus?/.test(q))) missing.push('A1-compute(3.5d/8GPU-for-French-result)');
+  if (!paired(q03, (q) => q.includes('residual') && q.includes('function') && /reformulat|learn|mapping/.test(q))) missing.push('A2-residual-functions');
+  if (!paired(q03, (q) => runsOf(q).includes('152') && /layer/.test(q))) missing.push('A2-152-layers');
+  if (!paired(q03, (q) => q.includes('3.57') && q.includes('ensemble') && q.includes('imagenet') && q.includes('test') && q.includes('error'))) missing.push('A2-ensemble-3.57%-ImageNet-test-error');
+  if (!paired(q07, (q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q))) missing.push('A3-frozen-weights-trained-lowrank');
   const gpt = (q) => /gpt[- ]?3/.test(q) && /175\s*b/.test(q);
-  if (!q07.some((q) => gpt(q) && /10[, ]*000/.test(q) && q.includes('trainable') && q.includes('parameter'))) missing.push('A3-GPT3-175B-10000x-trainable-params');
-  if (!q07.some((q) => gpt(q) && /(?:\b3\b|\bthree\b).{0,20}(?:times|[x×]|fold)/.test(q) && q.includes('gpu') && q.includes('memory'))) missing.push('A3-GPT3-175B-3x-GPU-memory');
-  if (!q07.some((q) => /(?:\bno\b|without|does not|do not).{0,80}latency/.test(q) && q.includes('inference'))) missing.push('A3-no-additional-inference-latency');
+  if (!paired(q07, (q) => gpt(q) && /10[, ]*000/.test(q) && q.includes('trainable') && q.includes('parameter'))) missing.push('A3-GPT3-175B-10000x-trainable-params');
+  if (!paired(q07, (q) => gpt(q) && /(?:\b3\b|\bthree\b).{0,20}(?:times|[x×]|fold)/.test(q) && q.includes('gpu') && q.includes('memory'))) missing.push('A3-GPT3-175B-3x-GPU-memory');
+  if (!paired(q07, (q) => /(?:\bno\b|without|does not|do not).{0,80}latency/.test(q) && q.includes('inference'))) missing.push('A3-no-additional-inference-latency');
   return missing;
 }
 const BUDGET_DEFAULT = 5000000;
@@ -458,7 +467,7 @@ if (!runModel) {
         continue;
       }
       for (const g of numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions)) violations.push(s.originalFilename + ': numeric ' + g + ' unsupported by quote');
-      fileQuotes.push(c.quote);
+      fileQuotes.push({ quote: c.quote, statement: c.statement });
     }
     byFile.set(s.originalFilename, fileQuotes);
     const rep = u.report;
@@ -474,7 +483,7 @@ if (!runModel) {
     await writeFile(outDir + '/k3-stored-' + String(rev).slice(0, 8) + '.json', JSON.stringify({ revisionId: rev, source: s.originalFilename, state: u.state, claims: claims.length, error: u.error || null }, null, 2));
     sRows.push('| ' + s.originalFilename + ' | ' + u.state + ' | ' + claims.length + ' | stored-only |');
   }
-  for (const m of checkAnchors(byFile)) violations.push('anchor missing from exact quote: ' + m);
+  for (const m of checkAnchors(byFile)) violations.push('anchor missing from owner-visible statement + supporting quote: ' + m);
   try {
     const ov1 = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/overview');
     assert.equal(ov1.status, 200, 'GET overview must be 200.');
@@ -601,7 +610,7 @@ async function distillOne(s) {
     assert.equal(r.status, 200, 'Each claim quote must open (GET range 200).');
     assert.equal(r.bytes.toString('utf8'), c.quote, 'Each claim quote must equal the range bytes exactly (' + s.originalFilename + ').');
     assert.deepEqual(numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), [], 'Every numeric group must occur whole in its exact quote (' + s.originalFilename + ').');
-    fileQuotes.push(c.quote);
+    fileQuotes.push({ quote: c.quote, statement: c.statement });
   }
   paidByFile.set(s.originalFilename, fileQuotes);
   assert(u.report && typeof u.report === 'object', 'Terminal understanding must carry direct report (done/partial) (' + s.originalFilename + ').');
