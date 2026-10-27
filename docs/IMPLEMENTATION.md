@@ -425,6 +425,12 @@ The original C2/C3 HTTP 400 states remain; after the serializer correction, math
 failed local JSON parsing. The capability-selected text path completed separate C2/C3 turns with 1/2 resolved citations;
 C4 remained partial with no citations. This is not complete K2 acceptance; Beam O1–O8 and owner quality remain open.
 
+The later retained local Muse corpus run completed C1–C4; O1/O2 were partial at the unchanged 8,192 output bound.
+Those runs included canonical WIP and do not qualify published `main`. The subsequent immutable published-main
+snapshot failed O3 before usable usage was reported; its 106,496 micro-USD reservation remains, not a confirmed bill.
+Monthly estimates reached 430,670 / 4,158,177; defaults remained Flash. Eval accounting includes known partial/failed
+costs and marks unknown costs explicitly. These outcomes leave K2/K3 and owner acceptance open, without auto-retry.
+
 Native discovery uses `env.AI.models`, mapping text-generation `row.name` to `workers-ai:<row.name>`, published
 `context_window` and USD price[] units `per M input tokens`, `per M cached input tokens`, `per M output tokens`.
 Missing/unsupported facts remain null, native output cap stays UNKNOWN with job bound 8,192, and low reasoning effort

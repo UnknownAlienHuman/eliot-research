@@ -187,6 +187,9 @@ K2/K3 quality or deployment gates; 0006's 75-case SQL proof is a separate config
 The subsequent Beam corpus run passed C1, then stopped at C2 HTTP 400 without retry. A narrow donor history marker
 and capability-selected text streaming were checked separately: new C2/C3 turns completed, while C4 stayed partial
 because it supplied no citations. Failed/interrupted turns remain retained; O1–O8 on Beam and owner acceptance stay open.
+The retained local Muse run completed C1–C4 with valid labels, but O1/O2 stopped at `length` and remained partial.
+An immutable build of published `main` then failed O3 with unknown usage, retaining its 106,496 micro-USD reservation.
+No failed turn was auto-retried; complete K2 quality, remaining open questions and owner acceptance are unqualified.
 
 **Hard acceptance — `pnpm eval k2`**
 
