@@ -1,6 +1,7 @@
 // K6 project-knowledge storage. The Workflow owns admission and synthesis;
 // this module reads the frozen source surface and commits accepted pages.
 import type { Actor } from "./auth";
+import type { Block } from "./blocks";
 import type { Citation } from "./citations";
 import type { ComparisonAliases, ComparisonClaim, ComparisonGroup } from "./comparisons";
 import { getPage, type SavedPage } from "./pages";
@@ -38,6 +39,11 @@ export interface KnowledgeView {
   } | null;
 }
 
+export interface WikiEvidence {
+  quote: string;
+  citation: Citation;
+}
+
 interface KnowledgeSourceRow {
   sourceId: string;
   revisionId: string;
@@ -47,6 +53,8 @@ interface KnowledgeSourceRow {
 const READABLE_STATES = "('readable','readable_with_warnings')";
 const STALE_ERROR = "Project sources changed during this update. Refresh project knowledge again.";
 const MAX_PAGE_BODY_CHARS = 1_000_000;
+// Mirrors the existing model-call context ceiling at three UTF-8 bytes/token.
+const MAX_WIKI_EVIDENCE_BYTES = 400_000 * 3;
 
 async function currentKnowledgeSources(env: Env, projectId: string): Promise<KnowledgeSourceRow[]> {
   const rows = await env.DB.prepare(`SELECT s.id AS sourceId,r.id AS revisionId,s.title
@@ -100,6 +108,143 @@ export async function loadKnowledgeInputs(env: Env, actor: Actor | null, input: 
     throw new LibraryError("conflict", "Project sources changed while loading knowledge. Reload and refresh again.", 409);
   }
   return sources;
+}
+
+function blockId(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new LibraryError("invalid", "A Wiki evidence reference has an invalid block number.", 400);
+  }
+  return Number(value);
+}
+
+function guideBlockReferences(guide: string, revisionIds: Set<string>): { revisionId: string; blockId: number }[] {
+  const references: { revisionId: string; blockId: number }[] = [];
+  const markers = guide.match(/\[(?:R|S)[^\]\r\n]*(?:\]|$)/g) ?? [];
+  for (const marker of markers) {
+    const match = /^\[R([^:\]\r\n]+):(\d+)\]$/.exec(marker);
+    if (!match || !revisionIds.has(match[1] ?? "")) {
+      throw new LibraryError("conflict", "A stored Wiki guide reference is outside its frozen source revision.", 409);
+    }
+    const id = blockId(Number(match[2]));
+    if (String(id) !== match[2]) throw new LibraryError("invalid", "A Wiki guide reference has a non-canonical block number.", 400);
+    references.push({ revisionId: match[1] as string, blockId: id });
+  }
+  return references;
+}
+
+function storedBlocks(value: unknown): Map<number, Block> {
+  if (!Array.isArray(value)) throw new LibraryError("unavailable", "The frozen Wiki block map is invalid.", 503);
+  const result = new Map<number, Block>();
+  const blockTypes = new Set<Block["type"]>(["heading", "paragraph", "list", "table", "code", "quote"]);
+  for (const item of value) {
+    if (!isRecord(item) || !Number.isSafeInteger(item.id) || Number(item.id) < 1
+      || !blockTypes.has(item.type as Block["type"]) || !Number.isSafeInteger(item.start)
+      || !Number.isSafeInteger(item.end) || Number(item.start) < 0 || Number(item.end) <= Number(item.start)
+      || (item.heading !== null && typeof item.heading !== "string")) {
+      throw new LibraryError("unavailable", "The frozen Wiki block map contains an invalid range.", 503);
+    }
+    const block = item as unknown as Block;
+    if (result.has(block.id)) throw new LibraryError("unavailable", "The frozen Wiki block map contains duplicate IDs.", 503);
+    result.set(block.id, block);
+  }
+  return result;
+}
+
+export async function loadWikiEvidence(env: Env, sources: readonly KnowledgeSource[]): Promise<WikiEvidence[]> {
+  const sourceIds = new Set<string>();
+  const revisionIds = new Set<string>();
+  for (const source of sources) {
+    if (!source.sourceId || !source.revisionId || !source.title || source.revisionId.includes("/")
+      || source.revisionId.includes("\\") || sourceIds.has(source.sourceId) || revisionIds.has(source.revisionId)
+      || !Array.isArray(source.claims) || (source.guide !== null && typeof source.guide !== "string")) {
+      throw new LibraryError("invalid", "The frozen Wiki source scope is invalid.", 400);
+    }
+    sourceIds.add(source.sourceId);
+    revisionIds.add(source.revisionId);
+  }
+
+  const requestedByRevision = new Map<string, Set<number>>();
+  const requestBlock = (revisionId: string, id: number) => {
+    const ids = requestedByRevision.get(revisionId) ?? new Set<number>();
+    ids.add(id);
+    requestedByRevision.set(revisionId, ids);
+  };
+  for (const source of sources) {
+    for (const claim of source.claims) {
+      if (claim.sourceId !== source.sourceId || claim.revisionId !== source.revisionId) {
+        throw new LibraryError("conflict", "A Wiki claim is outside its frozen source revision.", 409);
+      }
+      requestBlock(source.revisionId, blockId(claim.block));
+    }
+    if (source.guide !== null) {
+      for (const reference of guideBlockReferences(source.guide, revisionIds)) {
+        requestBlock(reference.revisionId, reference.blockId);
+      }
+    }
+  }
+  const requested = sources.flatMap((source) => {
+    const ids = requestedByRevision.get(source.revisionId);
+    return ids ? [{ source, blockIds: [...ids].sort((a, b) => a - b) }] : [];
+  });
+  if (requested.length === 0) {
+    throw new LibraryError("invalid", "This topic has no verified source passages for a Wiki page.", 400);
+  }
+
+  const blockMaps = new Map<string, Map<number, Block>>();
+  for (const { source } of requested) {
+    const object = await env.BUCKET.get(`source/${source.revisionId}/blocks.json`);
+    if (!object) throw new LibraryError("unavailable", "A frozen Wiki source block map is missing.", 503);
+    let raw: unknown;
+    try { raw = await object.json<unknown>(); }
+    catch { throw new LibraryError("unavailable", "A frozen Wiki source block map is invalid.", 503); }
+    blockMaps.set(source.revisionId, storedBlocks(raw));
+  }
+
+  const selected: { source: KnowledgeSource; block: Block }[] = [];
+  let totalBytes = 0;
+  for (const { source, blockIds } of requested) {
+    const blocks = blockMaps.get(source.revisionId);
+    for (const id of blockIds) {
+      const block = blocks?.get(id);
+      if (!block) throw new LibraryError("unavailable", "A frozen Wiki citation references a missing source block.", 503);
+      const length = block.end - block.start;
+      totalBytes += length;
+      if (totalBytes > MAX_WIKI_EVIDENCE_BYTES) {
+        throw new LibraryError("invalid", "The frozen Wiki evidence exceeds the bounded model context.", 400);
+      }
+      selected.push({ source, block });
+    }
+  }
+
+  return Promise.all(selected.map(async ({ source, block }): Promise<WikiEvidence> => {
+    const object = await env.BUCKET.get(`source/${source.revisionId}/text.md`, {
+      range: { offset: block.start, length: block.end - block.start },
+    });
+    if (!object) throw new LibraryError("unavailable", "A frozen Wiki source passage is missing.", 503);
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    if (bytes.byteLength !== block.end - block.start) {
+      throw new LibraryError("unavailable", "A frozen Wiki source passage is incomplete.", 503);
+    }
+    let quote: string;
+    try { quote = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
+    catch { throw new LibraryError("unavailable", "A frozen Wiki source passage is not valid UTF-8.", 503); }
+    if (new TextEncoder().encode(quote).byteLength !== bytes.byteLength) {
+      throw new LibraryError("unavailable", "A frozen Wiki source passage did not round-trip as UTF-8.", 503);
+    }
+    return {
+      quote,
+      citation: {
+        revisionId: source.revisionId,
+        sourceId: source.sourceId,
+        block: block.id,
+        start: block.start,
+        end: block.end,
+        sourceTitle: source.title,
+        deleted: false,
+        label: `[R${source.revisionId}:${block.id}]`,
+      },
+    };
+  }));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -343,7 +488,7 @@ async function storedPageOrNull(env: Env, actor: Actor | null, projectId: string
   return getPage(env, actor, { projectId, pageId });
 }
 
-export async function getProjectKnowledge(env: Env, actor: Actor | null, input: { projectId: string }): Promise<KnowledgeView> {
+export async function getProjectKnowledge(env: Env, actor: Actor | null, input: { projectId: string; operationId?: string | undefined }): Promise<KnowledgeView> {
   const project = await env.DB.prepare(`SELECT knowledge_page_id AS pageId,
     knowledge_active_revision_id AS activeRevisionId FROM project WHERE id=?`)
     .bind(input.projectId).first<{ pageId: string | null; activeRevisionId: string | null }>();
@@ -353,15 +498,17 @@ export async function getProjectKnowledge(env: Env, actor: Actor | null, input: 
   let error: string | null = null;
   let operation: KnowledgeView["operation"] = null;
   let usage: KnowledgeView["usage"] = null;
-  if (project.activeRevisionId) {
+  const operationId = input.operationId ?? project.activeRevisionId;
+  if (operationId) {
     const active = await env.DB.prepare(`SELECT r.page_id AS pageId,p.kind AS kind,r.generation_state AS state,
       r.generation_error AS error,r.model_calls AS calls,r.model_input_tokens AS inputTokens,
       r.model_output_tokens AS outputTokens,r.model_estimated_cost_microusd AS estimatedCostMicrousd
       FROM page_revision r JOIN page p ON p.id=r.page_id
       WHERE r.id=? AND p.project_id=?`)
-      .bind(project.activeRevisionId, input.projectId)
+      .bind(operationId, input.projectId)
       .first<{ pageId: string; kind: string; state: string; error: string | null; calls: number; inputTokens: number | null; outputTokens: number | null; estimatedCostMicrousd: number | null }>();
-    if (!active) throw new LibraryError("unavailable", "The active project knowledge revision is missing.", 503);
+    if (!active) throw new LibraryError(input.operationId ? "not_found" : "unavailable",
+      input.operationId ? "Project knowledge operation not found in this project." : "The active project knowledge revision is missing.", input.operationId ? 404 : 503);
     if (!["none", "running", "paused", "done", "failed"].includes(active.state)) {
       throw new LibraryError("unavailable", "The active project knowledge state is invalid.", 503);
     }
@@ -370,7 +517,7 @@ export async function getProjectKnowledge(env: Env, actor: Actor | null, input: 
     }
     state = active.state as KnowledgeView["state"];
     error = active.error;
-    operation = { revisionId: project.activeRevisionId, pageId: active.pageId, kind: active.kind };
+    operation = { revisionId: operationId, pageId: active.pageId, kind: active.kind };
     usage = { calls: active.calls, inputTokens: active.inputTokens, outputTokens: active.outputTokens,
       estimatedCostMicrousd: active.estimatedCostMicrousd };
   }

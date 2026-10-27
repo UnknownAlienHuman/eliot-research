@@ -239,7 +239,7 @@ export function ProjectKnowledge({ projectId }: { readonly projectId: string }) 
             <div className="er-pk__status" data-state={currentView.state} role="status">
               <strong>{stateLabel(currentView.state)}</strong>
               <span>
-                {currentView.state === 'running' ? 'Updating the project map…' : null}
+                {currentView.state === 'running' ? currentView.operation?.kind === 'wiki' ? 'Writing the Wiki page…' : 'Updating the project map…' : null}
                 {currentView.state === 'paused' ? 'Update paused. Check the reason above before trying again.' : null}
                 {currentView.state === 'done' ? 'Project knowledge is ready.' : null}
                 {currentView.state === 'failed' ? 'Update failed. Any previous page remains available for review.' : null}

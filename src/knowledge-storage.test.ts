@@ -3,9 +3,11 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Actor } from "./auth";
+import type { Block } from "./blocks";
 import type { ComparisonClaim } from "./comparisons";
 import { getProjectKnowledge, renderKnowledge, storeKnowledgeRevision } from "./knowledge";
-import type { KnowledgeData } from "./knowledge";
+import { loadWikiEvidence } from "./knowledge";
+import type { KnowledgeData, KnowledgeSource } from "./knowledge";
 
 // These cases call the real storage functions, not loadKnowledgeInputs. Keep
 // the latter's unrelated K3 Workflow import out of the native SQLite runner.
@@ -63,6 +65,7 @@ interface MemoryPutOptions {
 class MemoryR2 {
   readonly objects = new Map<string, Uint8Array>();
   readonly attempts: { key: string; etagDoesNotMatch?: string }[] = [];
+  readonly gets: { key: string; offset?: number; length?: number }[] = [];
   failKey: string | null = null;
   afterPut: ((key: string) => void | Promise<void>) | null = null;
 
@@ -89,10 +92,13 @@ class MemoryR2 {
     return {};
   }
 
-  async get(key: string): Promise<object | null> {
+  async get(key: string, options?: { range?: { offset: number; length: number } }): Promise<object | null> {
+    this.gets.push({ key, ...(options?.range ? options.range : {}) });
     const stored = this.objects.get(key);
     if (!stored) return null;
-    const bytes = stored.slice();
+    const bytes = options?.range
+      ? stored.slice(options.range.offset, options.range.offset + options.range.length)
+      : stored.slice();
     return {
       async arrayBuffer() { return bytes.slice().buffer; },
       async text() { return new TextDecoder().decode(bytes); },
@@ -254,6 +260,23 @@ function scopeData(data: KnowledgeData, sourceId: string): KnowledgeData {
       .filter((route) => route.sourceIds.length > 0),
     sources,
   };
+}
+
+function seedSourceBlocks(f: Fixture, revisionId: string, chunks: string[]): Block[] {
+  const encoder = new TextEncoder();
+  let offset = 0;
+  const blocks = chunks.map((chunk, index): Block => {
+    const start = offset;
+    offset += encoder.encode(chunk).byteLength;
+    return { id: index + 1, type: "paragraph", start, end: offset, heading: null };
+  });
+  f.bucket.seed(`source/${revisionId}/text.md`, encoder.encode(chunks.join("")));
+  f.bucket.seed(`source/${revisionId}/blocks.json`, JSON.stringify(blocks));
+  return blocks;
+}
+
+function wikiSource(sourceId: string, revisionId: string, guide: string | null, claims: ComparisonClaim[] = []): KnowledgeSource {
+  return { sourceId, revisionId, title: "Frozen source", guide, claims };
 }
 
 function headId(f: Fixture, pageId = f.pageId): string | null {
@@ -427,5 +450,97 @@ describe("K6 storage functions on migrated SQLite and in-memory R2", () => {
     const view = await getProjectKnowledge(f.env, OWNER, { projectId: f.projectId });
 
     expect(view).toMatchObject({ state: "none", operation: null, page: { headRevisionId: f.oldHeadId }, data: f.data });
+  });
+
+  it("hydrates a guide-only citation from the full block in its frozen revision", async () => {
+    const f = create();
+    const revisionId = "guide-only-r1";
+    const chunks = ["Prefix block.\n", "Guide-only evidence.\n"];
+    const blocks = seedSourceBlocks(f, revisionId, chunks);
+
+    const evidence = await loadWikiEvidence(f.env, [wikiSource("guide-only", revisionId, `Claim [R${revisionId}:2].`)]);
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toEqual({ quote: chunks[1], citation: {
+      revisionId, sourceId: "guide-only", block: 2, start: blocks[1]?.start, end: blocks[1]?.end,
+      sourceTitle: "Frozen source", deleted: false, label: `[R${revisionId}:2]`,
+    } });
+    expect(f.bucket.gets).toEqual([
+      { key: `source/${revisionId}/blocks.json` },
+      { key: `source/${revisionId}/text.md`, offset: blocks[1]?.start, length: (blocks[1]?.end ?? 0) - (blocks[1]?.start ?? 0) },
+    ]);
+  });
+
+  it("hydrates guide references only from revisions in the frozen Wiki source set", async () => {
+    const f = create();
+    const revisionId = "source-b-r1", quote = "Cross-source guide evidence.\n";
+    seedSourceBlocks(f, revisionId, [quote]);
+
+    const evidence = await loadWikiEvidence(f.env, [
+      wikiSource("source-a", "source-a-r1", `Guide reference [R${revisionId}:1].`),
+      wikiSource("source-b", revisionId, null),
+    ]);
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({ quote, citation: {
+      sourceId: "source-b", revisionId, sourceTitle: "Frozen source", block: 1, label: `[R${revisionId}:1]`,
+    } });
+  });
+
+  it("deduplicates a block cited by both a verified claim and its guide", async () => {
+    const f = create();
+    const revisionId = "claim-guide-r1", chunk = "Whole source block, not just the claim quote.\n";
+    seedSourceBlocks(f, revisionId, [chunk]);
+    const sourceClaim = { ...claim("claim-guide", revisionId, "claim quote", "81%", 81), block: 1 };
+
+    const evidence = await loadWikiEvidence(f.env, [wikiSource("claim-guide", revisionId,
+      `Guide passage [R${revisionId}:1].`, [sourceClaim])]);
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]?.quote).toBe(chunk);
+    expect(f.bucket.gets.filter((item) => item.key === `source/${revisionId}/text.md`)).toHaveLength(1);
+  });
+
+  it("uses exact UTF-8 byte offsets for a full non-ASCII block range", async () => {
+    const f = create();
+    const revisionId = "utf8-evidence-r1";
+    const chunks = ["Prefix π 😀.\n", "Résumé — 東京 🧪.\n"];
+    const blocks = seedSourceBlocks(f, revisionId, chunks);
+    const start = new TextEncoder().encode(chunks[0]).byteLength;
+    const end = start + new TextEncoder().encode(chunks[1]).byteLength;
+
+    const evidence = await loadWikiEvidence(f.env, [wikiSource("utf8-source", revisionId, `[R${revisionId}:2]`)]);
+
+    expect(evidence[0]).toMatchObject({ quote: chunks[1], citation: { block: 2, start, end, label: `[R${revisionId}:2]` } });
+    expect(blocks[1]).toMatchObject({ start, end });
+    expect(f.bucket.gets.at(-1)).toEqual({ key: `source/${revisionId}/text.md`, offset: start, length: end - start });
+  });
+
+  it("rejects a guide reference outside the frozen revision scope before reading R2", async () => {
+    const f = create();
+
+    await expect(loadWikiEvidence(f.env, [wikiSource("source-a", "source-a-r1", "Foreign quote [Rsource-b-r1:1].")]))
+      .rejects.toMatchObject({ code: "conflict" });
+    expect(f.bucket.gets).toHaveLength(0);
+  });
+
+  it("rejects an empty Wiki evidence set", async () => {
+    const f = create();
+
+    await expect(loadWikiEvidence(f.env, [wikiSource("source-a", "source-a-r1", null)]))
+      .rejects.toMatchObject({ code: "invalid" });
+    expect(f.bucket.gets).toHaveLength(0);
+  });
+
+  it("enforces the existing bounded context ceiling before reading passage bytes", async () => {
+    const f = create();
+    const revisionId = "large-evidence-r1";
+    f.bucket.seed(`source/${revisionId}/blocks.json`, JSON.stringify([
+      { id: 1, type: "paragraph", start: 0, end: 1_200_001, heading: null },
+    ]));
+
+    await expect(loadWikiEvidence(f.env, [wikiSource("large-source", revisionId, `[R${revisionId}:1]`)]))
+      .rejects.toMatchObject({ code: "invalid" });
+    expect(f.bucket.gets).toEqual([{ key: `source/${revisionId}/blocks.json` }]);
   });
 });

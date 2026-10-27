@@ -38,7 +38,7 @@ function summarizeTimings(samples: number[]) {
 }
 async function apiJson(path: string, init?: RequestInit): Promise<{ status: number; body: any; ms: number }> {
   const started = nowMs();
-  const r = await fetch(origin + path, { ...init, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } });
+  const r = await fetch(origin + path, { ...init, signal: init?.signal ?? AbortSignal.timeout(30000), headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } });
   const ms = nowMs() - started;
   const t = await r.text();
   let b: any = null;
@@ -173,7 +173,7 @@ if (runModel) {
   assert(attempt?.revisionId);
   const deadline = Date.now() + 16 * 60_000;
   while (true) {
-    knowledge = await timeIt('GET operation', () => apiJson('/api/projects/' + projectId + '/knowledge', { signal: AbortSignal.timeout(20_000) }));
+    knowledge = await timeIt('GET operation', () => apiJson('/api/projects/' + projectId + '/knowledge?operationId=' + encodeURIComponent(attempt.revisionId), { signal: AbortSignal.timeout(20_000) }));
     assert.equal(knowledge.status, 200);
     const current = knowledge.body as KnowledgeView;
     assert.equal(current.operation?.revisionId, attempt.revisionId, 'Observe the same owning operation, never a replacement.');
@@ -194,6 +194,13 @@ if (runModel) {
     await finish(1, { usage: knowledge.body.usage });
   }
   assert.equal(knowledge.body.page?.headRevisionId, attempt.revisionId, 'The real map must reach its accepted page reader.');
+}
+if (!runModel && knowledge.body.page?.headRevisionId && knowledge.body.operation?.revisionId !== knowledge.body.page.headRevisionId) {
+  const head = knowledge.body.page.headRevisionId;
+  knowledge = await timeIt('GET accepted map operation', () => apiJson('/api/projects/' + projectId + '/knowledge?operationId=' + encodeURIComponent(head)));
+  assert.equal(knowledge.status, 200);
+  assert.equal(knowledge.body.operation?.revisionId, head, 'Read the map owning row rather than later Wiki usage.');
+  assert.equal(knowledge.body.page?.headRevisionId, head, 'The accepted map changed during stored validation.');
 }
 const kv: any = knowledge.body;
 assert(kv && typeof kv === 'object', 'KnowledgeView must be an object.');
@@ -302,7 +309,8 @@ report['topics'] = topics.length;
   report['comparisons'] = storedGroups.length;
 report['derivedGroups'] = derivedGroups.length;
 report['rangeChecks'] = rangeChecks;
-report['unknownFields'] = Object.keys(kv).filter((k) => !['state', 'error', 'page', 'data', 'usage'].includes(k));
+report['unknownFields'] = Object.keys(kv).filter((k) => !['state', 'error', 'operation', 'page', 'data', 'usage'].includes(k));
+report['operation'] = view.operation;
 report['dataKeys'] = data && typeof data === 'object' ? Object.keys(data as Record<string, unknown>) : [];
 report['viewState'] = view.state;
 report['viewError'] = view.error;

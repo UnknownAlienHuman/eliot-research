@@ -185,7 +185,9 @@ app.post("/api/sources/:id/understanding", async (c) => {
   return c.json(await requestUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), ...input }), 202);
 });
 app.get("/api/projects/:id/overview", async (c) => c.json(await getOverview(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")) })));
-app.get("/api/projects/:id/knowledge", async (c) => c.json(await getProjectKnowledge(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")) })));
+app.get("/api/projects/:id/knowledge", async (c) => c.json(await getProjectKnowledge(c.env, c.get("actor"), {
+  projectId: uuid.parse(c.req.param("id")), operationId: uuid.optional().parse(c.req.query("operationId")),
+})));
 app.post("/api/projects/:id/knowledge", async (c) => {
   const input = z.object({ mutationId: uuid, model: z.string().min(1).max(1100).optional() }).strict().parse(await c.req.json());
   return c.json(await requestProjectKnowledge(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...input }), 202);

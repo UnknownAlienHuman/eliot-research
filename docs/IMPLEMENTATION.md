@@ -588,11 +588,16 @@ a natural page-revision `mutationId`. `GET /knowledge` reads only stored state, 
 `page_revision` stores generation state, frozen-input key, admitted model, call count, nullable token counts and
 estimated micro-USD; `0007_project_knowledge.sql` owns these column names. Monthly admission includes every historical
 generated revision, alongside chat/distill estimates; a later Refresh cannot erase earlier spend.
+The reader returns the owning `operation` revision/page/kind. Optional `operationId` selects that project's retained
+operation, so a later Wiki cannot replace a map's usage or polling identity; a foreign operation is not returned.
 After a successful distillation completes the project's batch, the trusted Workflow also starts its map update with
 a mutation key derived from the compact input snapshot. Repeated completion notifications return that same attempt;
 a failed attempt is not retried. This internal call records `actor='workflow'`; it does not fabricate an authenticated
 owner. Checked-output Save and read/reconnect paths never start this caller. Missing metadata or budget is a visible
 paused page revision with no dispatch, and Studio lists only pages with an accepted head.
+Automatic batches wait until every active readable current source is understood (`done`/`partial`); a failed,
+paused or unfinished source does not buy an automatic continuation. One project's snapshot conflict does not stop
+other projects in the batch.
 The existing scheduler and an explicit Refresh expire abandoned running revisions after the operation deadline,
 retaining reservations for any dispatched call. Expiration performs no model or Workflow retry; GET remains read-only.
 The map has at most two model calls: one assignment of changed sources plus questions/routes, and at most one optional
@@ -604,6 +609,10 @@ Frozen guides/current verified claims live at `page/<revision>/inputs.json`; bod
 written to immutable sibling R2 keys before a guarded accepted-head update. Replacement or a checked-understanding
 head change stales only accepted pages whose full revision inputs include that revision; attachment stales the project
 map, and detachment also stales dependent pages in that project. No original source or retained attempt is deleted.
+For an explicit Wiki, the same input artifact freezes original UTF-8 blocks referenced by both the guide and verified
+claims before admission. The model selects labels before one complete factual sentence, without Markdown chapters or
+inline citation tokens, and copies the source's numeric notation. Validation uses that frozen evidence only. Earlier
+failed outputs are not rebound to newly hydrated passages, and no repair model call is added.
 
 Deep research is an explicit bounded Workflow: Library first, optional web lead generation, capture selected pages
 through K1, then synthesize. Prefer static fetch; use Browser Run only when rendering is necessary. Never cite an
