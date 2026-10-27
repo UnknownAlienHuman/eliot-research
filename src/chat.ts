@@ -14,6 +14,11 @@ import { LibraryError } from "./library";
 import type { RunTurnInput, TurnView } from "./shared/api";
 
 interface ChatState { active: string | null; queued: RunTurnInput | null; stopRequested: boolean }
+function sameTurnRequest(a: RunTurnInput, b: RunTurnInput): boolean {
+  return a.projectId === b.projectId && a.chatId === b.chatId && a.turnId === b.turnId
+    && a.question === b.question && a.scopeMode === b.scopeMode && (a.model ?? null) === (b.model ?? null)
+    && JSON.stringify(a.sourceIds ?? []) === JSON.stringify(b.sourceIds ?? []);
+}
 export class ChatAgent extends Agent<Env, ChatState> {
   initialState: ChatState = { active: null, queued: null, stopRequested: false };
   private controller: AbortController | undefined;
@@ -56,7 +61,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
   }
   async getTurns(projectId: string): Promise<TurnView[]> {
     await this.ensureProject(projectId);
-    return this.sql<{ payload: string }>`SELECT payload FROM turns ORDER BY created_at DESC LIMIT 50`
+    return this.sql<{ payload: string }>`SELECT payload FROM turns ORDER BY created_at DESC,id DESC LIMIT 50`
       .reverse().map((row) => JSON.parse(row.payload) as TurnView);
   }
   async getSnapshot(projectId: string) {
@@ -70,6 +75,31 @@ export class ChatAgent extends Agent<Env, ChatState> {
     return { answer: (turn.state === "partial" ? "Partial answer — the turn ended before completion.\n\n" : "") + saved.text,
       citations: saved.citations, revisionIds: turn.revisionIds, state: turn.state };
   }
+  private startTurn(input: RunTurnInput): Promise<TurnView> {
+    this.setState({ active: input.turnId, queued: null, stopRequested: false });
+    const task = this.runTurn(input);
+    this.current = task;
+    this.ctx.waitUntil(task.finally(() => this.advanceQueue(input.turnId)));
+    return task;
+  }
+  private advanceQueue(finishedTurnId: string) {
+    if (this.state.active !== finishedTurnId) return;
+    const queued = this.state.queued;
+    this.current = undefined;
+    this.controller = undefined;
+    if (!queued) {
+      this.setState({ active: null, queued: null, stopRequested: false });
+      this.broadcast(JSON.stringify({ type: "queued", queued: null }));
+      return;
+    }
+    // Claim the queued ID synchronously before runTurn performs its first await.
+    // A concurrent submit therefore cannot jump ahead or replace this payload.
+    this.setState({ active: queued.turnId, queued: null, stopRequested: false });
+    this.broadcast(JSON.stringify({ type: "queued", queued: null }));
+    const task = this.runTurn(queued);
+    this.current = task;
+    this.ctx.waitUntil(task.finally(() => this.advanceQueue(queued.turnId)));
+  }
   async submitTurn(input: RunTurnInput, wait = false): Promise<TurnView | { turnId: string; queued?: boolean } | { busy: true; message: string }> {
     await this.ensureProject(input.projectId);
     if (input.chatId !== this.name) throw new LibraryError("invalid", "Chat identity mismatch.", 400);
@@ -78,21 +108,16 @@ export class ChatAgent extends Agent<Env, ChatState> {
     if (this.state.active === input.turnId) return wait && this.current ? this.current : { turnId: input.turnId };
     if (this.state.active) {
       if (wait) return { busy: true, message: "Another answer is running. Wait or stop it first." };
-      if (this.state.queued && this.state.queued.turnId !== input.turnId) return { busy: true, message: "One question is already queued." };
+      if (this.state.queued) {
+        if (this.state.queued.turnId !== input.turnId) return { busy: true, message: "One question is already queued." };
+        if (!sameTurnRequest(this.state.queued, input)) throw new LibraryError("conflict", "This turn ID is already queued with different input.", 409);
+        return { turnId: input.turnId, queued: true };
+      }
       this.setState({ ...this.state, queued: input });
       this.broadcast(JSON.stringify({ type: "queued", queued: { turnId: input.turnId, question: input.question } }));
       return { turnId: input.turnId, queued: true };
     }
-    this.setState({ active: input.turnId, queued: null, stopRequested: false });
-    const task = this.runTurn(input);
-    this.current = task;
-    this.ctx.waitUntil(task.finally(() => {
-      const queued = this.state.queued;
-      this.current = undefined; this.controller = undefined;
-      this.setState({ active: null, queued: null, stopRequested: false });
-      this.broadcast(JSON.stringify({ type: "queued", queued: null }));
-      if (queued) this.ctx.waitUntil(this.submitTurn(queued));
-    }));
+    const task = this.startTurn(input);
     return wait ? task : { turnId: input.turnId };
   }
   async stopTurn(projectId: string, turnId: string) {
@@ -171,8 +196,15 @@ export class ChatAgent extends Agent<Env, ChatState> {
       usage = await result.totalUsage;
       turn.answer = render((await result.output).sentences);
       const finish = await result.finishReason;
-      turn.state = finish === "length" ? "partial" : "completed";
-      if (!turn.answer.trim()) { turn.state = "failed"; turn.error = "The model returned no answer text."; }
+      if (finish === "stop" && !streamError) turn.state = "completed";
+      else {
+        turn.state = "partial";
+        turn.error = streamError || `The model stopped before a normal completion (${finish}).`;
+      }
+      if (!turn.answer.trim()) {
+        turn.state = "failed";
+        turn.error = streamError || `The model returned no answer text (finish: ${finish}).`;
+      }
     } catch (error) {
       const stopped = this.controller.signal.aborted;
       turn.state = turn.answer ? "partial" : stopped ? "cancelled" : "failed";
