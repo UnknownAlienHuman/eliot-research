@@ -19,23 +19,38 @@ function sameTurnRequest(a: RunTurnInput, b: RunTurnInput): boolean {
     && a.question === b.question && a.scopeMode === b.scopeMode && (a.model ?? null) === (b.model ?? null)
     && JSON.stringify(a.sourceIds ?? []) === JSON.stringify(b.sourceIds ?? []);
 }
+function legacyTurnMatches(turn: TurnView, input: RunTurnInput): boolean {
+  if (turn.question !== input.question || turn.scopeMode !== input.scopeMode) return false;
+  if (input.model !== undefined && turn.model !== input.model) return false;
+  return input.scopeMode !== "explicit" || JSON.stringify(turn.sourceIds) === JSON.stringify(input.sourceIds ?? []);
+}
 export class ChatAgent extends Agent<Env, ChatState> {
   initialState: ChatState = { active: null, queued: null, stopRequested: false };
   private controller: AbortController | undefined;
   private current: Promise<TurnView> | undefined;
   async onStart() {
     void this.sql`CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL)`;
-    if (this.state.active) {
-      const turn = this.readTurn(this.state.active);
+    void this.sql`CREATE TABLE IF NOT EXISTS turn_requests(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL)`;
+    const activeId = this.state.active;
+    const queued = this.state.queued;
+    if (activeId) {
+      const turn = this.readTurn(activeId);
       if (turn?.state === "started") {
         turn.state = turn.answer ? "partial" : "failed";
         turn.error = "The stream was interrupted. Retry starts a new turn; it will not continue automatically.";
         this.writeTurn(turn);
-        await this.env.DB.prepare("UPDATE chat_turn SET state=?,error=? WHERE chat_id=? AND turn_id=? AND state='started'")
-          .bind(turn.state, turn.error, this.name, turn.turnId).run();
       }
-      this.setState({ active: null, queued: null, stopRequested: false });
+      if (turn) await this.persistTerminalTurn(turn);
+      else {
+        const request = this.readRequest(activeId);
+        if (request) await this.recordUndispatchedTurn(this.undispatchedTurn(request, "failed",
+          "The accepted turn was interrupted before dispatch. Retry starts a new turn."));
+      }
     }
+    this.current = undefined;
+    this.controller = undefined;
+    this.setState({ active: null, queued: null, stopRequested: false });
+    if (queued && queued.turnId !== activeId && !this.readTurn(queued.turnId)) this.startTurn(queued);
   }
   shouldConnectionBeReadonly() { return true; }
   shouldSendProtocolMessages() { return false; }
@@ -54,6 +69,50 @@ export class ChatAgent extends Agent<Env, ChatState> {
     void this.sql`INSERT INTO turns(id,payload,created_at) VALUES(${turn.turnId},${JSON.stringify(turn)},${Date.now()})
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`;
     this.broadcast(JSON.stringify({ type: "turn", turn }));
+  }
+  private readRequest(id: string): RunTurnInput | undefined {
+    const row = this.sql<{ payload: string }>`SELECT payload FROM turn_requests WHERE id=${id}`[0];
+    return row ? JSON.parse(row.payload) as RunTurnInput : undefined;
+  }
+  private claimRequest(input: RunTurnInput) {
+    const existing = this.readRequest(input.turnId);
+    if (existing && !sameTurnRequest(existing, input)) {
+      throw new LibraryError("conflict", "This turn ID is already bound to different input.", 409);
+    }
+    if (!existing) void this.sql`INSERT INTO turn_requests(id,payload,created_at)
+      VALUES(${input.turnId},${JSON.stringify(input)},${Date.now()})`;
+  }
+  private assertStoredRequest(input: RunTurnInput, turn: TurnView) {
+    const request = this.readRequest(input.turnId);
+    if (request) {
+      if (!sameTurnRequest(request, input)) throw new LibraryError("conflict", "This turn ID is already bound to different input.", 409);
+      return;
+    }
+    if (!legacyTurnMatches(turn, input)) throw new LibraryError("conflict", "This turn ID already belongs to a different request.", 409);
+  }
+  private undispatchedTurn(input: RunTurnInput, state: "failed" | "cancelled", error: string): TurnView {
+    return { turnId: input.turnId, question: input.question, answer: "", state, model: input.model ?? DEFAULT_MODEL,
+      scopeMode: input.scopeMode, contextMode: "none", revisionIds: [], sourceIds: input.sourceIds ?? [], citations: [], invalidLabels: 0,
+      inputTokens: 0, cachedTokens: 0, outputTokens: 0, estimatedCostMicrousd: 0, firstTokenMs: null, totalMs: 0, error };
+  }
+  private async recordUndispatchedTurn(turn: TurnView) {
+    this.writeTurn(turn);
+    try {
+      await this.env.DB.prepare(`INSERT OR IGNORE INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,
+        input_tokens,cached_tokens,output_tokens,estimated_cost_microusd,total_ms,error,created_at)
+        VALUES(?,?,?,?,?,'none',?,0,0,0,0,0,?,?)`)
+        .bind(this.name, turn.turnId, turn.model, turn.scopeMode, "[]", turn.state, turn.error, Date.now()).run();
+      await this.persistTerminalTurn(turn);
+      await this.env.DB.prepare("UPDATE chat SET updated_at=? WHERE id=?").bind(Date.now(), this.name).run();
+    } catch (error) {
+      console.error("Chat zero-dispatch terminal receipt could not be mirrored to D1", error instanceof Error ? error.name : "unknown");
+    }
+  }
+  private async persistTerminalTurn(turn: TurnView) {
+    await this.env.DB.prepare(`UPDATE chat_turn SET state=?,input_tokens=?,cached_tokens=?,output_tokens=?,estimated_cost_microusd=?,
+      citations=?,invalid_labels=?,first_token_ms=?,total_ms=?,error=? WHERE chat_id=? AND turn_id=? AND state='started'`)
+      .bind(turn.state, turn.inputTokens, turn.cachedTokens, turn.outputTokens, turn.estimatedCostMicrousd, turn.citations.length, turn.invalidLabels,
+        turn.firstTokenMs, turn.totalMs, turn.error, this.name, turn.turnId).run();
   }
   private async ensureProject(projectId: string) {
     const row = await this.env.DB.prepare("SELECT project_id FROM chat WHERE id=?").bind(this.name).first<{ project_id: string }>();
@@ -76,6 +135,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       citations: saved.citations, revisionIds: turn.revisionIds, state: turn.state };
   }
   private startTurn(input: RunTurnInput): Promise<TurnView> {
+    this.claimRequest(input);
     this.setState({ active: input.turnId, queued: null, stopRequested: false });
     const task = this.runTurn(input);
     this.current = task;
@@ -92,27 +152,29 @@ export class ChatAgent extends Agent<Env, ChatState> {
       this.broadcast(JSON.stringify({ type: "queued", queued: null }));
       return;
     }
-    // Claim the queued ID synchronously before runTurn performs its first await.
-    // A concurrent submit therefore cannot jump ahead or replace this payload.
-    this.setState({ active: queued.turnId, queued: null, stopRequested: false });
     this.broadcast(JSON.stringify({ type: "queued", queued: null }));
-    const task = this.runTurn(queued);
-    this.current = task;
-    this.ctx.waitUntil(task.finally(() => this.advanceQueue(queued.turnId)));
+    this.startTurn(queued);
   }
   async submitTurn(input: RunTurnInput, wait = false): Promise<TurnView | { turnId: string; queued?: boolean } | { busy: true; message: string }> {
     await this.ensureProject(input.projectId);
     if (input.chatId !== this.name) throw new LibraryError("invalid", "Chat identity mismatch.", 400);
     const prior = this.readTurn(input.turnId);
-    if (prior) return wait && this.state.active === input.turnId && this.current ? this.current : prior;
-    if (this.state.active === input.turnId) return wait && this.current ? this.current : { turnId: input.turnId };
+    if (prior) {
+      this.assertStoredRequest(input, prior);
+      return wait && this.state.active === input.turnId && this.current ? this.current : prior;
+    }
+    if (this.state.active === input.turnId) {
+      this.claimRequest(input);
+      return wait && this.current ? this.current : { turnId: input.turnId };
+    }
     if (this.state.active) {
       if (wait) return { busy: true, message: "Another answer is running. Wait or stop it first." };
       if (this.state.queued) {
         if (this.state.queued.turnId !== input.turnId) return { busy: true, message: "One question is already queued." };
-        if (!sameTurnRequest(this.state.queued, input)) throw new LibraryError("conflict", "This turn ID is already queued with different input.", 409);
+        this.claimRequest(input);
         return { turnId: input.turnId, queued: true };
       }
+      this.claimRequest(input);
       this.setState({ ...this.state, queued: input });
       this.broadcast(JSON.stringify({ type: "queued", queued: { turnId: input.turnId, question: input.question } }));
       return { turnId: input.turnId, queued: true };
@@ -122,7 +184,12 @@ export class ChatAgent extends Agent<Env, ChatState> {
   }
   async stopTurn(projectId: string, turnId: string) {
     await this.ensureProject(projectId);
-    if (this.state.queued?.turnId === turnId) { this.setState({ ...this.state, queued: null }); this.broadcast(JSON.stringify({ type: "queued", queued: null })); }
+    if (this.state.queued?.turnId === turnId) {
+      const queued = this.state.queued;
+      this.setState({ ...this.state, queued: null });
+      this.broadcast(JSON.stringify({ type: "queued", queued: null }));
+      await this.recordUndispatchedTurn(this.undispatchedTurn(queued, "cancelled", "Cancelled before dispatch."));
+    }
     if (this.state.active === turnId) { this.setState({ ...this.state, stopRequested: true }); this.controller?.abort(); }
     return { turnId };
   }
@@ -226,10 +293,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     turn.totalMs = Date.now() - started;
     if (turn.totalMs > 90000 && turn.state === "completed") { turn.state = "partial"; turn.error = "The answer exceeded the time bound."; }
     this.writeTurn(turn);
-    if (rowInserted) await this.env.DB.prepare(`UPDATE chat_turn SET state=?,input_tokens=?,cached_tokens=?,output_tokens=?,estimated_cost_microusd=?,
-      citations=?,invalid_labels=?,first_token_ms=?,total_ms=?,error=? WHERE chat_id=? AND turn_id=?`)
-      .bind(turn.state, turn.inputTokens, turn.cachedTokens, turn.outputTokens, turn.estimatedCostMicrousd, turn.citations.length, turn.invalidLabels,
-        turn.firstTokenMs, turn.totalMs, turn.error, this.name, turn.turnId).run();
+    if (rowInserted) await this.persistTerminalTurn(turn);
     await this.env.DB.prepare("UPDATE chat SET updated_at=? WHERE id=?").bind(Date.now(), this.name).run();
     return turn;
   }
