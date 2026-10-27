@@ -1,3 +1,4 @@
+import { numbersSupported, parseSingleNumber } from "./numbers.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
 
@@ -61,9 +62,6 @@ export interface VerifiedClaim extends CandidateClaim {
   valueNumber: number | null;
 }
 
-const DIGIT_RUN_RE = /[0-9]+/g;
-const NUMERIC_TOKEN_RE = /[0-9]+(?:[.,][0-9]+)*(?:[eE][+\-\u2212]?[0-9]+)?/g;
-const SINGLE_NUMBER_RE = /^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const COMPACT_LABEL_RE = /^\[S(\d+):(\d+)\]$/;
 const REF_CANDIDATE_RE = /\[(?:S\d+[^\]\n[]*|R[^:\]\n[]*:[^\]\n[]*|block\s+[^\]\n[]*)\]/g;
 const SINGLES = new Set(["\u2018", "\u2019", "\u201A", "\u2039", "\u203A"]);
@@ -367,48 +365,8 @@ function foldedHits(slices: Map<number, Slice>, order: number[], foldedQuote: st
   return hits;
 }
 
-function quoteRuns(text: string): Set<string> {
-  return new Set(text.match(DIGIT_RUN_RE) ?? []);
-}
-
-function decimalTokens(text: string): Set<string> {
-  return new Set((text.match(NUMERIC_TOKEN_RE) ?? []).filter((token) => {
-    const parts = token.split(/[eE]/);
-    // A scientific token keeps its literal sign/exponent identity even with
-    // an integer mantissa: 1e8 is not supported by 1e-8.
-    if (parts.length > 1) return true;
-    const mantissa = parts[0] ?? "";
-    // A single comma can be a decimal separator; an ordinary thousands group stays ambiguous.
-    return mantissa.includes(".") || (/^\d+,\d+$/.test(mantissa) && !/^[1-9]\d{0,2},\d{3}$/.test(mantissa));
-  }).map((token) => token.replace(",", ".").replace("\u2212", "-").toLowerCase()));
-}
-
-/**
- * Shared maximal-digit-group rule: every digit run in text must occur as a
- * whole maximal digit run in quote. Decimal fractions additionally require
- * a complete token, including its exponent: 41.8/41,8 is not supported by
- * 41.0 plus a lone 8, and 1e8 is not supported by 1e-8. Only unambiguous
- * decimal-comma notation is folded; e/E case and U+2212 minus are
- * normalized, other signs stay literal. Integer/thousands digit rules and
- * source names remain unchanged.
- */
-export function numbersSupported(text: string, quote: string): boolean {
-  if (typeof text !== "string" || typeof quote !== "string") return false;
-  const decimals = decimalTokens(quote);
-  if ([...decimalTokens(text)].some((token) => !decimals.has(token))) return false;
-  const groups = text.match(DIGIT_RUN_RE) ?? [];
-  const supported = quoteRuns(quote);
-  return groups.every((group) => supported.has(group));
-}
-
 /** Parse one plain/decimal/thousands/scientific value; percent kept as written. */
-function parseSingleNumber(valueText: string): number | null {
-  let cleaned = valueText.trim();
-  if (cleaned.endsWith("%")) cleaned = cleaned.slice(0, -1);
-  if (!SINGLE_NUMBER_RE.test(cleaned)) return null;
-  const parsed = Number(cleaned.replace(/,/g, ""));
-  return Number.isFinite(parsed) ? parsed : null;
-}
+
 
 export function verifyClaims(
   text: string,
