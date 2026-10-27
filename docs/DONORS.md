@@ -88,8 +88,10 @@ styles and disabling raw HTML/images; only server-resolved source references bec
 The model-choice discovery baseline is [`lidge-jun/opencodex@9f0d40a25f8b842c33ab233d466d0bd991d86052`](https://github.com/lidge-jun/opencodex/tree/9f0d40a25f8b842c33ab233d466d0bd991d86052),
 `@bitkyc08/opencodex@2.92.0`, MIT: narrow bounded JSON catalogue reading/validation, deduplication and raw-ID preservation
 from `src/providers/model-discovery.ts`, adapted through the model-catalogue boundary. Discovery/selection and the
-selected official-pricing read have the limited evidence in IMPLEMENTATION §11; CC inference returned HTTP 502,
-so this adoption asserts no working provider runtime or model-quality PASS.
+selected official-pricing read have the limited evidence in IMPLEMENTATION §11. Command Code narrowly adapts
+`packages/agents/src/models/core/transport.ts` from the registered Agents pin below (MIT): receiver-bound `AI.fetch`,
+provider-native path, raw body, headers, method and signal. No SDK retry/resume framework is copied. The retained
+universal attempt failed; the separate native-path caller smoke passed, without model-quality acceptance.
 No local proxy/backend, cache/registry, model-selection policy/default seed or vendored/cross-provider pricing is
 imported; missing prices stay null. Picker interaction/layout retains the approved legacy MIT pin and paths above,
 with provider/native-ID pair identity and dynamic API data instead of legacy qualification/admin layers.

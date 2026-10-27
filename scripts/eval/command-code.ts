@@ -19,7 +19,10 @@ export async function runCommandCodeSmoke(): Promise<void> {
   const origin = new URL(process.env.ELIOT_URL || 'http://127.0.0.1:5173').origin;
   const optIn = process.env.ELIOT_CC_MODEL === '1';
   const route = process.env.ELIOT_EVAL_MODEL ?? null;
-  const out = fileURLToPath(new URL('../../eval/out/command-code/', import.meta.url));
+  const attempt = (process.env.ELIOT_CC_ATTEMPT ?? '').trim();
+  assert(attempt === '' || /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(attempt), 'ELIOT_CC_ATTEMPT must be a safe directory name, not a path.');
+  const baseOut = fileURLToPath(new URL('../../eval/out/command-code/', import.meta.url));
+  const out = attempt === '' ? baseOut : baseOut.replace(/[\\/]$/, '') + '/' + attempt + '/';
   await mkdir(out, { recursive: true });
   const idsPath = out + 'ids.json';
   const question = 'No sources are selected. Reply with a brief greeting in English.';

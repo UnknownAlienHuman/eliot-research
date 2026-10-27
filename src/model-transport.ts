@@ -122,10 +122,11 @@ export async function resolveModelTransport(
           init.signal?.throwIfAborted();
           const headers = { "Content-Type": "application/json", "x-session-affinity": sessionAffinity,
             "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" };
-          return env.AI.gateway(gatewayId).run({
-            provider: "custom-command-code", endpoint: "v1/chat/completions", headers, query: JSON.parse(init.body) as unknown,
-          }, { gateway: { id: gatewayId, skipCache: true, collectLog: false, retries: { maxAttempts: 1 } }, extraHeaders: headers,
-            ...(init.signal ? { signal: init.signal } : {}) });
+          // Native binding mechanism: Agents 0.30.1, packages/agents/src/models/core/transport.ts.
+          // Ai.fetch is not declared in the pinned types; preserve its receiver with this narrow cast.
+          return (env.AI as unknown as Pick<Fetcher, "fetch">).fetch(
+            'https://workers-binding.ai/ai-gateway/gateways/' + encodeURIComponent(gatewayId) + '/custom-command-code/v1/chat/completions',
+            { method: "POST", body: init.body, headers, ...(init.signal ? { signal: init.signal } : {}) });
         },
       }).languageModel(model.id);
     }

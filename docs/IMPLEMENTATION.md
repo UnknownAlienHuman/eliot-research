@@ -397,9 +397,19 @@ without establishing rates for other unconfirmed models.
 
 Release-scoped browser proof: 596 models at 1440/390 px, late row 463 and both late-response races PASS; real project
 PATCH/GET persisted the canonical selection with native defaults and Gateway unchanged. This verifies discovery and
-selection only. The single real Command Code turn returned HTTP 502 in 1,182 ms with no output/retry and spend delta
-zero: runtime **SPIKE_FAIL**, model quality **NOT_RUN**. It does not establish working CC inference, full K2/K3 quality,
-publication or deployment. The 75-case native SQL `0006` guard proof belongs to the separate config slice.
+selection only. The retained legacy universal-path attempt returned HTTP 502 in 1,182 ms, without retry.
+After adopting the pinned Agents provider-native binding path, the separate `native-binding-20261027` attempt
+completed one empty-scope Beam turn in 3,843 ms (first text 3,715 ms), with 415/0/134 input/cached/output tokens,
+zero estimated model cost and unchanged monthly usage. This is **CALLER_SMOKE_PASS**, not full K2/K3 quality,
+owner acceptance or deployment. The failed attempt remains unchanged; replaying either manifest never redispatches.
+The 75-case native SQL `0006` guard proof belongs to the separate config slice.
+
+Command Code uses `@ai-sdk/openai-compatible` with a fixed provider-native `AI.fetch` adapter, narrowly adapted from
+the pinned Agents `packages/agents/src/models/core/transport.ts`. It sends POST to
+`https://workers-binding.ai/ai-gateway/gateways/{encoded gatewayId}/custom-command-code/v1/chat/completions`, preserving
+the SDK body, abort signal and session header. Explicit no-wholesale, one-attempt, skip-cache and no-log controls remain;
+no credential, fallback, resume or additional binding is introduced. The pinned Ai declaration lacks `fetch`, so the
+narrow receiver-preserving cast follows the SDK mechanism and the real binding check. Model quality is still open.
 
 Native discovery uses `env.AI.models`, mapping text-generation `row.name` to `workers-ai:<row.name>`, published
 `context_window` and USD price[] units `per M input tokens`, `per M cached input tokens`, `per M output tokens`.

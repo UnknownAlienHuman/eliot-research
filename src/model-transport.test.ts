@@ -255,10 +255,9 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
   }
 
   function fakeCommandCode(response: Response) {
-    const run = vi.fn<ReturnType<Env["AI"]["gateway"]>["run"]>().mockResolvedValue(response);
-    const gateway = vi.fn<Env["AI"]["gateway"]>().mockReturnValue({ run } as unknown as AiGateway);
-    const fetch = vi.fn(), catalogRun = vi.fn();
-    const binding = { gateway, fetch, run: catalogRun } as unknown as Env["AI"];
+    const fetch = vi.fn().mockResolvedValue(response);
+    const gateway = vi.fn(), run = vi.fn(), catalogRun = vi.fn();
+    const binding = { fetch, gateway, run: catalogRun } as unknown as Env["AI"];
     return { binding, gateway, run, fetch, catalogRun };
   }
   const commandCodeModel = (binding: Env["AI"]) => resolveModelTransport(
@@ -277,21 +276,21 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     await expect(result.output).resolves.toEqual({ sentences: ["original source"] });
     expect((await result.totalUsage).inputTokens).toBe(10);
     expect((await result.totalUsage).outputTokens).toBeUndefined();
-    expect(seen.run).toHaveBeenCalledTimes(1);
-    expect(seen.gateway).toHaveBeenCalledWith("my-gw");
-    const request = seen.run.mock.calls[0]?.[0];
-    if (!request || Array.isArray(request)) throw new Error("expected a single universal request");
-    expect(request).toMatchObject({ provider: "custom-command-code", endpoint: "v1/chat/completions",
-      query: { model: COMMAND_CODE.id, stream: true, stream_options: { include_usage: true } } });
-    expect(request.query).not.toHaveProperty("provider");
-    expect(request.query).not.toHaveProperty("response_format");
-    expect(request.headers).toEqual({ "Content-Type": "application/json", "x-session-affinity": "cc-session",
+    expect(seen.fetch).toHaveBeenCalledTimes(1);
+    const url = seen.fetch.mock.calls[0]?.[0];
+    expect(url).toBe('https://workers-binding.ai/ai-gateway/gateways/my-gw/custom-command-code/v1/chat/completions');
+    const init = seen.fetch.mock.calls[0]?.[1] as { method?: unknown; headers?: unknown; body?: unknown };
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ "Content-Type": "application/json", "x-session-affinity": "cc-session",
       "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" });
-    expect(seen.run.mock.calls[0]?.[1]).toMatchObject({
-      gateway: { id: "my-gw", skipCache: true, collectLog: false, retries: { maxAttempts: 1 } }, extraHeaders: request.headers });
-    expect(JSON.stringify(request).toLowerCase()).not.toMatch(/authorization|bearer|api[-_]?key|proxy-alias/);
+    const sent = JSON.parse(String(init.body)) as { model?: unknown; stream?: unknown; stream_options?: unknown };
+    expect(sent).toMatchObject({ model: COMMAND_CODE.id, stream: true, stream_options: { include_usage: true } });
+    expect(sent).not.toHaveProperty("provider");
+    expect(sent).not.toHaveProperty("response_format");
+    expect(JSON.stringify({ url, headers: init.headers, body: sent }).toLowerCase()).not.toMatch(/authorization|bearer|api[-_]?key|proxy-alias/);
     expect(createAIMock).not.toHaveBeenCalled();
-    expect(seen.fetch).not.toHaveBeenCalled();
+    expect(seen.gateway).not.toHaveBeenCalled();
+    expect(seen.run).not.toHaveBeenCalled();
     expect(seen.catalogRun).not.toHaveBeenCalled();
   });
 

@@ -180,9 +180,10 @@ The model-choice slice uses Cloudflare, Command Code and OpenRouter discovery wi
 the existing Material picker. Selected-only official HTML pricing requires exact provider/native-ID and currency/unit
 matches; the corrected generic parser's selected Beam GET verified zero rates, while mismatches remain UNKNOWN.
 Browser discovery/selection PASS covers 596 models, 1440/390 px, row 463 and both late-response races; actual project
-PATCH/GET preserved the canonical choice without changing defaults/Gateway. The one real CC turn failed HTTP 502
-after 1,182 ms, no output/retry and zero spend delta: runtime SPIKE_FAIL, quality NOT_RUN. This independently usable
-model-choice slice does not close K2/K3 or deployment gates; 0006's 75-case SQL proof is a separate config result.
+PATCH/GET preserved the canonical choice without changing defaults/Gateway. The first legacy-path CC attempt failed
+HTTP 502 and remains retained. A separate provider-native Beam caller smoke completed in 3,843 ms with 415/0/134
+tokens and zero estimated cost; its one-turn manifest cannot redispatch. This **CALLER_SMOKE_PASS** does not close
+K2/K3 quality or deployment gates; 0006's 75-case SQL proof is a separate config result.
 
 **Hard acceptance — `pnpm eval k2`**
 
