@@ -41,6 +41,8 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   const [gatewayNote, setGatewayNote] = useState('');
   const [gatewaySaving, setGatewaySaving] = useState(false);
   const catalogRequest = useRef({ sequence: 0, controller: null as AbortController | null });
+  const enrichmentRequests = useRef(new Map<string, { controller: AbortController; pending: boolean }>());
+  const selectedRoutes = useRef({ answer: '', distill: '' });
   const gatewayGeneration = useRef(0);
   const modelChoices = models;
   const trimmedGatewayId = gatewayId.trim();
@@ -53,39 +55,56 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     catalogRequest.current.sequence++;
     catalogRequest.current.controller?.abort();
     catalogRequest.current.controller = null;
+    for (const request of enrichmentRequests.current.values()) request.controller.abort();
+    enrichmentRequests.current.clear();
     return catalogRequest.current.sequence;
   }
-  async function reloadModels(selected?: string): Promise<void> {
-    const matches = selected === undefined ? [] : models.filter((model) => model.route === selected || model.aliases?.includes(selected));
-    const target = matches.length === 1 ? matches[0] : undefined;
-    const targetKey = target ? modelCatalogEntryKey(target) : null;
-    const sequence = invalidateModels();
+  async function reloadModels(selected?: string): Promise<ModelRoute[] | undefined> {
+    if (selected !== undefined && enrichmentRequests.current.get(selected)?.pending) return;
+    const sequence = selected === undefined ? invalidateModels() : catalogRequest.current.sequence;
     const generation = gatewayGeneration.current;
     const controller = new AbortController();
-    catalogRequest.current.controller = controller;
+    const request = { controller, pending: true };
+    if (selected === undefined) catalogRequest.current.controller = controller;
+    else {
+      enrichmentRequests.current.get(selected)?.controller.abort();
+      enrichmentRequests.current.set(selected, request);
+    }
     const current = () => catalogRequest.current.sequence === sequence
-      && gatewayGeneration.current === generation && !controller.signal.aborted;
+      && gatewayGeneration.current === generation && !controller.signal.aborted
+      && (selected === undefined || (enrichmentRequests.current.get(selected) === request
+        && (selectedRoutes.current.answer === selected || selectedRoutes.current.distill === selected)));
     if (selected === undefined) { setModelsLoading(true); setModelsError(''); }
-    const unknownPrices = () => setModels((previous) => !current() || targetKey === null ? previous : previous.map((model) =>
-      modelCatalogEntryKey(model) === targetKey ? { ...model, inputMicrousdPerMillion: null,
-        cachedMicrousdPerMillion: null, outputMicrousdPerMillion: null } : model));
+    const matching = (rows: readonly ModelRoute[]) => rows.filter((model) => model.route === selected || model.aliases?.includes(selected ?? ''));
+    const unknownPrices = () => setModels((previous) => {
+      if (!current()) return previous;
+      const matches = matching(previous), target = matches.length === 1 ? matches[0] : undefined;
+      if (!target) return previous;
+      const key = modelCatalogEntryKey(target);
+      return previous.map((model) => modelCatalogEntryKey(model) === key ? { ...model, inputMicrousdPerMillion: null,
+        cachedMicrousdPerMillion: null, outputMicrousdPerMillion: null } : model);
+    });
     try {
       const d = await apiJson<ModelCatalog>('/api/models' + (selected === undefined ? '' : '?selected=' + encodeURIComponent(selected)), { signal: controller.signal });
       if (!current()) return;
       setModelsWarnings(d.warnings);
       if (selected === undefined) setModels((previous) => current() ? d.models : previous);
       else {
-        const details = targetKey === null ? [] : d.models.filter((model) => modelCatalogEntryKey(model) === targetKey);
+        const details = matching(d.models);
         const detail = details.length === 1 ? details[0] : undefined;
         if (!detail) {
           unknownPrices();
           setModelsWarnings((warnings) => [...warnings, 'Selected model metadata could not be matched uniquely. Selection was kept.']);
         } else setModels((previous) => {
-          if (!current() || previous.filter((model) => modelCatalogEntryKey(model) === targetKey).length !== 1) return previous;
+          if (!current()) return previous;
+          const matches = matching(previous), target = matches.length === 1 ? matches[0] : undefined;
+          if (!target || modelCatalogEntryKey(target) !== modelCatalogEntryKey(detail)) return previous;
+          const targetKey = modelCatalogEntryKey(target);
           return previous.map((model) => modelCatalogEntryKey(model) === targetKey
             ? { ...model, ...detail, route: model.route, id: model.id } : model);
         });
       }
+      return d.models;
     } catch (err) {
       if (!current()) return;
       if (selected !== undefined) {
@@ -96,32 +115,65 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
       setModelsError(err instanceof Error ? err.message : 'Could not load model catalog.');
       throw err;
     } finally {
-      if (current()) { catalogRequest.current.controller = null; setModelsLoading(false); }
+      if (selected === undefined) {
+        if (current()) { catalogRequest.current.controller = null; setModelsLoading(false); }
+      } else if (enrichmentRequests.current.get(selected) === request) request.pending = false;
     }
   }
-  function retryModels(): void { void reloadModels().catch(() => { /* catalog error is shown beside the picker */ }); }
+  function enrichSelections(catalog: readonly ModelRoute[]): void {
+    for (const route of new Set([selectedRoutes.current.answer, selectedRoutes.current.distill])) {
+      const matches = catalog.filter((model) => model.route === route || model.aliases?.includes(route));
+      const model = matches.length === 1 ? matches[0] : undefined;
+      if (route.startsWith('gateway:command-code/') || model?.route.startsWith('gateway:command-code/')) selectedMetadata(route);
+    }
+  }
+  function retryModels(): void {
+    const pending = reloadModels(), sequence = catalogRequest.current.sequence;
+    void pending.then((catalog) => { if (catalog && catalogRequest.current.sequence === sequence) enrichSelections(catalog); }).catch(() => { /* catalog error is shown beside the picker */ });
+  }
   function selectedMetadata(route: string): void {
     if (route !== '') void reloadModels(route).catch(() => { /* enrichment warnings are nonblocking */ });
   }
+  function cancelUnselectedEnrichment(): void {
+    for (const [route, request] of enrichmentRequests.current) {
+      if (route !== selectedRoutes.current.answer && route !== selectedRoutes.current.distill) {
+        request.controller.abort();
+        enrichmentRequests.current.delete(route);
+      }
+    }
+  }
   function selectAnswerModel(route: string): void {
+    selectedRoutes.current.answer = route;
+    cancelUnselectedEnrichment();
     setAnswerModel(route);
     if (projectId !== undefined) setUseGlobal(route === '');
     selectedMetadata(route);
   }
-  function selectDistillModel(route: string): void { setDistillModel(route); selectedMetadata(route); }
+  function selectDistillModel(route: string): void {
+    selectedRoutes.current.distill = route;
+    cancelUnselectedEnrichment();
+    setDistillModel(route);
+    selectedMetadata(route);
+  }
   useEffect(() => {
     let live = true;
     const generation = ++gatewayGeneration.current;
     const reads = new AbortController();
     setGatewaySaving(false);
-    retryModels();
+    selectedRoutes.current = { answer: '', distill: '' };
+    const catalog = reloadModels();
+    const catalogSequence = catalogRequest.current.sequence;
+    let settings: Promise<void>;
     if (projectId === undefined) {
-      void apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setAutoDistill(!!d.settings.autoDistill); setBudgetUsd(String(d.settings.monthlyModelBudgetMicrousd / 1000000)); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
+      settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; selectedRoutes.current = { answer: d.settings.answerModel, distill: d.settings.distillModel }; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setAutoDistill(!!d.settings.autoDistill); setBudgetUsd(String(d.settings.monthlyModelBudgetMicrousd / 1000000)); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
       void apiJson<{ connection: GatewayConnection }>('/api/models/connection', { signal: reads.signal }).then((d) => { if (!live || gatewayGeneration.current !== generation) return; setGatewayId(d.connection.gatewayId ?? ''); setAllowGateway(false); }).catch((err: unknown) => { if (live && gatewayGeneration.current === generation) setGatewayNote(err instanceof Error ? err.message : 'Gateway connection status unavailable.'); });
     } else {
       const pid = projectId;
-      void apiJson<{ project: ProjectSettings }>('/api/projects/' + encodeURIComponent(pid), { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.project.answerModel ?? ''); setUseGlobal(d.project.answerModel === null); setInstructions(d.project.instructions); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
+      settings = apiJson<{ project: ProjectSettings }>('/api/projects/' + encodeURIComponent(pid), { signal: reads.signal }).then((d) => { if (!live) return; selectedRoutes.current = { answer: d.project.answerModel ?? '', distill: '' }; setAnswerModel(d.project.answerModel ?? ''); setUseGlobal(d.project.answerModel === null); setInstructions(d.project.instructions); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
     }
+    void Promise.all([catalog, settings]).then(([rows]) => {
+      if (live && gatewayGeneration.current === generation && catalogRequest.current.sequence === catalogSequence && rows) enrichSelections(rows);
+    }).catch(() => { /* the owning settings/catalog reader displays its error */ });
     return () => { live = false; reads.abort(); gatewayGeneration.current++; invalidateModels(); };
   }, [projectId]);
   async function save(): Promise<void> {
@@ -161,7 +213,9 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
       if (!current()) return;
       setGatewayId(d.connection.gatewayId ?? '');
       setAllowGateway(false);
-      await reloadModels();
+      const pending = reloadModels(), sequence = catalogRequest.current.sequence;
+      const catalog = await pending;
+      if (current() && catalogRequest.current.sequence === sequence && catalog) enrichSelections(catalog);
       if (current()) setGatewayNote(trimmed === '' ? 'Gateway disabled.' : 'Gateway connection saved.');
     } catch (err) {
       if (!current()) return;

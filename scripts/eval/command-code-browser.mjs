@@ -205,6 +205,93 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
       report.metadataFixtures.unavailableSelection = 'PRESERVED_NO_FALLBACK';
     } finally { await unavailableContext.close(); }
 
+
+    // Saved answer/distill selections must enrich independently on open. Each
+    // selected response leaves the other row Unknown to catch whole-list clobbers.
+    const savedRows = [
+      { ...fixtureModels[0], route: 'gateway:command-code/browser/saved-answer', id: 'browser/saved-answer', label: 'Saved answer metadata fixture' },
+      { ...fixtureModels[1], route: 'gateway:command-code/browser/saved-distill', id: 'browser/saved-distill', label: 'Saved understanding metadata fixture' },
+    ];
+    const savedPrices = [
+      { ...savedRows[0], inputMicrousdPerMillion: 125000, cachedMicrousdPerMillion: 2500, outputMicrousdPerMillion: 375000, checkedOn: '2026-10-27' },
+      { ...savedRows[1], inputMicrousdPerMillion: 625000, cachedMicrousdPerMillion: 5000, outputMicrousdPerMillion: 875000, checkedOn: '2026-10-27' },
+    ];
+    const savedGates = savedRows.map(() => ({ seen: pause(), release: pause(), delivered: pause() }));
+    const savedCounts = Object.fromEntries(savedRows.map((model) => [model.route, 0]));
+    const savedRequestMark = { blocked: report.requests.blocked.length,
+      settings: report.requests.interceptedSettingsPuts, connection: report.requests.interceptedConnectionPuts };
+    const savedEvidence = report.metadataFixtures.savedSelectedMetadata = {
+      status: 'PENDING', selectedGets: savedCounts, responseOrder: [],
+      answerRoute: savedRows[0].route, distillRoute: savedRows[1].route,
+    };
+    const savedContext = await contextFor({ width: 1440, height: 900 }, async (route, endpoint, method) => {
+      if (method !== 'GET') return false;
+      if (endpoint === '/api/models') {
+        report.requests.fixtureGets++;
+        const selected = new URL(route.request().url()).searchParams.get('selected');
+        if (selected === null) { await json(route, catalogueBody(savedRows)); return true; }
+        const index = savedRows.findIndex((model) => model.route === selected);
+        assert(index !== -1, 'Saved selections must request their exact canonical metadata route.');
+        savedCounts[selected]++;
+        savedGates[index].seen.release();
+        try {
+          await savedGates[index].release.promise;
+          await json(route, catalogueBody(savedRows.map((model, row) => row === index ? savedPrices[row] : model)));
+          savedEvidence.responseOrder.push(selected);
+        } finally { savedGates[index].delivered.release(); }
+        return true;
+      }
+      if (endpoint === '/api/settings') {
+        report.requests.fixtureGets++;
+        await json(route, { ...before, settings: { ...before.settings,
+          answerModel: savedRows[0].route, distillModel: savedRows[1].route } });
+        return true;
+      }
+      if (endpoint === '/api/models/connection') {
+        report.requests.fixtureGets++;
+        await json(route, { connection: { gatewayId: 'browser-fixture-existing', provider: 'ai-gateway', alias: 'default' } });
+        return true;
+      }
+      return false;
+    });
+    try {
+      const page = activePage = await savedContext.newPage(); await page.goto(origin + '/settings');
+      const answer = page.getByRole('combobox', { name: 'Answer model', exact: true });
+      const distill = page.getByRole('combobox', { name: 'Understanding model', exact: true });
+      await expect(answer).toBeEnabled(); await expect(distill).toBeEnabled();
+      await expect(answer).toHaveValue(savedRows[0].route); await expect(distill).toHaveValue(savedRows[1].route);
+      const answerDetails = picker(page).locator('.er-models__details');
+      const distillDetails = picker(page, 'Understanding model').locator('.er-models__details');
+      await answerDetails.locator('summary').click(); await distillDetails.locator('summary').click();
+      await bounded(Promise.all(savedGates.map((gate) => gate.seen.promise)),
+        'Both saved CC selections must request metadata on open without cancelling one another.');
+      await expect(answerDetails).toContainText('Unknown in / Unknown cached / Unknown out');
+      await expect(distillDetails).toContainText('Unknown in / Unknown cached / Unknown out');
+      // The later-started request completes first; its price must survive the other response.
+      savedGates[1].release.release();
+      await bounded(savedGates[1].delivered.promise, 'Saved understanding metadata did not complete.');
+      await expect(distillDetails).toContainText('$0.625 in / $0.005 cached / $0.875 out');
+      await expect(answerDetails).toContainText('Unknown in / Unknown cached / Unknown out');
+      savedGates[0].release.release();
+      await bounded(savedGates[0].delivered.promise, 'Saved answer metadata was cancelled or did not complete.');
+      await expect(answerDetails).toContainText('$0.125 in / $0.0025 cached / $0.375 out');
+      await expect(distillDetails).toContainText('$0.625 in / $0.005 cached / $0.875 out');
+      await expect(answer).toHaveValue(savedRows[0].route); await expect(distill).toHaveValue(savedRows[1].route);
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      for (const model of savedRows) assert.equal(savedCounts[model.route], 1, 'At most one selected GET per unique saved route.');
+      assert.deepEqual(savedEvidence.responseOrder, [savedRows[1].route, savedRows[0].route]);
+      assert.equal(report.requests.blocked.length, savedRequestMark.blocked, 'No mutations attempted in saved-metadata fixture.');
+      assert.equal(report.requests.interceptedSettingsPuts, savedRequestMark.settings);
+      assert.equal(report.requests.interceptedConnectionPuts, savedRequestMark.connection);
+      await fitted(page); await shot(page, 'metadata-saved-two-cc-prices-1440.png');
+      savedEvidence.status = 'PASS';
+      savedEvidence.bothPricesPreserved = true;
+      savedEvidence.mutations = 0;
+    } finally {
+      for (const gate of savedGates) gate.release.release();
+      await savedContext.close();
+    }
+
     const oldSeen = pause(), releaseOld = pause();
     const newModel = { ...target463, id: 'new-catalogue-sentinel', route: 'gateway:catalogue-fixture-a/new-catalogue-sentinel', label: 'New catalogue sentinel' };
     const oldDeliveries = [];

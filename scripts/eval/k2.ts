@@ -84,18 +84,23 @@ if (process.argv.includes('--models-only')) {
   assert.equal(connection.body.connection.gatewayId, null, 'Use a disconnected local namespace; this check never disables an existing connection.');
   const models = await apiJson('/api/models');
   assert.equal(models.status, 200);
-  const EXPECTED_EXTERNAL = [
-    'gateway:openrouter/dots-studio/dots-3-note-preview:free',
-    'gateway:openrouter/thinkingmachines/inkling:free',
-    'gateway:openrouter/nvidia/nemotron-3.5-super-vl:free',
-  ];
-  const externals = models.body.models.filter((m) => m && typeof m.route === 'string' && m.route.startsWith('gateway:openrouter/'));
-  assert.deepEqual(externals.map((m) => m.route).sort(), [...EXPECTED_EXTERNAL].sort(), 'Models-only expects exactly the three free OpenRouter chat routes.');
+  assert(Array.isArray(models.body.models), 'GET /api/models must return a catalogue array.');
+  const warnings = models.body.warnings;
+  assert(Array.isArray(warnings) && warnings.every((w) => typeof w === 'string' && w.trim().length > 0), 'Catalogue discovery warnings must remain visible, including partial provider failures.');
+  const externals = models.body.models.filter((m) => m && typeof m.route === 'string' && m.route.startsWith('gateway:'));
+  assert(externals.length > 0, 'At least one discovered Gateway provider route is required.');
+  assert.equal(new Set(externals.map((m) => m.route)).size, externals.length, 'Discovered Gateway routes must be unique.');
+  const nativePairs = externals.map((m) => {
+    const parts = /^gateway:([^/]+)\/.+/.exec(m.route);
+    assert(parts && typeof m.id === 'string' && m.id.trim().length > 0, 'Gateway entries require a provider and native ID.');
+    return [parts[1], m.id];
+  });
+  assert.equal(new Set(nativePairs.map((pair) => JSON.stringify(pair))).size, externals.length, 'Provider/native ID pairs must be unique.');
   for (const m of externals) assert(m && !m.enabled && m.unavailableReason, 'External model must be visibly disabled without owner credential opt-in (' + m.route + ').');
   const external = externals[0];
-  assert(external, 'At least one external OpenRouter route is required.');
+  assert(external, 'At least one external Gateway route is required.');
   const embedders = models.body.models.filter((m) => m && /embed|rerank/i.test(m.route + ' ' + (m.id || '') + ' ' + (m.label || '')));
-  assert.deepEqual(embedders.map((m) => m.route), [], 'No embed/rerank model may be offered for selection.');
+  for (const m of embedders) assert(!m.enabled && m.unavailableReason, 'Embed/rerank inventory entries must not be selectable (' + m.route + ').');
   const flash = models.body.models.find((m) => m.route === 'workers-ai:@cf/zai-org/glm-5.3-flash');
   assert(flash && flash.enabled, 'Native Flash default must stay enabled.');
   assert.equal(before.body.settings.answerModel, flash.route, 'Default answer model stays Flash.');
@@ -156,34 +161,76 @@ if (process.argv.includes('--models-only')) {
   try {
     const context = await browser.newContext({ extraHTTPHeaders: H });
     let settingsPuts = 0;
-    await context.route('**/api/settings', async (route) => {
-      if (route.request().method() === 'PUT') settingsPuts += 1;
+    const mutations = [];
+    await context.route('**/api/**', async (route) => {
+      const request = route.request();
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
+        if (new URL(request.url()).pathname === '/api/settings' && request.method() === 'PUT') settingsPuts += 1;
+        mutations.push({ method: request.method(), url: request.url() });
+        await route.abort('blockedbyclient');
+        return;
+      }
       await route.continue();
     });
     const errors = [];
-    const desktop = await context.newPage({ viewport: { width: 1440, height: 900 } });
+    async function openSettings(page) {
+      const reads = ['/api/settings', '/api/models/connection', '/api/models'].map(async (path) => {
+        const response = await page.waitForResponse((r) => r.url() === origin + path && r.request().method() === 'GET', { timeout: 30000 });
+        assert.equal(response.status(), 200, 'Settings reader must load ' + path + '.');
+        await response.finished();
+      });
+      await Promise.all([page.goto(origin + '/settings'), ...reads]);
+      await expect(page.getByRole('region', { name: 'Models', exact: true })).toBeVisible();
+      for (const [label, value] of [['Answer model', before.body.settings.answerModel], ['Understanding model', before.body.settings.distillModel]]) {
+        const select = page.getByRole('combobox', { name: label, exact: true });
+        await expect(select).toBeEnabled({ timeout: 30000 });
+        await expect(select).toHaveValue(value);
+      }
+      await expect(page.getByRole('textbox', { name: 'Monthly budget (USD)', exact: true })).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
+      const gateway = page.getByRole('region', { name: 'AI Gateway connection', exact: true });
+      await expect(gateway).toBeVisible();
+      await expect(gateway.getByRole('textbox', { name: 'Gateway ID Blank disables.', exact: true })).toHaveValue('');
+      await expect(gateway.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true })).not.toBeChecked();
+    }
+    async function assertDisabledChoice(page, label) {
+      const select = page.getByRole('combobox', { name: label, exact: true });
+      const row = page.locator('.er-models__row').filter({ has: select });
+      const find = row.locator('details.er-model-picker__find > summary');
+      await find.click();
+      const provider = row.getByRole('combobox', { name: label + ': provider', exact: true });
+      const search = row.getByRole('searchbox', { name: label + ': search models', exact: true });
+      await provider.selectOption(external.route.slice('gateway:'.length).split('/')[0]);
+      await search.fill(external.route);
+      await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
+        .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), external.route), { timeout: 30000 }).toEqual([true]);
+      await search.fill('');
+      await provider.selectOption('');
+      await find.click();
+    }
+    const desktop = await context.newPage();
+    await desktop.setViewportSize({ width: 1440, height: 900 });
     desktop.on('pageerror', (error) => errors.push(error.message));
-    await desktop.goto(origin + '/settings');
-    await expect(desktop.getByRole('region', { name: 'Models', exact: true })).toBeVisible();
+    await openSettings(desktop);
     await desktop.screenshot({ path: outDir + '/external-models-desktop.png', fullPage: true });
     await desktop.close();
-    const page = await context.newPage({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 390, height: 844 });
     page.on('pageerror', (error) => errors.push(error.message));
-    await page.goto(origin + '/settings');
-    const gateway = page.getByRole('region', { name: 'Connection', exact: true });
-    await expect(gateway).toBeVisible();
-    await expect(gateway.getByRole('checkbox')).not.toBeChecked();
-    await gateway.getByRole('textbox', { name: 'Gateway ID' }).fill('unconfigured-eval-gateway');
-    await expect(gateway.getByRole('button', { name: 'Save connection' })).toBeDisabled();
-    await expect(page.getByRole('textbox', { name: 'Monthly budget (USD)', exact: true })).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
-    await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(before.body.settings.answerModel);
-    await expect(page.getByRole('combobox', { name: 'Answer model', exact: true }).locator('option[value="' + external.route + '"]')).toHaveJSProperty('disabled', true);
-    await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toHaveValue(before.body.settings.distillModel);
-    await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true }).locator('option[value="' + external.route + '"]')).toHaveJSProperty('disabled', true);
+    await openSettings(page);
+    const gateway = page.getByRole('region', { name: 'AI Gateway connection', exact: true });
+    const consent = gateway.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true });
+    const gatewayId = gateway.getByRole('textbox', { name: 'Gateway ID Blank disables.', exact: true });
+    await gatewayId.fill('unconfigured-eval-gateway');
+    await expect(gateway.getByRole('button', { name: 'Save connection', exact: true })).toBeDisabled();
     assert((await page.locator('#workspace-main details').count()) >= 1, 'Compact Settings must expose collapsed technical details.');
     assert.strictEqual(await page.locator('#workspace-main details[open]').count(), 0, 'Compact default UI must not display expanded technical walls.');
     const summaries = page.locator('#workspace-main details > summary');
     for (let i = 0; i < await summaries.count(); i++) assert((await summaries.nth(i).innerText()).trim().length > 0, 'Every collapsed section must carry an accessible label.');
+    await assertDisabledChoice(page, 'Answer model');
+    await assertDisabledChoice(page, 'Understanding model');
+    await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(before.body.settings.answerModel);
+    await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toHaveValue(before.body.settings.distillModel);
+    assert.strictEqual(await page.locator('#workspace-main details[open]').count(), 0, 'Search filters must close without changing the default compact layout.');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Settings must fit the 390px Material layout.');
     await gateway.getByRole('button', { name: 'Save connection' }).scrollIntoViewIfNeeded();
     await expect(gateway.getByRole('button', { name: 'Save connection' })).toBeVisible();
@@ -195,16 +242,25 @@ if (process.argv.includes('--models-only')) {
     const modelsSection = page.getByRole('region', { name: 'Models', exact: true });
     await budget.fill('1.0000001');
     await modelsSection.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(modelsSection.getByRole('status')).toContainText('Use up to six decimal places for the monthly budget.');
+    await expect(modelsSection.getByRole('status').filter({ hasText: 'Use up to six decimal places for the monthly budget.' })).toHaveText('Use up to six decimal places for the monthly budget.');
     assert.strictEqual(settingsPuts, 0, 'Seven-decimal budget must be rejected before any PUT /api/settings.');
     await budget.fill(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
     await expect(budget).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
+    await expect(consent).not.toBeChecked();
+    await expect(gateway.getByRole('button', { name: 'Save connection', exact: true })).toBeDisabled();
+    await gatewayId.fill('');
     if (sourceId) {
+      const modelsRead = page.waitForResponse((r) => r.url() === origin + '/api/models' && r.request().method() === 'GET', { timeout: 30000 });
       await page.goto(origin + '/p/' + projectId + '/source/' + sourceId);
+      assert.equal((await modelsRead).status(), 200, 'Understanding model catalogue must load.');
       const understanding = page.getByRole('region', { name: 'Understanding', exact: true });
-      await expect(understanding.getByRole('combobox', { name: 'Model', exact: true })).toBeVisible();
-      await expect(understanding.getByRole('combobox', { name: 'Model', exact: true }).locator('option[value="' + external.route + '"]')).toHaveJSProperty('disabled', true);
+      const select = understanding.getByRole('combobox', { name: 'Model', exact: true });
+      await expect(select).toBeVisible();
+      await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
+        .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), external.route), { timeout: 30000 }).toEqual([true]);
     }
+    assert.strictEqual(settingsPuts, 0, 'The entire browser journey must attempt zero settings PUTs.');
+    assert.deepEqual(mutations, [], 'The browser journey must attempt no API mutation, including Gateway/model requests.');
     assert.deepEqual(errors, [], 'Settings/understanding must not throw browser errors.');
   } finally { await browser.close(); }
   const after = await apiJson('/api/settings');
@@ -212,6 +268,7 @@ if (process.argv.includes('--models-only')) {
   assert.equal(after.body.monthlyUsedMicrousd, before.body.monthlyUsedMicrousd);
   assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
   const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, consentRejected: true, disconnectedTurnCost: 0,
+    catalogue: { externalModels: externals.length, providers: [...new Set(nativePairs.map((pair) => pair[0]))], discovery: warnings.length ? 'PARTIAL' : 'NO_WARNINGS', warnings },
     monthlyUsedMicrousd: after.body.monthlyUsedMicrousd, provider: 'NOT_RUN', streaming: 'NOT_RUN', distill, browser390: 'LOCAL_PASS', credentialAccess: 'NOT_ENABLED' };
   await writeFile(outDir + '/external-models-native.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));

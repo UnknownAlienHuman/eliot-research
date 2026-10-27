@@ -41,7 +41,7 @@ Wrangler; never hand-write it.
 A paid effect is a model call, rendered Browser capture, billable AI Search use, or a Workflow that invokes one. Page
 load, list, read, citation open, reconnect and saving existing output must not start paid work. Before dispatch,
 `src/cost.ts` computes a conservative upper bound and rejects or pauses when current-month estimates plus that bound
-exceed `settings.monthly_model_budget_microusd` (default $5). Unknown prices are disabled, not treated as free. Store
+exceed `settings.monthly_model_budget_microusd` (default $5). Unknown input/output prices block job admission, not model selection, and are not treated as zero. Store
 actual input/cached/output tokens and estimated micro-USD on the row that owns the operation. Distillation runs once per
 immutable revision; ordinary whole/claim answers use one model call; search/tool loops and explicit jobs have hard caps.
 
@@ -384,8 +384,8 @@ Routes are `workers-ai:<model>` or `gateway:<provider>/<native ID>`, preserving 
 from live Cloudflare, Command Code and OpenRouter APIs; the examples below are metadata snapshots, not a capability
 limit. `availableModels` merges discovery with the explicit native `DEFAULT_MODEL` fallback; Flash remains the default.
 `CatalogModel` permits null context/prices/output cap. Selection remains valid, but paid dispatch requires a resolved
-`ModelSpec` with known usable context and input/output prices; unknown is not zero. Unknown cached-input price uses
-the full known input rate. Freeze the admitted metadata as specified in §6/§8, without a new registry/cache/backend.
+`ModelSpec` with known usable context and input/output prices; unknown is not zero. An unknown cached-input rate remains `null`; only the cost estimate uses the full
+known input rate, without asserting a published provider cache price or guaranteeing the actual bill. Freeze the admitted metadata as specified in §6/§8, without a new registry/cache/backend.
 
 `GET /api/models` returns models, independent provider warnings and defaultModel; optional `selected` enrichment is
 limited to the selected model's official provider HTML pricing. Require an exact provider/native-ID and published
