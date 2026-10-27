@@ -9,7 +9,7 @@ import { addSource, attachSource, createProject, getProject, getSource, LibraryE
 import { readOriginal, readOutline, readText } from "./read";
 import { captureUrl, UrlGuardError } from "./url-guard";
 import { monthlyUsage } from "./cost";
-import { availableModels, getModelConnection, requireAvailableModel, validGatewayId } from "./models";
+import { availableModels, getModelConnection, requireCatalogModel, validGatewayId } from "./models";
 import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
 import { getOverview, getUnderstanding } from "./understanding";
@@ -53,21 +53,25 @@ async function chatRecord(env: Env, projectId: string, chatId: string) {
   if (!chat) throw new LibraryError("not_found", "Chat not found in this project.", 404);
   return chat;
 }
-app.get("/api/models", async (c) => c.json({ models: await availableModels(c.env), defaultModel: (await c.env.DB.prepare("SELECT answer_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model }));
+app.get("/api/models", async (c) => {
+  const warnings: string[] = [];
+  const models = await availableModels(c.env, z.string().max(1100).optional().parse(c.req.query("selected")), (warning) => warnings.push(warning));
+  return c.json({ models, warnings, defaultModel: (await c.env.DB.prepare("SELECT answer_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model });
+});
 app.get("/api/models/connection", async (c) => c.json({ connection: await getModelConnection(c.env) }));
 app.put("/api/models/connection", async (c) => {
   if (c.get("actor").type !== "owner") throw new AuthError("invalid", "Only the owner may allow access to a Gateway credential.");
   const input = z.object({ gatewayId: z.string().refine(validGatewayId, "Use an existing named Gateway, not default.").nullable(), confirmCredentialAccess: z.boolean().optional() }).strict().parse(await c.req.json());
   if (input.gatewayId !== null && input.confirmCredentialAccess !== true)
-    throw new LibraryError("invalid", "Allow access to the existing OpenRouter credential before connecting.", 400);
+    throw new LibraryError("invalid", "Allow access to the existing provider credentials before connecting.", 400);
   await c.env.DB.prepare("UPDATE settings SET model_gateway_id=?,updated_at=? WHERE id=1").bind(input.gatewayId, Date.now()).run();
   return c.json({ connection: await getModelConnection(c.env) });
 });
 app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,auto_distill AS autoDistill,monthly_model_budget_microusd AS monthlyModelBudgetMicrousd,updated_at AS updatedAt FROM settings WHERE id=1").first(), ...await monthlyUsage(c.env) }));
 app.put("/api/settings", async (c) => {
   const input = z.object({ answerModel: z.string().min(1), monthlyModelBudgetMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), distillModel: z.string().min(1).optional(), autoDistill: z.boolean().optional() }).strict().parse(await c.req.json());
-  await requireAvailableModel(c.env, input.answerModel);
-  if (input.distillModel !== undefined) await requireAvailableModel(c.env, input.distillModel);
+  await requireCatalogModel(c.env, input.answerModel);
+  if (input.distillModel !== undefined) await requireCatalogModel(c.env, input.distillModel);
   await c.env.DB.prepare("UPDATE settings SET answer_model=?,monthly_model_budget_microusd=?,distill_model=COALESCE(?,distill_model),auto_distill=COALESCE(?,auto_distill),updated_at=? WHERE id=1")
     .bind(input.answerModel, input.monthlyModelBudgetMicrousd, input.distillModel ?? null, input.autoDistill === undefined ? null : input.autoDistill ? 1 : 0, Date.now()).run();
   return c.json({ settings: { ...input, updatedAt: Date.now() } });
@@ -75,7 +79,7 @@ app.put("/api/settings", async (c) => {
 app.patch("/api/projects/:id/settings", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), project = await getProject(c.env, c.get("actor"), projectId);
   const input = z.object({ instructions: z.string().max(10000).optional(), answerModel: z.string().min(1).nullable().optional() }).strict().parse(await c.req.json());
-  if (input.answerModel !== undefined && input.answerModel !== null) await requireAvailableModel(c.env, input.answerModel);
+  if (input.answerModel !== undefined && input.answerModel !== null) await requireCatalogModel(c.env, input.answerModel);
   await c.env.DB.prepare("UPDATE project SET instructions=?,answer_model=?,updated_at=? WHERE id=?")
     .bind(input.instructions ?? project.instructions ?? "", input.answerModel === undefined ? project.answerModel ?? null : input.answerModel, Date.now(), projectId).run();
   return c.json({ project: await getProject(c.env, c.get("actor"), projectId) });

@@ -85,6 +85,18 @@ synthesizing. The same installed Agents/AI SDK packages supply the model boundar
 is imported. The shared Markdown renderer is used by Chat, Studio and source knowledge, retaining the same Material
 styles and disabling raw HTML/images; only server-resolved source references become reader links.
 
+The model-choice discovery baseline is [`lidge-jun/opencodex@9f0d40a25f8b842c33ab233d466d0bd991d86052`](https://github.com/lidge-jun/opencodex/tree/9f0d40a25f8b842c33ab233d466d0bd991d86052),
+`@bitkyc08/opencodex@2.92.0`, MIT: narrow bounded JSON catalogue reading/validation, deduplication and raw-ID preservation
+from `src/providers/model-discovery.ts`, adapted through the model-catalogue boundary. Discovery/selection and the
+selected official-pricing read have the limited evidence in IMPLEMENTATION §11; CC inference returned HTTP 502,
+so this adoption asserts no working provider runtime or model-quality PASS.
+No local proxy/backend, cache/registry, model-selection policy/default seed or vendored/cross-provider pricing is
+imported; missing prices stay null. Picker interaction/layout retains the approved legacy MIT pin and paths above,
+with provider/native-ID pair identity and dynamic API data instead of legacy qualification/admin layers.
+`src/native-model-catalog.ts` separately consumes the installed AI binding's `models()` metadata API, not a static
+native model set; page1/per100 returned 73 rows / 39 text-generation rows on 2026-10-27
+(`eval/out/catalogue-native/page1.json`), with zero inference. No other donor architecture is adopted.
+
 ### Agents SDK and examples
 
 Repository pin: [`cloudflare/agents@321814b6c13f72cff82161e7eb20312574ac9b7a`](https://github.com/cloudflare/agents/tree/321814b6c13f72cff82161e7eb20312574ac9b7a),

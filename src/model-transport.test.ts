@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LibraryError } from "./library";
-import { MODELS, type ModelSpec } from "./models";
+import type { ModelSpec } from "./models";
 
 vi.mock("agents/models/ai-sdk", () => ({ createAI: vi.fn() }));
 
@@ -8,21 +8,63 @@ import { createAI } from "agents/models/ai-sdk";
 import type * as agentsSdk from "agents/models/ai-sdk";
 import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
 import { Output, streamText } from "ai";
+import type { LanguageModelUsage } from "ai";
 import { z } from "zod";
 
 const createAIMock = vi.mocked(createAI);
 
-function mustFind(route: string): ModelSpec {
-  const found = MODELS.find((item) => item.route === route);
-  if (!found) throw new Error("test fixture model missing: " + route);
-  return found;
-}
+const BASE = {
+  contextTokens: 1_048_576,
+  maxOutputTokens: 8192,
+  inputMicrousdPerMillion: 150000,
+  cachedMicrousdPerMillion: 30000,
+  outputMicrousdPerMillion: 500000,
+  checkedOn: "2026-10-26",
+  enabled: true,
+} as const;
 
-const NATIVE = mustFind("workers-ai:@cf/zai-org/glm-5.3-flash");
+const NATIVE = {
+  ...BASE,
+  route: "workers-ai:@cf/zai-org/glm-5.3-flash",
+  id: "@cf/zai-org/glm-5.3-flash",
+  label: "GLM 5.3 Flash",
+  nativeReasoningEffort: "low",
+} as ModelSpec;
 
-const DOTS = mustFind("gateway:openrouter/dots-studio/dots-3-note-preview:free");
-const INKLING = mustFind("gateway:openrouter/thinkingmachines/inkling:free");
-const NEMOTRON = mustFind("gateway:openrouter/nvidia/nemotron-3.5-super-vl:free");
+const DOTS: ModelSpec = {
+  ...BASE,
+  route: "gateway:openrouter/dots-studio/dots-3-note-preview:free",
+  id: "dots-studio/dots-3-note-preview:free",
+  label: "Dots 3 Note Preview",
+  maxOutputTokens: 460800,
+  outputReserveTokens: 8192,
+  structuredOutputs: true,
+  responseFormat: true,
+  reasoning: { enabled: false },
+};
+
+const INKLING: ModelSpec = {
+  ...BASE,
+  route: "gateway:openrouter/thinkingmachines/inkling:free",
+  id: "thinkingmachines/inkling:free",
+  label: "Inkling",
+  maxOutputTokens: 262144,
+  outputReserveTokens: 8192,
+  structuredOutputs: false,
+  responseFormat: false,
+};
+
+const NEMOTRON: ModelSpec = {
+  ...BASE,
+  route: "gateway:openrouter/nvidia/nemotron-3.5-super-vl:free",
+  id: "nvidia/nemotron-3.5-super-vl:free",
+  label: "Nemotron 3.5 Super VL",
+  maxOutputTokens: 131072,
+  outputReserveTokens: 8192,
+  structuredOutputs: true,
+  responseFormat: true,
+};
+const COMMAND_CODE: ModelSpec = { ...INKLING, route: "gateway:command-code/proxy-alias", id: "native-model-id", responseFormat: false };
 
 function makeEnv(gatewayId: string | null) {
   const prepared: string[] = [];
@@ -113,6 +155,21 @@ describe("resolveModelTransport", () => {
   });
 });
 
+describe("reportedProviderUsage", () => {
+  it("leaves Command Code cost currency unknown without mutating raw or changing OpenRouter USD", () => {
+    const raw = Object.freeze({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.25 });
+    const usage: LanguageModelUsage = { inputTokens: 10, outputTokens: 5, totalTokens: 15,
+      inputTokenDetails: { noCacheTokens: 10, cacheReadTokens: undefined, cacheWriteTokens: undefined },
+      outputTokenDetails: { textTokens: 5, reasoningTokens: undefined }, raw };
+    expect(reportedProviderUsage(usage, COMMAND_CODE.route)).toEqual({ inputTokens: 10, outputTokens: 5,
+      totalTokens: 15, cachedTokens: null, reasoningTokens: null, costUsd: null });
+    expect(reportedProviderUsage(usage)?.costUsd).toBe(0.25);
+    expect(reportedProviderUsage(usage, DOTS.route)?.costUsd).toBe(0.25);
+    expect(usage.raw).toBe(raw);
+    expect(usage.raw?.cost).toBe(0.25);
+  });
+});
+
 describe("modelFailure", () => {
   it("keeps external errors static and redacts provider details", () => {
     const err = new Error("provider 401: bad key sk-live-SECRET123");
@@ -177,21 +234,66 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     };
     return { binding: { fetch: fakeFetch }, wire };
   }
-  function runStructured(model: unknown) {
+  function runStructured(model: unknown, abortSignal?: AbortSignal) {
     return streamText({ model: model as Parameters<typeof streamText>[0]["model"],
       output: Output.object({ schema, name: "cited_answer" }),
       instructions: "rules", messages: [{ role: "user", content: "hi" }],
-      maxOutputTokens: 64, maxRetries: 0 });
+      maxOutputTokens: 64, maxRetries: 0, ...(abortSignal ? { abortSignal } : {}) });
   }
   function sentBody(wire: { init?: { body?: unknown } }) {
-    return JSON.parse(String(wire.init?.body)) as { model?: unknown; provider?: unknown; response_format?: unknown; messages?: Array<{ role?: unknown; content?: unknown }> };
+    return JSON.parse(String(wire.init?.body)) as { model?: unknown; provider?: unknown; reasoning?: unknown; response_format?: unknown; messages?: Array<{ role?: unknown; content?: unknown }> };
   }
   function assertProviderNative(wire: { url?: unknown; init?: { headers?: Record<string, string> }; calls?: number }) {
     expect(wire.calls).toBe(1);
     expect(String(wire.url)).toContain("/ai-gateway/gateways/my-gw/openrouter/v1/chat/completions");
     const headers = wire.init?.headers ?? {};
     expect(Object.keys(headers).some((k) => k.toLowerCase() === "authorization")).toBe(false);
+    expect(headers["cf-aig-no-wholesale"]).toBe("true");
+    expect(headers["cf-aig-max-attempts"]).toBe("1");
+    expect(headers["cf-aig-skip-cache"]).toBe("true");
+    expect(headers["cf-aig-collect-log"]).toBe("false");
   }
+
+  function fakeCommandCode(response: Response) {
+    const run = vi.fn<ReturnType<Env["AI"]["gateway"]>["run"]>().mockResolvedValue(response);
+    const gateway = vi.fn<Env["AI"]["gateway"]>().mockReturnValue({ run } as unknown as AiGateway);
+    const fetch = vi.fn(), catalogRun = vi.fn();
+    const binding = { gateway, fetch, run: catalogRun } as unknown as Env["AI"];
+    return { binding, gateway, run, fetch, catalogRun };
+  }
+  const commandCodeModel = (binding: Env["AI"]) => resolveModelTransport(
+    { AI: binding, DB: makeEnv("my-gw").env.DB }, COMMAND_CODE, "cc-session");
+
+  it("uses one keyless custom-provider request with the native id and local JSON validation", async () => {
+    createAIMock.mockClear();
+    const seen = fakeCommandCode(new Response(sse([
+      chunk({ content: JSON.stringify({ sentences: ["original source"] }) }, "stop"),
+      usageOnly({ prompt_tokens: 10 }),
+    ]), { headers: { "content-type": "text/event-stream" } }));
+    const model = await commandCodeModel(seen.binding);
+    const result = streamText({ model, output: Output.object({ schema }), instructions: "Return the JSON schema requested by the caller.",
+      messages: [{ role: "user", content: "hi" }], maxOutputTokens: 64, maxRetries: 0,
+      providerOptions: { commandCode: { provider: { allow_fallbacks: true }, response_format: { type: "json_object" } } } });
+    await expect(result.output).resolves.toEqual({ sentences: ["original source"] });
+    expect((await result.totalUsage).inputTokens).toBe(10);
+    expect((await result.totalUsage).outputTokens).toBeUndefined();
+    expect(seen.run).toHaveBeenCalledTimes(1);
+    expect(seen.gateway).toHaveBeenCalledWith("my-gw");
+    const request = seen.run.mock.calls[0]?.[0];
+    if (!request || Array.isArray(request)) throw new Error("expected a single universal request");
+    expect(request).toMatchObject({ provider: "custom-command-code", endpoint: "v1/chat/completions",
+      query: { model: COMMAND_CODE.id, stream: true, stream_options: { include_usage: true } } });
+    expect(request.query).not.toHaveProperty("provider");
+    expect(request.query).not.toHaveProperty("response_format");
+    expect(request.headers).toEqual({ "Content-Type": "application/json", "x-session-affinity": "cc-session",
+      "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" });
+    expect(seen.run.mock.calls[0]?.[1]).toMatchObject({
+      gateway: { id: "my-gw", skipCache: true, collectLog: false, retries: { maxAttempts: 1 } }, extraHeaders: request.headers });
+    expect(JSON.stringify(request).toLowerCase()).not.toMatch(/authorization|bearer|api[-_]?key|proxy-alias/);
+    expect(createAIMock).not.toHaveBeenCalled();
+    expect(seen.fetch).not.toHaveBeenCalled();
+    expect(seen.catalogRun).not.toHaveBeenCalled();
+  });
 
   it.each([
     { spec: DOTS, id: "dots-studio/dots-3-note-preview:free" },
@@ -221,6 +323,8 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     const sent = sentBody(seen.wire);
     expect(sent.model).toBe(id);
     expect(sent.provider).toEqual({ allow_fallbacks: false, require_parameters: true });
+    if (spec.route === DOTS.route) expect(sent.reasoning).toEqual({ enabled: false });
+    else expect(sent).not.toHaveProperty("reasoning");
     const format = sent.response_format as { type?: unknown; json_schema?: { name?: unknown; schema?: unknown } };
     expect(format.type).toBe("json_schema");
     expect(format.json_schema?.name).toBe("cited_answer");
@@ -289,6 +393,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     const sent = sentBody(seen.wire);
     expect(sent.model).toBe("thinkingmachines/inkling:free");
     expect(sent.provider).toEqual({ allow_fallbacks: false, require_parameters: true });
+    expect(sent).not.toHaveProperty("reasoning");
     expect("response_format" in sent).toBe(false);
     // The explicit schema instruction is the caller codec job (chat/distill add
     // z.toJSONSchema when model.responseFormat is false); transport only strips.

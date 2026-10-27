@@ -244,6 +244,9 @@ annotations still reject the item. This avoids erasing an inline citation and le
 
 K3 records `distill_calls` (hard maximum two), `distill_started_at` and `distill_ms` on the owning revision. Admission
 reserves both full-context call bounds in the same monthly pool as chat, with at most two revisions running. Each
+new internal `DistillInput` is `{ revisionId, model: ModelSpec }`: after admission and before Workflow creation,
+snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
+Old terminal reports and cached Save retain their recorded usage and shape. Each
 Workflow paid step has zero retries; an atomic per-revision dispatch count prevents step replay from buying a duplicate
 call. Completed/partial revisions return existing artifacts on a repeated explicit request. Budget-paused work resumes
 only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
@@ -309,6 +312,8 @@ ranges remain frozen; this formatting performs storage reads only and starts no 
 Estimate text conservatively as UTF-8 bytes / 3. History is newest prior turns, stripped of labels, capped at 10% of
 context and excludes answers whose cited revisions are outside scope. Keep source-prefix bytes stable for cache reuse.
 
+Resolve one `ModelSpec` at turn start and keep it fixed for admission, context, request bounds and cost settlement;
+later catalogue refreshes do not reprice or resize that turn, and the snapshot contains no credential.
 One `runTurn(input)` backs WebSocket and synchronous eval. Insert `chat_turn(state='started')` before dispatch, apply
 budget admission, assemble context, stream once, resolve labels server-side, then persist answer, citations, tokens,
 first-token/total time, cost, invalid-label count and terminal state. One active turn/chat; queue one second submission.
@@ -375,40 +380,65 @@ call; an in-flight call may finish.
 
 ## 11. Models
 
-Routes are `workers-ai:<model>` or `gateway:<provider>/<model>`. `src/models.ts` owns context, output reserve,
-capabilities and dated unit prices. Unknown routes stay disabled. Native routes rechecked 2026-10-26 (pricing page
-updated 2026-10-20); external facts below checked 2026-10-26:
+Routes are `workers-ai:<model>` or `gateway:<provider>/<native ID>`, preserving native slashes. Catalogue choices come
+from live Cloudflare, Command Code and OpenRouter APIs; the examples below are metadata snapshots, not a capability
+limit. `availableModels` merges discovery with the explicit native `DEFAULT_MODEL` fallback; Flash remains the default.
+`CatalogModel` permits null context/prices/output cap. Selection remains valid, but paid dispatch requires a resolved
+`ModelSpec` with known usable context and input/output prices; unknown is not zero. Unknown cached-input price uses
+the full known input rate. Freeze the admitted metadata as specified in §6/§8, without a new registry/cache/backend.
+
+`GET /api/models` returns models, independent provider warnings and defaultModel; optional `selected` enrichment is
+limited to the selected model's official provider HTML pricing. Require an exact provider/native-ID and published
+currency/unit match; ambiguity, mismatch or missing facts stay null
+with a warning, never a donor/cross-provider price fallback. Do not scrape every model's HTML on catalogue load.
+One provider's failure must not suppress other catalogues or the native default; metadata reads run no model job.
+The generic official-pricing parser was corrected; the actual selected Beam GET verified zero rates on 2026-10-27,
+without establishing rates for other unconfirmed models.
+
+Release-scoped browser proof: 596 models at 1440/390 px, late row 463 and both late-response races PASS; real project
+PATCH/GET persisted the canonical selection with native defaults and Gateway unchanged. This verifies discovery and
+selection only. The single real Command Code turn returned HTTP 502 in 1,182 ms with no output/retry and spend delta
+zero: runtime **SPIKE_FAIL**, model quality **NOT_RUN**. It does not establish working CC inference, full K2/K3 quality,
+publication or deployment. The 75-case native SQL `0006` guard proof belongs to the separate config slice.
+
+Native discovery uses `env.AI.models`, mapping text-generation `row.name` to `workers-ai:<row.name>`, published
+`context_window` and USD price[] units `per M input tokens`, `per M cached input tokens`, `per M output tokens`.
+Missing/unsupported facts remain null, native output cap stays UNKNOWN with job bound 8,192, and low reasoning effort
+is requested only when published support includes low. The real read-only page1/per100 check on 2026-10-27 returned
+73 rows / 39 text-generation rows (`eval/out/catalogue-native/page1.json`); this is metadata proof, not inference,
+K2/K3 acceptance or deployment. Dated price examples were checked 2026-10-26 (pricing page updated 2026-10-20):
 
 | Use | Route | Context | Max output | $/1M input / cached / output |
 |---|---|---:|---:|---:|
-| default answer + distill | `workers-ai:@cf/zai-org/glm-5.3-flash` | 1,048,576 | 8,192 | 0.15 / 0.03 / 0.50 |
-| owner-selected hard synthesis | `workers-ai:@cf/zai-org/glm-5.3` | 1,048,576 | 8,192 | 1.40 / 0.26 / 4.40 |
+| native default fallback | `workers-ai:@cf/zai-org/glm-5.3-flash` | 1,048,576 | UNKNOWN; job 8,192 | 0.15 / 0.03 / 0.50 |
+| recorded native example | `workers-ai:@cf/zai-org/glm-5.3` | 1,048,576 | UNKNOWN; job 8,192 | 1.40 / 0.26 / 4.40 |
 | optional OpenRouter; local WIP | `gateway:openrouter/dots-studio/dots-3-note-preview:free` | 512,000 | 460,800 | 0 / — / 0 |
 | optional OpenRouter; local WIP | `gateway:openrouter/thinkingmachines/inkling:free` | 1,048,576 | 262,144 | 0 / — / 0 |
 | optional OpenRouter; local WIP | `gateway:openrouter/nvidia/nemotron-3.5-super-vl:free` | 1,000,000 | 131,072 | 0 / — / 0 |
 
-OpenRouter `maxOutputTokens` preserves the verified provider cap. Ordinary chat/distill jobs separately retain the
-existing 8,192-token output bound in `outputReserveTokens`: `modelOutputLimit = min(outputReserveTokens ?? maxOutputTokens,
-maxOutputTokens)`. Use that result for request output, context fit and budget reservation. Context limits stay unchanged;
+`maxOutputTokens` is a published provider cap or null, separate from the 8,192 job `outputReserveTokens`. With
+`bound = outputReserveTokens ?? maxOutputTokens ?? 0`, use `min(bound, maxOutputTokens ?? bound)` for request output,
+context fit and budget reservation. Context limits stay unchanged;
 the reserve does not redefine model capacity or force claim-mode overflow. Native configured output remains 8,192.
 Show model capacity and the job bound only in advanced model details, keeping ordinary Material controls/layout.
 
-Native answer/distill defaults remain Flash; the expensive native route is never automatic. These three exact `:free`
-IDs are the only registered external generation choices. The public catalog prices prompt/completion at zero and lists
-no separate cached-input rate. Their model-token estimate is zero, not a promise of unlimited quota or availability.
+Native answer/distill defaults remain Flash; the expensive native route is never automatic. Listed external IDs are
+recorded choices; provider APIs supply the current catalogue. The listed OpenRouter free examples publish zero
+prompt/completion prices and no separate cached-input rate, not unlimited quota or availability. Other entries need
+their own provider-specific pricing; model names and `free` suffixes are not price authority.
 Provider limits/errors remain visible failures; no artificial local quota, paid fallback or alternate model is added.
 `nvidia/nemotron-3.5-embed-8b:free` and `nvidia/nemotron-3.5-rerank-8b:free` are separate future K5 capabilities, not chat choices.
 
 Local connection contract: `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; null disables the
-external routes. `GET /api/models/connection` returns `{ connection: { gatewayId, provider: "openrouter",
+external routes. `GET /api/models/connection` returns `{ connection: { gatewayId, provider: "ai-gateway",
 alias: "default" } }`. Owner-only `PUT` accepts `{ gatewayId, confirmCredentialAccess: true }` to enable access to
-the owner's existing OpenRouter default BYOK credential, or `{ gatewayId: null }` to disconnect. The owner checkbox is
+the owner's stored Gateway credentials, or `{ gatewayId: null }` to disconnect. The owner checkbox is
 mandatory when enabling; existing credential metadata grants no access by itself. Use an exact existing named Gateway
 in the Worker's account; `default` is rejected because that name can create a Gateway implicitly. Saving records
 configuration without checking Gateway existence or provider usability. No new credential, secret input, provider
 Authorization header or dummy key is needed. Credentials stay in Cloudflare; the app uses only the `default` BYOK alias.
 
-External transport uses installed `agents@0.30.1` and `@ai-sdk/openai-compatible@3.0.79` (Apache-2.0). Build the vendor
+OpenRouter transport uses installed `agents@0.30.1` and `@ai-sdk/openai-compatible@3.0.79` (Apache-2.0). Build the vendor
 model with `createOpenAICompatible({ name: "openrouter", baseURL: "https://openrouter.ai/api/v1", includeUsage: true, ... })`
 and `openrouter.languageModel(model.id)`, then wrap the model object with
 `createAI({ binding: env.AI }).languageModel(vendor, { gateway: { id, ... }, vendorKey: "gateway", ... })`.
@@ -522,6 +552,9 @@ Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:
 Every screen has loading, empty and actionable error states plus
 stale/paused where relevant. Use one Markdown renderer with raw HTML disabled and resolved citation chips. Do not cache
 private text in localStorage or a service worker.
+The model picker reuses the approved legacy Material interaction/layout, keys choices by provider/native-ID pair and
+shows UNKNOWN metadata without rejecting selection; model-job admission remains separate. Only the selected model
+requests official HTML pricing enrichment, and provider warnings remain independent so other choices stay visible.
 
 ## 14. Lifecycle and export
 

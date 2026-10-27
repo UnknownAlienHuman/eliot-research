@@ -7,7 +7,7 @@ import { buildContext } from "./context";
 import { persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn, estimateCost } from "./cost";
-import { DEFAULT_MODEL, modelOutputLimit, requireModel } from "./models";
+import { DEFAULT_MODEL, modelOutputLimit, requireAvailableModel } from "./models";
 import type { ModelSpec } from "./models";
 import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
 import { LibraryError } from "./library";
@@ -144,7 +144,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
         FROM project p CROSS JOIN settings s WHERE p.id=? AND s.id=1`).bind(input.projectId).first<{ model: string; instructions: string }>();
       if (!settings) throw new LibraryError("not_found", "Project or model settings not found.", 404);
       turn.model = input.model ?? settings.model;
-      const model = requireModel(turn.model);
+      const model = await requireAvailableModel(this.env, turn.model);
       selectedModel = model;
       const transport = await resolveModelTransport(this.env, model, this.name);
       await this.env.DB.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at)
@@ -216,10 +216,10 @@ export class ChatAgent extends Agent<Env, ChatState> {
       turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
     }
     if (usage) {
-      turn.providerUsage = reportedProviderUsage(usage);
+      turn.providerUsage = reportedProviderUsage(usage, turn.model);
       turn.inputTokens = usage.inputTokens ?? null; turn.cachedTokens = usage.inputTokenDetails.cacheReadTokens ?? null; turn.outputTokens = usage.outputTokens ?? null;
-      if (turn.inputTokens !== null && turn.outputTokens !== null) {
-        turn.estimatedCostMicrousd = estimateCost(requireModel(turn.model), turn.inputTokens, turn.cachedTokens ?? 0, turn.outputTokens);
+      if (selectedModel && turn.inputTokens !== null && turn.outputTokens !== null) {
+        turn.estimatedCostMicrousd = estimateCost(selectedModel, turn.inputTokens, turn.cachedTokens ?? 0, turn.outputTokens);
       }
     }
     if (!dispatched) { turn.estimatedCostMicrousd = 0; turn.inputTokens = 0; turn.cachedTokens = 0; turn.outputTokens = 0; }

@@ -8,6 +8,8 @@ import type { ProviderUsage } from "./shared/api";
 
 const OPENROUTER_PREFIX = "gateway:openrouter/";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const COMMAND_CODE_PREFIX = "gateway:command-code/";
+const COMMAND_CODE_BASE_URL = "https://api.commandcode.ai/provider/v1";
 
 const EXTERNAL_FAILURE =
   "External model request failed. Check the Gateway connection and provider status; no retry was started.";
@@ -19,7 +21,7 @@ function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
-export function reportedProviderUsage(usage: LanguageModelUsage): ProviderUsage | null {
+export function reportedProviderUsage(usage: LanguageModelUsage, route?: string): ProviderUsage | null {
   const raw = usage.raw;
   if (!raw) return null;
   const input = raw.prompt_tokens_details, output = raw.completion_tokens_details;
@@ -27,17 +29,18 @@ export function reportedProviderUsage(usage: LanguageModelUsage): ProviderUsage 
   const reasoning = output && typeof output === "object" && "reasoning_tokens" in output ? output.reasoning_tokens : undefined;
   return { inputTokens: count(raw.prompt_tokens) ?? null, outputTokens: count(raw.completion_tokens) ?? null,
     totalTokens: count(raw.total_tokens) ?? null, cachedTokens: count(cached) ?? null, reasoningTokens: count(reasoning) ?? null,
-    costUsd: typeof raw.cost === "number" && Number.isFinite(raw.cost) && raw.cost >= 0 ? raw.cost : null };
+    // Command Code's cost currency is undocumented; keep raw private without naming it USD.
+    costUsd: !route?.startsWith(COMMAND_CODE_PREFIX) && typeof raw.cost === "number" && Number.isFinite(raw.cost) && raw.cost >= 0 ? raw.cost : null };
 }
 
-// Narrow OpenRouter usage fix (pinned @ai-sdk/openai-compatible 3.0.79): the bundled
+// Narrow compatible-usage fix (pinned @ai-sdk/openai-compatible 3.0.79): the bundled
 // converter coerces missing counts to 0, which wrongly settles usage as zero on priced
 // routes. Unknown stays unknown here; output follows the same max(completion,
 // total - prompt) rule as the native path and never subtracts reasoning (OpenRouter
 // completion totals already include it). Contradictory detail counts reset to unknown,
 // and a total below prompt or reasoning above the computed output keeps output unknown
 // so the reservation is retained instead of billing an inconsistent number.
-const convertOpenRouterUsage: ProviderConvertUsage = (usage) => {
+const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
   const prompt = count(usage?.prompt_tokens);
   let cacheRead = count(usage?.prompt_tokens_details?.cached_tokens);
   if (cacheRead !== undefined && prompt !== undefined && cacheRead > prompt) cacheRead = undefined;
@@ -75,12 +78,11 @@ const convertOpenRouterUsage: ProviderConvertUsage = (usage) => {
 // provider contract forbids, so strip it. The caller adds the explicit schema
 // instruction when model.responseFormat is false; Output.object parses locally
 // either way and failures stay local with no repair calls.
-function openRouterBody(structured: boolean) {
+function openRouterBody(structured: boolean, reasoning?: ModelSpec["reasoning"]) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
     const provider = { ...(args.provider as Record<string, unknown> | undefined), allow_fallbacks: false, require_parameters: true };
-    if (structured) return { ...args, provider };
-    const out: Record<string, unknown> = { ...args, provider };
-    delete out.response_format;
+    const out: Record<string, unknown> = { ...args, provider, ...(reasoning ? { reasoning } : {}) };
+    if (!structured) delete out.response_format;
     return out;
   };
 }
@@ -90,8 +92,11 @@ export async function resolveModelTransport(
   model: ModelSpec,
   sessionAffinity: string,
 ): Promise<LanguageModel> {
-  if (model.route.startsWith(OPENROUTER_PREFIX)) {
-    if (model.route !== OPENROUTER_PREFIX + model.id) {
+  const commandCode = model.route.startsWith(COMMAND_CODE_PREFIX);
+  if (commandCode || model.route.startsWith(OPENROUTER_PREFIX)) {
+    if (commandCode
+      ? model.route === COMMAND_CODE_PREFIX || !model.id.trim() || model.responseFormat !== false || model.structuredOutputs === true
+      : model.route !== OPENROUTER_PREFIX + model.id) {
       throw new LibraryError("unavailable", "This model route is not supported.", 503);
     }
     const connection = await getModelConnection(env);
@@ -99,14 +104,39 @@ export async function resolveModelTransport(
       throw new LibraryError("unavailable",
         "External models are disconnected. Allow access to the existing Gateway credential in Settings first.", 503);
     }
+    if (commandCode) {
+      const gatewayId = connection.gatewayId;
+      return createOpenAICompatible({
+        name: "command-code", baseURL: COMMAND_CODE_BASE_URL, includeUsage: true,
+        supportsStructuredOutputs: false, convertUsage: convertCompatibleUsage,
+        transformRequestBody: (args) => {
+          const out = { ...args };
+          delete out.provider;
+          delete out.response_format;
+          return out;
+        },
+        fetch: async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (url !== COMMAND_CODE_BASE_URL + "/chat/completions" || init?.method !== "POST" || typeof init.body !== "string")
+            throw new LibraryError("unavailable", "This Command Code endpoint is not supported.", 503);
+          init.signal?.throwIfAborted();
+          const headers = { "Content-Type": "application/json", "x-session-affinity": sessionAffinity,
+            "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" };
+          return env.AI.gateway(gatewayId).run({
+            provider: "custom-command-code", endpoint: "v1/chat/completions", headers, query: JSON.parse(init.body) as unknown,
+          }, { gateway: { id: gatewayId, skipCache: true, collectLog: false, retries: { maxAttempts: 1 } }, extraHeaders: headers,
+            ...(init.signal ? { signal: init.signal } : {}) });
+        },
+      }).languageModel(model.id);
+    }
     const structured = model.structuredOutputs === true;
     const openrouter = createOpenAICompatible<string, string, string, string>({
       name: "openrouter",
       baseURL: OPENROUTER_BASE_URL,
       includeUsage: true,
       supportsStructuredOutputs: structured,
-      transformRequestBody: openRouterBody(structured),
-      convertUsage: convertOpenRouterUsage,
+      transformRequestBody: openRouterBody(structured, model.reasoning),
+      convertUsage: convertCompatibleUsage,
     });
     const vendor = openrouter.languageModel(model.id);
     return createAI({ binding: env.AI }).languageModel(vendor, {
@@ -122,7 +152,7 @@ export async function resolveModelTransport(
     });
   }
   if (model.route.startsWith("workers-ai:")) {
-    return createAI({ binding: env.AI }).languageModel(model.id, { reasoningEffort: "low", sessionAffinity });
+    return createAI({ binding: env.AI }).languageModel(model.id, { ...(model.nativeReasoningEffort ? { reasoningEffort: model.nativeReasoningEffort } : {}), sessionAffinity });
   }
   throw new LibraryError("unavailable", "This model route is not supported.", 503);
 }

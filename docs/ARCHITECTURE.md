@@ -63,7 +63,7 @@ revision's `text.md`. Generated pages are derived material and never silently re
 | Project map | Topics, comparable result tables, disagreement candidates, gaps and reading routes built from verified claims. |
 | Deep research | Explicit bounded job over the Library with optional web capture; progress, partial result, cost and Stop. Web material must enter the Library before citation. |
 | Agents | External agents connect through MCP, read through the shared tools and write proposals rather than accepted owner pages. |
-| Models | Owner chooses defaults and project overrides from known routes; credentials remain in Cloudflare; limits and dated prices are visible. |
+| Models | Owner selects from provider API catalogues; unknown required metadata blocks paid admission, not selection. Credentials remain in Cloudflare; provider output capacity is separate from job bounds, and the native Flash default is explicit. |
 | Data ownership | Export originals, texts, claims and pages; delete with impact preview; missing/deleted evidence stays visibly missing. |
 
 ## Owner guarantees

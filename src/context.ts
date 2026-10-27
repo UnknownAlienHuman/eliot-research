@@ -6,7 +6,7 @@ import { modelOutputLimit } from "./models";
 
 export interface ContextModel {
   contextTokens: number;
-  maxOutputTokens: number;
+  maxOutputTokens: number | null;
   outputReserveTokens?: number;
 }
 export interface ContextHistoryTurn {

@@ -7,7 +7,8 @@ const monthlyEstimate = `(SELECT COALESCE(SUM(estimated_cost_microusd),0) FROM c
 
 export function estimateCost(model: ModelSpec, input: number, cached: number, output: number): number {
   if (![input, cached, output].every((n) => Number.isSafeInteger(n) && n >= 0) || cached > input) throw new RangeError("Invalid model usage.");
-  return Math.ceil(((input - cached) * model.inputMicrousdPerMillion + cached * model.cachedMicrousdPerMillion + output * model.outputMicrousdPerMillion) / 1_000_000);
+  const cachedRate = model.cachedMicrousdPerMillion ?? model.inputMicrousdPerMillion;
+  return Math.ceil(((input - cached) * model.inputMicrousdPerMillion + cached * cachedRate + output * model.outputMicrousdPerMillion) / 1_000_000);
 }
 export async function monthlyUsage(env: Env) {
   const now = new Date(), start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);

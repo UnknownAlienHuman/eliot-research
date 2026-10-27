@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { estimateCost, failUndispatchedDistill } from "./cost.js";
-import { LibraryError } from "./library.js";
-import { requireModel } from "./models.js";
 import type { ModelSpec } from "./models.js";
 
 // Local price fixture: estimateCost is pure arithmetic over the spec it is
@@ -46,21 +44,9 @@ describe("estimateCost", () => {
   it("rejects a cached prefix larger than the input", () => {
     expect(() => estimateCost(SPEC, 100, 101, 0)).toThrow(RangeError);
   });
-});
 
-describe("requireModel", () => {
-  it("fails unknown routes without calling any model", () => {
-    // Simulates disabled/unknown only; never asserts audit state of real routes.
-    for (const route of ["workers-ai:@cf/does-not-exist", ""]) {
-      let err: unknown;
-      try {
-        requireModel(route);
-      } catch (e) {
-        err = e;
-      }
-      expect(err).toBeInstanceOf(LibraryError);
-      expect((err as LibraryError).code).toBe("unavailable");
-    }
+  it("reserves full input price when the provider omits its cached-input rate", () => {
+    expect(estimateCost({ ...SPEC, cachedMicrousdPerMillion: null }, 1_000_000, 500_000, 0)).toBe(150000);
   });
 });
 describe("failUndispatchedDistill", () => {

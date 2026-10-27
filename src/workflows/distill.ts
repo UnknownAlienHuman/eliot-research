@@ -6,7 +6,9 @@ import { z } from "zod";
 import type { Block } from "../blocks";
 import { admitDistill, estimateCost, failUndispatchedDistill } from "../cost";
 import { LibraryError } from "../library";
-import { modelOutputLimit, requireAvailableModel, requireModel } from "../models";
+import { modelOutputLimit, requireAvailableModel } from "../models";
+import type { ModelSpec } from "../models";
+import type { DistillInput } from "../shared/api";
 import { modelFailure, resolveModelTransport } from "../model-transport";
 import { cleanDistillText, numbersSupported, resolveQuoteBlock, resultStatement, splitDistillStatements, verifyClaims } from "../quotes";
 import type { CandidateClaim, VerifiedClaim } from "../quotes";
@@ -74,13 +76,13 @@ export async function hasAvailableUnderstanding(env: Env, revisionId: string): P
   } catch { return false; }
 }
 
-async function call<T>(env: Env, revisionId: string, ordinal: number, instructions: string, content: string, schema: z.ZodType<T>, language: "English" | "Russian"): Promise<Raw<T>> {
+async function call<T>(env: Env, revisionId: string, ordinal: number, instructions: string, content: string, schema: z.ZodType<T>, language: "English" | "Russian", model: ModelSpec): Promise<Raw<T>> {
   const row = await env.DB.prepare("SELECT distill_model,distill_started_at FROM source_revision WHERE id=? AND distill_state='running'")
     .bind(revisionId).first<{ distill_model: string; distill_started_at: number }>();
   if (!row) throw new Error("Source understanding is no longer running.");
+  if (row.distill_model !== model.route) throw new Error("The admitted model snapshot no longer matches the stored model route.");
   const remaining = row.distill_started_at + DISTILL_DEADLINE_MS - Date.now();
   if (remaining <= 0) throw new Error("Source understanding reached its recovery deadline. No paid step will be repeated.");
-  const model = requireModel(row.distill_model);
   const transport = await resolveModelTransport(env, model, `distill-${revisionId}`);
   const modelInstructions = model.responseFormat === false ? instructions + "\nReturn one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema)) : instructions;
   const inputBound = Math.ceil(new TextEncoder().encode(modelInstructions + content + JSON.stringify(z.toJSONSchema(schema))).byteLength / 3) + 1024;
@@ -109,11 +111,11 @@ function documentLanguage(text: string): "English" | "Russian" {
   return (text.match(/[А-Яа-яЁё]/gu)?.length ?? 0) > (text.match(/[A-Za-z]/gu)?.length ?? 0) ? "Russian" : "English";
 }
 
-async function extract(env: Env, revisionId: string) {
+async function extract(env: Env, revisionId: string, model: ModelSpec) {
   const row = await env.DB.prepare("SELECT readable_size,distill_model FROM source_revision WHERE id=? AND distill_state='running'")
     .bind(revisionId).first<{ readable_size: number; distill_model: string }>();
   if (!row) throw new Error("Source understanding is no longer running.");
-  const model = requireModel(row.distill_model);
+  if (row.distill_model !== model.route) throw new Error("The admitted model snapshot no longer matches the stored model route.");
   if (Math.ceil(row.readable_size / 3) + modelOutputLimit(model) + 16384 > Math.min(model.contextTokens * 0.6, 400000))
     throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
   const object = await env.BUCKET.get(key(revisionId, "text.md"));
@@ -130,10 +132,10 @@ async function extract(env: Env, revisionId: string) {
     "First select the supporting labels for each of 3–5 individual source-guide sentences covering the paper's central contribution, method, headline findings and stated limitations. A guide sentence can use up to four explicitly selected blocks; select all needed passages, not just the start of a section. Then write 3–5 useful questions and compact claims covering definitions, reported configurations, optimizer defaults, training schedules/formulas, representational choices and quantitative results. Do not replace this overview with an inventory of table rows. " +
     "Choose quoteBlock from the printed labels. That full block will be the exact quote shown to the owner; it must support the entire statement, every number and every experiment condition. Choose evidence before writing the claim. Never combine unsupported results from other blocks into one claim. " +
     "Each result claim describes one scalar result for one task, dataset, metric and model condition. Split different result rows into separate claims; do not put multiple results in valueText. Copy source digits and units without conversion. " +
-    "Keep task, metric, dataset and valueText in the source language; do not convert units or generalize a particular experiment. Use null when a structured field is absent. Authors and publication date must be copied from the source; otherwise empty/null.", content, extractionSchema(labels), documentLanguage(decoder.decode(bytes)));
+    "Keep task, metric, dataset and valueText in the source language; do not convert units or generalize a particular experiment. Use null when a structured field is absent. Authors and publication date must be copied from the source; otherwise empty/null.", content, extractionSchema(labels), documentLanguage(decoder.decode(bytes)), model);
   await put(env, revisionId, "distill-call1.json", raw);
 }
-async function verifyAndStore(env: Env, revisionId: string) {
+async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
   const raw = await json<Raw<Extraction>>(env, revisionId, "distill-call1.json");
   const text = await (await env.BUCKET.get(key(revisionId, "text.md")))?.text();
   if (text === undefined) throw new Error("Readable text is missing.");
@@ -160,7 +162,7 @@ async function verifyAndStore(env: Env, revisionId: string) {
   await put(env, revisionId, "distill-verified.json", artifact);
   const owner = await env.DB.prepare("SELECT source_id,distill_model FROM source_revision WHERE id=?").bind(revisionId).first<{ source_id: string; distill_model: string }>();
   if (!owner) throw new Error("Source revision is missing.");
-  const model = requireModel(owner.distill_model);
+  if (owner.distill_model !== model.route) throw new Error("The admitted model snapshot no longer matches the stored model route.");
   await env.DB.batch([
     env.DB.prepare("UPDATE source_revision SET distill_input_tokens=?,distill_cached_tokens=?,distill_output_tokens=?,distill_estimated_cost_microusd=? WHERE id=?")
       .bind(raw.usage.inputTokens, raw.usage.cachedTokens, raw.usage.outputTokens,
@@ -169,7 +171,7 @@ async function verifyAndStore(env: Env, revisionId: string) {
       .bind(text.includes(raw.output.authors) ? raw.output.authors : "", raw.output.published && text.includes(raw.output.published) ? raw.output.published : null, owner.source_id, revisionId)]);
   return { kept: verified.claims.length, dropped: verified.dropped.length };
 }
-async function synthesize(env: Env, revisionId: string) {
+async function synthesize(env: Env, revisionId: string, model: ModelSpec) {
   const verified = await json<Verified>(env, revisionId, "distill-verified.json");
   if (!verified.evidence.length) throw new Error("No verified source excerpts are available for synthesis.");
   const labels = verified.evidence.map((item) => item.label) as [string, ...string[]];
@@ -183,7 +185,7 @@ async function synthesize(env: Env, revisionId: string) {
     "Then produce 3–5 source-grounded guide sentences, a concise digest and an EN/RU glossary for the owner: describe the paper's contribution, method, findings and limitations, not your review process or candidate IDs. If source passages disagree, preserve the differing values with their own citations instead of reconciling them. Put citation labels only in labels arrays, never in text. Copy numeric spellings, including powers of ten, character for character from the quoted block. Keep each number with its dataset, model and experiment conditions; no unsupported facts or universalized results. Prefer a compact output to repetition.",
     JSON.stringify({ evidence: verified.evidence, guideCandidates: verified.guide,
       candidates: claims }), synthesisSchema(labels, claims.map((item) => item.id)),
-    documentLanguage(verified.evidence.map((item) => item.quote).join("\n")));
+    documentLanguage(verified.evidence.map((item) => item.quote).join("\n")), model);
   await put(env, revisionId, "distill-call2.json", raw);
 }
 async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared> {
@@ -326,13 +328,13 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
     .bind(report.state, report.error, report.usage.wallMs, report.usage.inputTokens, report.usage.cachedTokens,
       report.usage.outputTokens, report.usage.estimatedCostMicrousd, revisionId).run();
 }
-export class DistillWorkflow extends WorkflowEntrypoint<Env, { revisionId: string }> {
-  async run(event: Readonly<WorkflowEvent<{ revisionId: string }>>, step: WorkflowStep) {
-    const id = event.payload.revisionId;
+export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillInput> {
+  async run(event: Readonly<WorkflowEvent<DistillInput>>, step: WorkflowStep) {
+    const { revisionId: id, model } = event.payload;
     try {
-      await step.do("extract source", once, () => extract(this.env, id));
-      await step.do("verify source excerpts", store, () => verifyAndStore(this.env, id));
-      await step.do("review and synthesize", once, () => synthesize(this.env, id));
+      await step.do("extract source", once, () => extract(this.env, id, model));
+      await step.do("verify source excerpts", store, () => verifyAndStore(this.env, id, model));
+      await step.do("review and synthesize", once, () => synthesize(this.env, id, model));
       const projection = await step.do("store understanding", store, () => commitSynthesis(this.env, id));
       await step.do("finish understanding", store, () => finish(this.env, id, undefined, projection));
     } catch (error) { await finish(this.env, id, error); }
@@ -375,7 +377,7 @@ export async function scheduleDistillation(env: Env) {
       continue;
     }
     if (!await admitDistill(env, row.id, model)) continue;
-    try { await env.DISTILL.create({ id: `distill-${row.id}`, params: { revisionId: row.id } }); }
+    try { await env.DISTILL.create({ id: `distill-${row.id}`, params: { revisionId: row.id, model } }); }
     catch (error) {
       const detail = `Workflow dispatch could not be confirmed: ${message(error)}. No duplicate call is dispatched.`;
       if (!await failUndispatchedDistill(env, row.id, detail)) await env.DB.prepare("UPDATE source_revision SET distill_error=? WHERE id=? AND distill_state='running'").bind(detail, row.id).run();

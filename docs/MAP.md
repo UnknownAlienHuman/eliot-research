@@ -166,7 +166,8 @@ stop/reconnect, reopen chat and save an answer as a page.
 **Build**
 
 1. Apply `migrations/0002_ask.sql`; add one `ChatAgent` Durable Object per chat and `/agents/*` routing.
-2. Implement dated model metadata, conservative context/output limits, estimated cost and monthly model-budget admission.
+2. Discover provider API catalogues with an explicit native Flash fallback; separate valid selection from admission
+   requiring known context/input/output prices, using full input rate for unknown cache price and fixed job metadata.
 3. Build whole-reading context from the frozen readable revisions. When it does not fit, return a clear narrow-scope
    response; claim/search modes arrive later.
 4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.
@@ -174,6 +175,14 @@ stop/reconnect, reopen chat and save an answer as a page.
    citations/tokens/timings/cost and never auto-continue a paid failed stream.
 6. Add chat/page APIs, minimal model selector, saved answers and the moved chat/evidence UI.
 7. Add label/context/cost tests and `pnpm eval k2`.
+
+The model-choice slice uses Cloudflare, Command Code and OpenRouter discovery with independent provider warnings and
+the existing Material picker. Selected-only official HTML pricing requires exact provider/native-ID and currency/unit
+matches; the corrected generic parser's selected Beam GET verified zero rates, while mismatches remain UNKNOWN.
+Browser discovery/selection PASS covers 596 models, 1440/390 px, row 463 and both late-response races; actual project
+PATCH/GET preserved the canonical choice without changing defaults/Gateway. The one real CC turn failed HTTP 502
+after 1,182 ms, no output/retry and zero spend delta: runtime SPIKE_FAIL, quality NOT_RUN. This independently usable
+model-choice slice does not close K2/K3 or deployment gates; 0006's 75-case SQL proof is a separate config result.
 
 **Hard acceptance — `pnpm eval k2`**
 

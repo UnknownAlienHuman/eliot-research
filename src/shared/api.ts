@@ -1,3 +1,7 @@
+import type { ModelSpec } from "../models";
+
+export interface DistillInput { revisionId: string; model: ModelSpec }
+
 export interface OwnerActor {
   type: "owner";
   id: string;
