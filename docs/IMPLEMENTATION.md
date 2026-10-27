@@ -587,15 +587,13 @@ Checked against official Cloudflare documentation on 2026-10-24. Recheck before 
 ### Unmerged proposal PR #419 (explicitly unaccepted)
 
 [PR #419](https://github.com/UnknownAlienHuman/eliot-research/pull/419) (`docs/final-contract-audit` @
-`4dfcd8eb308e84f26c6c7e42a921aec25746a19c`) is **OPEN / CONFLICTING** (`mergeStateStatus: DIRTY`, not merged),
-checked live 2026-10-26 after the K1 duplicate-fix delivery. GitHub reports its base SHA, also the comparison merge base, as
-`397d04538dceca69eb975896513a6049f2d4a266`; current remote `main` and local `origin/main` are
-`ca4405576272a72654981d34b817c8f0ff7f8ef4`. Local `main` is `909c641ecd5af737d9c79ca650c2fb98f7160533`
-plus shared K3 WIP. The PR has one commit changing 18 documentation/migration files, including rewrites of
+`4dfcd8eb308e84f26c6c7e42a921aec25746a19c`) is **CLOSED / UNMERGED**, superseded by #420; GitHub retains
+`mergeStateStatus: DIRTY`. Checked live 2026-10-27 against comparison main `8078e150`.
+The PR has one commit changing 18 documentation/migration files, including rewrites of
 `0001`–`0004` and new `0005_search.sql`, `0006_project.sql`, `0007_jobs.sql`; it supplies no converter runtime.
 Its proposed contracts are not accepted architecture or evidence that the current product implements them.
 
-The PR's §4 rejects `AI.toMarkdown` as canonical evidence and proposes deterministic UTF-8/PDF/HTML extraction.
+The PR's §5 rejects `AI.toMarkdown` as canonical evidence and proposes deterministic UTF-8/PDF/HTML extraction.
 Current K1 code on `origin/main` and local WIP still uses native text or `env.AI.toMarkdown().transform()`;
 standalone images are rejected before conversion, and embedded HTML/DOCX/PDF images request
 `convert: false, maxConvertedImages: 0`, with PDF metadata disabled. Installed `@cloudflare/workers-types`
@@ -613,6 +611,7 @@ Both registries retain legacy Eliot `7c034569b908d3b03a8b821b7c537477a24b10f7` a
 
 | Choice needing owner decision | Implication |
 |---|---|
+| Read API: current `/text`, `/range`, `/outline` or PR `/text?start=&end=` and `/blocks` | The PR endpoints are not implemented. Retain current callers until an explicit API contract change is accepted. |
 | Canonical converter: retain current K1 path or adopt deterministic extraction | Current instruction retains `toMarkdown`; adopting the pinned `unpdf`/HTML proposal requires an explicit converter change and fresh K1 acceptance. Existing canonical revisions/citations must remain intact. |
 | Image evidence: current no-OCR policy or a separately accepted OCR/description path | Keep originals and `needs_conversion`; embedded-image opt-out needs real output verification. Accepting derived image text as canonical evidence would require an explicit policy and a new revision, not a silent reinterpretation of old text. |
 | Schema: current revision-owned state or PR attempt/reservation tables | Reconcile deliberately with current callers and retained local data. PR `0001` excludes `workers_ai_markdown` and replaces `readable_size` with `canonical_size`; `0002` renames the budget field and adds `budget_month`/`budget_reservation`; `0003` adds `distill_run`/`claim.distill_run_id` and different paused states, whereas local WIP retains revision-owned `distill_started_at`, `distill_calls` and `distill_ms`. These are incompatible contracts, not append-only migrations ready to apply. |
