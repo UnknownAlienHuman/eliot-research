@@ -8,7 +8,8 @@
 //   POST /api/projects/:projectId/knowledge {mutationId} -> 202 {revisionId}|{accepted} (explicit ELIOT_K6_MODEL=1 only)
 // Default: read stored map only, fail on missing work, zero model calls and zero POST.
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildComparisons } from '../../src/comparisons.ts';
 import type { ComparisonClaim, ComparisonGroup } from '../../src/comparisons.ts';
@@ -50,7 +51,6 @@ async function apiBytes(path: string): Promise<{ status: number; bytes: Buffer; 
   const ms = nowMs() - started;
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()), ms };
 }
-const buildOnly = process.argv.includes('--build-only');
 const t0 = nowMs();
 const timings: Record<string, number[]> = {};
 const timeIt = async <T>(key: string, fn: () => Promise<T>): Promise<T> => {
@@ -83,7 +83,7 @@ async function monthlyUsage(): Promise<{ used: number; budget: number }> {
   return { used: s.body.monthlyUsedMicrousd, budget: s.body.monthlyBudgetMicrousd };
 }
 const m0 = await monthlyUsage();
-const knowledge = await timeIt('GET knowledge', () => apiJson('/api/projects/' + encodeURIComponent(projectId) + '/knowledge'));
+let knowledge = await timeIt('GET knowledge', () => apiJson('/api/projects/' + encodeURIComponent(projectId) + '/knowledge'));
 if (knowledge.status === 404) {
   knowledgeWired = false;
 } else {
@@ -101,6 +101,7 @@ const report: Record<string, unknown> = {
 const finish = async (exitCode: number, extra: Record<string, unknown> = {}) => {
   const m1 = await monthlyUsage().catch(() => null);
   Object.assign(report, extra, {
+    paidPosted,
     monthlyAfter: m1,
     usageDelta: m1 ? m1.used - m0.used : null,
     timings: Object.fromEntries(Object.entries(timings).map(([k, v]) => [k, summarizeTimings(v)])),
@@ -108,7 +109,7 @@ const finish = async (exitCode: number, extra: Record<string, unknown> = {}) => 
     wallMs: nowMs() - t0,
   });
   await writeFile(outDir + '/k6-' + Date.now() + '.json', JSON.stringify(report, null, 2));
-  const lines = ['# K6 project knowledge eval (stored-only, zero paid calls)', '', '- project: ' + title, '- knowledge route: ' + (knowledgeWired ? 'wired' : 'NOT_WIRED (404)'), '- monthly: ' + m0.used + '/' + m0.budget + ' -> ' + (m1 ? m1.used + '/' + m1.budget : 'unread'), '- violations: ' + violations.length, ''];
+  const lines = ['# K6 project knowledge eval (' + (runModel ? 'explicit service run; at most one map request' : 'stored-only, zero paid calls') + ')', '', '- project: ' + title, '- knowledge route: ' + (knowledgeWired ? 'wired' : 'NOT_WIRED (404)'), '- monthly: ' + m0.used + '/' + m0.budget + ' -> ' + (m1 ? m1.used + '/' + m1.budget : 'unread'), '- violations: ' + violations.length, ''];
   for (const v of violations) lines.push('- ' + v);
   lines.push('');
   await writeFile(outDir + '/k6-' + Date.now() + '.md', lines.join(EOL));
@@ -121,6 +122,78 @@ if (!knowledgeWired) {
   violations.push('owner O1-O5 NOT_RUN: no map to answer from');
   violations.push('source-replacement staleness NOT_RUN: no recorded operation or map revision observed');
   await finish(1);
+}
+if (runModel) {
+  assert(['127.0.0.1', 'localhost', '[::1]'].includes(new URL(origin).hostname), 'Model eval uses the isolated local Worker only.');
+  const attemptPath = outDir + '/service-' + projectId + '.json';
+  type Attempt = { projectId: string; origin: string; mutationId: string; model: string; dispatchStarted: boolean;
+    revisionId: string | null; pageId: string | null; at: string; upperCostMicrousd: number; observationError?: string };
+  let attempt: Attempt | null = null;
+  try { attempt = JSON.parse(await readFile(attemptPath, 'utf8')) as Attempt; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const save = () => writeFile(attemptPath, JSON.stringify(attempt, null, 2));
+  if (attempt) {
+    assert.equal(attempt.origin, origin, 'Retain the original service attempt origin.');
+    assert.equal(attempt.projectId, projectId);
+    assert.equal(attempt.dispatchStarted, true, 'An existing incomplete record requires manual inspection; no auto-dispatch.');
+    assert(attempt.revisionId, 'Dispatch outcome is unknown. Inspect the owning operation; never send a replacement.');
+  } else {
+    assert.equal(knowledge.body.state, 'none', 'Initial service eval requires no earlier operation; no automatic retry.');
+    const settings = await apiJson('/api/settings');
+    const route: unknown = settings.body.settings?.answerModel;
+    assert(typeof route === 'string' && route.length > 0, 'Use the existing configured default.');
+    const catalog = await apiJson('/api/models?selected=' + encodeURIComponent(route));
+    assert.equal(catalog.status, 200);
+    const model = catalog.body.models.find((item: any) => item.route === route);
+    assert(model?.enabled && Number.isSafeInteger(model.contextTokens) && model.contextTokens > 0);
+    for (const key of ['inputMicrousdPerMillion', 'outputMicrousdPerMillion'])
+      assert(typeof model[key] === 'number' && Number.isFinite(model[key]) && model[key] >= 0, 'Unknown prices cannot admit an effect.');
+    const reserve = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
+    const output = Math.min(reserve, model.maxOutputTokens ?? reserve);
+    assert(Number.isSafeInteger(output) && output > 0);
+    const bound = 2 * Math.ceil((model.contextTokens * model.inputMicrousdPerMillion + output * model.outputMicrousdPerMillion) / 1_000_000);
+    assert(Number.isSafeInteger(bound) && bound + m0.used <= m0.budget, 'Existing monthly budget must cover the two-call upper bound.');
+    attempt = { projectId, origin, mutationId: randomUUID(), model: route, dispatchStarted: true, revisionId: null, pageId: null,
+      at: new Date().toISOString(), upperCostMicrousd: bound };
+    await save(); // Persist before the sole dispatch, including an unknown HTTP outcome.
+    paidPosted = true;
+    try {
+      const response = await apiJson('/api/projects/' + projectId + '/knowledge', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mutationId: attempt.mutationId, model: route }),
+        signal: AbortSignal.timeout(30_000) });
+      assert.equal(response.status, 202, 'The one request must return its owning page revision.');
+      assert(typeof response.body.revisionId === 'string' && typeof response.body.pageId === 'string');
+      attempt.revisionId = response.body.revisionId; attempt.pageId = response.body.pageId; await save();
+    } catch (error) {
+      attempt.observationError = error instanceof Error ? error.message : String(error); await save();
+      violations.push('Service dispatch outcome was not confirmed; no repeat: ' + attempt.observationError);
+      await finish(1, { serviceAttempt: attempt });
+    }
+  }
+  assert(attempt?.revisionId);
+  const deadline = Date.now() + 16 * 60_000;
+  while (true) {
+    knowledge = await timeIt('GET operation', () => apiJson('/api/projects/' + projectId + '/knowledge', { signal: AbortSignal.timeout(20_000) }));
+    assert.equal(knowledge.status, 200);
+    const current = knowledge.body as KnowledgeView;
+    assert.equal(current.operation?.revisionId, attempt.revisionId, 'Observe the same owning operation, never a replacement.');
+    assert.equal(current.operation?.pageId, attempt.pageId);
+    assert.equal(current.operation?.kind, 'map');
+    assert((current.usage?.calls ?? 0) <= 2, 'Map dispatch cannot exceed two model calls.');
+    if (current.state !== 'running' && current.state !== 'none') break;
+    if (Date.now() > deadline) {
+      violations.push('Operation observation timed out; retain the same revision and never redispatch.');
+      await finish(1, { serviceAttempt: attempt, operation: current.operation });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  report.serviceAttempt = attempt;
+  report.operation = knowledge.body.operation;
+  if (knowledge.body.state !== 'done') {
+    violations.push('Real service operation ended ' + knowledge.body.state + ': ' + String(knowledge.body.error ?? 'no error detail'));
+    await finish(1, { usage: knowledge.body.usage });
+  }
+  assert.equal(knowledge.body.page?.headRevisionId, attempt.revisionId, 'The real map must reach its accepted page reader.');
 }
 const kv: any = knowledge.body;
 assert(kv && typeof kv === 'object', 'KnowledgeView must be an object.');
@@ -198,7 +271,7 @@ for (const g of storedGroups) {
     claimByKey.set(c.revisionId + '|' + c.block + '|' + c.start + '|' + c.end, c as ComparisonClaim);
   }
 }
-const aliases: Record<string, readonly string[]> = ((kv as any).aliases !== undefined && (kv as any).aliases !== null && typeof (kv as any).aliases === 'object' && !Array.isArray((kv as any).aliases)) ? (kv as any).aliases as Record<string, readonly string[]> : {};
+const aliases = data.aliases ?? {};
 const derivedGroups = buildComparisons([...claimByKey.values()], aliases);
 if (derivedGroups.filter((g) => g.rows.length >= 2).length < 3) violations.push('fewer than 3 genuinely compatible multi-source groups re-derived with production buildComparisons (found ' + derivedGroups.filter((g) => g.rows.length >= 2).length + ')');
 const readPool = new Map<string, Buffer>();
@@ -238,6 +311,7 @@ report['page'] = view.page ? { id: view.page.id, title: view.page.title, headRev
 violations.push('owner O1-O5 NOT_RUN: answering from the map is owner-judged; no recorded O1-O5 turns observed');
 violations.push('source-replacement staleness NOT_RUN: no replacement operation or stale-map record observed in this stored run');
 const m1 = await monthlyUsage();
-if (m1.used !== m0.used) violations.push('monthly usage moved without paid calls');
+if (!runModel && m1.used !== m0.used) violations.push('monthly usage moved without paid calls');
+if (m1.used > m1.budget) violations.push('recorded monthly usage exceeds the unchanged configured budget');
 if (m1.budget !== m0.budget) violations.push('monthly budget moved during a read-only stored run');
 await finish(violations.length > 0 ? 1 : 0, { usageDelta: m1.used - m0.used });

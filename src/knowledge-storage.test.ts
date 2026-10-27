@@ -328,7 +328,8 @@ describe("K6 storage functions on migrated SQLite and in-memory R2", () => {
     });
 
     const view = await getProjectKnowledge(f.env, OWNER, { projectId: f.projectId });
-    expect(view).toMatchObject({ state: "done", page: { headRevisionId: f.candidateId, freshness: "current" }, usage: {
+    expect(view).toMatchObject({ state: "done", operation: { revisionId: f.candidateId, pageId: f.pageId, kind: "map" },
+      page: { headRevisionId: f.candidateId, freshness: "current" }, usage: {
       calls: 0, inputTokens: null, outputTokens: null, estimatedCostMicrousd: 777,
     } });
     expect(view.data).toEqual(f.data);
@@ -384,7 +385,8 @@ describe("K6 storage functions on migrated SQLite and in-memory R2", () => {
     expect(f.bucket.has(`page/${f.candidateId}/data.json`)).toBe(true);
 
     const view = await getProjectKnowledge(f.env, OWNER, { projectId: f.projectId });
-    expect(view).toMatchObject({ state: "failed", page: { headRevisionId: f.oldHeadId, freshness: "stale" } });
+    expect(view).toMatchObject({ state: "failed", operation: { revisionId: f.candidateId, pageId: f.pageId, kind: "map" },
+      page: { headRevisionId: f.oldHeadId, freshness: "stale" } });
   });
 
   it("requires Wiki page data and citations to match the selected input scope", async () => {
@@ -394,6 +396,10 @@ describe("K6 storage functions on migrated SQLite and in-memory R2", () => {
       projectId: f.projectId, pageId: wiki.pageId, revisionId: wiki.revisionId,
       data: f.data, inputs: wiki.inputs, title: "Topic wiki", kind: "wiki" as const,
     };
+    const running = await getProjectKnowledge(f.env, OWNER, { projectId: f.projectId });
+    expect(running).toMatchObject({ state: "running",
+      operation: { revisionId: wiki.revisionId, pageId: wiki.pageId, kind: "wiki" },
+      page: { headRevisionId: f.oldHeadId }, data: f.data });
 
     await expect(storeKnowledgeRevision(f.env, OWNER, broad)).rejects.toMatchObject({ code: "invalid" });
     expect(f.bucket.attempts).toHaveLength(0);
@@ -407,5 +413,19 @@ describe("K6 storage functions on migrated SQLite and in-memory R2", () => {
     });
     expect(accepted).toMatchObject({ accepted: true, stale: false, page: { kind: "wiki", headRevisionId: wiki.revisionId } });
     expect(accepted.page?.citations).toHaveLength(1);
+
+    const view = await getProjectKnowledge(f.env, OWNER, { projectId: f.projectId });
+    expect(view).toMatchObject({ state: "done",
+      operation: { revisionId: wiki.revisionId, pageId: wiki.pageId, kind: "wiki" },
+      page: { id: f.pageId, headRevisionId: f.oldHeadId }, data: f.data });
+  });
+
+  it("returns no operation when the project has no active K6 revision", async () => {
+    const f = create();
+    f.db.prepare("UPDATE project SET knowledge_active_revision_id=NULL WHERE id=?").run(f.projectId);
+
+    const view = await getProjectKnowledge(f.env, OWNER, { projectId: f.projectId });
+
+    expect(view).toMatchObject({ state: "none", operation: null, page: { headRevisionId: f.oldHeadId }, data: f.data });
   });
 });

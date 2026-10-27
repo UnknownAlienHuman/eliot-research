@@ -27,6 +27,7 @@ export interface KnowledgeData {
 export interface KnowledgeView {
   state: "none" | "running" | "paused" | "done" | "failed";
   error: string | null;
+  operation: { revisionId: string; pageId: string; kind: "map" | "wiki" } | null;
   page: SavedPage | null;
   data: KnowledgeData | null;
   usage: {
@@ -350,21 +351,26 @@ export async function getProjectKnowledge(env: Env, actor: Actor | null, input: 
 
   let state: KnowledgeView["state"] = "none";
   let error: string | null = null;
+  let operation: KnowledgeView["operation"] = null;
   let usage: KnowledgeView["usage"] = null;
   if (project.activeRevisionId) {
-    const active = await env.DB.prepare(`SELECT r.page_id AS pageId,r.generation_state AS state,
+    const active = await env.DB.prepare(`SELECT r.page_id AS pageId,p.kind AS kind,r.generation_state AS state,
       r.generation_error AS error,r.model_calls AS calls,r.model_input_tokens AS inputTokens,
       r.model_output_tokens AS outputTokens,r.model_estimated_cost_microusd AS estimatedCostMicrousd
       FROM page_revision r JOIN page p ON p.id=r.page_id
       WHERE r.id=? AND p.project_id=?`)
       .bind(project.activeRevisionId, input.projectId)
-      .first<{ pageId: string; state: string; error: string | null; calls: number; inputTokens: number | null; outputTokens: number | null; estimatedCostMicrousd: number | null }>();
+      .first<{ pageId: string; kind: string; state: string; error: string | null; calls: number; inputTokens: number | null; outputTokens: number | null; estimatedCostMicrousd: number | null }>();
     if (!active) throw new LibraryError("unavailable", "The active project knowledge revision is missing.", 503);
     if (!["none", "running", "paused", "done", "failed"].includes(active.state)) {
       throw new LibraryError("unavailable", "The active project knowledge state is invalid.", 503);
     }
+    if (active.kind !== "map" && active.kind !== "wiki") {
+      throw new LibraryError("unavailable", "The active project knowledge kind is invalid.", 503);
+    }
     state = active.state as KnowledgeView["state"];
     error = active.error;
+    operation = { revisionId: project.activeRevisionId, pageId: active.pageId, kind: active.kind };
     usage = { calls: active.calls, inputTokens: active.inputTokens, outputTokens: active.outputTokens,
       estimatedCostMicrousd: active.estimatedCostMicrousd };
   }
@@ -383,7 +389,7 @@ export async function getProjectKnowledge(env: Env, actor: Actor | null, input: 
       data = stored;
     }
   }
-  return { state, error, page, data, usage };
+  return { state, error, operation, page, data, usage };
 }
 
 async function currentInputsMatch(env: Env, projectId: string, kind: "map" | "wiki", inputs: string[]): Promise<boolean> {
