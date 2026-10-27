@@ -170,10 +170,11 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const render = (sentences: ({ text?: string | undefined; labels?: (string | undefined)[] | undefined } | undefined)[] | undefined) =>
         (sentences ?? []).flatMap((sentence) => sentence?.text ? [sentence.text.trimEnd() + "\n" + (sentence.labels ?? []).filter((token) => token !== undefined && allowed.has(token) && !sentence.text?.includes(token)).join(" ")] : []).join("\n\n");
       const structured = model.responseFormat !== false;
+      const conciseRules = "Answer the specific question concisely. Select the most relevant evidence instead of cataloguing every paper. Omit unasked background, algorithm derivations and repeated conclusions.";
       const formatRules = structured
         ? "Return the requested structured answer. Choose the exact supporting block labels first, then write one statement entailed by those blocks in the question language. Preserve the source's technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Text may use Markdown but must not contain citation tokens. Mark inference explicitly. With no sources, labels must be empty. Do not invent sources or labels."
         : "Write a plain Markdown answer in the question language. Cite each source-supported statement immediately with the exact supplied [Sx:block] labels. Preserve technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Mark inference explicitly. With no selected sources, include no citation tokens. Do not invent sources or labels.";
-      const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions, formatRules,
+      const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions, conciseRules, formatRules,
         ...(structured && model.structuredOutputs === false ? ["Return one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema))] : [])].filter(Boolean).join("\n\n");
       const messages = context.messages.filter((message) => message.role !== "system");
       messages.push({ role: "user", content: input.question });

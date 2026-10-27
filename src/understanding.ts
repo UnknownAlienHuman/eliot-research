@@ -107,7 +107,7 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
     authors: source.authors,
     published: source.published,
     progress: { attempts: row.attempts, limit: 2, maximumCostMicrousd: model ? 2 * estimateCost(model, model.contextTokens, 0, modelOutputLimit(model)) : null,
-      model: row.model ?? configuredModel, configuredModel },
+      model: row.model, configuredModel },
     guide,
     digest,
     glossary: Array.isArray(glossary) ? glossary : [],

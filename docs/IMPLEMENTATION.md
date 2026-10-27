@@ -322,7 +322,8 @@ One `runTurn(input)` backs WebSocket and synchronous eval. Insert `chat_turn(sta
 budget admission, assemble context, stream once, resolve labels server-side, then persist answer, citations, tokens,
 first-token/total time, cost, invalid-label count and terminal state. One active turn/chat; queue one second submission.
 Stop stores partial text. Closing a tab does not cancel. Failed streams are never auto-continued; Retry creates a new
-turn. Prompt rules: answer in question language, lead with answer, cite each source-derived factual sentence,
+turn. Prompt rules: answer the specific question concisely without an unasked paper catalogue or derivations;
+answer in question language, lead with answer, cite each source-derived factual sentence,
 distinguish inference, abstain with missing evidence, and never invent labels.
 
 During either output mode, persist and broadcast the first nonempty rendered answer immediately and set
