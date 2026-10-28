@@ -3,12 +3,13 @@
 //   ELIOT_K6_REPLACEMENT=1 ELIOT_K6_REPLACEMENT_URL=http://127.0.0.1:PORT
 //   ELIOT_K6_REPLACEMENT_PROJECT=<projectId> ELIOT_K6_REPLACEMENT_SOURCE=<sourceId>
 //   ELIOT_K6_REPLACEMENT_FILE=<absolute path to canonical Markdown>
-//   [ELIOT_K6_EXPECTED_AFFECTED='["<pageId>",...]'] [ELIOT_K6_EXPECTED_UNAFFECTED='["<pageId>",...]']
+//   ELIOT_K6_REPLACEMENT_D1=<absolute path to copied SQLite store>
+//   ELIOT_K6_EXPECTED_AFFECTED='["<pageId>",...]' ELIOT_K6_EXPECTED_UNAFFECTED='["<pageId>",...]'
 //   node scripts/eval/k6-replacement.mjs
 // No setup/cloning in script: manager creates the separate copied D1/R2 namespace
 // (remote AI/crons off, autoDistill 0) and wires run.ts --replacement. No model calls,
 // no distill POSTs, no credentials changes, no synthetic science/corpus writes.
-// Single artefact: eval/out/k6/replacement.json
+// Each attempt is retained at eval/out/k6/replacement-<timestamp>.json.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";

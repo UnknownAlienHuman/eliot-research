@@ -466,8 +466,10 @@ output and foreign-project controls returned 409, and original D1/R2 hashes and 
 model call or Workflow was created; monthly usage stayed 787,485 / 4,158,177 micro-USD. Two concurrent recheck POSTs
 also returned the same new head with exactly one storage revision; a local stale-Wiki fixture returned 409 without
 creating a revision. An independent review against the original frozen passages supports the nine retained sentences;
-missing ResNet coverage remains explicit. The retained local-binding
-failure still holds its reservation; successful later work does not erase it. These are local service results,
+missing ResNet coverage remains explicit. The real 1440/390 px browser journey shows the warning and storage-only
+control, opens Partial Wiki in Studio, and compares the Reader excerpt with the cited UTF-8 range. Its recheck POSTs
+are intercepted; actual storage POSTs are verified separately above. The retained local-binding failure still holds
+its reservation; successful later work does not erase it. These are local service results,
 not owner acceptance or deployment. The existing Material map/reader remains in use.
 
 Non-test `src/` additions are 2,232 lines (58 removed), including all new UI/CSS and excluding generated bindings. This exceeds the
