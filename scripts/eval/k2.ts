@@ -182,6 +182,9 @@ async function writeCompare(rows, metadata) {
   const numericCheckDetails = turnRows.flatMap((row) => Array.isArray(row.factChecks) ? row.factChecks : [])
     .filter((check) => check.name === 'numeric citation support').map((check) => check.detail || '');
   const unsupportedNumericCount = numericCheckDetails.reduce((total, detail) => total + (Number(/([0-9]+) unsupported/.exec(detail)?.[1]) || 0), 0);
+  const uncitedCheckDetails = turnRows.flatMap((row) => Array.isArray(row.factChecks) ? row.factChecks : [])
+    .filter((check) => check.name === 'uncited factual statements').map((check) => check.detail || '');
+  const uncitedAdvisoryCount = uncitedCheckDetails.reduce((total, detail) => total + (Number(/([0-9]+) found/.exec(detail)?.[1]) || 0), 0);
   const inputs = sumKnown('inputTokens'), cached = sumKnown('cachedTokens'), outputs = sumKnown('outputTokens');
   const limits = sumKnown('tokenLimit'), actualCosts = sumKnown('actualProviderCostUsd');
   const lines = [
@@ -200,7 +203,8 @@ async function writeCompare(rows, metadata) {
     '- Provider-reported actual cost (legacy historical only, never gated): ' + (actualCosts.unknown > 0 ? 'UNKNOWN (known subtotal ' + actualCosts.sum + ' USD; ' + actualCosts.unknown + ' turn(s) unknown, not zero).' : actualCosts.sum + ' USD across ' + actualCosts.count + ' turn(s).'),
     '- Latency sample n=' + turnRows.filter((row) => typeof row.timing?.firstTokenMs === 'number' && typeof row.timing?.totalMs === 'number').length + ' ms: first p50/p95 ' + percentile(firstTimes, 0.50) + '/' + percentile(firstTimes, 0.95) + '; total p50/p95 ' + percentile(totalTimes, 0.50) + '/' + percentile(totalTimes, 0.95) + '.',
     '- Exact citation ranges: ' + ranges.filter((range) => range.status === 'PASS').length + '/' + ranges.length + ' opened and matched; failed ' + ranges.filter((range) => range.status !== 'PASS').length + '.',
-    '- Unsupported numeric statements: ' + unsupportedNumericCount + '.',
+    '- Unsupported numeric statements (advisory WARN, not a hard gate): ' + unsupportedNumericCount + '.',
+    '- Uncited factual statements (advisory WARN, not a hard gate): ' + uncitedAdvisoryCount + '.',
     '- Actual Eliot turn model is shown per row; non-default stored answers are diagnostic only.',
     '- Owner semantic gate: O1/O2/O3/O8 remain `OWNER_REQUIRED`; this report does not judge meaning.',
     '- Result: ' + mdCell(metadata.status) + (metadata.stopReason ? ' — ' + mdCell(metadata.stopReason) : ''),
@@ -850,6 +854,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
       tokenLimit: turn?.tokenLimit ?? null,
       actualProviderCostUsd: actualProviderCostUsd(turn),
     },
+    invalidLabelExamples: Array.isArray(turn?.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [],
     failures: [],
   };
   const failures = row.failures;
@@ -913,16 +918,20 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   } catch (error) {
     failures.push('citation/fact verifier threw: ' + (error instanceof Error ? error.message : String(error)));
   }
+  row.uncitedStatements = uncited;
+  row.unsupportedNumericStatements = unsupportedNumeric;
   if (uncited === null) failures.push('uncited-statement check NOT_RUN (answer/citations unavailable)');
-  else if (uncited > 0) failures.push(uncited + ' factual statement(s) lack adjacent citations');
+  // MAP Behavioral contract + IMPLEMENTATION 8: missing-citation spans are advisory marks,
+  // not stream-state transitions. Retained visible as WARN; only NOT_RUN remains HARD.
   if (unsupportedNumeric === null) failures.push('numeric grounding check NOT_RUN (answer/citations unavailable)');
-  else if (unsupportedNumeric > 0) failures.push(unsupportedNumeric + ' numeric statement(s) are unsupported by their exact citation ranges');
+  // MAP + IMPLEMENTATION 8: unsupported-number spans are advisory marks,
+  // not stream-state transitions. Retained visible as WARN; only NOT_RUN remains HARD.
   if (citations.length) row.citationSummary = citations.length + ' citation(s); ' + row.citationRanges.filter((range) => range.status === 'PASS').length + '/' + citations.length + ' ranges open';
   else row.citationSummary = '0 citations';
   const factChecks = checkAnswer(qid, answer);
   factChecks.push({ name: 'citation byte ranges', status: row.citationRanges.length > 0 && row.citationRanges.every((range) => range.status === 'PASS') ? 'PASS' : 'FAIL', detail: row.citationSummary });
-  factChecks.push({ name: 'uncited factual statements', status: uncited === 0 ? 'PASS' : uncited === null ? 'NOT_RUN' : 'FAIL', detail: uncited === null ? 'Unavailable.' : String(uncited) + ' found.' });
-  factChecks.push({ name: 'numeric citation support', status: unsupportedNumeric === 0 ? 'PASS' : unsupportedNumeric === null ? 'NOT_RUN' : 'FAIL', detail: unsupportedNumeric === null ? 'Unavailable.' : String(unsupportedNumeric) + ' unsupported.' });
+  factChecks.push({ name: 'uncited factual statements', status: uncited === 0 ? 'PASS' : uncited === null ? 'NOT_RUN' : 'WARN', detail: uncited === null ? 'Unavailable.' : String(uncited) + ' found (advisory; MAP hard gate is >=1 citation, invalidLabels=0, ranges open).' });
+  factChecks.push({ name: 'numeric citation support', status: unsupportedNumeric === 0 ? 'PASS' : unsupportedNumeric === null ? 'NOT_RUN' : 'WARN', detail: unsupportedNumeric === null ? 'Unavailable.' : String(unsupportedNumeric) + ' unsupported (advisory; MAP hard gates are C1-C4 facts/conditions, O8 abstention, ranges open).' });
   for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs']) {
     factChecks.push({ name: field, status: typeof turn?.[field] === 'number' && Number.isFinite(turn[field]) ? 'PASS' : 'FAIL', detail: String(turn?.[field] ?? 'UNKNOWN') });
   }
@@ -949,7 +958,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   await checkRange(s0.currentRevisionId, 0, end);
 }
 async function saveTurn(qid, turn, extra) {
-  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, tokenLimit: turn.tokenLimit ?? null, actualProviderCostUsd: actualProviderCostUsd(turn), firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
+  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, invalidLabelExamples: Array.isArray(turn.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [], inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, tokenLimit: turn.tokenLimit ?? null, actualProviderCostUsd: actualProviderCostUsd(turn), firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
   await writeFile(outDir + '/k2-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
 }
 function actualProviderCostUsd(turn) {

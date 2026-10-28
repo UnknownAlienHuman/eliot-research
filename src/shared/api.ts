@@ -89,6 +89,8 @@ export interface TurnView {
   sourceIds: string[];
   citations: Citation[];
   invalidLabels: number;
+  /** Diagnostic-only rejected marker samples (<=8, each <=160 chars). Stored in turn JSON only. */
+  invalidLabelExamples?: string[];
   warnings?: AnswerWarning[];
   inputTokens: number | null;
   cachedTokens: number | null;

@@ -105,8 +105,9 @@ Migrations own schema names:
 | `0007_manual_understanding.sql` | explicit source understanding, removal of the automatic switch |
 | `0008_model_providers.sql` | editable provider configuration without credentials |
 | `0009_provider_usage.sql` | token bounds on the existing owning rows; historical currency data retained |
+| `0010_native_usage_mode.sql` | saved included-only or standard Cloudflare usage choice |
 
-Current `migrations/000[12356789]_*.sql` selects `0001`–`0003` and `0005`–`0009`;
+Current `migrations/{000[12356789],0010}_*.sql` selects `0001`–`0003` and `0005`–`0010`;
 future K4 `0004_agents.sql` remains excluded.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:

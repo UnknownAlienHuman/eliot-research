@@ -242,6 +242,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
     } finally { clearTimeout(timer); }
     const resolved = resolveCitations(turn.answer, labelSources);
     turn.answer = resolved.text; turn.citations = resolved.citations; turn.invalidLabels = resolved.invalidLabels;
+    if (resolved.invalidLabelExamples !== undefined && resolved.invalidLabelExamples.length > 0) turn.invalidLabelExamples = resolved.invalidLabelExamples;
+    else delete turn.invalidLabelExamples;
     if (turn.state === "completed" && turn.invalidLabels > 0) {
       turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
     }

@@ -6,8 +6,8 @@ import type { ModelSpec } from "./models.js";
 // Saved native-usage admission only. Provider quota readout is untouched here:
 // no registry, secret, network, probe, or model call. Root applies migration 0010
 // (settings.native_usage_mode) to 5228/5216 before model calls.
-const NATIVE_ROUTE = "workers-ai:@cf/zai-org/glm-5.3-flash";
-const EXTERNAL_ROUTE = "gateway:openrouter/dots-studio/dots-3-note-preview:free";
+const NATIVE_ROUTE = "workers-ai:@fixture/native";
+const EXTERNAL_ROUTE = "gateway:fixture/model";
 
 function spec(route: string): ModelSpec {
   return {

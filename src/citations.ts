@@ -38,6 +38,8 @@ export interface ResolvedAnswer {
   text: string;
   citations: Citation[];
   invalidLabels: number;
+  /** Diagnostic-only rejected marker samples (<=8, each <=160 chars). Never changes resolution. */
+  invalidLabelExamples?: string[];
 }
 
 const UUID_RE =
@@ -152,6 +154,8 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
   const parts: string[] = [];
   let last = 0;
   let invalidLabels = 0;
+  const invalidExamples: string[] = [];
+  const seenInvalid = new Set<string>();
   for (const match of answer.matchAll(LABEL_RE)) {
     const at = match.index ?? -1;
     if (at < 0 || inside(at)) continue;
@@ -160,6 +164,13 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
     const source = parsed === undefined ? undefined : sources[parsed.sourceIndex];
     if (parsed === undefined || source === undefined) {
       invalidLabels += 1;
+      if (invalidExamples.length < 8) {
+        const sample = Array.from(token).slice(0, 160).join("");
+        if (!seenInvalid.has(sample)) {
+          seenInvalid.add(sample);
+          invalidExamples.push(sample);
+        }
+      }
       parts.push(answer.slice(last, at));
       last = at + token.length;
       continue;
@@ -184,7 +195,12 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
     last = at + token.length;
   }
   parts.push(answer.slice(last));
-  return { text: parts.join(""), citations, invalidLabels };
+  return {
+    text: parts.join(""),
+    citations,
+    invalidLabels,
+    ...(invalidExamples.length > 0 ? { invalidLabelExamples: invalidExamples } : {}),
+  };
 }
 
 export function resolveCitations(answer: string, sources: LabelSource[]): ResolvedAnswer {
