@@ -272,7 +272,7 @@ export function Reader() {
   const preRef = useRef<HTMLPreElement | null>(null);
   const rev = revisions.find((r) => r.id === (revisionId || source?.currentRevisionId || source?.revisionId || revisions[0]?.id || ""));
   const activeRevision = rev?.id ?? "";
-  const activeRevisionNumber = revisions.findIndex((r) => r.id === activeRevision) + 1;
+  const activeRevisionNumber = rev?.revisionNo;
   const activeState = revisionId ? (rev?.readableState ?? "") : (rev?.readableState ?? source?.readableState ?? "");
   const textReady = loadedRev !== "" && loadedRev === activeRevision;
   const hasRange = textReady && Number.isSafeInteger(rangeStart) && Number.isSafeInteger(rangeEnd) && rangeStart >= 0 && rangeEnd > rangeStart;
@@ -355,7 +355,7 @@ export function Reader() {
         <p>Current source snapshot: {source.blockCount === null ? "block count unavailable" : source.blockCount + " blocks"}{source.readableSize === null ? " · readable size unavailable" : " · " + source.readableSize + " bytes of readable text"}{" · " + source.originalSize + " bytes original"}</p>
         {source.originalFilename ? <p>Original file: {source.originalFilename}</p> : null}
         {hasRange ? <p>Selected byte range [{rangeStart}, {rangeEnd}) in revision {activeRevision}.</p> : null}
-        {revisions.length > 1 ? <div><p><strong>Revisions</strong></p><ul className="er-lib__revision-list">{revisions.map((r, i) => <li key={r.id}><Link to={"?revisionId=" + encodeURIComponent(r.id)}>{"Revision " + (i + 1) + " · " + r.readableState}</Link><span className="er-lib__mono">{r.id}</span></li>)}</ul></div> : null}
+        {revisions.length > 1 ? <div><p><strong>Revisions</strong></p><ul className="er-lib__revision-list">{revisions.map((r) => <li key={r.id}><Link to={"?revisionId=" + encodeURIComponent(r.id)}>{"Revision " + r.revisionNo + " · " + r.readableState}</Link><span className="er-lib__mono">{r.id}</span></li>)}</ul></div> : null}
       </div></details>
       {hasRange ? (<div className="er-lib__excerpt" role="note"><p>Selected passage from {source.title}.</p>{excerpt ? <pre>{excerpt}</pre> : <p className="er-lib__error">This passage could not be opened in the loaded text. Clear it and choose another passage.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(activeRevision)}>Clear passage</Link></div>) : null}
       <div className="er-lib__reader">

@@ -562,7 +562,13 @@ try {
   await expect(page.locator('.er-lib__text')).not.toContainText('Точный русский текст');
   await expect(page.locator('.er-lib__text')).toContainText('Новая ревизия', { timeout: 10000 });
   await page.locator('.er-lib__facts summary').click();
-  await page.locator('.er-lib__facts a').filter({ hasText: revisionId.slice(0, 8) }).click();
+  const sidBefore = new URL(page.url()).pathname.split('/')[4] as string;
+  const rowsBefore = (await apiJson('/api/sources/' + sidBefore)).body.revisions as any[];
+  const oldRow = rowsBefore.find((r: any) => r.id === revisionId);
+  assert(oldRow && Number.isSafeInteger(oldRow.revisionNo) && oldRow.revisionNo >= 1, 'API must report the true original revision number.');
+  const oldRevLink = page.locator('.er-lib__revision-list a[href$="revisionId=' + revisionId + '"]');
+  await expect(oldRevLink).toContainText('Revision ' + oldRow.revisionNo + ' ');
+  await oldRevLink.click();
   await expect(page.locator('.er-lib__text')).not.toContainText('Новая ревизия');
   await expect(page.locator('.er-lib__text')).toContainText('Точный русский текст');
   await reopened.reload();
@@ -570,8 +576,12 @@ try {
   const revLoc = new URL(page.url());
   const revPid = revLoc.pathname.split('/')[2] as string;
   const revSid = revLoc.pathname.split('/')[4] as string;
-  const revIds = (await apiJson('/api/sources/' + revSid)).body.revisions.map((r: any) => r.id) as string[];
+  const revRows = (await apiJson('/api/sources/' + revSid)).body.revisions as any[];
+  const revIds = revRows.map((r: any) => r.id) as string[];
   assert(revIds.length >= 2, 'Replaced file must keep both immutable revisions.');
+  for (const r of revRows) assert(Number.isSafeInteger(r.revisionNo) && r.revisionNo >= 1, 'Every stored revision must carry its true number.');
+  assert(new Set(revRows.map((r: any) => r.revisionNo)).size === revRows.length, 'True revision numbers must be unique.');
+  assert(Math.max(...revRows.map((r: any) => r.revisionNo)) > oldRow.revisionNo, 'The replacement must carry a true number above the original.');
   const curRev = revLoc.searchParams.get('revisionId') as string;
   const otherRev = revIds.find((id) => id !== curRev) as string;
   assert(otherRev, 'A second immutable revision must exist.');

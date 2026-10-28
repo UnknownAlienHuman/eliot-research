@@ -47,6 +47,7 @@ export interface Source {
 
 export interface Revision extends Pick<Source, "converter" | "conversionTokens" | "conversionCalls" | "conversionMs" | "warningSummary" | "error"> {
   id: string;
+  revisionNo: number;
   readableState: Source["readableState"];
   createdAt: number;
 }
