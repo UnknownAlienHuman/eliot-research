@@ -17,7 +17,10 @@ vi.mock("cloudflare:workers", () => ({
     constructor(_ctx: unknown, readonly env: Env) {}
   },
 }));
-vi.mock("ai", () => ({ generateText: vi.fn(), Output: { object: vi.fn() } }));
+vi.mock("ai", async () => {
+  const actual = await vi.importActual<Record<string, unknown>>("ai");
+  return { ...actual, generateText: vi.fn(), Output: { object: vi.fn() } };
+});
 vi.mock("../model-transport", async () => ({
   ...await vi.importActual<typeof ModelTransport>("../model-transport"),
   resolveModelTransport: vi.fn(),
@@ -30,12 +33,12 @@ vi.mock("../models", async () => ({
   requireAvailableModel: vi.fn(), requireCatalogModel: vi.fn(), availableModels: vi.fn(),
 }));
 
-import { generateText } from "ai";
+import { NoObjectGeneratedError, generateText } from "ai";
 import { resolveModelTransport } from "../model-transport";
 import { availableModels, requireAvailableModel, requireCatalogModel } from "../models";
 import { discoverGatewayModels } from "../model-catalog";
 import { discoverNativeModels } from "../native-model-catalog";
-import { DistillWorkflow, requestUnderstanding, scheduleDistillation } from "./distill";
+import { DistillWorkflow, hasAvailableUnderstanding, requestUnderstanding, scheduleDistillation } from "./distill";
 
 const revisionId = "d9b7d198-0dd2-4d5f-8176-e824e25bb6d0";
 const sourceId = "fb3c275a-46c0-43f6-9d49-deea18581c44";
@@ -359,6 +362,48 @@ describe("DistillWorkflow admitted model snapshot", () => {
 
     expect(generateText).not.toHaveBeenCalled();
     expect(resolveModelTransport).not.toHaveBeenCalled();
+  });
+
+  it("retains typed structured-output failure telemetry without claiming the stored second-step cause", async () => {
+    // Does not reproduce eval/out/openrouter-20261028/resnet-trace (generic External failure, distill-call2.json 404, unrecoverable).
+    // It covers the proven pinned ai@7.0.152 shape in isolation: NoObjectGeneratedError carries usage/text/finishReason.
+    const f = fixture(snapshot.route);
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    const rawProviderUsage = { prompt_tokens: 1200, completion_tokens: 34, total_tokens: 1234 };
+    const sdkUsage = { inputTokens: 1200, inputTokenDetails: { noCacheTokens: 1200, cacheReadTokens: 0, cacheWriteTokens: undefined }, outputTokens: 34, outputTokenDetails: { textTokens: 34, reasoningTokens: undefined }, totalTokens: 1234, raw: rawProviderUsage };
+    const sdkError = new NoObjectGeneratedError({ message: "No object generated: response did not match schema.", text: '{"guide":', response: { id: "resp-typed-1", timestamp: new Date(), modelId: "fixture/admitted" }, usage: sdkUsage, finishReason: "stop" });
+    vi.mocked(generateText).mockRejectedValueOnce(sdkError);
+    try {
+      const steps = await run(f);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      const rawBody = f.bodies.get(prefix + "distill-call1.json");
+      if (!rawBody) throw new Error("Typed failure did not retain its per-call artifact.");
+      const stored = JSON.parse(rawBody) as { output: null; usage: { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage: unknown }; error: { kind: string; finishReason: string | null; text: string | null } };
+      expect(stored.output).toBeNull();
+      expect(stored.error.kind).toBe("invalid-structured-output");
+      expect(stored.error.finishReason).toBe("stop");
+      expect(stored.error.text).toBe('{"guide":');
+      expect(stored.usage.inputTokens).toBe(1200);
+      expect(stored.usage.cachedTokens).toBe(0);
+      expect(stored.usage.outputTokens).toBe(34);
+      expect(stored.usage.providerUsage).toMatchObject(rawProviderUsage);
+      expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
+      const reportBody = f.bodies.get(prefix + "distill.json");
+      if (!reportBody) throw new Error("Missing distill.json for typed failure.");
+      const report = JSON.parse(reportBody) as DistillReport & { state: string };
+      expect(report.state).toBe("failed");
+      expect(report.usage.calls).toBe(1);
+      expect(report.usage.inputTokens).toBe(1200);
+      expect(report.usage.outputTokens).toBe(34);
+      expect(report.usage.providerUsage).toHaveLength(1);
+      expect(report.kept).toBe(0);
+      expect(JSON.stringify(report)).not.toContain('{"guide":');
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
+      const row = f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId) as { state: string; calls: number };
+      expect(row).toEqual({ state: "failed", calls: 1 });
+    } finally { f.db.close(); }
   });
 
   it("keeps known-zero token counts and historical cost for zero-call failure", async () => {

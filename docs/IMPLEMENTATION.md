@@ -245,7 +245,10 @@ Store raw result/report in R2, compact verified claims in D1, and usage,
 cost and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
 Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.providerUsage` from AI SDK `usage.raw`
-as a JSON object or null. The final report retains `usage.providerUsage` as an array of at most two such entries for
+as a JSON object or null. A typed structured-output failure retains `output: null`, known usage, generated text and
+finish reason in that same immutable private artifact; request bodies, headers and private protocol fields are excluded.
+It remains failed and unavailable for Save unless complete compatible output exists. The final report retains
+`usage.providerUsage` as an array of at most two such entries for
 saved call responses; older artifacts may omit the field. This is provider usage telemetry, not request bodies,
 headers or credentials, and adds no table, ledger or model call. Missing token counts remain unknown.
 `done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal

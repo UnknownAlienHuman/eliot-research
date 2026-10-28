@@ -1,7 +1,7 @@
 import { numbersSupported } from "../numbers";
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import { generateText, Output } from "ai";
+import { NoObjectGeneratedError, NoOutputGeneratedError, generateText, Output } from "ai";
 import type { JSONObject } from "@ai-sdk/provider";
 import { z } from "zod";
 import { isCitableBlock, type Block } from "../blocks";
@@ -34,7 +34,7 @@ function extractionSchema(labels: [string, ...string[]]) {
 }
 type Extraction = z.infer<ReturnType<typeof extractionSchema>>;
 interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; estimatedCostMicrousd?: number | null; providerUsage?: JSONObject | null }
-interface Raw<T> { output: T; usage: Usage; validation?: { dropped: { index: number; reason: string }[] } }
+interface Raw<T> { output: T | null; usage: Usage; validation?: { dropped: { index: number; reason: string }[] }; error?: { kind: "invalid-structured-output"; finishReason: string | null; text: string | null } }
 interface Evidence { label: string; block: number; quote: string }
 interface GuideItem { labels: string[]; text: string }
 interface Verified { claims: VerifiedClaim[]; guide: GuideItem[]; evidence: Evidence[]; questions: string[]; dropped: { index: number; reason: string }[]; clearedNumbers: number }
@@ -74,11 +74,33 @@ async function put(env: Env, revision: string, name: string, value: unknown) {
     throw new Error("A different immutable understanding artifact already exists; it was not overwritten.");
 }
 
+function asNonNegativeInt(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+type GeneratedUsage = { inputTokens?: unknown; inputTokenDetails?: { cacheReadTokens?: unknown } | null; outputTokens?: unknown; raw?: unknown };
+function toStoredUsage(usage: GeneratedUsage | null | undefined, model: ModelSpec): Usage {
+  const inputTokens = asNonNegativeInt(usage?.inputTokens);
+  const cachedTokens = asNonNegativeInt(usage?.inputTokenDetails?.cacheReadTokens);
+  const outputTokens = asNonNegativeInt(usage?.outputTokens);
+  const raw = usage?.raw;
+  return { inputTokens, cachedTokens, outputTokens, tokenLimit: modelTokenLimit(model), providerUsage: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as JSONObject) : null };
+}
+function structuredFailureDetail(error: unknown, result: { text: string; finishReason: string; totalUsage: GeneratedUsage } | undefined): { usage: GeneratedUsage | undefined; finishReason: string | null; text: string | null } | null {
+  if (NoObjectGeneratedError.isInstance(error)) {
+    return { usage: error.usage, finishReason: error.finishReason ?? null, text: error.text ?? null };
+  }
+  if (result && NoOutputGeneratedError.isInstance(error)) {
+    return { usage: result.totalUsage, finishReason: result.finishReason, text: result.text };
+  }
+  return null;
+}
+
 export async function hasAvailableUnderstanding(env: Env, revisionId: string): Promise<boolean> {
   try {
     const verified = await json<Verified>(env, revisionId, "distill-verified.json");
     const raw = await json<Raw<Synthesis>>(env, revisionId, "distill-call2.json");
     if (!verified.evidence.length) return false;
+    if (!raw.output) return false;
     return synthesisSchema(verified.evidence.map((e) => e.label) as [string, ...string[]], verified.claims.map((_, i) => "C" + i)).safeParse(raw.output).success;
   } catch { return false; }
 }
@@ -98,18 +120,26 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
     WHERE id=? AND distill_state='running' AND distill_calls=? AND distill_started_at>?`)
     .bind(revisionId, ordinal - 1, Date.now() - DISTILL_DEADLINE_MS).run();
   if (!dispatch.meta.changes) throw new Error("This model call was already dispatched; it will not be repeated.");
-  let result;
-  try { result = await generateText({ model: transport,
-    instructions: modelInstructions, messages: [{ role: "user", content }, { role: "user", content: `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }], output: Output.object({ schema }),
-    maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
+  const artifactName = `distill-call${ordinal}.json`;
+  let result: Awaited<ReturnType<typeof generateText>> | undefined;
+  try {
+    result = await generateText({ model: transport,
+      instructions: modelInstructions, messages: [{ role: "user", content }, { role: "user", content: `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }], output: Output.object({ schema }),
+      maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
+    const output = result.output as T;
+    const usage = result.totalUsage;
+    const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
+    const tokenLimit = modelTokenLimit(model);
+    return { output, usage: { inputTokens, cachedTokens, outputTokens, tokenLimit, providerUsage: usage.raw ?? null } };
   } catch (error) {
+    const detail = structuredFailureDetail(error, result);
+    if (detail) {
+      const failed = { output: null, usage: toStoredUsage(detail.usage, model), error: { kind: "invalid-structured-output" as const, finishReason: detail.finishReason, text: detail.text } };
+      try { await put(env, revisionId, artifactName, failed); } catch { /* Preserve the failure without repeating inference if storage is unavailable. */ }
+    }
     // Provider errors can contain credentials; retain only the fixed safe projection.
     throw new LibraryError("unavailable", modelFailure(error, model), 503);
   }
-  const usage = result.totalUsage;
-  const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
-  const tokenLimit = modelTokenLimit(model);
-  return { output: result.output, usage: { inputTokens, cachedTokens, outputTokens, tokenLimit, providerUsage: usage.raw ?? null } };
 }
 
 function documentLanguage(text: string): "English" | "Russian" {
@@ -148,6 +178,7 @@ async function extract(env: Env, revisionId: string, model: ModelSpec) {
 }
 async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
   const raw = await json<Raw<Extraction>>(env, revisionId, "distill-call1.json");
+  if (!raw.output) throw new Error("The retained source material did not produce supported understanding. No paid step will be repeated.");
   const text = await (await env.BUCKET.get(key(revisionId, "text.md")))?.text();
   if (text === undefined) throw new Error("Readable text is missing.");
   const blocks = await json<Block[]>(env, revisionId, "blocks.json");
@@ -203,6 +234,7 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
   const verified = await json<Verified>(env, revisionId, "distill-verified.json");
   const raw = await json<Raw<Synthesis>>(env, revisionId, "distill-call2.json");
   if (!verified.evidence.length) throw new Error("No frozen source excerpts are available.");
+  if (!raw.output) throw new Error("The retained source material did not produce supported understanding. No paid step will be repeated.");
   raw.output = synthesisSchema(verified.evidence.map((e) => e.label) as [string, ...string[]], verified.claims.map((_, i) => "C" + i)).parse(raw.output);
   const dropped = [...verified.dropped];
   const retained = new Set(raw.output.supportedClaims);
