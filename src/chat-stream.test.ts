@@ -117,7 +117,8 @@ function usageOnlyWithoutChoices(usage: unknown) {
   return JSON.stringify({ id: "t1", object: "chat.completion.chunk", created: 1, model: "beam", choices: [], usage });
 }
 
-function makeHarness() {
+function makeHarness(quote = "A source") {
+  const quoteBytes = new TextEncoder().encode(quote);
   const db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE chat(id TEXT PRIMARY KEY,project_id TEXT NOT NULL)");
   db.prepare("INSERT INTO chat VALUES ('wire-chat',?)").run(projectId);
@@ -130,6 +131,8 @@ function makeHarness() {
               if (sql.includes("FROM chat WHERE id=")) return { project_id: projectId };
               if (sql.includes("COALESCE(p.answer_model")) return { model: "gateway:command-code/native-beam", instructions: "" };
               if (sql.includes("model_gateway_id")) return { gatewayId: "test-gw" };
+              if (sql.includes("FROM source_revision")) return { id: "r1", readable_state: "readable", readable_size: quoteBytes.byteLength,
+                original_key: "fixture-original", original_filename: "fixture.md" };
               return null;
             },
             run: async () => ({ meta: { changes: 1 } }),
@@ -148,7 +151,7 @@ function makeHarness() {
         return new Response(nextSSE ?? "", { headers: { "content-type": "text/event-stream" } });
       },
     },
-    BUCKET: {},
+    BUCKET: { get: async () => ({ arrayBuffer: async () => quoteBytes.buffer }) },
   } as unknown as Env;
   const agent = new ChatAgent({ database: db } as unknown as ConstructorParameters<typeof ChatAgent>[0], env);
   return { agent, db, env };
@@ -177,6 +180,22 @@ beforeEach(() => {
 });
 
 describe("chat-stream K2 wire regression", () => {
+  it.each([{ quote: "by A.B.C", state: "partial" }, { quote: "score81.", state: "completed" }])(
+    "checks numeric facts against the exact cited bytes: $state",
+    async ({ quote, state }) => {
+      const h = makeHarness(quote);
+      try {
+        await h.agent.onStart();
+        nextSSE = sse([chunk({ content: "The result is 81 [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+        const turn = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: "bbbbbbbb-bbbb-4bbb-8bbb-000000000001", question: "Q", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+        expect(turn.state).toBe(state);
+        if (state === "partial") expect(turn.error).toContain("numeric statements");
+        expect(turn.answer).toBe("The result is 81 [S1:1].");
+        expect(turn.citations).toHaveLength(1);
+        expect(fetchCalls).toBe(1);
+      } finally { h.db.close(); }
+    },
+  );
   it("marks selected partial history without changing its original protocol message", async () => {
     const h = makeHarness();
     try {

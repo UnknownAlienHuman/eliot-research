@@ -245,6 +245,8 @@ describe("numbersSupported", () => {
     expect(numbersSupported(superscript, "Values 7.6. A 10-layer model and 9 other entries.")).toBe(false);
     expect(numbersSupported("Only 10 and 9.", "The value is 7.6×10^9.")).toBe(false);
     expect(numbersSupported("Operations are 31·10^6.", "Operations are 31·10⁶.")).toBe(true);
+    expect(numbersSupported("Maximum accuracy after 6 times 10^6 training steps.", "Maximum accuracy after 6 · 106 training steps; 10% dropout.")).toBe(false);
+    expect(numbersSupported("Maximum accuracy after 6 times 10^6 training steps.", "Maximum accuracy after 6 · 10⁶ training steps.")).toBe(true);
   });
 
   it("verifies a nonatomic guide hypothesis against the union of declared quotes only", () => {

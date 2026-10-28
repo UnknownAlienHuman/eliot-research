@@ -206,7 +206,16 @@ Its real two-turn Beam check over one selected Transformer source completed C1 a
 including an actual restart between turns. Usage was 11,429/171 then 11,613/287 input/output tokens; estimates were
 zero, monthly usage remained 449,781 micro-USD, and the original private record hash stayed unchanged. This usable
 protocol slice does not close the twelve-question K2 gates or owner acceptance. The original failures remain retained.
-This slice adds 559 non-test `src/` lines and removes 35 against its published base; generated bindings are excluded.
+The protocol-only part added 559 non-test `src/` lines and removed 35 against its published base.
+The following full ten-paper Beam run stopped after C2: C1 had mechanically completed, C2 was partial, and C3–O8
+were not dispatched. A numeric grounding guard added from that concrete failure rejects C1 on stored-only
+revalidation as well: its cited ranges do not support three numeric factual units. The original states remain
+unchanged. Source-local numeric checking, its real R2 range caller and stricter eval pass 303 local tests and
+lint/types/build; whole-corpus K2 quality and owner acceptance remain open. No failed question is automatically
+repeated, and a model's correct-looking values do not establish valid supporting citations.
+Including the shared numeric primitive and R2 grounding check, the correction adds 726 non-test `src/` lines and
+removes 80 against the published base; generated bindings are excluded. No new service, retry layer or model policy
+is introduced.
 
 The shared-picker correction checked on 2026-10-27 passes lint/types, 225 tests and build. `pnpm eval k2
 --models-browser` passes at 1440/390 px against 559 live catalogue rows, plus intercepted metadata cases: catalogue

@@ -1,4 +1,5 @@
 import type { Block } from "./blocks.js";
+import { numbersSupported } from "./numbers.ts";
 
 /**
  * K2 label/citation resolver (IMPLEMENTATION 5, 8; root contract 2026-10-26).
@@ -468,25 +469,26 @@ function sentenceRanges(block: StatementBlock, analyzed: string): TextRange[] {
   return sentences;
 }
 
-/**
- * Count factual prose units without an adjacent exact server-resolved label.
- * This is a deterministic coverage gate, not a check that a cited source
- * semantically entails the statement.
- */
-export function uncitedStatements(text: string, citations: Citation[]): number {
+interface FactualStatement {
+  text: string;
+  labels: string[];
+}
+
+/** The same factual units and exact local labels back both completion gates. */
+function factualStatements(text: string, citations: Citation[]): FactualStatement[] {
   const fences = fencedRanges(text);
   const inline = inlineCodeRanges(text, fences);
   const code = [...fences, ...inline].sort((a, b) => a.start - b.start);
   const analyzed = maskRanges(text, fences);
   const knownLabels = new Set(citations.map((citation) => citation.label));
-  const resolved: TextRange[] = [];
+  const resolved: (TextRange & { label: string })[] = [];
   for (const match of text.matchAll(LABEL_RE)) {
     const start = match.index ?? -1;
     if (start < 0 || !knownLabels.has(match[0]) || code.some((range) => start >= range.start && start < range.end)) continue;
-    resolved.push({ start, end: start + match[0].length });
+    resolved.push({ start, end: start + match[0].length, label: match[0] });
   }
 
-  let uncited = 0;
+  const units: FactualStatement[] = [];
   for (const block of statementBlocks(text, analyzed, fences)) {
     for (const statement of sentenceRanges(block, analyzed)) {
       const content = cleanStatement(analyzed.slice(statement.start, statement.end));
@@ -494,8 +496,42 @@ export function uncitedStatements(text: string, citations: Citation[]): number {
       const heading = content.toLowerCase().replace(/[\p{P}\p{S}]+/gu, " ").replace(/\s+/g, " ").trim();
       if (block.kind === "heading" && sectionHeadings.has(heading)) continue;
       if (isExplicitInferenceOrAbstention(content)) continue;
-      if (!resolved.some((range) => range.start >= statement.start && range.end <= statement.end)) uncited += 1;
+      const labels = [...new Set(resolved
+        .filter((range) => range.start >= statement.start && range.end <= statement.end)
+        .map((range) => range.label))];
+      units.push({ text: content, labels });
     }
   }
-  return uncited;
+  return units;
+}
+
+/** Citation presence/locality only; this does not establish semantic entailment. */
+export function uncitedStatements(text: string, citations: Citation[]): number {
+  return factualStatements(text, citations).filter((unit) => unit.labels.length === 0).length;
+}
+
+/** Exact resolved labels whose local factual unit needs numeric evidence. */
+export function numericCitationLabels(text: string, citations: Citation[]): string[] {
+  return [...new Set(factualStatements(text, citations)
+    .filter((unit) => !numbersSupported(unit.text, ""))
+    .flatMap((unit) => unit.labels))];
+}
+
+/**
+ * Count numeric factual units unsupported by their own adjacent selected quotes.
+ * Citation tokens/Markdown syntax were removed by factualStatements; fences,
+ * structural headings and explicit inference/abstention follow the coverage gate.
+ * Missing quotes provide no evidence. No unrelated answer-wide quote union,
+ * label reassignment, numeric repair or semantic-entailment claim is made.
+ */
+export function unsupportedNumericStatements(
+  text: string,
+  citations: Citation[],
+  quotes: ReadonlyMap<string, string>,
+): number {
+  return factualStatements(text, citations).filter((unit) => {
+    if (numbersSupported(unit.text, "")) return false;
+    const selected = unit.labels.map((label) => quotes.get(label) ?? "").join("\n");
+    return !numbersSupported(unit.text, selected);
+  }).length;
 }

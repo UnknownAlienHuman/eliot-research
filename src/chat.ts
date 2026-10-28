@@ -4,7 +4,7 @@ import { Output, streamText } from "ai";
 import { z } from "zod";
 import type { LanguageModelUsage } from "ai";
 import { buildContext } from "./context";
-import { persistentResolvedAnswer, resolveCitations, uncitedStatements } from "./citations";
+import { numericCitationLabels, persistentResolvedAnswer, resolveCitations, uncitedStatements, unsupportedNumericStatements } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn, estimateCost } from "./cost";
 import { DEFAULT_MODEL, modelOutputLimit, requireAvailableModel } from "./models";
@@ -12,6 +12,7 @@ import type { ModelSpec } from "./models";
 import { AssistantWireCapture, modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
 import type { AssistantWire } from "./model-transport";
 import { LibraryError } from "./library";
+import { readText } from "./read";
 import type { RunTurnInput, TurnView } from "./shared/api";
 
 interface ChatState { active: string | null; queued: RunTurnInput | null; stopRequested: boolean }
@@ -284,6 +285,24 @@ export class ChatAgent extends Agent<Env, ChatState> {
     }
     if (turn.state === "completed" && sourceMode !== "none" && uncitedStatements(turn.answer, turn.citations) > 0) {
       turn.state = "partial"; turn.error = "Some factual statements have no adjacent verified source reference. This answer is incomplete.";
+    }
+    const numericLabels = turn.state === "completed" && sourceMode !== "none"
+      ? new Set(numericCitationLabels(turn.answer, turn.citations)) : new Set<string>();
+    if (numericLabels.size > 0) {
+      try {
+        const passages = new Map<string, string>();
+        for (const citation of turn.citations) {
+          if (!numericLabels.has(citation.label)) continue;
+          const response = await readText(this.env, { type: "owner", id: "owner", authentication: "access" },
+            citation.revisionId, { start: citation.start, end: citation.end });
+          passages.set(citation.label, new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await response.arrayBuffer()));
+        }
+        if (unsupportedNumericStatements(turn.answer, turn.citations, passages) > 0) {
+          turn.state = "partial"; turn.error = "Some numeric statements are not supported by their cited source passages. This answer is incomplete.";
+        }
+      } catch {
+        turn.state = "partial"; turn.error = "The cited source passages could not be checked. This answer is incomplete.";
+      }
     }
     if (usage) {
       turn.providerUsage = reportedProviderUsage(usage, turn.model);

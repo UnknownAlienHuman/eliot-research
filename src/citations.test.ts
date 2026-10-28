@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { persistentAnswer, persistentResolvedAnswer, resolveCitations, uncitedStatements } from "./citations.js";
+import { persistentAnswer, persistentResolvedAnswer, resolveCitations, uncitedStatements,
+  numericCitationLabels, unsupportedNumericStatements } from "./citations.js";
 import type { Citation, LabelSource } from "./citations.js";
 import type { Block } from "./blocks.js";
 
@@ -325,5 +326,120 @@ describe("uncitedStatements independent falsifications", () => {
 
   it("factual RU data-quality assertion is not abstention", () => {
     expect(checkRaw("\u0414\u0430\u043d\u043d\u044b\u0435 \u043d\u0435 \u0441\u043e\u0434\u0435\u0440\u0436\u0430\u0442 \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u043e\u0432.")).toBe(1);
+  });
+});
+
+describe("unsupportedNumericStatements", () => {
+  function check(raw: string, quotes: ReadonlyMap<string, string>): number {
+    const resolved = resolveCitations(raw, makeSources());
+    return unsupportedNumericStatements(resolved.text, resolved.citations, quotes);
+  }
+
+  const tick = String.fromCharCode(96);
+  const badC2Citation: Citation = {
+    revisionId: "ba9dc6dc-7d09-4b81-bad4-08e83698f000",
+    sourceId: "3eb73d59-caa1-45b5-8fff-38b4a09dbd19", block: 3, start: 27, end: 38,
+    sourceTitle: "Attention Is All You Need", deleted: false, label: "[S9:3]",
+  };
+  const formula = "lrate = d_model^{-0.5} · min(step_num^{-0.5}, step_num · warmup_steps^{-1.5})";
+  const formulaQuote = "We varied the learning\nrate over the course of training, according to the formula:"
+    + "lrate = d−0.5model · min(step_num−0.5, step_num · warmup_steps−1.5) (3)\n"
+    + "This corresponds to increasing the learning rate linearly for the first warmup_steps training steps,\n"
+    + "and decreasing it thereafter proportionally to the inverse square root of the step number. We used"
+    + "warmup_steps = 4000.5.4 RegularizationWe employ three types of regularization during training:\n7\n";
+
+  it("rejects the actual C2 11-byte page-heading citation for its numeric facts", () => {
+    const answer = [
+      "Расписание скорости обучения базового Transformer (статья «Attention Is All You Need») задаётся формулой [S9:3]:",
+      "", tick + formula + tick, "",
+      "- Оптимизатор: Adam с " + tick + "β1 = 0.9" + tick + ", " + tick + "β2 = 0.98" + tick + ", " + tick + "ε = 10^{-9}" + tick + " [S9:3].",
+      "- " + tick + "warmup_steps = 4000" + tick + " [S9:3].",
+      "- В течение первых " + tick + "warmup_steps" + tick + " шагов скорость обучения растёт линейно, после чего убывает пропорционально " + tick + "step_num^{-0.5}" + tick + " (обратный квадратный корень от номера шага) [S9:3].",
+    ].join("\n");
+    const quotes = new Map([[badC2Citation.label, "### Page 1\n"]]);
+    expect(unsupportedNumericStatements(answer, [badC2Citation], quotes)).toBe(4);
+    expect(numericCitationLabels(answer, [badC2Citation])).toEqual(["[S9:3]"]);
+  });
+
+  it("accepts the source formula and 4000 only with their actual selected quote", () => {
+    const citation = { ...badC2Citation, block: 34, start: 21114, end: 21572, label: "[S9:34]" };
+    const answer = formula + ", warmup_steps = 4000 " + citation.label + ".";
+    expect(unsupportedNumericStatements(answer, [citation], new Map([[citation.label, formulaQuote]]))).toBe(0);
+    expect(unsupportedNumericStatements(answer, [citation], new Map([[citation.label, "### Page 1\n"]]))).toBe(1);
+  });
+
+  it("does not borrow supported numbers across neighboring cited sentences", () => {
+    const answer = "Width is 512 [S1:1]. Heads are 8 [S1:2].";
+    expect(check(answer, new Map([["[S1:1]", "8 heads"], ["[S1:2]", "512 dimensions"]]))).toBe(2);
+    expect(check(answer, new Map([["[S1:1]", "512 dimensions"], ["[S1:2]", "8 heads"]]))).toBe(0);
+  });
+
+  it("does not use unrelated map entries or unused resolved citations as evidence", () => {
+    const citations = resolveCitations("Scope [S1:1] [S1:2]", makeSources()).citations;
+    const answer = "Width is 512 [S1:1].";
+    const quotes = new Map([["[S1:1]", "8 heads"], ["[S1:2]", "512 dimensions"]]);
+    expect(unsupportedNumericStatements(answer, citations, quotes)).toBe(1);
+    expect(numericCitationLabels(answer, citations)).toEqual(["[S1:1]"]);
+  });
+
+  it("combines only the selected quotes inside the same factual unit", () => {
+    expect(check("Width is 512 and heads are 8 [S1:1] [S1:2].",
+      new Map([["[S1:1]", "512 dimensions"], ["[S1:2]", "8 heads"]]))).toBe(0);
+  });
+
+  it("fails numeric units with no citation or no hydrated selected quote", () => {
+    expect(check("Width is 512 [S1:1].", new Map())).toBe(1);
+    expect(check("Width is 512.", new Map([["[S1:1]", "512"]]))).toBe(1);
+    expect(check("Width is 512 [S9:9].", new Map([["[S9:9]", "512"]]))).toBe(1);
+  });
+
+  it("does not treat compact or persistent citation digits as factual numbers", () => {
+    const resolved = resolveCitations("Cited prose [S1:1].", makeSources());
+    const saved = persistentResolvedAnswer(resolved.text, resolved.citations);
+    expect(unsupportedNumericStatements(resolved.text, resolved.citations, new Map())).toBe(0);
+    expect(unsupportedNumericStatements(saved.text, saved.citations, new Map())).toBe(0);
+    expect(numericCitationLabels(saved.text, saved.citations)).toEqual([]);
+  });
+
+  it("uses the same postfix locality and first-paragraph prefix boundaries", () => {
+    const quotes = new Map([["[S1:1]", "512"], ["[S1:2]", "8"]]);
+    expect(check("Width 512 [S1:1]. [S1:2] Heads 8.", quotes)).toBe(1);
+    expect(check("Width 512.[S1:1]\n\n[S1:2] Heads 8.", quotes)).toBe(0);
+    expect(check("Width 512. [S1:1] Heads 8 [S1:2].", quotes)).toBe(0);
+  });
+
+  it("ignores fenced examples and never uses fenced or inline-code label tokens as authority", () => {
+    const quotes = new Map([["[S1:1]", "512"]]), fence = tick.repeat(3);
+    expect(check("Width 512 " + tick + "[S1:1]" + tick + ".", quotes)).toBe(1);
+    const citations = resolveCitations("Scope [S1:1]", makeSources()).citations;
+    expect(unsupportedNumericStatements("Width 512.\n" + fence + "\n[S1:1]\n" + fence, citations, quotes)).toBe(1);
+    expect(check(fence + "\nvalue = 512;\n" + fence + "\nCited prose [S1:1].", new Map())).toBe(0);
+  });
+
+  it("keeps the same numeric heading and Markdown table-row rules", () => {
+    const quotes = new Map([["[S1:1]", "8"]]);
+    expect(check("## d_model = 512 [S1:1]", quotes)).toBe(1);
+    const header = "| model | width |\n| --- | ---: |\n";
+    expect(check(header + "| model | 512 [S1:1] |", quotes)).toBe(1);
+    expect(check(header + "| model | 512 [S1:1] |", new Map([["[S1:1]", "512"]]))).toBe(0);
+  });
+
+  it("exempts explicit inference/abstention only in their own units", () => {
+    expect(check("Inference: 900 might generalize. Width is 512 [S1:1].", new Map([["[S1:1]", "512"]]))).toBe(0);
+    expect(check("Воздерживаюсь: в источниках нет ответа о 900. Модель имеет 512 параметров.", new Map())).toBe(1);
+    expect(check("Inference uses 512 tokens [S1:1].", new Map([["[S1:1]", "8"]]))).toBe(1);
+  });
+
+  it("uses the shared atomic decimal/scientific rule without repairing numbers", () => {
+    expect(check("Result is 41.8 [S1:1].", new Map([["[S1:1]", "41.0 and 8"]]))).toBe(1);
+    expect(check("Result is 1e8 [S1:1].", new Map([["[S1:1]", "1e-8"]]))).toBe(1);
+    expect(check("Result is 1e-8 [S1:1].", new Map([["[S1:1]", "1e-8"]]))).toBe(0);
+  });
+
+  it("returns unique quote labels only for numeric factual units", () => {
+    const resolved = resolveCitations("Width 512 [S1:1]. Heads 8 [S1:1]. Prose [S1:2].", makeSources());
+    expect(numericCitationLabels(resolved.text, resolved.citations)).toEqual(["[S1:1]"]);
+    expect(unsupportedNumericStatements(resolved.text, resolved.citations,
+      new Map([["[S1:1]", "512 dimensions, 8 heads"]]))).toBe(0);
   });
 });

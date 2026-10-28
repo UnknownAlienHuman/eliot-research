@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { uncitedStatements } from '../../src/citations.ts';
+import { uncitedStatements, unsupportedNumericStatements } from '../../src/citations.ts';
 const EOL = String.fromCharCode(10);
 const TAB = String.fromCharCode(9);
 const BACKSLASH = String.fromCharCode(92);
@@ -468,6 +468,7 @@ async function checkRange(rev, st, en) {
   const r = await apiBytes('/api/revisions/' + encodeURIComponent(rev) + '/range?start=' + st + '&end=' + en);
   assert.equal(r.status, 200, 'Each cited range must open (GET range 200).');
   assert(r.bytes.equals(w.subarray(st, en)), 'Cited range must equal the whole-text slice.');
+  return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(r.bytes);
 }
 {
   const s0 = scoped[0] || sources.find((source) => source.currentRevisionId && ['readable', 'readable_with_warnings'].includes(source.readableState));
@@ -544,6 +545,7 @@ if (storedOnly) {
     assert(typeof turn.answer === 'string', qid + ': stored turn.answer must be a string.');
     assert(Array.isArray(turn.citations) && turn.citations.length >= 1, qid + ': stored completed answer needs >=1 citation.');
     assert(typeof turn.invalidLabels === 'number' && turn.invalidLabels === 0, qid + ': stored invalidLabels must be 0.');
+    const citationQuotes = new Map();
     for (const c of turn.citations) {
       assert(c && typeof c.revisionId === 'string', qid + ': citation needs full revisionId.');
       assert(typeof c.sourceId === 'string', qid + ': citation needs sourceId.');
@@ -552,14 +554,22 @@ if (storedOnly) {
       assert(Array.isArray(turn.revisionIds) && turn.revisionIds.includes(c.revisionId), qid + ': citation revisionId must belong to the turn frozen scope.');
       assert(revOwner.get(c.revisionId) === c.sourceId, qid + ': citation sourceId must be the scoped source owning the cited revision.');
       if (Array.isArray(turn.sourceIds)) assert(turn.sourceIds.includes(c.sourceId), qid + ': citation sourceId must belong to the turn frozen source scope.');
-      await checkRange(c.revisionId, c.start, c.end);
+      citationQuotes.set(c.label, await checkRange(c.revisionId, c.start, c.end));
     }
     const sActual = actualProviderCostUsd(turn);
+    if (sActual === null) sActualUnknown++; else { sActualKnownUsd += sActual; sActualKnownCount++; }
+    const unsupportedNumeric = unsupportedNumericStatements(turn.answer, turn.citations, citationQuotes);
+    if (unsupportedNumeric > 0) {
+      sFailed++;
+      sRows.push('| ' + qid + ' | numeric-rejected(' + unsupportedNumeric + ') | ' + turn.citations.length + ' | 0 | '
+        + turn.inputTokens + '/' + turn.cachedTokens + '/' + turn.outputTokens + ' | ' + turn.estimatedCostMicrousd + ' | '
+        + (sActual === null ? 'UNKNOWN' : sActual) + ' | ' + turn.firstTokenMs + ' | ' + turn.totalMs + ' | stored |');
+      continue;
+    }
     const doc = { chatId, qid, turnId: turn.turnId, reused: true, src: 'stored', question: Q.get(qid), answer: turn.answer ?? null, state: turn.state, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, actualProviderCostUsd: sActual, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: null };
     await writeFile(outDir + '/k2-stored-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
     checkAnswer(qid, turn.answer);
     sCompleted.add(qid);
-    if (sActual === null) sActualUnknown++; else { sActualKnownUsd += sActual; sActualKnownCount++; }
     for (const k of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) assert(typeof turn[k] === 'number', qid + ': stored turn.' + k + ' must be a number.');
     assert(turn.totalMs <= 90000, qid + ': catastrophic ceiling 90s exceeded.');
     sRows.push('| ' + qid + ' | stored-completed | ' + turn.citations.length + ' | 0 | ' + turn.inputTokens + '/' + turn.cachedTokens + '/' + turn.outputTokens + ' | ' + turn.estimatedCostMicrousd + ' | ' + (sActual === null ? 'UNKNOWN' : sActual) + ' | ' + turn.firstTokenMs + ' | ' + turn.totalMs + ' | stored |');
@@ -573,12 +583,12 @@ if (storedOnly) {
     'Retained historical reference (separate chat recheck-O2.json, not observed here): LoRA "0,01% (4,7 млн вместо 175 млрд)" pairing is arithmetically inconsistent (0.01% of 175B = 17.5M); [S10:42] cites setup text, not the quoted demonstration sentence (sibling labels cover the claims).'
   ];
   const sKnownActualText = sActualKnownCount > 0 ? String(sActualKnownUsd) : 'UNKNOWN';
-  const md = ['# K2 Ask eval — stored-only revalidation (zero model calls)', '', '- project: ' + title + ' (10 arxiv explicit scope, exact frozen scope enforced per turn)', '- chat: ' + chatId + ' (stored-only; ELIOT_EVAL_CHAT, never created or submitted)', '- mode: whole revalidation from storage only; estimated/reserved new-turn delta is 0 micro-USD (NOT actual provider spend)', '- monthly before/after: ' + m0 + '/' + hF.monthlyUsedMicrousd + ' micro-USD (must be equal)', '- configured budget, never written or raised: ' + hF.monthlyBudgetMicrousd, '- actual known provider cost (providerUsage.costUsd only; token-rate math is never actual): ' + sKnownActualText + ' USD across ' + sActualKnownCount + ' turn(s); unknown actual ' + sActualUnknown + ' (unknown is never zero)', '- ' + ownerGate, '- retained historical reference, not observed here (mechanical PASS does not clear these):'].concat(defects.map((d) => '  - ' + d)).concat(['', '| q | state | cites | invalid | in/cached/out | est_uUSD | actual_usd | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|---|']).concat(sRows).concat(['']).join(EOL);
+  const md = ['# K2 Ask eval — stored-only revalidation (zero model calls)', '', '- project: ' + title + ' (10 arxiv explicit scope, exact frozen scope enforced per turn)', '- chat: ' + chatId + ' (stored-only; ELIOT_EVAL_CHAT, never created or submitted)', '- mode: whole revalidation from storage only; estimated/reserved new-turn delta is 0 micro-USD (NOT actual provider spend)', '- monthly before/after: ' + m0 + '/' + hF.monthlyUsedMicrousd + ' micro-USD (must be equal)', '- configured budget, never written or raised: ' + hF.monthlyBudgetMicrousd, '- actual known provider cost (providerUsage.costUsd only; token-rate math is never actual): ' + sKnownActualText + ' USD across ' + sActualKnownCount + ' turn(s); unknown actual ' + sActualUnknown + ' (unknown is never zero)', '- Numeric-rejected completed answers fail whole-answer citation integrity and do not count as a Beam quality pass.', '- ' + ownerGate, '- retained historical reference, not observed here (mechanical PASS does not clear these):'].concat(defects.map((d) => '  - ' + d)).concat(['', '| q | state | cites | invalid | in/cached/out | est_uUSD | actual_usd | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|---|']).concat(sRows).concat(['']).join(EOL);
   await writeFile(outDir + '/k2-stored-only-' + Date.now() + '.md', md);
   console.log(md);
   assert.equal(hF.turns.length, h0.turns.length, 'Stored-only run must not add turns (zero submissions).');
   assert.equal(hF.monthlyUsedMicrousd, m0, 'Stored-only run must not change monthly usage (zero new model calls).');
-  assert.equal(sFailed, 0, sFailed + ' question(s) have no exact-question/exact-frozen-scope completed stored turn; this mode never submits missing/failed turns.');
+  assert.equal(sFailed, 0, sFailed + ' question(s) have no accepted exact-question/exact-frozen-scope stored turn (missing, incomplete, or numerically unsupported); this mode never submits turns.');
   assert(order.every((q) => sCompleted.has(q)), 'All 12 questions must revalidate from storage.');
   process.exit(0);
 }
@@ -639,6 +649,7 @@ for (const qid of order) {
   }
   assert(Array.isArray(turn.citations) && turn.citations.length >= 1, qid + ': completed answer needs >=1 citation.');
   assert(typeof turn.invalidLabels === 'number' && turn.invalidLabels === 0, qid + ': invalidLabels must be 0.');
+  const citationQuotes = new Map();
   for (const c of turn.citations) {
     assert(c && typeof c.revisionId === 'string', qid + ': citation needs full revisionId.');
     assert(typeof c.sourceId === 'string', qid + ': citation needs sourceId.');
@@ -646,8 +657,10 @@ for (const qid of order) {
     assert(typeof c.start === 'number' && typeof c.end === 'number', qid + ': citation needs numeric start/end.');
     assert(Array.isArray(turn.revisionIds) && turn.revisionIds.includes(c.revisionId), qid + ': citation revisionId must belong to the turn frozen scope.');
     assert(Array.isArray(turn.sourceIds) && turn.sourceIds.includes(c.sourceId), qid + ': citation sourceId must belong to the turn frozen source scope.');
-    await checkRange(c.revisionId, c.start, c.end);
+    citationQuotes.set(c.label, await checkRange(c.revisionId, c.start, c.end));
   }
+  assert.equal(unsupportedNumericStatements(turn.answer, turn.citations, citationQuotes), 0,
+    qid + ': completed answer has numeric statements unsupported by their cited source passages.');
   assert.equal(turn.scopeMode, 'explicit', qid + ': live turn must keep explicit scope (no project-default fallback).');
   assert.equal(turn.contextMode, 'whole', qid + ': live turn must be whole-reading (no claims/none fallback).');
   assert(Array.isArray(turn.sourceIds) && turn.sourceIds.length === sourceIds.length && sourceIds.every((id) => turn.sourceIds.includes(id)), qid + ': live turn sourceIds must equal the exact frozen 10-arxiv scope.');

@@ -370,6 +370,10 @@ Semicolons do not create new sentence boundaries: one cited compound sentence or
 label. This corrects structural false partials; a valid label still does not establish that its block entails a formula
 or other claim, and the semantic/owner quality gates remain unchanged.
 This deterministic coverage check does not establish semantic entailment or replace the K2 quality/owner gates.
+Completion also checks numeric factual units against their own adjacent citations' canonical UTF-8 ranges, using
+the shared numeric verifier. Unrelated cited passages elsewhere in the answer cannot supply missing numbers.
+Only required numeric citation ranges are read; missing evidence or unsupported values makes the answer partial
+without rewriting it or buying another model call. This numeric presence check is not general semantic entailment.
 Eval reuse applies this same coverage function and requires completed whole-reading turns with explicit, exact
 frozen source/revision sets. A non-reusable same-question turn remains manual; resume never dispatches a replacement.
 Reports separate estimated/reserved micro-USD from known provider-reported USD, preserving unknown actual cost.
@@ -388,6 +392,12 @@ restart, C2 completed with 11,613 / 287 tokens and one exact citation. First-tex
 and both original protocol records stayed server-only. This tests selected-source dialogue and durable replay,
 not the complete twelve-question baseline, owner quality or deployment. Those calls used source HEAD `96999bcc`;
 the later partial-history notice is covered by the dedicated SDK/SQLite regression without another inference call.
+A subsequent fixed ten-paper run on `1f7dbb17` sent C1 and C2 only. C1 reached the old mechanical completion gate;
+C2 was partial because the formula lacked an adjacent citation and its repeated label pointed to `### Page 1`.
+The new stored-only numeric check rejects C1 too: three numeric units lack support in its two byte-exact cited ranges.
+C2 and C3–O8 are not revalidated. All raw answers/states and usage remain retained; the corpus run is not a pass.
+The stricter checker passes 303 local tests plus lint/types/build. Its bare Node stored-only entry works through
+explicit `.ts` imports under the existing no-emit TypeScript configuration; no resolver shim is shipped.
 The real Workers AI GLM 5.3 Flash structured streaming call was exercised on 2026-10-26. Admission reserves the full
 model context at uncached input price plus maximum output, then settles to reported SDK usage; unknown usage retains
 the reservation. Saving rewrites aliases outside code fences and uses a page mutation UUID without model work.
