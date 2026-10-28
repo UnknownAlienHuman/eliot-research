@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ModelPicker } from './ModelPicker';
 import type { ModelRoute } from './ModelPicker';
 import './model-settings.css';
-interface GlobalSettings { readonly answerModel: string; readonly distillModel: string; readonly autoDistill: number; readonly monthlyModelBudgetMicrousd: number; readonly updatedAt: number; }
+interface GlobalSettings { readonly answerModel: string; readonly distillModel: string; readonly monthlyModelBudgetMicrousd: number; readonly updatedAt: number; }
 interface ProjectSettings { readonly instructions: string; readonly answerModel: string | null; }
 interface GatewayConnection { readonly gatewayId: string | null; readonly provider: string; readonly alias: string; }
 interface ModelCatalog { readonly models: ModelRoute[]; readonly warnings: string[]; readonly defaultModel: string; }
@@ -33,7 +33,6 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   const [modelsWarnings, setModelsWarnings] = useState<string[]>([]);
   const [answerModel, setAnswerModel] = useState('');
   const [distillModel, setDistillModel] = useState('');
-  const [autoDistill, setAutoDistill] = useState(false);
   const [useGlobal, setUseGlobal] = useState(true);
   const [instructions, setInstructions] = useState('');
   const [budgetUsd, setBudgetUsd] = useState('');
@@ -99,7 +98,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     const catalog = reloadModels();
     let settings: Promise<void>;
     if (projectId === undefined) {
-      settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setAutoDistill(!!d.settings.autoDistill); setBudgetUsd(String(d.settings.monthlyModelBudgetMicrousd / 1000000)); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
+      settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setBudgetUsd(String(d.settings.monthlyModelBudgetMicrousd / 1000000)); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
       void apiJson<{ connection: GatewayConnection }>('/api/models/connection', { signal: reads.signal }).then((d) => { if (!live || gatewayGeneration.current !== generation) return; setGatewayId(d.connection.gatewayId ?? ''); setGatewayAlias(d.connection.alias); setAllowGateway(false); }).catch((err: unknown) => { if (live && gatewayGeneration.current === generation) setGatewayNote(err instanceof Error ? err.message : 'Gateway connection status unavailable.'); });
     } else {
       const pid = projectId;
@@ -122,7 +121,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
         if (microBig > BigInt(Number.MAX_SAFE_INTEGER)) { setNote('Enter a non-negative budget in USD.'); return; }
         const micro = Number(microBig);
         if (answerModel === '') { setNote('Choose an answer model.'); return; }
-        await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel, distillModel, autoDistill, monthlyModelBudgetMicrousd: micro }) });
+        await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel, distillModel, monthlyModelBudgetMicrousd: micro }) });
       } else {
         await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instructions, answerModel: useGlobal ? null : answerModel }) });
       }
@@ -212,10 +211,6 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
         <ModelPicker label='Understanding model' choices={modelChoices} value={distillModel} onChange={selectDistillModel}
           loading={modelsLoading || gatewaySaving} error={modelsError} />
         {catalogWarnings}
-        <label className='er-models__check'>
-          <input type='checkbox' checked={autoDistill} onChange={(e) => setAutoDistill(e.currentTarget.checked)} />
-          <span className='er-models__checktext'>Understand new sources automatically<span className='er-models__help'>Two bounded calls per revision.</span></span>
-        </label>
         <label className='er-models__row'>
           <span className='er-models__label'>Monthly budget (USD)</span>
           <input inputMode='decimal' value={budgetUsd} onChange={(e) => setBudgetUsd(e.currentTarget.value)} />

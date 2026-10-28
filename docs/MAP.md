@@ -197,11 +197,12 @@ re-distilled automatically.
 
 **Build**
 
-1. Apply `migrations/0003_distill.sql`; add `DistillWorkflow`, scheduler and quote/number verification.
-2. Ingest queues a readable revision once only when auto-distill is enabled and no completed artifact exists.
-3. The scheduler admits queued revisions only while concurrency and the shared monthly dollar budget allow. Budget-
-   blocked work is visibly `paused`; stale `running` rows reconcile against deterministic Workflow IDs. An explicit
-   Understand request schedules only its requested revision.
+1. Apply `migrations/0003_distill.sql` and `0007_manual_understanding.sql`; add `DistillWorkflow` and quote/number verification.
+2. Ingest makes a revision readable without queueing understanding. Understand explicitly requests one revision;
+   unchanged completed or partial output is returned without another model call.
+3. Admit only the explicitly requested revision while concurrency and the shared monthly dollar budget allow. Budget-
+   blocked work is visibly `paused` until another explicit request. Cron only reconciles stale `running` rows against
+   deterministic Workflow IDs; it never admits queued revisions.
 4. Use at most two bounded calls: labelled canonical text produces guide and candidate claims; code verifies
    quotes/ranges/numbers; the second call receives only verified material and produces digest/glossary. Store raw
    output/report in R2 and compact claims in D1. Paid calls do not retry.
@@ -307,7 +308,7 @@ reading routes and owner-requested Wiki pages. Source changes stale only depende
 
 **Build**
 
-1. `ProjectKnowledgeWorkflow` starts after a completed distillation batch or explicit Refresh.
+1. `ProjectKnowledgeWorkflow` starts only on explicit Refresh.
 2. Assign new sources to at most 12 topics using guide + verified claims. Reuse existing topics where possible.
 3. Build comparison candidates by code: NFKC/lowercase normalization, parsed numeric value/unit, dataset and condition
    compatibility. Use one bounded semantic grouping call only for unmatched EN/RU synonyms; never compare incompatible

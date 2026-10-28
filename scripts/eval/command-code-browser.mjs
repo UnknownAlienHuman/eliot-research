@@ -168,7 +168,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
     const emptyContext = await contextFor({ width: 390, height: 844 }, async (route, endpoint, method) => {
       if (endpoint === '/api/settings' && method === 'PUT') {
         const body = route.request().postDataJSON();
-        assert.deepEqual(body, { answerModel: target463.route, distillModel: FLASH, autoDistill: !!before.settings.autoDistill,
+        assert.deepEqual(body, { answerModel: target463.route, distillModel: FLASH,
           monthlyModelBudgetMicrousd: before.settings.monthlyModelBudgetMicrousd });
         report.requests.interceptedSettingsPuts++; savedAnswer = body.answerModel;
         await json(route, fixtureSettings(savedAnswer)); return true;
