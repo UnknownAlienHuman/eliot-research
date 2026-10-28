@@ -1,5 +1,5 @@
 /* K2 Ask chat/studio views. Material tokens only; preserve the existing family. */
-.er-chat { display: flex; flex-direction: column; gap: var(--eliot-space-panel); min-width: 0; min-height: 0; block-size: 100%; color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family); font-size: var(--eliot-type-body-medium-size); line-height: var(--eliot-type-body-medium-line-height); }
+ .er-chat { display: flex; flex-direction: column; gap: var(--eliot-space-panel); min-width: 0; min-height: 0; block-size: auto; min-block-size: 100%; color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family); font-size: var(--eliot-type-body-medium-size); line-height: var(--eliot-type-body-medium-line-height); }
 .er-chat__head { display: grid; gap: var(--eliot-space-block-control); justify-items: start; min-width: 0; }
 .er-chat__title { margin: 0; color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family-display); font-size: var(--eliot-type-title-large-size); line-height: var(--eliot-type-title-large-line-height); font-weight: var(--eliot-type-font-weight-regular); letter-spacing: var(--eliot-type-letter-spacing-headline); }
 .er-chat__connection { margin: 0; max-width: var(--eliot-type-reading-measure); color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); line-height: var(--eliot-type-body-small-line-height); }
@@ -13,7 +13,7 @@
 .er-chat__sources { display: grid; gap: var(--eliot-space-tight); margin: 0; padding: 0; list-style: none; min-width: 0; }
 .er-chat__sources label { display: flex; align-items: center; gap: var(--eliot-space-gutter); min-height: var(--eliot-size-control); overflow-wrap: anywhere; }
 .er-chat__model { display: grid; gap: var(--eliot-space-tight); justify-items: stretch; inline-size: 100%; max-width: var(--eliot-type-reading-measure); }
-.er-chat__turns { display: grid; flex: 1 1 auto; gap: var(--eliot-space-panel); min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0; padding: 0; list-style: none; min-width: 0; }
+ .er-chat__turns { display: grid; flex: none; gap: var(--eliot-space-panel); min-height: 0; overflow: visible; margin: 0; padding: 0; list-style: none; min-width: 0; }
 .er-chat__turn { display: grid; gap: var(--eliot-space-block-control); min-width: 0; padding-block: var(--eliot-space-panel); }
 .er-chat__turn + .er-chat__turn { border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); }
 .er-chat__question { margin: 0; justify-self: end; max-inline-size: min(100%, 85%); padding: var(--eliot-space-gutter) var(--eliot-space-group); border-radius: var(--eliot-shape-large-increased) var(--eliot-shape-large-increased) var(--eliot-shape-extra-small) var(--eliot-shape-large-increased); background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); font-size: var(--eliot-type-body-large-size); overflow-wrap: anywhere; }
@@ -30,7 +30,7 @@
 .er-chat__cites { display: grid; gap: var(--eliot-space-tight); margin: 0; padding: var(--eliot-space-panel) var(--eliot-space-group); border-radius: var(--eliot-shape-large); background: var(--eliot-color-group); list-style: none; min-width: 0; }
 .er-chat__cite { min-width: 0; overflow-wrap: anywhere; }
 .er-chat__actions { display: flex; flex-wrap: wrap; gap: var(--eliot-space-block-control); min-height: var(--eliot-size-control); }
-.er-chat__composer { display: grid; gap: var(--eliot-space-block-control); justify-items: start; position: sticky; bottom: 0; z-index: 1; inline-size: 100%; padding-block: var(--eliot-space-panel); border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface); }
+ .er-chat__composer { display: grid; gap: var(--eliot-space-block-control); justify-items: start; position: static; inline-size: 100%; padding-block: var(--eliot-space-panel); border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface); }
 .er-chat__asklabel { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .er-chat__composer textarea { inline-size: 100%; max-width: var(--eliot-type-reading-measure); }
 .er-chat__pages { display: grid; gap: var(--eliot-space-tight); margin: 0; padding: 0; list-style: none; min-width: 0; }
