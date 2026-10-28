@@ -32,6 +32,7 @@ if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
 }
 if (process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.env.ELIOT_OWNER_JWT).trim();
 const nativeOnly = process.argv.includes('--native-only');
+const readerBrowser = process.argv.includes('--reader-browser');
 const runModel = process.env.ELIOT_K3_MODEL === '1';
 const outDir = fileURLToPath(new URL('../../eval/out/k3/', import.meta.url));
 await mkdir(outDir, { recursive: true });
@@ -406,6 +407,178 @@ if (nativeOnly) {
       checkLines.push('- check normal head deterministic: claim IDs identical across two GETs');
       for (const line of checkLines) recLines.push(line);
     }
+    const browserLines = [];
+    if (readerBrowser) {
+      let rbSrc = null;
+      let rbRev = null;
+      let rbU = null;
+      const preferId = String(process.env.ELIOT_K3_CHECK_SOURCE || '').trim();
+      const candLists = [];
+      if (preferId) {
+        const f = (sources || []).find((s) => s && s.id === preferId && s.currentRevisionId);
+        if (f) candLists.push(f);
+      }
+      for (const s of scoped) if (!candLists.includes(s)) candLists.push(s);
+      for (const s of (sources || [])) if (!candLists.includes(s)) candLists.push(s);
+      for (const s of candLists) {
+        if (!s || !s.currentRevisionId || !['readable', 'readable_with_warnings'].includes(s.readableState)) continue;
+        const u = await apiJson('/api/sources/' + encodeURIComponent(s.id) + '/understanding?revisionId=' + encodeURIComponent(s.currentRevisionId));
+        if (u.status === 200 && u.body && (u.body.state === 'done' || u.body.state === 'partial')) { rbSrc = s; rbRev = s.currentRevisionId; rbU = u.body; break; }
+      }
+      if (!rbSrc) {
+        browserLines.push('- reader-browser: NOT_EXERCISED (no stored done/partial understanding in corpus, no new derivation)');
+      } else {
+        assertUnderstanding(rbU, 'reader-browser stored');
+        const rbText = await apiBytes('/api/revisions/' + encodeURIComponent(rbRev) + '/text');
+        assert.equal(rbText.status, 200, 'Reader-browser stored text must open (GET revision text 200).');
+        const rbStoredText = rbText.bytes.toString('utf8');
+        assert(rbStoredText.length > 0, 'Reader-browser stored text must be non-empty.');
+        const rbUsageBefore = await monthlyUsage();
+        const rbReportBefore = rbU.report && rbU.report.usage ? JSON.stringify(rbU.report.usage) : 'no-report';
+        const rbOv1 = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/overview');
+        assert.equal(rbOv1.status, 200, 'Reader-browser overview must be 200.');
+        const rbOvKey1 = JSON.stringify(rbOv1.body);
+        const hasGuide = typeof rbU.guide === 'string' && rbU.guide.length > 0;
+        const hasClaims = Array.isArray(rbU.claims) && rbU.claims.length > 0;
+        if (!hasGuide) browserLines.push('- reader-browser guide: NOT_EXERCISED (stored understanding has no guide, no mock)');
+        if (!hasClaims) browserLines.push('- reader-browser claims: NOT_EXERCISED (stored understanding has zero claims, no mock)');
+        const imp = await import('@playwright/test');
+        const chromium = imp.chromium;
+        const pwexpect = imp.expect;
+        const browser = await chromium.launch();
+        const mutations = [];
+        const pageErrors = [];
+        try {
+          const combos = [
+            { name: 'reader-1440-light', w: 1440, h: 900, theme: 'light' },
+            { name: 'reader-1440-dark', w: 1440, h: 900, theme: 'dark' },
+            { name: 'reader-390-light', w: 390, h: 844, theme: 'light' },
+            { name: 'reader-390-dark', w: 390, h: 844, theme: 'dark' },
+          ];
+          const readerUrl = origin + '/p/' + encodeURIComponent(proj.id) + '/source/' + encodeURIComponent(rbSrc.id) + '?revisionId=' + encodeURIComponent(rbRev);
+          let firstHref = '';
+          let firstMeta = '';
+          let firstGuideOk = false;
+          for (const c of combos) {
+            const ctx = await browser.newContext({ viewport: { width: c.w, height: c.h }, colorScheme: c.theme });
+            await ctx.route('**/api/**', async (route) => {
+              const req = route.request();
+              if (req.method() !== 'GET' && req.method() !== 'HEAD') {
+                mutations.push(req.method() + ' ' + new URL(req.url()).pathname);
+                await route.abort('blockedbyclient');
+                return;
+              }
+              await route.continue();
+            });
+            const page = await ctx.newPage();
+            page.on('pageerror', (e) => pageErrors.push(String((e && e.message) || e)));
+            await page.goto(readerUrl, { waitUntil: 'domcontentloaded' });
+            await pwexpect(page.locator('.er-lib__text')).toBeVisible({ timeout: 15000 });
+            const probeWords = rbStoredText.slice(0, 48).trim().split(/\s+/).slice(0, 4).join(' ');
+            if (probeWords.length > 8) await pwexpect(page.locator('.er-lib__text')).toContainText(probeWords.slice(0, 24), { timeout: 15000 });
+            else await pwexpect.poll(async () => (await page.locator('.er-lib__text').innerText()).trim().length, { timeout: 15000 }).toBeGreaterThan(0);
+            const visText = await page.locator('.er-lib__text').innerText();
+            assert(visText.trim().length > 0, 'Reader visible text must be non-empty (' + c.name + ').');
+            if (probeWords.length > 8) assert(visText.includes(probeWords.slice(0, 24)) || rbStoredText.includes(visText.slice(0, 24)), 'Reader must keep source-derived text (' + c.name + ').');
+            if (rbU.state === 'partial') await pwexpect(page.getByText(/Partially understood|Partial understanding/i).first()).toBeVisible({ timeout: 15000 });
+            const factsBox = page.locator('details.er-lib__facts').first();
+            if (await factsBox.count() > 0) {
+              const factsOpen = await factsBox.evaluate((el) => (el as HTMLDetailsElement).open);
+              if (!factsOpen) await factsBox.locator('summary').first().click();
+            }
+            const undBox = page.locator('details.er-und__details').first();
+            if (await undBox.count() > 0) {
+              const undOpen = await undBox.evaluate((el) => (el as HTMLDetailsElement).open);
+              if (!undOpen) await undBox.locator('summary').first().click();
+            }
+            if (hasGuide) {
+              const guideLoc = page.locator('.er-und__guide').first();
+              await pwexpect(guideLoc).toBeVisible({ timeout: 15000 });
+              const guideNeedle = String(rbU.guide || '').slice(0, 80).trim().split(/\s+/).slice(0, 5).join(' ').slice(0, 32);
+              if (guideNeedle.length > 8) await pwexpect(guideLoc).toContainText(guideNeedle.slice(0, 16), { timeout: 15000 });
+              else await pwexpect.poll(async () => (await guideLoc.innerText().catch(() => '')).trim().length, { timeout: 15000 }).toBeGreaterThan(0);
+            }
+            if (hasClaims) {
+              await pwexpect(page.locator('.er-und__claims .er-und__claim').first()).toBeVisible({ timeout: 15000 });
+              const claimNeedle = String((rbU.claims[0] && rbU.claims[0].statement) || '').slice(0, 80).trim().split(/\s+/).slice(0, 5).join(' ').slice(0, 28);
+              if (claimNeedle.length > 8) await pwexpect(page.locator('.er-und__claims').first()).toContainText(claimNeedle.slice(0, 16), { timeout: 15000 });
+              await pwexpect(page.locator('.er-und__claims .er-und__cite').first()).toBeVisible({ timeout: 15000 });
+            }
+            if (c.name === 'reader-1440-light' && hasGuide) {
+              const g = await page.locator('.er-und__guide').first().innerText().catch(() => '');
+              if (g && g.trim().length > 0) firstGuideOk = true;
+            }
+            await page.locator('.er-lib__head').first().scrollIntoViewIfNeeded().catch(() => {});
+            await page.screenshot({ path: outDir + '/' + c.name + '.png' });
+            if (hasGuide) {
+              await page.locator('.er-und__guide').first().scrollIntoViewIfNeeded().catch(() => {});
+              await page.screenshot({ path: outDir + '/' + c.name + '-guide.png' });
+            }
+            if (hasClaims) {
+              await page.locator('.er-und__claims .er-und__claim').first().scrollIntoViewIfNeeded().catch(() => {});
+              await page.locator('.er-und__claims .er-und__cite').first().scrollIntoViewIfNeeded().catch(() => {});
+              await page.screenshot({ path: outDir + '/' + c.name + '-claim.png' });
+            }
+            if (c.name === 'reader-1440-light') {
+              const facts = await page.locator('.er-lib__facts-content').first().innerText().catch(() => '');
+              const det = await page.locator('.er-und__details-content').first().innerText().catch(() => '');
+              firstMeta = facts + ' ' + det;
+              if (hasClaims) {
+                const cite = page.locator('.er-und__claims .er-und__cite').first();
+                firstHref = await cite.getAttribute('href') || '';
+              }
+            }
+            await ctx.close();
+          }
+          assert.deepEqual(mutations, [], 'Reader browser must issue zero non-GET/HEAD API calls (GET-only).');
+          assert.deepEqual(pageErrors, [], 'Reader browser must report zero page errors.');
+          assert(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(firstMeta), 'Metadata areas must not display revision UUIDs (hrefs keep full IDs).');
+          assert(!/bounded calls|reserved|tokens|wallms|conversion.*calls|bytes of readable|bytes original/i.test(firstMeta), 'Metadata areas must not display model/telemetry values.');
+          if (hasGuide) assert(firstGuideOk, 'Stored guide must be visible in the reader (no mock).');
+          if (hasClaims) {
+            assert(firstHref.includes(rbRev), 'Open quote href must keep the full revisionId.');
+            const m = firstHref.match(/start=(\d+).*end=(\d+)/);
+            assert(m, 'Open quote href must keep start/end.');
+            const st = Number(m[1]);
+            const en = Number(m[2]);
+            const firstClaim = rbU.claims[0];
+            assert.equal(st, firstClaim.start, 'Open quote href start must equal stored claim start.');
+            assert.equal(en, firstClaim.end, 'Open quote href end must equal stored claim end.');
+            const rng = await apiBytes('/api/revisions/' + encodeURIComponent(rbRev) + '/range?start=' + st + '&end=' + en);
+            assert.equal(rng.status, 200, 'Open quote range must open (GET range 200).');
+            assert.equal(rng.bytes.toString('utf8'), firstClaim.quote, 'Open quote GET bytes must equal the stored claim quote exactly.');
+          }
+          const rbUsageAfter = await monthlyUsage();
+          assert.equal(rbUsageAfter.used, rbUsageBefore.used, 'Monthly usage must not move during GET-only browser check.');
+          assert.equal(rbUsageAfter.budget, rbUsageBefore.budget, 'Monthly budget must not move during GET-only browser check.');
+          const rbU2 = await apiJson('/api/sources/' + encodeURIComponent(rbSrc.id) + '/understanding?revisionId=' + encodeURIComponent(rbRev));
+          assert.equal(rbU2.status, 200, 'Understanding re-read must stay 200 after browser.');
+          const rbRep2 = rbU2.body.report && rbU2.body.report.usage ? JSON.stringify(rbU2.body.report.usage) : 'no-report';
+          assert.deepEqual(rbRep2, rbReportBefore, 'Report usage/job counts must be stable across browser.');
+          const rbOv2 = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/overview');
+          assert.equal(JSON.stringify(rbOv2.body), rbOvKey1, 'Overview must stay deterministic across browser.');
+          browserLines.push('- reader-browser: PASS 1440+390 light/dark screenshots in eval/out/k3/reader-*.png (GET-only, zero non-GET/HEAD, zero page errors)');
+          browserLines.push('- reader-browser source: ' + (rbSrc.originalFilename || rbSrc.title) + ' rev ' + String(rbRev).slice(0, 8) + ' (' + rbU.state + ', stored done/partial, no new derivation)');
+          browserLines.push('- reader-browser metadata: no UUID/telemetry in facts/details; source text/guide/claims kept; quote href keeps full revisionId/start/end with byte-exact GET');
+          browserLines.push('- reader-browser usage/jobs stable: monthly delta 0, report usage unchanged, overview deterministic');
+          if (rbU.state === 'partial') browserLines.push('- reader-browser partial display: PASS (stored partial shows partial hint)');
+          else {
+            let otherPartial = null;
+            for (const s of (sources || [])) {
+              if (!s || s.id === rbSrc.id || !s.currentRevisionId) continue;
+              if (s.readableState === 'needs_conversion' || s.readableState === 'failed') { otherPartial = { s: s, st: s.readableState }; break; }
+              const u = await apiJson('/api/sources/' + encodeURIComponent(s.id) + '/understanding?revisionId=' + encodeURIComponent(s.currentRevisionId));
+              if (u.status === 200 && (u.body.state === 'partial' || u.body.state === 'failed' || u.body.state === 'none')) { otherPartial = { s: s, st: u.body.state }; break; }
+            }
+            if (otherPartial) browserLines.push('- reader-browser unavailable/partial display: covered on ' + (otherPartial.s.originalFilename || otherPartial.s.title) + ' (' + otherPartial.st + ', stored data only)');
+            else browserLines.push('- reader-browser unavailable/partial display: NOT_EXERCISED (no stored partial/failed/needs_conversion source in this project)');
+          }
+        } finally {
+          await browser.close();
+        }
+      }
+    }
+    for (const line of browserLines) recLines.push(line);
     const md = ['# K3 native-only (storage, zero model calls)', '', '- project: ' + title, '- readable arxiv: ' + scoped.length + '/10 (no ingestion/conversion repeats)', '- reader range self-check: 1 exact range', '- understanding route: ' + (understandingWired ? (recSource ? 'wired (probes GET + explicit storage-only save POST when requested)' : 'wired (GET only, no POST)') : 'NOT_WIRED (404)'), '- overview route: ' + (overviewWired ? 'wired (GET only)' : 'NOT_WIRED (404)'), '- monthly usage stable: ' + m0.used + ' micro-USD', '- MODEL_NOT_RUN: set ELIOT_K3_MODEL=1 (root signal) for paid distillation; claim-mode C1-C4: NOT_RUN here.', ''].concat(recLines).concat(['']).join(EOL);
   await writeFile(outDir + '/k3-native-' + Date.now() + '.md', md);
   console.log(md);

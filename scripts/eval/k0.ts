@@ -93,13 +93,14 @@ try {
       const filename = `projects-${width}-${theme}.png`;
       await page.screenshot({ path: fileURLToPath(new URL(filename, output)), fullPage: true });
       screenshots.push(filename);
-      await page.locator('nav a[href="/settings"]').filter({ visible: true }).click();
+      const primaryNavigation = page.getByRole("navigation", { name: "Primary", exact: true });
+      await primaryNavigation.locator('a[href="/settings"]').filter({ visible: true }).click();
       await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
       await page.reload();
       await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-      const nav = await page.locator("nav").boundingBox();
+      const nav = await primaryNavigation.boundingBox();
       assert(nav && (width === 390 ? nav.y > 700 : nav.x < 100), "Rail/bottom navigation geometry changed.");
-      const settings = await page.locator('nav a[href="/settings"]').boundingBox();
+      const settings = await primaryNavigation.locator('a[href="/settings"]').boundingBox();
       assert(settings && settings.width >= 48 && settings.height >= 48, "Navigation touch targets must be at least 48px.");
       await page.locator('summary[aria-label="Appearance"]').click();
       await page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true }).selectOption(theme === "light" ? "dark" : "light");
