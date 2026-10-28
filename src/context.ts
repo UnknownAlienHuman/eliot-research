@@ -12,7 +12,13 @@ export interface ContextModel {
 export interface ContextHistoryTurn {
   role: "user" | "assistant";
   content: string;
-  /** Actual resolved citation revision IDs for this answer, not the turn's full source scope. The caller populates these from resolved citations; an assistant answer citing any revision outside the frozen scope is dropped with its user question. */
+  /** Private caller identity survives history selection, never source evidence. */
+  turnId?: string;
+  /** Full wire message cost, including private reasoning, when replay is required. */
+  wireTokens?: number;
+  /** User: the prior turn's full ordered revision scope, required for private wire replay
+   * and retained only as a prefix of the current frozen order so compact aliases stay stable.
+   * Assistant: actual resolved citation revisions, used to select reusable public text. */
   revisionIds?: string[];
 }
 export interface ContextInput {
@@ -28,6 +34,7 @@ export interface ContextInput {
 export interface ContextMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  turnId?: string;
 }
 export interface ContextResult {
   mode: "whole" | "claims" | "none";
@@ -130,7 +137,8 @@ function selectHistory(
   frozen: Set<string>,
   budget: number,
 ): { messages: ContextMessage[]; tokens: number } {
-  const exchanges: ContextMessage[][] = [];
+  const exchanges: { messages: ContextMessage[]; tokens: number }[] = [];
+  const orderedFrozen = [...frozen];
   const turns = history ?? [];
   for (let i = 0; i < turns.length;) {
     const user = turns[i];
@@ -138,29 +146,31 @@ function selectHistory(
     const assistant = turns[i + 1];
     if (!assistant || assistant.role !== "assistant") {
       const content = stripLabels(user.content).trim();
-      if (content) exchanges.push([{ role: "user", content }]);
+      if (content) exchanges.push({ messages: [{ role: "user", content }], tokens: estimateTokens(content) });
       i += 1;
       continue;
     }
     i += 2;
+    if (assistant.wireTokens !== undefined && (user.revisionIds === undefined
+      || user.revisionIds.some((id, index) => !frozen.has(id) || orderedFrozen[index] !== id))) continue;
     if ((assistant.revisionIds ?? []).some((id) => !frozen.has(id))) continue;
     const userContent = stripLabels(user.content).trim();
     const assistantContent = stripLabels(assistant.content).trim();
     if (!userContent || !assistantContent) continue;
-    exchanges.push([
+    const messages: ContextMessage[] = [
       { role: "user", content: userContent },
-      { role: "assistant", content: assistantContent },
-    ]);
+      { role: "assistant", content: assistantContent, ...(assistant.turnId ? { turnId: assistant.turnId } : {}) },
+    ];
+    exchanges.push({ messages, tokens: estimateTokens(userContent) + Math.max(estimateTokens(assistantContent), assistant.wireTokens ?? 0) });
   }
   const picked: ContextMessage[] = [];
   let used = 0;
   for (let i = exchanges.length - 1; i >= 0; i--) {
     const exchange = exchanges[i];
     if (!exchange) continue;
-    const cost = exchange.reduce((sum, turn) => sum + estimateTokens(turn.content), 0);
-    if (used + cost > budget) break;
-    used += cost;
-    picked.unshift(...exchange);
+    if (used + exchange.tokens > budget) break;
+    used += exchange.tokens;
+    picked.unshift(...exchange.messages);
   }
   return { messages: picked, tokens: used };
 }
@@ -354,12 +364,13 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
 
   const cap = Math.min(Math.floor(contextTokens * 0.6), WHOLE_CAP);
   const systemTokens = estimateTokens(SYSTEM_PROMPT);
+  const scopePolicyTokens = frozen.length === 0 ? estimateTokens(NONE_SCOPE_POLICY) : 0;
   const callerTokens = estimateTokens(input.question ?? "") + estimateTokens(input.instructions ?? "");
-  if (systemTokens + callerTokens + maxOutputTokens > cap) {
+  if (systemTokens + scopePolicyTokens + callerTokens + maxOutputTokens > cap) {
     throw new LibraryError("invalid", NARROW_SCOPE, 400);
   }
   const frozenSet = new Set(frozen.map((entry) => entry.revisionId));
-  const historyBudget = Math.min(Math.floor(contextTokens * 0.1), cap - maxOutputTokens - systemTokens - callerTokens);
+  const historyBudget = Math.min(Math.floor(contextTokens * 0.1), cap - maxOutputTokens - systemTokens - scopePolicyTokens - callerTokens);
   const history = selectHistory(input.history, frozenSet, Math.max(0, historyBudget));
   let knownBytes = 0;
   for (const entry of frozen) {
@@ -377,7 +388,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
         { role: "system", content: NONE_SCOPE_POLICY },
         ...history.messages,
       ],
-      estimatedInputTokens: systemTokens + estimateTokens(NONE_SCOPE_POLICY) + history.tokens,
+      estimatedInputTokens: systemTokens + scopePolicyTokens + history.tokens,
     };
   }
 

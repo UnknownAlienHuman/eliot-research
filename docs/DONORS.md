@@ -92,9 +92,14 @@ selected official-pricing read have the limited evidence in IMPLEMENTATION §11.
 `packages/agents/src/models/core/transport.ts` from the registered Agents pin below (MIT): receiver-bound `AI.fetch`,
 provider-native path, raw body, headers, method and signal. No SDK retry/resume framework is copied. The retained
 universal attempt failed; the separate native-path caller smoke passed, without model-quality acceptance.
-The same OpenCodex pin's `src/adapters/openai-chat/messages.ts` and `reasoning-replay.ts` supply only the blank
-missing-reasoning wire marker for CC assistant history. Cache/TTL, model-family lists, thought storage and replay
-orchestration are discarded; the original history is not mutated and no failed call is retried.
+The same OpenCodex pin's `src/adapters/openai-chat.ts`, `src/adapters/openai-chat/response-events.ts` and
+`src/adapters/openai-chat/messages.ts` supply the narrow provider-field parsing and typed assistant serialization
+mechanisms for CC history. Eliot persists actual wire state privately in its existing ChatAgent SQLite storage and
+replays it unchanged after reload. The installed AI SDK supplies raw JSON chunks and SSE parsing; Eliot assembles
+only the provider fields needed by the next request. OpenCodex does not supply a complete durable Beam replay implementation.
+Its DeepSeek-only replay policy, fabricated blank marker, process-memory cache/TTL, tool-call-ID capture and
+CLI `/alpha/generate` protocol are discarded. Missing original protocol state requires visible recovery without a
+model call; no model-family list, proxy platform or replay framework is imported.
 No local proxy/backend, cache/registry, model-selection policy/default seed or vendored/cross-provider pricing is
 imported; missing prices stay null. Picker interaction/layout retains the approved legacy MIT pin and paths above,
 with provider/native-ID pair identity and dynamic API data instead of legacy qualification/admin layers.

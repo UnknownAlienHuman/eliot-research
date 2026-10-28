@@ -184,12 +184,20 @@ PATCH/GET preserved the canonical choice without changing defaults/Gateway. The 
 HTTP 502 and remains retained. A separate provider-native Beam caller smoke completed in 3,843 ms with 415/0/134
 tokens and zero estimated cost; its one-turn manifest cannot redispatch. This **CALLER_SMOKE_PASS** does not close
 K2/K3 quality or deployment gates; 0006's 75-case SQL proof is a separate config result.
-The subsequent Beam corpus run passed C1, then stopped at C2 HTTP 400 without retry. A narrow donor history marker
-and capability-selected text streaming were checked separately: new C2/C3 turns completed, while C4 stayed partial
+The subsequent Beam corpus run passed C1, then stopped at C2 HTTP 400 without retry. The former fabricated history
+marker is withdrawn in favour of private durable capture and unchanged replay of actual assistant protocol fields;
+legacy missing state requires a new chat before any call. Capability-selected text streaming was checked separately:
+new C2/C3 turns completed under the former workaround, while C4 stayed partial
 because it supplied no citations. Failed/interrupted turns remain retained; O1–O8 on Beam and owner acceptance stay open.
 The retained local Muse run completed C1–C4 with valid labels, but O1/O2 stopped at `length` and remained partial.
 An immutable build of published `main` then failed O3 with unknown usage, retaining its 106,496 micro-USD reservation.
 No failed turn was auto-retried; complete K2 quality, remaining open questions and owner acceptance are unqualified.
+The 2026-10-27 local protocol correction passes the full local check (266 tests), including SQLite reload/replay and
+uncited-answer regressions. A stored-only revalidation under the current coverage gate qualifies C1/C2 only;
+C3/C4 and O1–O8 remain NOT_REVALIDATED. It made no model calls and does not qualify live provider or owner acceptance.
+The separate real Beam C1 protocol attempt returned external HTTP 503 in 1,440 ms. One request was dispatched; no
+retry or second turn followed. Token usage is unknown, estimate zero; no private wire was captured. Failed-state
+persistence after an actual restart passed, but successful reasoning replay and full K2 quality remain open.
 
 **Hard acceptance — `pnpm eval k2`**
 

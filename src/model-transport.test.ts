@@ -6,7 +6,8 @@ vi.mock("agents/models/ai-sdk", () => ({ createAI: vi.fn() }));
 
 import { createAI } from "agents/models/ai-sdk";
 import type * as agentsSdk from "agents/models/ai-sdk";
-import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
+import { AssistantWireCapture, modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
+import type { AssistantWire } from "./model-transport";
 import { Output, streamText } from "ai";
 import type { LanguageModelUsage } from "ai";
 import { z } from "zod";
@@ -244,6 +245,16 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
   function sse(chunks: string[]) {
     return chunks.map((c) => "data: " + c + "\n\n").join("") + "data: [DONE]\n\n";
   }
+  function fragmentedSse(chunks: string[]) {
+    const bytes = new TextEncoder().encode(sse(chunks));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+        controller.close();
+      },
+    });
+    return new Response(body, { headers: { "content-type": "text/event-stream" } });
+  }
   function chunk(delta: unknown, finish: string | null, usage?: unknown) {
     return JSON.stringify({ id: "t1", object: "chat.completion.chunk", created: 1, model: "fake",
       choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) });
@@ -261,11 +272,18 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     };
     return { binding: { fetch: fakeFetch }, wire };
   }
-  function runStructured(model: unknown, abortSignal?: AbortSignal) {
+  function rawCapture(capture: AssistantWireCapture) {
+    return { include: { rawChunks: true },
+      onChunk: ({ chunk }: { chunk: { type: string; rawValue?: unknown } }) => {
+        if (chunk.type === "raw") capture.push(chunk.rawValue);
+      } };
+  }
+  function runStructured(model: unknown, abortSignal?: AbortSignal, onError?: (event: { error: unknown }) => void,
+    capture?: AssistantWireCapture) {
     return streamText({ model: model as Parameters<typeof streamText>[0]["model"],
       output: Output.object({ schema, name: "cited_answer" }),
       instructions: "rules", messages: [{ role: "user", content: "hi" }],
-      maxOutputTokens: 64, maxRetries: 0, ...(abortSignal ? { abortSignal } : {}) });
+      maxOutputTokens: 64, maxRetries: 0, ...(abortSignal ? { abortSignal } : {}), ...(onError ? { onError } : {}), ...(capture ? rawCapture(capture) : {}) });
   }
   function sentBody(wire: { init?: { body?: unknown } }) {
     return JSON.parse(String(wire.init?.body)) as { model?: unknown; provider?: unknown; reasoning?: unknown; response_format?: unknown; messages?: Array<{ role?: unknown; content?: unknown }> };
@@ -281,14 +299,17 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     expect(headers["cf-aig-collect-log"]).toBe("false");
   }
 
-  function fakeCommandCode(response: Response) {
-    const fetch = vi.fn().mockResolvedValue(response);
+  function fakeCommandCode(response: Response, afterDispatch?: () => void) {
+    const fetch = vi.fn(async (..._args: unknown[]) => {
+      afterDispatch?.();
+      return response;
+    });
     const gateway = vi.fn(), run = vi.fn(), catalogRun = vi.fn();
     const binding = { fetch, gateway, run: catalogRun } as unknown as Env["AI"];
     return { binding, gateway, run, fetch, catalogRun };
   }
-  const commandCodeModel = (binding: Env["AI"]) => resolveModelTransport(
-    { AI: binding, DB: makeEnv("my-gw").env.DB }, COMMAND_CODE, "cc-session");
+  const commandCodeModel = (binding: Env["AI"], assistantHistory?: AssistantWire[]) => resolveModelTransport(
+    { AI: binding, DB: makeEnv("my-gw").env.DB }, COMMAND_CODE, "cc-session", assistantHistory);
 
   it("uses one keyless custom-provider request with the native id and local JSON validation", async () => {
     createAIMock.mockClear();
@@ -304,6 +325,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     expect((await result.totalUsage).inputTokens).toBe(10);
     expect((await result.totalUsage).outputTokens).toBeUndefined();
     expect(seen.fetch).toHaveBeenCalledTimes(1);
+    expect(seen.fetch.mock.contexts[0]).toBe(seen.binding);
     const url = seen.fetch.mock.calls[0]?.[0];
     expect(url).toBe('https://workers-binding.ai/ai-gateway/gateways/my-gw/custom-command-code/v1/chat/completions');
     const init = seen.fetch.mock.calls[0]?.[1] as { method?: unknown; headers?: unknown; body?: unknown };
@@ -321,12 +343,13 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     expect(seen.catalogRun).not.toHaveBeenCalled();
   });
 
-  it("marks bare assistant history with an empty protocol marker without touching the caller array", async () => {
+  it("does not fabricate missing reasoning fields for bare assistant history", async () => {
     await useRealSDK();
     const seen = fakeCommandCode(new Response(sse([
       chunk({ content: JSON.stringify({ sentences: ["ok"] }) }, "stop"),
     ]), { headers: { "content-type": "text/event-stream" } }));
-    const model = await commandCodeModel(seen.binding);
+    const capture = new AssistantWireCapture();
+    const model = await commandCodeModel(seen.binding, [{ content: "previous answer" }]);
     const history: Array<{ role: "user" | "assistant"; content: string }> = [
       { role: "user", content: "first" },
       { role: "assistant", content: "previous answer" },
@@ -334,14 +357,231 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     ];
     const frozen = JSON.parse(JSON.stringify(history)) as unknown;
     const result = streamText({ model: model as Parameters<typeof streamText>[0]["model"], messages: history,
-      output: Output.object({ schema: z.object({ sentences: z.array(z.string()) }) }), maxOutputTokens: 64, maxRetries: 0 });
+      output: Output.object({ schema: z.object({ sentences: z.array(z.string()) }) }), maxOutputTokens: 64, maxRetries: 0, ...rawCapture(capture) });
     await expect(result.output).resolves.toEqual({ sentences: ["ok"] });
     expect(seen.fetch).toHaveBeenCalledTimes(1);
     expect(history).toEqual(frozen);
     const sent = JSON.parse(String((seen.fetch.mock.calls[0]?.[1] as { body?: unknown }).body)) as { messages?: Array<Record<string, unknown>> };
     expect(sent.messages?.[0]).toEqual({ role: "user", content: "first" });
-    expect(sent.messages?.[1]).toEqual({ role: "assistant", content: "previous answer", reasoning_content: " " });
+    expect(sent.messages?.[1]).toEqual({ role: "assistant", content: "previous answer" });
+    expect(sent.messages?.[1]).not.toHaveProperty("reasoning_content");
+    expect(sent.messages?.[1]).not.toHaveProperty("reasoning");
+    expect(sent.messages?.[1]).not.toHaveProperty("reasoning_details");
     expect(sent.messages?.[2]).toEqual({ role: "user", content: "second" });
+    expect(capture.message()).toEqual({ content: '{"sentences":["ok"]}' });
+  });
+
+  it("replays captured assistant messages in order without rewriting opaque protocol fields", async () => {
+    await useRealSDK();
+    const seen = fakeCommandCode(new Response(sse([
+      chunk({ content: JSON.stringify({ sentences: ["current"] }) }, "stop"),
+    ]), { headers: { "content-type": "text/event-stream" } }));
+    const firstWire: AssistantWire = {
+      content: "first answer",
+      reasoning_content: "first reasoning",
+      reasoning_details: [{ id: "reason-1", index: 0, type: "reasoning.text", text: "first" }],
+    };
+    const secondWire: AssistantWire = {
+      content: "second answer",
+      reasoning: "second reasoning",
+      reasoning_details: [{ id: "opaque-2", index: 1, type: "reasoning.encrypted",
+        signature: "opaque-signature/+:keep", data: "opaque-data/+/==:keep" }],
+    };
+    const assistantHistory = [firstWire, secondWire];
+    const frozenHistory = JSON.stringify(assistantHistory);
+    const model = await commandCodeModel(seen.binding, assistantHistory);
+    const history = [
+      { role: "user" as const, content: "first question" },
+      { role: "assistant" as const, content: "first answer" },
+      { role: "user" as const, content: "second question" },
+      { role: "assistant" as const, content: "second answer" },
+      { role: "user" as const, content: "current question" },
+    ];
+    const result = streamText({ model: model as Parameters<typeof streamText>[0]["model"], messages: history,
+      output: Output.object({ schema }), maxOutputTokens: 64, maxRetries: 0 });
+    await expect(result.output).resolves.toEqual({ sentences: ["current"] });
+    await result.totalUsage;
+
+    expect(seen.fetch).toHaveBeenCalledTimes(1);
+    const init = seen.fetch.mock.calls[0]?.[1] as { body?: unknown } | undefined;
+    const sent = JSON.parse(String(init?.body)) as { messages?: Array<Record<string, unknown>> };
+    expect(sent.messages).toEqual([
+      { role: "user", content: "first question" },
+      { role: "assistant", ...firstWire },
+      { role: "user", content: "second question" },
+      { role: "assistant", ...secondWire },
+      { role: "user", content: "current question" },
+    ]);
+    expect(assistantHistory).toEqual(JSON.parse(frozenHistory) as AssistantWire[]);
+  });
+
+  it("captures raw content and actual reasoning fields across fragmented UTF-8 SSE", async () => {
+    await useRealSDK();
+    const rawContent = '{"sentences":["Привет, café 🧪"]}';
+    const seen = fakeCommandCode(fragmentedSse([
+      chunk({ role: "assistant", content: '{"sentences":["Привет, ', reasoning_content: "мысль ", reasoning: "reason " }, null),
+      chunk({ content: 'café 🧪"]}', reasoning_content: "задача 🧠", reasoning: "detail 🧭" }, "stop"),
+    ]));
+    const capture = new AssistantWireCapture();
+    const model = await commandCodeModel(seen.binding, []);
+    const result = runStructured(model, undefined, undefined, capture);
+    await expect(result.output).resolves.toEqual({ sentences: ["Привет, café 🧪"] });
+    await result.totalUsage;
+
+    expect(seen.fetch).toHaveBeenCalledTimes(1);
+    expect(capture.message()).toEqual({
+      content: rawContent,
+      reasoning_content: "мысль задача 🧠",
+      reasoning: "reason detail 🧭",
+    });
+  });
+
+  it("captures a clean assistant response as content-only when reasoning is absent", async () => {
+    await useRealSDK();
+    const rawContent = '{"sentences":["plain"]}';
+    const seen = fakeCommandCode(new Response(sse([
+      chunk({ role: "assistant", content: rawContent }, "stop"),
+    ]), { headers: { "content-type": "text/event-stream" } }));
+    const capture = new AssistantWireCapture();
+    const model = await commandCodeModel(seen.binding, []);
+    const result = runStructured(model, undefined, undefined, capture);
+    await expect(result.output).resolves.toEqual({ sentences: ["plain"] });
+    await result.totalUsage;
+
+    expect(capture.message()).toEqual({ content: rawContent });
+    expect(capture.message()).not.toHaveProperty("reasoning_content");
+    expect(capture.message()).not.toHaveProperty("reasoning");
+    expect(capture.message()).not.toHaveProperty("reasoning_details");
+    expect(seen.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("merges cumulative reasoning details by ID and index while preserving opaque signature and data", async () => {
+    await useRealSDK();
+    const rawContent = '{"sentences":["ok"]}';
+    const opaqueDetail = { id: "opaque-2", index: 1, type: "reasoning.encrypted",
+      signature: "opaque-signature/+:keep", data: "opaque-data/+/==:keep" };
+    const seen = fakeCommandCode(new Response(sse([
+      chunk({ role: "assistant", content: rawContent,
+        reasoning_details: [{ id: "reason-1", index: 0, type: "reasoning.text", text: "a" }, opaqueDetail] }, null),
+      chunk({ reasoning_details: [{ id: "reason-1", index: 0, type: "reasoning.text", text: "ab" }, opaqueDetail] }, null),
+      chunk({ reasoning_details: [{ index: 0, text: "ab" }] }, "stop"),
+    ]), { headers: { "content-type": "text/event-stream" } }));
+    const capture = new AssistantWireCapture();
+    const model = await commandCodeModel(seen.binding, []);
+    const result = runStructured(model, undefined, undefined, capture);
+    await expect(result.output).resolves.toEqual({ sentences: ["ok"] });
+    await result.totalUsage;
+
+    expect(capture.message()).toEqual({
+      content: rawContent,
+      reasoning_details: [
+        { id: "reason-1", index: 0, type: "reasoning.text", text: "ab" },
+        opaqueDetail,
+      ],
+    });
+    expect(capture.message()?.reasoning_details?.[0]).toMatchObject({ text: "ab" });
+    expect(capture.message()?.reasoning_details?.[1]).toEqual(opaqueDetail);
+    expect(seen.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a shorter incremental reasoning detail that matches the previous prefix", async () => {
+    const seen = fakeCommandCode(fragmentedSse([
+      chunk({ role: "assistant", content: '{"sentences":["ok"]}',
+        reasoning_details: [{ id: "detail-1", index: 0, type: "reasoning.text", text: "analysis" }] }, null),
+      chunk({ reasoning_details: [{ index: 0, text: "anal" }] }, "stop"),
+    ]));
+    const capture = new AssistantWireCapture();
+    const model = await commandCodeModel(seen.binding, []);
+    const result = runStructured(model, undefined, undefined, capture);
+    await expect(result.output).resolves.toEqual({ sentences: ["ok"] });
+    await result.totalUsage;
+    expect(capture.message()).toEqual({
+      content: '{"sentences":["ok"]}',
+      reasoning_details: [{ id: "detail-1", index: 0, type: "reasoning.text", text: "analysisanal" }],
+    });
+    expect(seen.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the SDK raw JSON hook without requiring a transport sentinel", async () => {
+    const rawContent = '{"sentences":["SDK owns framing"]}';
+    const seen = fakeCommandCode(new Response("data: " + chunk({ role: "assistant", content: rawContent }, "stop") + "\n\n",
+      { headers: { "content-type": "text/event-stream" } }));
+    const capture = new AssistantWireCapture();
+    const model = await commandCodeModel(seen.binding, []);
+    const result = runStructured(model, undefined, undefined, capture);
+    await expect(result.output).resolves.toEqual({ sentences: ["SDK owns framing"] });
+    expect(await result.finishReason).toBe("stop");
+    expect(capture.message()).toEqual({ content: rawContent });
+    expect(seen.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes AssistantWire only from valid finished SDK raw JSON", async () => {
+    await useRealSDK();
+    const rawContent = '{"sentences":["partial"]}';
+    const abortController = new AbortController();
+    const overLimitContent = JSON.stringify({ sentences: ["ok"], padding: "x".repeat(1024 * 1024) });
+    const cases: Array<{ name: string; response: Response; signal?: AbortSignal; afterDispatch?: () => void }> = [
+      {
+        name: "terminal choice error",
+        response: new Response(sse([
+          chunk({ role: "assistant", content: rawContent }, null),
+          JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "error",
+            error: { message: "synthetic terminal provider failure", type: "server_error" } }] }),
+        ]), { headers: { "content-type": "text/event-stream" } }),
+      },
+      {
+        name: "provider error",
+        response: new Response(sse([
+          chunk({ role: "assistant", content: rawContent }, null),
+          JSON.stringify({ error: { message: "synthetic provider failure", type: "server_error" } }),
+        ]), { headers: { "content-type": "text/event-stream" } }),
+      },
+      {
+        name: "malformed event",
+        response: new Response(sse([
+          chunk({ role: "assistant", content: rawContent }, null),
+          "{malformed-json",
+        ]), { headers: { "content-type": "text/event-stream" } }),
+      },
+      {
+        name: "incomplete stream",
+        response: new Response(sse([chunk({ role: "assistant", content: rawContent }, null)]),
+          { headers: { "content-type": "text/event-stream" } }),
+      },
+      {
+        name: "invalid choices",
+        response: new Response(sse([JSON.stringify({ choices: [null] })]),
+          { headers: { "content-type": "text/event-stream" } }),
+      },
+      {
+        name: "reasoning without answer content",
+        response: new Response(sse([chunk({ reasoning_content: "private reasoning only" }, "stop")]),
+          { headers: { "content-type": "text/event-stream" } }),
+      },
+      {
+        name: "aborted stream",
+        response: new Response(sse([chunk({ role: "assistant", content: rawContent }, "stop")]),
+          { headers: { "content-type": "text/event-stream" } }),
+        signal: abortController.signal,
+        afterDispatch: () => abortController.abort(),
+      },
+      {
+        name: "capture over 1 MiB",
+        response: new Response(sse([chunk({ role: "assistant", content: overLimitContent }, "stop")]),
+          { headers: { "content-type": "text/event-stream" } }),
+      },
+    ];
+
+    for (const scenario of cases) {
+      const capture = new AssistantWireCapture();
+      const seen = fakeCommandCode(scenario.response, scenario.afterDispatch);
+      const model = await commandCodeModel(seen.binding, []);
+      const result = runStructured(model, scenario.signal, () => {}, capture);
+      await Promise.allSettled([result.output, result.totalUsage]);
+
+      expect(capture.message(), scenario.name).toBeUndefined();
+      expect(seen.fetch).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("keeps existing reasoning fields, user/system messages and history-free bodies unchanged", async () => {
@@ -502,19 +742,52 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     const seen = fakeBinding(errBody);
     const model = await resolveModelTransport(
       { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, DOTS, "sess");
-    const result = runStructured(model);
-    let err: unknown;
-    try {
-      await result.output;
-      await result.totalUsage;
-      expect.unreachable();
-    } catch (e) { err = e; }
-    expect(err).toBeInstanceOf(Error);
-    const text = modelFailure(err, DOTS);
-    expect(text.startsWith("External model request failed (cause: ")).toBe(true);
+    let streamError: unknown;
+    const result = runStructured(model, undefined, ({ error }) => { streamError = error; });
+    await Promise.allSettled([result.output, result.totalUsage]);
+
+    expect(streamError).toBeInstanceOf(Error);
+    expect((streamError as Error).name).toBe("AI_StreamProviderError");
+    expect((streamError as Error & { data?: unknown }).data).toEqual({
+      message: "provider exploded",
+      type: "provider_error",
+    });
+    const text = modelFailure(streamError, DOTS);
+    expect(text.startsWith("External model request failed (cause: AI_StreamProviderError)")).toBe(true);
     expect(text).toContain("no retry was started.");
     expect(text).not.toContain("provider exploded");
     expect(text.length).toBeLessThanOrEqual(200);
+    expect(seen.wire.calls).toBe(1);
+  });
+
+  it("names a standard mid-stream error type without echoing raw payload", async () => {
+    await useRealSDK();
+    const secretBody = sse([JSON.stringify({ error: { message: "sk-live-SECRET123 invalid payload DROP TABLE", type: "invalid_request_error", code: "secret-code-123", param: "messages" } })]);
+    const seen = fakeBinding(secretBody);
+    const model = await resolveModelTransport(
+      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, DOTS, "sess");
+    let streamError: unknown;
+    const result = runStructured(model, undefined, ({ error }) => { streamError = error; });
+    await Promise.allSettled([result.output, result.totalUsage]);
+
+    expect(streamError).toBeInstanceOf(Error);
+    expect((streamError as Error).name).toBe("AI_StreamProviderError");
+    expect((streamError as Error & { data?: unknown }).data).toEqual({
+      message: "sk-live-SECRET123 invalid payload DROP TABLE",
+      type: "invalid_request_error",
+      code: "secret-code-123",
+      param: "messages",
+    });
+    const text = modelFailure(streamError, DOTS);
+    expect(text).toContain("(cause: AI_StreamProviderError:invalid_request_error)");
+    expect(text).toContain("no retry was started.");
+    expect(text.length).toBeLessThanOrEqual(200);
+    expect(text).not.toContain("SECRET");
+    expect(text).not.toContain("sk-live");
+    expect(text).not.toContain("DROP TABLE");
+    expect(text).not.toContain("secret-code-123");
+    expect(text).not.toContain("messages");
+    expect(text).not.toContain("invalid payload");
     expect(seen.wire.calls).toBe(1);
   });
 });

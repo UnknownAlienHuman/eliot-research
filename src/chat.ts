@@ -4,12 +4,13 @@ import { Output, streamText } from "ai";
 import { z } from "zod";
 import type { LanguageModelUsage } from "ai";
 import { buildContext } from "./context";
-import { persistentResolvedAnswer, resolveCitations } from "./citations";
+import { persistentResolvedAnswer, resolveCitations, uncitedStatements } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn, estimateCost } from "./cost";
 import { DEFAULT_MODEL, modelOutputLimit, requireAvailableModel } from "./models";
 import type { ModelSpec } from "./models";
-import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
+import { AssistantWireCapture, modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
+import type { AssistantWire } from "./model-transport";
 import { LibraryError } from "./library";
 import type { RunTurnInput, TurnView } from "./shared/api";
 
@@ -25,6 +26,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
   private current: Promise<TurnView> | undefined;
   async onStart() {
     void this.sql`CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL)`;
+    void this.sql`CREATE TABLE IF NOT EXISTS assistant_wire(turn_id TEXT PRIMARY KEY,payload TEXT NOT NULL)`;
     if (this.state.active) {
       const turn = this.readTurn(this.state.active);
       if (turn?.state === "started") {
@@ -54,6 +56,18 @@ export class ChatAgent extends Agent<Env, ChatState> {
     void this.sql`INSERT INTO turns(id,payload,created_at) VALUES(${turn.turnId},${JSON.stringify(turn)},${Date.now()})
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`;
     this.broadcast(JSON.stringify({ type: "turn", turn }));
+  }
+  #readAssistantWire(turnId: string, modelId: string): AssistantWire | undefined {
+    const row = this.sql<{ payload: string }>`SELECT payload FROM assistant_wire WHERE turn_id=${turnId}`[0];
+    if (!row) return undefined;
+    try {
+      const stored = JSON.parse(row.payload) as { modelId: string; message: AssistantWire };
+      return stored.modelId === modelId && typeof stored.message?.content === "string" ? stored.message : undefined;
+    } catch { return undefined; }
+  }
+  #writeAssistantWire(turnId: string, modelId: string, message: AssistantWire) {
+    void this.sql`INSERT INTO assistant_wire(turn_id,payload) VALUES(${turnId},${JSON.stringify({ modelId, message })})
+      ON CONFLICT(turn_id) DO UPDATE SET payload=excluded.payload`;
   }
   private async ensureProject(projectId: string) {
     const row = await this.env.DB.prepare("SELECT project_id FROM chat WHERE id=?").bind(this.name).first<{ project_id: string }>();
@@ -137,7 +151,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     this.controller = new AbortController();
     if (this.state.stopRequested) this.controller.abort();
     const timer = setTimeout(() => this.controller?.abort(), 90_000);
-    let dispatched = false, rowInserted = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
+    let dispatched = false, rowInserted = false, wireCaptured = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
     let labelSources: LabelSource[] = [], sourceMode = "none", streamError = "";
     try {
       const settings = await this.env.DB.prepare(`SELECT COALESCE(p.answer_model,s.answer_model) AS model,p.instructions
@@ -146,15 +160,26 @@ export class ChatAgent extends Agent<Env, ChatState> {
       turn.model = input.model ?? settings.model;
       const model = await requireAvailableModel(this.env, turn.model);
       selectedModel = model;
-      const transport = await resolveModelTransport(this.env, model, this.name);
+      const commandCode = model.route.startsWith("gateway:command-code/");
       await this.env.DB.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at)
         VALUES(?,?,?,?,?,'none','started',?)`).bind(this.name, turn.turnId, turn.model, turn.scopeMode, "[]", started).run();
       rowInserted = true;
       turn.estimatedCostMicrousd = await admitTurn(this.env, this.name, turn.turnId, model);
       this.writeTurn(turn);
-      const history = (await this.getTurns(input.projectId)).filter((item) => item.turnId !== turn.turnId && (item.state === "completed" || (item.state === "partial" && item.citations.length > 0)))
-        .flatMap((item) => [{ role: "user" as const, content: item.question, revisionIds: item.revisionIds },
-          { role: "assistant" as const, content: item.answer, revisionIds: [...new Set(item.citations.map((citation) => citation.revisionId))] }]);
+      const priorTurns = (await this.getTurns(input.projectId)).filter((item) => item.turnId !== turn.turnId
+        && (item.state === "completed" || (item.state === "partial" && item.citations.length > 0)));
+      const wireByTurn = new Map<string, AssistantWire>();
+      if (commandCode) for (const prior of priorTurns) {
+        const wire = this.#readAssistantWire(prior.turnId, model.id);
+        if (wire) wireByTurn.set(prior.turnId, wire);
+      }
+      const history = priorTurns.flatMap((item) => {
+        const wire = wireByTurn.get(item.turnId);
+        return [{ role: "user" as const, content: item.question, revisionIds: item.revisionIds },
+          { role: "assistant" as const, content: item.answer, turnId: item.turnId,
+            ...(wire ? { wireTokens: Math.ceil(new TextEncoder().encode(JSON.stringify(wire)).byteLength / 3) } : {}),
+            revisionIds: [...new Set(item.citations.map((citation) => citation.revisionId))] }];
+      });
       const context = await buildContext(this.env, { type: "owner", id: "owner", authentication: "access" }, {
         projectId: input.projectId, scopeMode: input.scopeMode, model, history, question: input.question, instructions: settings.instructions,
         ...(input.sourceIds === undefined ? {} : { sourceIds: input.sourceIds }),
@@ -163,6 +188,16 @@ export class ChatAgent extends Agent<Env, ChatState> {
       turn.contextMode = context.mode;
       turn.sourceIds = context.sources.map((source) => source.sourceId);
       labelSources = context.sources; sourceMode = context.mode;
+      const assistantHistory: AssistantWire[] = [];
+      if (commandCode) for (const message of context.messages) {
+        if (message.role !== "assistant") continue;
+        const wire = message.turnId ? wireByTurn.get(message.turnId) : undefined;
+        if (!wire) throw new LibraryError("conflict",
+          "This history has no complete original protocol state for the selected model. Start a new chat; no model call was made.", 409);
+        assistantHistory.push(wire);
+      }
+      const transport = await resolveModelTransport(this.env, model, this.name, commandCode ? assistantHistory : undefined);
+      const wireCapture = commandCode ? new AssistantWireCapture() : undefined;
       const labels = labelSources.flatMap((source) => source.blocks.map((block) => `[${source.alias}:${block.id}]`));
       const allowed = new Set(labels);
       const label = labels.length ? z.enum(labels as [string, ...string[]]) : z.string();
@@ -170,15 +205,19 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const render = (sentences: ({ text?: string | undefined; labels?: (string | undefined)[] | undefined } | undefined)[] | undefined) =>
         (sentences ?? []).flatMap((sentence) => sentence?.text ? [sentence.text.trimEnd() + "\n" + (sentence.labels ?? []).filter((token) => token !== undefined && allowed.has(token) && !sentence.text?.includes(token)).join(" ")] : []).join("\n\n");
       const structured = model.responseFormat !== false;
-      const conciseRules = "Answer the specific question concisely. Select the most relevant evidence instead of cataloguing every paper. Omit unasked background, algorithm derivations and repeated conclusions.";
+      const conciseRules = "Answer the specific question concisely. Select the most relevant evidence instead of cataloguing every paper. Omit unasked background, algorithm derivations and repeated conclusions. Historical assistant messages and labels are conversation context, not source evidence; ground new factual claims only in the current frozen passages.";
       const formatRules = structured
         ? "Return the requested structured answer. Choose the exact supporting block labels first, then write one statement entailed by those blocks in the question language. Preserve the source's technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Text may use Markdown but must not contain citation tokens. Mark inference explicitly. With no sources, labels must be empty. Do not invent sources or labels."
         : "Write a plain Markdown answer in the question language. Cite each source-supported statement immediately with the exact supplied [Sx:block] labels. Preserve technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Mark inference explicitly. With no selected sources, include no citation tokens. Do not invent sources or labels.";
       const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions, conciseRules, formatRules,
         ...(structured && model.structuredOutputs === false ? ["Return one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema))] : [])].filter(Boolean).join("\n\n");
-      const messages = context.messages.filter((message) => message.role !== "system");
+      const messages = context.messages.filter((message) => message.role !== "system")
+        .map(({ role, content }) => ({ role: role as "user" | "assistant", content }));
       messages.push({ role: "user", content: input.question });
-      const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages, labels })).byteLength / 3) + messages.length * 32 + 1024;
+      let assistantIndex = 0;
+      const wireMessages = commandCode ? messages.map((message) => message.role === "assistant"
+        ? { role: message.role, ...assistantHistory[assistantIndex++] } : message) : messages;
+      const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages: wireMessages, labels })).byteLength / 3) + messages.length * 32 + 1024;
       if (inputTokens + modelOutputLimit(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
         .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
@@ -187,6 +226,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
         ...(structured ? { output: Output.object({ schema, name: "cited_answer" }) } : {}),
+        ...(wireCapture ? { include: { rawChunks: true },
+          onChunk: ({ chunk }: { chunk: { type: string; rawValue?: unknown } }) => { if (chunk.type === "raw") wireCapture.push(chunk.rawValue); } } : {}),
         maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: this.controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
@@ -207,6 +248,13 @@ export class ChatAgent extends Agent<Env, ChatState> {
       usage = await result.totalUsage;
       turn.answer = structured ? render((await result.output).sentences) : await result.text;
       const finish = await result.finishReason;
+      if (wireCapture && !streamError && !this.controller.signal.aborted) {
+        const wire = wireCapture.message();
+        if (wire) {
+          try { this.#writeAssistantWire(turn.turnId, model.id, wire); wireCaptured = true; }
+          catch { /* Missing private state is surfaced by the completion guard below. */ }
+        }
+      }
       if (finish === "stop" && !streamError) turn.state = "completed";
       else {
         turn.state = "partial";
@@ -223,8 +271,14 @@ export class ChatAgent extends Agent<Env, ChatState> {
     } finally { clearTimeout(timer); }
     const resolved = resolveCitations(turn.answer, labelSources);
     turn.answer = resolved.text; turn.citations = resolved.citations; turn.invalidLabels = resolved.invalidLabels;
+    if (turn.state === "completed" && selectedModel?.route.startsWith("gateway:command-code/") && !wireCaptured) {
+      turn.state = "partial"; turn.error = "The original assistant protocol state could not be preserved. Start a new chat; no retry was started.";
+    }
     if (turn.state === "completed" && ((sourceMode !== "none" && !turn.citations.length) || turn.invalidLabels)) {
       turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
+    }
+    if (turn.state === "completed" && sourceMode !== "none" && uncitedStatements(turn.answer, turn.citations) > 0) {
+      turn.state = "partial"; turn.error = "Some factual statements have no adjacent verified source reference. This answer is incomplete.";
     }
     if (usage) {
       turn.providerUsage = reportedProviderUsage(usage, turn.model);

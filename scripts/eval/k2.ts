@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { uncitedStatements } from '../../src/citations.ts';
 const EOL = String.fromCharCode(10);
 const TAB = String.fromCharCode(9);
 const BACKSLASH = String.fromCharCode(92);
@@ -478,8 +479,12 @@ async function checkRange(rev, st, en) {
   await checkRange(s0.currentRevisionId, 0, end);
 }
 async function saveTurn(qid, turn, extra) {
-  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
+  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, actualProviderCostUsd: actualProviderCostUsd(turn), firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
   await writeFile(outDir + '/k2-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
+}
+function actualProviderCostUsd(turn) {
+  const v = turn && turn.providerUsage ? turn.providerUsage.costUsd : null;
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 }
 function reusableCandidate(qid, turns, used) {
   for (const t of turns) {
@@ -487,9 +492,13 @@ function reusableCandidate(qid, turns, used) {
     if (evalModel !== null && t.model !== evalModel) continue;
     if (!Array.isArray(t.citations) || t.citations.length < 1 || t.invalidLabels !== 0) continue;
     if (typeof t.answer !== 'string') continue;
-    if (!t.citations.every((c) => c && revSet.has(c.revisionId))) continue;
     if (t.question !== Q.get(qid)) continue;
+    if (t.scopeMode !== 'explicit') continue;
+    if (t.contextMode !== 'whole') continue;
     if (!Array.isArray(t.sourceIds) || t.sourceIds.length !== sourceIds.length || !sourceIds.every((id) => t.sourceIds.includes(id))) continue;
+    if (!Array.isArray(t.revisionIds) || t.revisionIds.length !== scoped.length || !scoped.every((s) => t.revisionIds.includes(s.currentRevisionId))) continue;
+    if (!t.citations.every((c) => c && revSet.has(c.revisionId))) continue;
+    if (uncitedStatements(t.answer, t.citations) > 0) continue;
     return t;
   }
   return null;
@@ -523,11 +532,12 @@ if (storedOnly) {
   const sUsed = new Set();
   const sCompleted = new Set();
   const revOwner = new Map(scoped.filter((s) => s && typeof s.currentRevisionId === 'string').map((s) => [s.currentRevisionId, s.id]));
+  let sActualKnownUsd = 0, sActualKnownCount = 0, sActualUnknown = 0;
   for (const qid of order) {
     const turn = reusableCandidate(qid, h0.turns, sUsed);
     if (!turn) {
       sFailed++;
-      sRows.push('| ' + qid + ' | NOT_REVALIDATED | - | - | - | - | - | - | - |');
+      sRows.push('| ' + qid + ' | NOT_REVALIDATED | - | - | - | - | - | - | - | - |');
       continue;
     }
     sUsed.add(turn.turnId);
@@ -544,23 +554,26 @@ if (storedOnly) {
       if (Array.isArray(turn.sourceIds)) assert(turn.sourceIds.includes(c.sourceId), qid + ': citation sourceId must belong to the turn frozen source scope.');
       await checkRange(c.revisionId, c.start, c.end);
     }
-    const doc = { chatId, qid, turnId: turn.turnId, reused: true, src: 'stored', question: Q.get(qid), answer: turn.answer ?? null, state: turn.state, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: null };
+    const sActual = actualProviderCostUsd(turn);
+    const doc = { chatId, qid, turnId: turn.turnId, reused: true, src: 'stored', question: Q.get(qid), answer: turn.answer ?? null, state: turn.state, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, actualProviderCostUsd: sActual, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: null };
     await writeFile(outDir + '/k2-stored-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
     checkAnswer(qid, turn.answer);
     sCompleted.add(qid);
+    if (sActual === null) sActualUnknown++; else { sActualKnownUsd += sActual; sActualKnownCount++; }
     for (const k of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) assert(typeof turn[k] === 'number', qid + ': stored turn.' + k + ' must be a number.');
     assert(turn.totalMs <= 90000, qid + ': catastrophic ceiling 90s exceeded.');
-    sRows.push('| ' + qid + ' | stored-completed | ' + turn.citations.length + ' | 0 | ' + turn.inputTokens + '/' + turn.cachedTokens + '/' + turn.outputTokens + ' | ' + turn.estimatedCostMicrousd + ' | ' + turn.firstTokenMs + ' | ' + turn.totalMs + ' | stored |');
+    sRows.push('| ' + qid + ' | stored-completed | ' + turn.citations.length + ' | 0 | ' + turn.inputTokens + '/' + turn.cachedTokens + '/' + turn.outputTokens + ' | ' + turn.estimatedCostMicrousd + ' | ' + (sActual === null ? 'UNKNOWN' : sActual) + ' | ' + turn.firstTokenMs + ' | ' + turn.totalMs + ' | stored |');
   }
   const hF = await getChat('stored-final');
-  const ownerGate = 'O1/O2/O3/O8 owner-quality gate: NOT_ACCEPTED (OWNER_REQUIRED) — the script never auto-passes human gates; observed defects below, owner judgment required.';
+  const ownerGate = 'O1/O2/O3/O8 owner-quality gate: NOT_ACCEPTED (OWNER_REQUIRED) — the script never auto-passes human gates; retained historical references below, owner judgment required.';
   const defects = [
-    'O2 stored answer: unsupported Chinese fragment "下游" (model-introduced; cited English ranges say "transferred"). Terminology defect.',
-    'O2 stored answer: "растёт быстрее, чем модель" growth-rate phrasing has no same-range source basis. Inference defect.',
-    'O2 stored answer: chain-of-thought scale-emergence result absent although the eval expects it (CoT/S4 uncited). Coverage defect.',
-    'Recheck run recheck-O2.json (separate chat): LoRA "0,01% (4,7 млн вместо 175 млрд)" pairing is arithmetically inconsistent (0.01% of 175B = 17.5M); [S10:42] cites setup text, not the quoted demonstration sentence (sibling labels cover the claims).'
+    'Retained historical reference (older Flash run, not observed here): O2 stored answer unsupported Chinese fragment "下游" (model-introduced; cited English ranges say "transferred"). Terminology defect.',
+    'Retained historical reference (older Flash run, not observed here): O2 stored answer "растёт быстрее, чем модель" growth-rate phrasing has no same-range source basis. Inference defect.',
+    'Retained historical reference (older Flash run, not observed here): O2 stored answer chain-of-thought scale-emergence result absent although the eval expects it (CoT/S4 uncited). Coverage defect.',
+    'Retained historical reference (separate chat recheck-O2.json, not observed here): LoRA "0,01% (4,7 млн вместо 175 млрд)" pairing is arithmetically inconsistent (0.01% of 175B = 17.5M); [S10:42] cites setup text, not the quoted demonstration sentence (sibling labels cover the claims).'
   ];
-  const md = ['# K2 Ask eval — stored-only revalidation (zero model calls)', '', '- project: ' + title + ' (10 arxiv explicit scope, exact frozen scope enforced per turn)', '- chat: ' + chatId + ' (stored-only; ELIOT_EVAL_CHAT, never created or submitted)', '- mode: whole revalidation from storage only; new-turn delta must be 0 micro-USD', '- monthly before/after: ' + m0 + '/' + hF.monthlyUsedMicrousd + ' micro-USD (must be equal)', '- configured budget, never written or raised: ' + hF.monthlyBudgetMicrousd, '- ' + ownerGate, '- observed defects (mechanical PASS does not clear these):'].concat(defects.map((d) => '  - ' + d)).concat(['', '| q | state | cites | invalid | in/cached/out | cost_uUSD | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|']).concat(sRows).concat(['']).join(EOL);
+  const sKnownActualText = sActualKnownCount > 0 ? String(sActualKnownUsd) : 'UNKNOWN';
+  const md = ['# K2 Ask eval — stored-only revalidation (zero model calls)', '', '- project: ' + title + ' (10 arxiv explicit scope, exact frozen scope enforced per turn)', '- chat: ' + chatId + ' (stored-only; ELIOT_EVAL_CHAT, never created or submitted)', '- mode: whole revalidation from storage only; estimated/reserved new-turn delta is 0 micro-USD (NOT actual provider spend)', '- monthly before/after: ' + m0 + '/' + hF.monthlyUsedMicrousd + ' micro-USD (must be equal)', '- configured budget, never written or raised: ' + hF.monthlyBudgetMicrousd, '- actual known provider cost (providerUsage.costUsd only; token-rate math is never actual): ' + sKnownActualText + ' USD across ' + sActualKnownCount + ' turn(s); unknown actual ' + sActualUnknown + ' (unknown is never zero)', '- ' + ownerGate, '- retained historical reference, not observed here (mechanical PASS does not clear these):'].concat(defects.map((d) => '  - ' + d)).concat(['', '| q | state | cites | invalid | in/cached/out | est_uUSD | actual_usd | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|---|']).concat(sRows).concat(['']).join(EOL);
   await writeFile(outDir + '/k2-stored-only-' + Date.now() + '.md', md);
   console.log(md);
   assert.equal(hF.turns.length, h0.turns.length, 'Stored-only run must not add turns (zero submissions).');
@@ -573,6 +586,7 @@ const rows = [];
 const firstMs = [], totalMs = [];
 let newCostMicro = 0, reportedMicro = 0, failed = 0, manual = 0, newCount = 0;
 let unknownCosts = 0, unknownNewCosts = 0;
+let actualKnownUsd = 0, actualKnownCount = 0, actualUnknown = 0, actualUnknownNew = 0;
 const completedQuestions = new Set();
 const used = new Set();
 for (const qid of order) {
@@ -580,7 +594,7 @@ for (const qid of order) {
   if (resumeChat) {
     const cand = reusableCandidate(qid, h0.turns, used);
     if (cand) { turn = cand; src = 'reused'; used.add(cand.turnId); }
-    else if (h0.turns.some((t) => t && t.question === Q.get(qid) && t.state !== 'completed')) { rows.push('| ' + qid + ' | PENDING_MANUAL | - | - | - | - | - | - | - |'); manual++; continue; }
+    else if (h0.turns.some((t) => t && t.question === Q.get(qid))) { rows.push('| ' + qid + ' | PENDING_MANUAL | - | - | - | - | - | - | - | - |'); manual++; continue; }
   }
   if (!turn) {
     const turnId = randomUUID();
@@ -607,12 +621,20 @@ for (const qid of order) {
     reportedMicro += cost;
     if (src === 'new') newCostMicro += cost;
   }
+  const actual = actualProviderCostUsd(turn);
+  if (actual === null) {
+    actualUnknown++;
+    if (src === 'new') actualUnknownNew++;
+  } else {
+    actualKnownUsd += actual;
+    actualKnownCount++;
+  }
   if (turn.state !== 'completed') {
     await saveTurn(qid, turn, { src, wall, question: Q.get(qid) }); failed++;
     const metric = (value) => typeof value === 'number' ? value : 'UNKNOWN';
     rows.push('| ' + qid + ' | ' + turn.state + ' | ' + (Array.isArray(turn.citations) ? turn.citations.length : 'UNKNOWN')
       + ' | ' + metric(turn.invalidLabels) + ' | ' + metric(turn.inputTokens) + '/' + metric(turn.cachedTokens) + '/' + metric(turn.outputTokens)
-      + ' | ' + metric(cost) + ' | ' + metric(turn.firstTokenMs) + ' | ' + metric(turn.totalMs) + ' | ' + (wall === null ? '-' : wall) + ' |');
+      + ' | ' + metric(cost) + ' | ' + metric(actual) + ' | ' + metric(turn.firstTokenMs) + ' | ' + metric(turn.totalMs) + ' | ' + (wall === null ? '-' : wall) + ' |');
     break;
   }
   assert(Array.isArray(turn.citations) && turn.citations.length >= 1, qid + ': completed answer needs >=1 citation.');
@@ -622,27 +644,35 @@ for (const qid of order) {
     assert(typeof c.sourceId === 'string', qid + ': citation needs sourceId.');
     assert(typeof c.block === 'number', qid + ': citation needs numeric block.');
     assert(typeof c.start === 'number' && typeof c.end === 'number', qid + ': citation needs numeric start/end.');
+    assert(Array.isArray(turn.revisionIds) && turn.revisionIds.includes(c.revisionId), qid + ': citation revisionId must belong to the turn frozen scope.');
+    assert(Array.isArray(turn.sourceIds) && turn.sourceIds.includes(c.sourceId), qid + ': citation sourceId must belong to the turn frozen source scope.');
     await checkRange(c.revisionId, c.start, c.end);
   }
+  assert.equal(turn.scopeMode, 'explicit', qid + ': live turn must keep explicit scope (no project-default fallback).');
+  assert.equal(turn.contextMode, 'whole', qid + ': live turn must be whole-reading (no claims/none fallback).');
+  assert(Array.isArray(turn.sourceIds) && turn.sourceIds.length === sourceIds.length && sourceIds.every((id) => turn.sourceIds.includes(id)), qid + ': live turn sourceIds must equal the exact frozen 10-arxiv scope.');
+  assert(Array.isArray(turn.revisionIds) && turn.revisionIds.length === scoped.length && scoped.every((s) => turn.revisionIds.includes(s.currentRevisionId)), qid + ': live turn revisionIds must equal the exact frozen current revisions.');
+  assert(uncitedStatements(turn.answer, turn.citations) === 0, qid + ': completed answer must have no uncited factual statements.');
   await saveTurn(qid, turn, { src, wall, reused: src === 'reused', question: Q.get(qid) });
   checkAnswer(qid, turn.answer);
   completedQuestions.add(qid);
   for (const k of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) assert(typeof turn[k] === 'number', qid + ': turn.' + k + ' must be a number.');
   assert(turn.totalMs <= 90000, qid + ': catastrophic ceiling 90s exceeded.');
   firstMs.push(turn.firstTokenMs); totalMs.push(turn.totalMs);
-  rows.push('| ' + qid + ' | completed(' + src + ') | ' + turn.citations.length + ' | 0 | ' + turn.inputTokens + '/' + turn.cachedTokens + '/' + turn.outputTokens + ' | ' + turn.estimatedCostMicrousd + ' | ' + turn.firstTokenMs + ' | ' + turn.totalMs + ' | ' + (wall === null ? 'reused' : wall) + ' |');
+  rows.push('| ' + qid + ' | completed(' + src + ') | ' + turn.citations.length + ' | 0 | ' + turn.inputTokens + '/' + turn.cachedTokens + '/' + turn.outputTokens + ' | ' + turn.estimatedCostMicrousd + ' | ' + (actual === null ? 'UNKNOWN' : actual) + ' | ' + turn.firstTokenMs + ' | ' + turn.totalMs + ' | ' + (wall === null ? 'reused' : wall) + ' |');
 }
 const h1 = await getChat('after turns');
 const h2 = await getChat('final re-read');
 const usdNew = newCostMicro / 1e6;
-const md = ['# K2 Ask eval', '', '- project: ' + title + ' (10 arxiv explicit scope)', '- chat: ' + chatId + (resumeChat ? ' (resumed, no paid retry)' : ''), '- model override: ' + (evalModel ?? '(none; product default)'), '- mode: whole, one call/turn, no paid retry', '- evaluated turns known cost: ' + reportedMicro + ' micro-USD; new-turn known cost subtotal: ' + newCostMicro + ' micro-USD ($' + usdNew.toFixed(4) + ', configured budget, never written or raised)', '- monthly: ' + h1.monthlyUsedMicrousd + '/' + h1.monthlyBudgetMicrousd + ' micro-USD', '- cold first/total: ' + firstMs[0] + '/' + totalMs[0] + ' ms', '- warm first p50/p95: ' + pct(firstMs.slice(1), 0.5) + '/' + pct(firstMs.slice(1), 0.95) + ' ms', '- warm total p50/p95: ' + pct(totalMs.slice(1), 0.5) + '/' + pct(totalMs.slice(1), 0.95) + ' ms', '- O1/O2/O3/O8 quality vs eval/arxiv-10/baseline.md: OWNER_JUDGMENT_REQUIRED (script never auto-passes human gates)', '- Stop/reconnect/Save: NOT_RUN here (root browser journey).', '', '| q | state | cites | invalid | in/cached/out | cost_uUSD | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|'].concat(rows).concat(['']).join(EOL);
+const knownActualText = actualKnownCount > 0 ? String(actualKnownUsd) : 'UNKNOWN';
+const md = ['# K2 Ask eval', '', '- project: ' + title + ' (10 arxiv explicit scope)', '- chat: ' + chatId + (resumeChat ? ' (resumed, no paid retry)' : ''), '- model override: ' + (evalModel ?? '(none; product default)'), '- mode: whole, one call/turn, no paid retry', '- estimated/reserved cost (NOT actual provider spend): evaluated turns ' + reportedMicro + ' micro-USD; new-turn subtotal ' + newCostMicro + ' micro-USD ($' + usdNew.toFixed(4) + ', configured budget, never written or raised)', '- actual known provider cost (providerUsage.costUsd only; token-rate math is never actual): ' + knownActualText + ' USD across ' + actualKnownCount + ' turn(s); unknown actual ' + actualUnknown + '/' + actualUnknownNew + ' all/new (unknown is never zero)', '- monthly: ' + h1.monthlyUsedMicrousd + '/' + h1.monthlyBudgetMicrousd + ' micro-USD', '- cold first/total: ' + firstMs[0] + '/' + totalMs[0] + ' ms', '- warm first p50/p95: ' + pct(firstMs.slice(1), 0.5) + '/' + pct(firstMs.slice(1), 0.95) + ' ms', '- warm total p50/p95: ' + pct(totalMs.slice(1), 0.5) + '/' + pct(totalMs.slice(1), 0.95) + ' ms', '- O1/O2/O3/O8 quality vs eval/arxiv-10/baseline.md: OWNER_JUDGMENT_REQUIRED (script never auto-passes human gates)', '- Stop/reconnect/Save: NOT_RUN here (root browser journey).', '', '| q | state | cites | invalid | in/cached/out | est_uUSD | actual_usd | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|---|'].concat(rows).concat(['']).join(EOL);
 const accounting = EOL + '- observed monthly delta: ' + (h1.monthlyUsedMicrousd - m0)
-  + ' micro-USD; unknown cost turns all/new: ' + unknownCosts + '/' + unknownNewCosts
-  + ' (known subtotals are incomplete if an unknown count is nonzero)' + EOL;
+  + ' micro-USD (reservation delta, NOT actual provider spend); estimated unknown turns all/new: ' + unknownCosts + '/' + unknownNewCosts
+  + ' (known estimate subtotals are incomplete if an unknown count is nonzero)' + EOL;
 await writeFile(outDir + '/k2-' + Date.now() + '.md', md + accounting);
 console.log(md + accounting);
 assert.equal(failed, 0, failed + ' paid turn(s) did not complete; no retry by design. Operator must create any manual new turn separately.');
-assert.equal(manual, 0, manual + ' question(s) PENDING_MANUAL: a same-question turn already failed; no auto re-request. Operator must create any manual new turn separately.');
+assert.equal(manual, 0, manual + ' question(s) PENDING_MANUAL: a same-question turn exists without an exact reusable completion; no auto re-request. Operator must create any manual new turn separately.');
 assert(order.every((q) => completedQuestions.has(q)), 'All 12 questions must complete.');
 assert.equal(h1.turns.length, h0.turns.length + newCount, 'History must hold exactly the pre-existing plus new turns.');
 assert.equal(unknownNewCosts, 0, 'New-turn cost is incomplete; UNKNOWN must not count as free.');

@@ -315,6 +315,10 @@ ranges remain frozen; this formatting performs storage reads only and starts no 
 
 Estimate text conservatively as UTF-8 bytes / 3. History is newest prior turns, stripped of labels, capped at 10% of
 context and excludes answers whose cited revisions are outside scope. Keep source-prefix bytes stable for cache reuse.
+Command Code history is the protocol exception to label stripping: private replay also requires the prior turn's full
+frozen source scope to remain selected; a narrow public citation set cannot admit reasoning about excluded sources.
+Select those exchanges by scope and budget, then replay the captured assistant wire message unchanged. Its complete serialized size, including private reasoning,
+counts against both the history and final request bounds. Historical labels are not new source evidence.
 
 Resolve one `ModelSpec` at turn start and keep it fixed for admission, context, request bounds and cost settlement;
 later catalogue refreshes do not reprice or resize that turn, and the snapshot contains no credential.
@@ -349,6 +353,22 @@ structured output contains statements and frozen block labels. With unsupported/
 use the SDK text stream with inline source labels; formulas remain ordinary Markdown rather than JSON string literals.
 Both modes use the same server citation resolver and persisted turn shape. Missing citations or invalid labels make
 the answer partial; no parse-repair generation, second call, or fabricated fallback citation is added.
+Text-mode completion also requires coverage of each source-derived factual sentence by an adjacent resolved citation;
+one valid reference cannot qualify unrelated uncited sentences. Explicit inference remains separate from source facts.
+Semicolons do not create new sentence boundaries: one cited compound sentence or list sentence may share its trailing
+label. This corrects structural false partials; a valid label still does not establish that its block entails a formula
+or other claim, and the semantic/owner quality gates remain unchanged.
+This deterministic coverage check does not establish semantic entailment or replace the K2 quality/owner gates.
+Eval reuse applies this same coverage function and requires completed whole-reading turns with explicit, exact
+frozen source/revision sets. A non-reusable same-question turn remains manual; resume never dispatches a replacement.
+Reports separate estimated/reserved micro-USD from known provider-reported USD, preserving unknown actual cost.
+The 2026-10-27 local correction passed lint, typecheck, 266 tests and build; nine ChatAgent regressions use the real
+AI SDK and private SQLite with fixture SSE. One real Beam C1 attempt on the frozen local correction returned external
+HTTP 503 in 1,440 ms with unknown token counts and zero estimated cost at verified zero rates. It was not retried;
+the planned second call did not run. No private assistant-wire row was produced, so successful capture/replay remains
+NOT_EXERCISED. The failed public state survived an actual server restart with identical worker bytes; settings and
+monthly usage (449,781 micro-USD) were unchanged. This is not provider or answer-quality acceptance. Stored-only
+revalidation qualifies C1/C2 only, leaves the other ten questions NOT_REVALIDATED and changes no monthly estimate.
 The real Workers AI GLM 5.3 Flash structured streaming call was exercised on 2026-10-26. Admission reserves the full
 model context at uncached input price plus maximum output, then settles to reported SDK usage; unknown usage retains
 the reservation. Saving rewrites aliases outside code fences and uses a page mutation UUID without model work.
@@ -419,9 +439,24 @@ the SDK body, abort signal and session header. Explicit no-wholesale, one-attemp
 no credential, fallback, resume or additional binding is introduced. The pinned Ai declaration lacks `fetch`, so the
 narrow receiver-preserving cast follows the SDK mechanism and the real binding check. Model quality is still open.
 
-CC assistant-history serialization adapts only OpenCodex's missing `reasoning_content` blank wire marker. Existing
-reasoning fields are preserved; no reasoning text, cache, model-family policy or replay framework is imported.
-The original C2/C3 HTTP 400 states remain; after the serializer correction, math generation reached the service but
+The former CC blank `reasoning_content` marker was fabricated protocol data and is removed. Reflection's official
+[multi-turn contract](https://developers.reflection.ai/reasoning#reasoning-in-multi-turn-conversations), updated
+2026-10-16 and checked 2026-10-27, requires the original nonempty reasoning field with each assistant message.
+Capture actual assistant `content` and separate reasoning fields through the pinned AI SDK's public
+`include: { rawChunks: true }` / `onChunk` interface. The compatible provider emits the original JSON before schema
+validation, retaining provider-specific fields. The SDK owns SSE framing and stream errors; no second SSE parser is
+introduced. Store the bounded assembled message only in the existing ChatAgent SQLite database's private
+`assistant_wire(turn_id TEXT PRIMARY KEY,payload TEXT NOT NULL)`, with native model identity; never include them in
+TurnView, broadcasts, snapshots, saved pages or logs. A clean terminal capture records field absence for a model
+that returned no reasoning. Selection depends on observed protocol fields, never a model/family allowlist.
+Capture requires a provider finish event and successful SDK stream completion without a provider error.
+Interrupted, malformed or over-bound captures cannot become replayable state. Selected legacy history without
+complete matching wire state fails before dispatch, tells the owner to start a new chat and settles the unstarted
+turn at zero. Do not invent missing reasoning, silently retry, or fetch it with another call. No D1 schema changes
+or additional service are needed for this private SQLite table.
+If an otherwise completed CC answer lacks a successful private capture, keep its readable answer as partial and
+show the protocol-state recovery error immediately; do not present it as a complete replayable turn.
+The original C2/C3 HTTP 400 states remain; after the now-withdrawn marker workaround, math generation reached the service but
 failed local JSON parsing. The capability-selected text path completed separate C2/C3 turns with 1/2 resolved citations;
 C4 remained partial with no citations. This is not complete K2 acceptance; Beam O1–O8 and owner quality remain open.
 

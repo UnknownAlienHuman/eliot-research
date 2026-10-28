@@ -33,6 +33,13 @@ export function reportedProviderUsage(usage: LanguageModelUsage, route?: string)
     costUsd: !route?.startsWith(COMMAND_CODE_PREFIX) && typeof raw.cost === "number" && Number.isFinite(raw.cost) && raw.cost >= 0 ? raw.cost : null };
 }
 
+export interface AssistantWire {
+  content: string;
+  reasoning_content?: string;
+  reasoning?: string;
+  reasoning_details?: JSONObject[];
+}
+
 // Narrow compatible-usage fix (pinned @ai-sdk/openai-compatible 3.0.79): the bundled
 // converter coerces missing counts to 0, which wrongly settles usage as zero on priced
 // routes. Unknown stays unknown here; output follows the same max(completion,
@@ -88,10 +95,153 @@ function openRouterBody(responseFormatAllowed: boolean, reasoning?: ModelSpec["r
   };
 }
 
+const MAX_ASSISTANT_JSON_BYTES = 1024 * 1024;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// Consumes the pinned AI SDK's raw JSON chunks. The SDK owns SSE framing and
+// decoding; the caller persists message() only after a successful SDK stream.
+export class AssistantWireCapture {
+  private byteCount = 0;
+  private valid = true;
+  private sawFinish = false;
+  private content = "";
+  private reasoningContent = "";
+  private reasoning = "";
+  private readonly reasoningDetails: JSONObject[] = [];
+  private readonly detailsById = new Map<string, JSONObject>();
+  private readonly detailsByIndex = new Map<number, JSONObject>();
+
+  push(rawValue: unknown): void {
+    if (!this.valid) return;
+    if (!isRecord(rawValue)) { this.invalidate(); return; }
+    let bytes: number;
+    try {
+      const json = JSON.stringify(rawValue);
+      if (json === undefined) { this.invalidate(); return; }
+      bytes = new TextEncoder().encode(json).byteLength;
+    } catch { this.invalidate(); return; }
+    if (bytes > MAX_ASSISTANT_JSON_BYTES - this.byteCount) { this.invalidate(); return; }
+    this.byteCount += bytes;
+    if ("error" in rawValue && rawValue.error !== null && rawValue.error !== undefined) {
+      this.invalidate(); return;
+    }
+    if (!Array.isArray(rawValue.choices)) {
+      if (!isRecord(rawValue.usage)) this.invalidate();
+      return;
+    }
+    if (rawValue.choices.length === 0) return;
+    if (rawValue.choices.length !== 1 || !isRecord(rawValue.choices[0])) { this.invalidate(); return; }
+    const choice = rawValue.choices[0];
+    if (choice.finish_reason === "error" || (choice.error !== undefined && choice.error !== null)
+      || (choice.index !== undefined && choice.index !== 0)) { this.invalidate(); return; }
+    if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
+      if (typeof choice.finish_reason !== "string" || choice.finish_reason.length === 0) { this.invalidate(); return; }
+      this.sawFinish = true;
+    }
+    if (choice.delta === undefined || choice.delta === null) return;
+    if (!isRecord(choice.delta)) { this.invalidate(); return; }
+    const delta = choice.delta;
+    if (delta.role !== undefined && delta.role !== "assistant") { this.invalidate(); return; }
+    if (!this.appendDelta(delta, "content", "content")
+      || !this.appendDelta(delta, "reasoning_content", "reasoningContent")
+      || !this.appendDelta(delta, "reasoning", "reasoning")) return;
+    if (delta.reasoning_details === undefined || delta.reasoning_details === null) return;
+    if (!Array.isArray(delta.reasoning_details)) { this.invalidate(); return; }
+    for (const detail of delta.reasoning_details) {
+      if (!isRecord(detail) || !this.appendReasoningDetail(detail)) { this.invalidate(); return; }
+    }
+  }
+
+  message(): AssistantWire | undefined {
+    if (!this.valid || !this.sawFinish || !this.content.trim()) return undefined;
+    return { content: this.content,
+      ...(this.reasoningContent.length ? { reasoning_content: this.reasoningContent } : {}),
+      ...(this.reasoning.length ? { reasoning: this.reasoning } : {}),
+      ...(this.reasoningDetails.length ? { reasoning_details: this.reasoningDetails.map((detail) => ({ ...detail })) } : {}) };
+  }
+
+  private appendDelta(delta: Record<string, unknown>, field: string, target: "content" | "reasoningContent" | "reasoning"): boolean {
+    const value = delta[field];
+    if (value === undefined || value === null) return true;
+    if (typeof value !== "string") {
+      this.invalidate();
+      return false;
+    }
+    if (target === "content") this.content += value;
+    else if (target === "reasoningContent") this.reasoningContent += value;
+    else this.reasoning += value;
+    return true;
+  }
+
+  private appendReasoningDetail(input: Record<string, unknown>): boolean {
+    const hasId = input.id !== undefined;
+    const hasIndex = input.index !== undefined;
+    if ((hasId && typeof input.id !== "string")
+      || (hasIndex && (typeof input.index !== "number" || !Number.isSafeInteger(input.index) || input.index < 0))) return false;
+    const id = typeof input.id === "string" && input.id.length > 0 ? input.id : undefined;
+    const index = typeof input.index === "number" ? input.index : undefined;
+    if (id === undefined && index === undefined) return false;
+    const byId = id === undefined ? undefined : this.detailsById.get(id);
+    const byIndex = index === undefined ? undefined : this.detailsByIndex.get(index);
+    if (byId && byIndex && byId !== byIndex) return false;
+    let target = byId ?? byIndex;
+    if (!target) {
+      target = Object.create(null) as JSONObject;
+      this.reasoningDetails.push(target);
+    }
+    if (id !== undefined) {
+      const conflict = this.detailsById.get(id);
+      if (conflict && conflict !== target) return false;
+      this.detailsById.set(id, target);
+    }
+    if (index !== undefined) {
+      const conflict = this.detailsByIndex.get(index);
+      if (conflict && conflict !== target) return false;
+      this.detailsByIndex.set(index, target);
+    }
+
+    const record = target as Record<string, unknown>;
+    for (const [field, value] of Object.entries(input)) {
+      const previous = record[field];
+      if (field === "id" || field === "index" || field === "type" || field === "format") {
+        if (previous !== undefined && previous !== value) return false;
+        record[field] = value;
+      } else if (typeof value === "string") {
+        if (previous === undefined) record[field] = value;
+        else if (field === "text" || field === "summary") {
+          if (typeof previous !== "string") return false;
+          if (value.startsWith(previous)) record[field] = value;
+          // A non-extending piece is incremental, even when it is a shorter
+          // prefix of the previous snapshot (OpenCodex response-events.ts).
+          else record[field] = previous + value;
+        } else if (previous !== value) return false;
+      } else {
+        if (previous === undefined) record[field] = value;
+        else if (JSON.stringify(previous) !== JSON.stringify(value)) return false;
+      }
+    }
+    return true;
+  }
+
+  private invalidate() {
+    this.valid = false;
+    this.content = "";
+    this.reasoningContent = "";
+    this.reasoning = "";
+    this.reasoningDetails.length = 0;
+    this.detailsById.clear();
+    this.detailsByIndex.clear();
+  }
+}
+
 export async function resolveModelTransport(
   env: Pick<Env, "AI" | "DB">,
   model: ModelSpec,
   sessionAffinity: string,
+  assistantHistory?: AssistantWire[],
 ): Promise<LanguageModel> {
   const commandCode = model.route.startsWith(COMMAND_CODE_PREFIX);
   if (commandCode || model.route.startsWith(OPENROUTER_PREFIX)) {
@@ -115,16 +265,23 @@ export async function resolveModelTransport(
           delete out.provider;
           delete out.response_format;
           const messages = Array.isArray(out.messages) ? out.messages : null;
-          if (messages) {
-            let touched = false;
-            const next = messages.map((entry) => {
-              if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;
-              const message = entry as Record<string, unknown>;
-              if (message.role !== "assistant" || "reasoning_content" in message || "reasoning_details" in message) return entry;
-              touched = true;
-              return { ...message, reasoning_content: " " };
-            });
-            if (touched) out.messages = next;
+          if (assistantHistory) {
+            const count = messages?.filter((entry) => isRecord(entry) && entry.role === "assistant").length ?? 0;
+            if (count !== assistantHistory.length) {
+              throw new LibraryError("conflict",
+                "This history has no complete original protocol state for the selected model. Start a new chat; no model call was made.", 409);
+            }
+            if (messages) {
+              let index = 0;
+              out.messages = messages.map((entry) => {
+                if (!isRecord(entry) || entry.role !== "assistant") return entry;
+                const base = { ...entry };
+                delete base.reasoning_content;
+                delete base.reasoning;
+                delete base.reasoning_details;
+                return { ...base, ...assistantHistory[index++] };
+              });
+            }
           }
           return out;
         },
@@ -239,6 +396,29 @@ function validationFieldHint(error: unknown): string {
 function errorCauseName(error: unknown): string | undefined {
   const cause = error instanceof Error ? error.cause : undefined;
   if (error instanceof Error && error.name === "AI_NoObjectGeneratedError" && cause instanceof Error && cause.name === "AI_JSONParseError") return "AI_JSONParseError";
+  const directStreamError = streamProviderErrorNames(error)[0];
+  if (directStreamError) return directStreamError;
+  const causedStreamError = streamProviderErrorNames(cause)[0];
+  if (causedStreamError) return causedStreamError;
   const names = ["Error", "TypeError", "AbortError", "TimeoutError", "AI_APICallError", "AI_StreamProviderError", "AI_NoObjectGeneratedError", "AI_NoOutputGeneratedError", "AI_InvalidResponseDataError", "AI_TypeValidationError", "AiGatewayError", "AiError", "ZodError"];
   return cause instanceof Error && names.includes(cause.name) ? cause.name : undefined;
+}
+
+// Pinned @ai-sdk/openai-compatible 3.0.79 streams a mid-stream provider error
+// as the raw `{ error: { message, type?, code? } }` chunk payload with no HTTP
+// status attached. Surface only the standard SDK error name plus a fixed
+// OpenAI error-type allowlist; never echo raw message/body, keys or codes.
+const STREAM_ERROR_TYPES = ["invalid_request_error", "authentication_error",
+  "permission_error", "not_found_error", "rate_limit_error", "server_error",
+  "overloaded_error", "timeout_error", "invalid_response_error"] as const;
+
+function streamProviderErrorNames(error: unknown): string[] {
+  if (!(error instanceof Error) || error.name !== "AI_StreamProviderError") return [];
+  const data = (error as { data?: unknown }).data;
+  const nested = isRecord(data) && isRecord(data.error) ? data.error : data;
+  if (!isRecord(nested)) return ["AI_StreamProviderError"];
+  const record = nested;
+  const type = typeof record.type === "string" ? record.type : undefined;
+  if (type !== undefined && (STREAM_ERROR_TYPES as readonly string[]).includes(type)) return ["AI_StreamProviderError:" + type];
+  return ["AI_StreamProviderError"];
 }

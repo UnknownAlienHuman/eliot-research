@@ -225,3 +225,277 @@ export function persistentResolvedAnswer(text: string, citations: Citation[]): R
   parts.push(text.slice(last));
   return { text: parts.join(""), citations: resolved, invalidLabels: 0 };
 }
+
+interface TextRange {
+  start: number;
+  end: number;
+}
+
+interface StatementBlock extends TextRange {
+  kind: "prose" | "heading" | "list" | "table";
+}
+
+const answerSentenceSegmenter = new Intl.Segmenter(["en", "ru"], { granularity: "sentence" });
+const sectionHeadings = new Set([
+  "answer", "background", "conclusion", "conclusions", "discussion", "evidence", "inference", "key points",
+  "methods", "method", "overview", "results", "sources", "summary", "takeaways",
+  "\u043e\u0431\u0437\u043e\u0440", "\u043e\u0442\u0432\u0435\u0442", "\u0432\u044b\u0432\u043e\u0434", "\u0432\u044b\u0432\u043e\u0434\u044b",
+  "\u043a\u0440\u0430\u0442\u043a\u043e", "\u043c\u0435\u0442\u043e\u0434\u044b", "\u043e\u0431\u0441\u0443\u0436\u0434\u0435\u043d\u0438\u0435",
+  "\u043e\u0441\u043d\u043e\u0432\u043d\u043e\u0435", "\u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b", "\u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0438",
+]);
+
+function inlineCodeRanges(text: string, fences: TextRange[]): TextRange[] {
+  const ranges: TextRange[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const fence = fences.find((range) => i >= range.start && i < range.end);
+    if (fence !== undefined) {
+      i = fence.end;
+      continue;
+    }
+    if (text[i] !== "`") {
+      i += 1;
+      continue;
+    }
+
+    let openLength = 1;
+    while (text[i + openLength] === "`") openLength += 1;
+    let j = i + openLength;
+    let closeStart = -1;
+    while (j < text.length) {
+      const containingFence = fences.find((range) => j >= range.start && j < range.end);
+      if (containingFence !== undefined) {
+        j = containingFence.end;
+        continue;
+      }
+      if (text[j] !== "`") {
+        j += 1;
+        continue;
+      }
+      let closeLength = 1;
+      while (text[j + closeLength] === "`") closeLength += 1;
+      if (closeLength === openLength) {
+        closeStart = j;
+        break;
+      }
+      j += closeLength;
+    }
+
+    if (closeStart < 0) {
+      i += openLength;
+      continue;
+    }
+    const end = closeStart + openLength;
+    ranges.push({ start: i, end });
+    i = end;
+  }
+  return ranges;
+}
+
+function maskRanges(text: string, ranges: TextRange[]): string {
+  if (ranges.length === 0) return text;
+  const chars = text.split("");
+  for (const range of ranges) {
+    for (let i = range.start; i < range.end; i += 1) {
+      if (chars[i] !== "\n" && chars[i] !== "\r") chars[i] = " ";
+    }
+  }
+  return chars.join("");
+}
+
+function cleanStatement(text: string): string {
+  return text
+    .replace(LABEL_RE, " ")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, " ")
+    .replace(/^\s{0,3}(?:[-+*]|\d+[.)])\s+/gm, " ")
+    .replace(/^\s{0,3}>\s?/gm, " ")
+    .replace(/[|*_~`]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasStatementSignal(text: string): boolean {
+  return /[\p{L}\p{N}]/u.test(text) || /[=<>+*/×÷^∑∫√]/u.test(text);
+}
+
+function isExplicitInferenceOrAbstention(text: string): boolean {
+  const start = text.replace(/^[\s"'“‘(]+/u, "");
+  const inference = /^(?:my\s+inference|inference|interpretation)(?::[ \t]*|[ \t]*[—–][ \t]*)(?=\S)/iu.test(start)
+    || /^\[inference\](?::[ \t]*|[ \t]+|[—–][ \t]*)(?=\S)/iu.test(start)
+    || /^this is (?:an? )?inference\b/iu.test(start)
+    || /^(?:i|we) infer\b/iu.test(start)
+    || /^вывод(?:\s+\[inference\])?(?::[ \t]*|[—–][ \t]*)(?=\S)|^(?:предположение|это предположение|моё предположение|мое предположение)(?::[ \t]*|[—–][ \t]*)(?=\S)/iu.test(start)
+    || /^(?:я предполагаю|можно предположить)(?:[ \t]*[,—:]|[ \t]+)(?=\S)/iu.test(start)
+    || /^интерпретация(?::[ \t]*|[ \t]*[—–][ \t]*)(?=\S)/iu.test(start)
+    || /^полагаю,\s*что(?=$|[^\p{L}\p{N}_-])/iu.test(start);
+  const abstention = /^(?:i|we) abstain\b|^(?:i|we) (?:cannot|can't|could not|couldn't|do not|don't) (?:determine|say|tell|identify|answer|conclude|verify|establish|find|see|confirm|know)\b/iu.test(start)
+    || /^(?:the\s+)?(?:source|sources|evidence|provided sources?)\s+(?:do not|don't|does not|doesn't)\s+(?:state|say|specify|report|provide|contain)|^no\s+(?:source|evidence)\s+(?:says?|states?|shows?|was provided)|^there is not enough (?:evidence|information)|^insufficient (?:evidence|information)/iu.test(start)
+    || /^(?:не могу|невозможно|нельзя)\s+(?:определить|установить|сказать|ответить|проверить|заключить)|^(?:в источниках|источники|предоставленные источники)\s+(?:не указано|не сообщают|не содержат|не позволяют определить)|^недостаточно\s+(?:данных|сведений|информации)|^воздерживаюсь\s*:\s*\S/iu.test(start);
+  const russianMissingAnswer = /^я не нахожу в (?:этой\s+)?статье\s+ответа(?=$|[^\p{L}\p{N}_-])/iu.test(start);
+  return inference || abstention || russianMissingAnswer;
+}
+
+function isTableDelimiter(line: string): boolean {
+  return /^ {0,3}\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function hasUnescapedPipe(line: string): boolean {
+  for (let i = 0; i < line.length; i += 1) {
+    if (line[i] !== "|") continue;
+    let slashes = 0;
+    for (let j = i - 1; j >= 0 && line[j] === "\\"; j -= 1) slashes += 1;
+    if (slashes % 2 === 0) return true;
+  }
+  return false;
+}
+
+function blockKind(line: string): StatementBlock["kind"] | undefined {
+  if (/^ {0,3}#{1,6}(?:\s+|$)/.test(line)) return "heading";
+  if (/^ {0,3}(?:[-+*]|\d+[.)])\s+/.test(line)) return "list";
+  return undefined;
+}
+
+function statementBlocks(text: string, analyzed: string, fences: TextRange[]): StatementBlock[] {
+  const blocks: StatementBlock[] = [];
+  let current: StatementBlock | undefined;
+  let inTable = false;
+  const flush = (): void => {
+    if (current !== undefined) blocks.push(current);
+    current = undefined;
+  };
+
+  const lines = text.split("\n");
+  let offset = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    const lineStart = offset;
+    const lineEnd = lineStart + line.length + (i < lines.length - 1 ? 1 : 0);
+    offset = lineEnd;
+    if (fences.some((range) => lineStart < range.end && lineEnd > range.start)) {
+      flush();
+      inTable = false;
+      continue;
+    }
+
+    const markdownLine = line.replace(/\r$/, "");
+    if (!inTable && hasUnescapedPipe(markdownLine) && isTableDelimiter(lines[i + 1] ?? "")) {
+      flush();
+      inTable = true;
+      continue;
+    }
+    if (inTable) {
+      if (markdownLine.trim() === "" || !hasUnescapedPipe(markdownLine)) {
+        inTable = false;
+      } else if (isTableDelimiter(markdownLine)) {
+        flush();
+        continue;
+      } else {
+        flush();
+        blocks.push({ start: lineStart, end: lineEnd, kind: "table" });
+        continue;
+      }
+    }
+
+    const visible = cleanStatement(analyzed.slice(lineStart, lineStart + line.length));
+    if (visible === "") {
+      if (/\[(?:S\d+|R)[^\]\n]*\]/.test(line)) {
+        if (current !== undefined) current.end = lineEnd;
+        else if (blocks.length > 0) (blocks[blocks.length - 1] as StatementBlock).end = lineEnd;
+      } else {
+        flush();
+      }
+      continue;
+    }
+
+    const kind = blockKind(line.replace(/\r$/, ""));
+    if (kind !== undefined) {
+      flush();
+      blocks.push({ start: lineStart, end: lineEnd, kind });
+    } else if (current === undefined) {
+      current = { start: lineStart, end: lineEnd, kind: "prose" };
+    } else {
+      current.end = lineEnd;
+    }
+  }
+  flush();
+  return blocks;
+}
+
+function sentenceRanges(block: StatementBlock, analyzed: string): TextRange[] {
+  let sentences: TextRange[];
+  if (block.kind === "table") {
+    sentences = [{ start: block.start, end: block.end }];
+  } else {
+    const text = analyzed.slice(block.start, block.end);
+    const labels = [...text.matchAll(LABEL_RE)];
+    // ICU may split "fact.[S1:1]" after the opening bracket. A citation
+    // token must remain atomic without changing the answer or its offsets.
+    const boundary = (at: number): number => labels.find((label) =>
+      at > label.index && at < label.index + label[0].length)?.index ?? at;
+    const segments = [...answerSentenceSegmenter.segment(text)];
+    sentences = [];
+    for (let i = 0; i < segments.length; i += 1) {
+      const segment = segments[i];
+      if (segment === undefined) continue;
+      let start = block.start + boundary(segment.index);
+      const end = block.start + boundary(segments[i + 1]?.index ?? text.length);
+      if (end <= start) continue;
+      const segmentText = analyzed.slice(start, end);
+      // Segmenter can put a postfix label after sentence punctuation into the
+      // next segment. Give leading label tokens back to the preceding sentence
+      // so they cannot cover its uncited neighbor. Only range boundaries move;
+      // answer text and persisted citation byte offsets remain unchanged.
+      const previous = sentences[sentences.length - 1];
+      if (previous !== undefined && previous.start >= block.start) {
+        let prefixEnd = 0;
+        for (const label of segmentText.matchAll(LABEL_RE)) {
+          if (segmentText.slice(prefixEnd, label.index).trim() !== "") break;
+          prefixEnd = label.index + label[0].length;
+        }
+        if (prefixEnd > 0) {
+          start += prefixEnd;
+          previous.end = start;
+        }
+      }
+      if (!hasStatementSignal(cleanStatement(analyzed.slice(start, end)))) {
+        if (previous !== undefined) previous.end = end;
+        continue;
+      }
+      sentences.push({ start, end });
+    }
+  }
+
+  return sentences;
+}
+
+/**
+ * Count factual prose units without an adjacent exact server-resolved label.
+ * This is a deterministic coverage gate, not a check that a cited source
+ * semantically entails the statement.
+ */
+export function uncitedStatements(text: string, citations: Citation[]): number {
+  const fences = fencedRanges(text);
+  const inline = inlineCodeRanges(text, fences);
+  const code = [...fences, ...inline].sort((a, b) => a.start - b.start);
+  const analyzed = maskRanges(text, fences);
+  const knownLabels = new Set(citations.map((citation) => citation.label));
+  const resolved: TextRange[] = [];
+  for (const match of text.matchAll(LABEL_RE)) {
+    const start = match.index ?? -1;
+    if (start < 0 || !knownLabels.has(match[0]) || code.some((range) => start >= range.start && start < range.end)) continue;
+    resolved.push({ start, end: start + match[0].length });
+  }
+
+  let uncited = 0;
+  for (const block of statementBlocks(text, analyzed, fences)) {
+    for (const statement of sentenceRanges(block, analyzed)) {
+      const content = cleanStatement(analyzed.slice(statement.start, statement.end));
+      if (!hasStatementSignal(content)) continue;
+      const heading = content.toLowerCase().replace(/[\p{P}\p{S}]+/gu, " ").replace(/\s+/g, " ").trim();
+      if (block.kind === "heading" && sectionHeadings.has(heading)) continue;
+      if (isExplicitInferenceOrAbstention(content)) continue;
+      if (!resolved.some((range) => range.start >= statement.start && range.end <= statement.end)) uncited += 1;
+    }
+  }
+  return uncited;
+}
