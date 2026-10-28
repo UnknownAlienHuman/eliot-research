@@ -199,6 +199,27 @@ export function ProjectKnowledge({ projectId }: { readonly projectId: string }) 
       setActionBusy(null);
     }
   }
+  async function recheckSavedWiki(): Promise<void> {
+    const revisionId = currentView?.operation?.kind === 'wiki' ? currentView.operation.revisionId : null;
+    if (!canRequest || currentView?.canRecheckWiki !== true || revisionId === null) return;
+    setActionBusy('wiki-recheck');
+    setActionError('');
+    setNotice('');
+    try {
+      await apiRequest(knowledgePath + '/wiki/recheck', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revisionId, mutationId: crypto.randomUUID() }),
+      });
+      setNotice('Saved Wiki rechecked; open it in Studio.');
+      setLoading(true);
+      setReadVersion((version) => version + 1);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not recheck the saved Wiki.');
+    } finally {
+      setActionBusy(null);
+    }
+  }
 
   if (projectId === '') {
     return <p className="er-pk__error" role="alert">Open project knowledge from a project.</p>;
@@ -237,14 +258,23 @@ export function ProjectKnowledge({ projectId }: { readonly projectId: string }) 
         <>
           {currentView.state !== 'none' ? (
             <div className="er-pk__status" data-state={currentView.state} role="status">
-              <strong>{stateLabel(currentView.state)}</strong>
+              <strong>{currentView.state === 'done' && currentView.operation?.kind === 'wiki' && currentView.error ? 'Review needed' : stateLabel(currentView.state)}</strong>
               <span>
                 {currentView.state === 'running' ? currentView.operation?.kind === 'wiki' ? 'Writing the Wiki page…' : 'Updating the project map…' : null}
                 {currentView.state === 'paused' ? 'Update paused. Check the reason above before trying again.' : null}
-                {currentView.state === 'done' ? 'Project knowledge is ready.' : null}
+                {currentView.state === 'done' && currentView.operation?.kind !== 'wiki' ? 'Project knowledge is ready.' : null}
+                {currentView.state === 'done' && currentView.operation?.kind === 'wiki' && !currentView.error ? 'Saved Wiki is ready; the displayed map is not the Wiki.' : null}
+                {currentView.state === 'done' && currentView.operation?.kind === 'wiki' && currentView.error ? 'Saved Wiki output needs review; the displayed map is not the Wiki.' : null}
                 {currentView.state === 'failed' ? 'Update failed. Any previous page remains available for review.' : null}
               </span>
               {currentView.error ? <span className="er-pk__status-error">{currentView.error}</span> : null}
+              {currentView.canRecheckWiki === true && currentView.operation?.kind === 'wiki' ? (
+                <span>
+                  <button className="er-button er-button--text" type="button" disabled={!canRequest || currentView.canRecheckWiki !== true} onClick={() => { void recheckSavedWiki(); }}>
+                    {actionBusy === 'wiki-recheck' ? 'Rechecking…' : 'Recheck saved Wiki'}
+                  </button>
+                </span>
+              ) : null}
             </div>
           ) : null}
 

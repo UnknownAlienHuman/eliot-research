@@ -611,8 +611,17 @@ head change stales only accepted pages whose full revision inputs include that r
 map, and detachment also stales dependent pages in that project. No original source or retained attempt is deleted.
 For an explicit Wiki, the same input artifact freezes original UTF-8 blocks referenced by both the guide and verified
 claims before admission. The model selects labels before one complete factual sentence, without Markdown chapters or
-inline citation tokens, and copies the source's numeric notation. Validation uses that frozen evidence only. Earlier
-failed outputs are not rebound to newly hydrated passages, and no repair model call is added.
+inline citation tokens, and copies the source's numeric notation. Validation uses that frozen evidence only and
+requires coverage of every selected source. Earlier failed outputs are not rebound to newly hydrated passages,
+and no repair model call is added.
+`POST /knowledge/wiki/recheck {revisionId,mutationId}` checks an existing terminal Wiki's saved raw output against
+its original frozen passages. It uses no model, admission or Workflow. Unsupported sections are dropped whole;
+retained text and citation identities are unchanged. A derived revision stays on the same page and points directly
+to the original operation; pointer chains and foreign-page/project links are rejected. Original bytes, rows and
+usage remain immutable. Missing coverage or dropped sections produce a Partial Wiki with a visible review warning
+in the existing `generation_error` field; `done` means storage finished, not quality acceptance. Repeating identical
+output reuses its head, a stale head returns conflict, and a concurrent active update cannot be replaced. This save
+works without model budget. `GET /knowledge` exposes `canRecheckWiki` only for compatible retained output.
 
 Deep research is an explicit bounded Workflow: Library first, optional web lead generation, capture selected pages
 through K1, then synthesize. Prefer static fetch; use Browser Run only when rendering is necessary. Never cite an

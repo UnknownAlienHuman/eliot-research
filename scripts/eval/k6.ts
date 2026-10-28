@@ -6,14 +6,20 @@
 //   GET  /api/projects/:projectId/knowledge -> 200 KnowledgeView | 404 K6_NOT_WIRED
 //   GET  /api/revisions/:rev/range?start=&end= -> exact canonical bytes (exact quote check)
 //   POST /api/projects/:projectId/knowledge {mutationId} -> 202 {revisionId}|{accepted} (explicit ELIOT_K6_MODEL=1 only)
+// Opt-in --wiki-recheck uses only /knowledge/wiki/recheck, never generation.
+// Exact inputs: ELIOT_K6_PROJECT_ID, ELIOT_K6_WIKI_REVISION_ID. Optional negative
+// controls: ELIOT_K6_FOREIGN_PROJECT_ID, ELIOT_K6_WIKI_INCOMPATIBLE_REVISION_ID.
+// ELIOT_K6_D1_PATH names the live local SQLite file, opened read-only for the
+// original-row snapshot; Local Explorer GETs hash its retained R2 objects.
 // Default: read stored map only, fail on missing work, zero model calls and zero POST.
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildComparisons } from '../../src/comparisons.ts';
 import type { ComparisonClaim, ComparisonGroup } from '../../src/comparisons.ts';
 import type { KnowledgeView, KnowledgeData } from '../../src/knowledge.ts';
+import type { SavedPage, PageSummary } from '../../src/pages.ts';
 const EOL = String.fromCharCode(10);
 const origin = new URL(process.env.ELIOT_URL || 'http://127.0.0.1:5173').origin;
 const H = { Origin: origin };
@@ -60,6 +66,234 @@ const timeIt = async <T>(key: string, fn: () => Promise<T>): Promise<T> => {
 const violations: string[] = [];
 let knowledgeWired = false;
 let paidPosted = false;
+async function runWikiRecheck(): Promise<number> {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function explicitId(name: string, required = true): string | undefined {
+    const value = process.env[name]?.trim();
+    assert(!required || value, name + ' must identify the exact retained object; no automatic selection.');
+    if (value) assert(uuid.test(value), name + ' must be a full UUID.');
+    return value || undefined;
+  }
+  assert(!runModel, '--wiki-recheck cannot be combined with ELIOT_K6_MODEL=1.');
+  assert(['127.0.0.1', 'localhost', '[::1]'].includes(new URL(origin).hostname), 'Wiki recheck uses a local Worker only.');
+  const pid = explicitId('ELIOT_K6_PROJECT_ID') as string;
+  const originalId = explicitId('ELIOT_K6_WIKI_REVISION_ID') as string;
+  const foreignId = explicitId('ELIOT_K6_FOREIGN_PROJECT_ID', false);
+  const incompatibleId = explicitId('ELIOT_K6_WIKI_INCOMPATIBLE_REVISION_ID', false);
+  const d1Path = process.env.ELIOT_K6_D1_PATH?.trim();
+  assert(d1Path, 'ELIOT_K6_D1_PATH must name the live local D1 SQLite file for immutable-original checks.');
+  assert(foreignId !== pid, 'The foreign control must name a different existing project.');
+  assert(incompatibleId !== originalId, 'The incompatible control must name a different retained attempt.');
+  const base = '/api/projects/' + encodeURIComponent(pid);
+  const requests: { path: string; revisionId: string; mutationId: string; status?: number; result?: unknown }[] = [];
+  const checks: Record<string, unknown> = {};
+  const result: Record<string, unknown> = { scope: 'WIKI_RECHECK_STORAGE_ONLY', projectId: pid, originalRevisionId: originalId,
+    modelCalls: 0, paidPosted: false, requests, checks, fullK6Acceptance: 'NOT_RUN: existing K6 hard gates are unchanged.' };
+  let before: { used: number; budget: number } | undefined;
+  let settingsBefore: unknown;
+  let failed: unknown;
+  const notRun: string[] = [];
+  let retainedBefore: Awaited<ReturnType<typeof retainedSnapshot>> | undefined;
+  async function retainedSnapshot() {
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(d1Path as string, { readOnly: true });
+    let row: Record<string, unknown>;
+    try {
+      const found = db.prepare(`SELECT r.* FROM page_revision r JOIN page p ON p.id=r.page_id
+        WHERE r.id=? AND p.project_id=? AND p.kind='wiki'`).get(originalId, pid);
+      assert(found, 'The exact original Wiki must exist in the explicitly named D1 store.');
+      row = { ...found };
+    } finally { db.close(); }
+    assert(typeof row.generation_payload_key === 'string', 'Original Wiki must retain its frozen-input key.');
+    const objects = [];
+    for (const [kind, key] of [['inputs', row.generation_payload_key], ['raw', 'page/' + originalId + '/call-1.json']]) {
+      assert(typeof key === 'string');
+      const read = await apiBytes('/cdn-cgi/local/explorer/api/r2/buckets/eliot-research-library/objects/' + encodeURIComponent(key));
+      assert.equal(read.status, 200, 'Retain the original R2 ' + kind + ' object.');
+      objects.push({ kind, key, bytes: read.bytes.length, sha256: createHash('sha256').update(read.bytes).digest('hex') });
+    }
+    return { row, rowSha256: createHash('sha256').update(JSON.stringify(row)).digest('hex'), objects };
+  }
+  async function storedOperation(project: string, revision: string): Promise<KnowledgeView> {
+    const read = await apiJson('/api/projects/' + encodeURIComponent(project) + '/knowledge?operationId=' + encodeURIComponent(revision));
+    assert.equal(read.status, 200, 'Read the exact owning operation.');
+    const view = read.body as KnowledgeView;
+    assert(view.operation, 'The retained Wiki operation must exist.');
+    assert.equal(view.operation.revisionId, revision);
+    assert.equal(view.operation.kind, 'wiki');
+    return view;
+  }
+  async function inventory(project: string): Promise<PageSummary[]> {
+    const pages: PageSummary[] = [];
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const read = await apiJson('/api/projects/' + encodeURIComponent(project) + '/pages' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''));
+      assert.equal(read.status, 200, 'Read all accepted page heads.');
+      assert(Array.isArray(read.body.pages));
+      pages.push(...read.body.pages);
+      cursor = read.body.nextCursor ?? null;
+      if (cursor) { assert(!seen.has(cursor), 'Page inventory cursor repeated.'); seen.add(cursor); }
+    } while (cursor);
+    return pages.sort((a, b) => a.id.localeCompare(b.id));
+  }
+  async function workflowJobs(): Promise<string[]> {
+    // Local Explorer GET, verified against its OpenAPI instance-list contract.
+    const ids: string[] = [];
+    let page = 1, totalPages = 1;
+    do {
+      const read = await apiJson('/cdn-cgi/local/explorer/api/workflows/eliot-research-project-knowledge/instances?per_page=100&page=' + page);
+      assert.equal(read.status, 200, 'Read local Workflow instances to prove no new job.');
+      assert.equal(read.body.success, true); assert(Array.isArray(read.body.result));
+      for (const row of read.body.result) { assert(typeof row.id === 'string'); ids.push(row.id); }
+      totalPages = read.body.result_info.total_pages;
+      assert(Number.isSafeInteger(totalPages) && totalPages >= 0);
+      page++;
+    } while (page <= totalPages);
+    assert.equal(new Set(ids).size, ids.length, 'Workflow inventory changed while paging.');
+    return ids.sort();
+  }
+  async function recheck(project: string, revision: string, mutationId: string) {
+    const path = '/api/projects/' + encodeURIComponent(project) + '/knowledge/wiki/recheck';
+    const request: (typeof requests)[number] = { path, revisionId: revision, mutationId };
+    requests.push(request);
+    const response = await apiJson(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ revisionId: revision, mutationId }) });
+    request.status = response.status; request.result = response.body;
+    if (response.status === 500) {
+      console.error('HTTP 500: Wiki recheck stopped immediately; no repeat follows.', JSON.stringify(request));
+      throw new Error('HTTP 500 from ' + path + '; inspect the retained request, never retry variations.');
+    }
+    return response;
+  }
+  try {
+    const project = await apiJson(base);
+    assert.equal(project.status, 200, 'The explicit project must exist.');
+    before = await monthlyUsage(); result.monthlyBefore = before;
+    const settings = await apiJson('/api/settings');
+    assert.equal(settings.status, 200); settingsBefore = settings.body;
+    const original = await storedOperation(pid, originalId);
+    assert(['done', 'failed'].includes(original.state), 'Recheck a retained terminal Wiki, never generate another.');
+    assert.equal(original.canRecheckWiki, true, 'The exact original must have compatible frozen output.');
+    assert(original.operation, 'The retained Wiki must identify its original page.');
+    const pageId = original.operation.pageId;
+    result.original = original;
+    retainedBefore = await retainedSnapshot(); result.retainedBefore = retainedBefore;
+    const activeBefore = await apiJson(base + '/knowledge');
+    assert.equal(activeBefore.status, 200);
+    result.activeOperationBefore = activeBefore.body.operation;
+    const pagesBefore = await inventory(pid);
+    const jobsBefore = await workflowJobs();
+    result.workflowJobsBefore = jobsBefore;
+    if (foreignId) assert.equal((await apiJson('/api/projects/' + encodeURIComponent(foreignId))).status, 200, 'Foreign control must be an existing project.');
+    if (incompatibleId) {
+      const old = await storedOperation(pid, incompatibleId);
+      const oldActive = await apiJson(base + '/knowledge');
+      const response = await recheck(pid, incompatibleId, randomUUID());
+      assert.equal(response.status, 409, 'An old Wiki without frozen passages is incompatible.');
+      assert.deepEqual(await storedOperation(pid, incompatibleId), old, 'Incompatible attempts remain immutable.');
+      assert.deepEqual((await apiJson(base + '/knowledge')).body, oldActive.body, 'Incompatible input must not start an operation.');
+      assert.deepEqual(await inventory(pid), pagesBefore, 'Incompatible input must not mutate page heads.');
+      assert.deepEqual(await workflowJobs(), jobsBefore, 'Incompatible input must not create a Workflow.');
+      checks.incompatible = { revisionId: incompatibleId, status: response.status, unchanged: true };
+    } else notRun.push('Incompatible frozen-passage control: set ELIOT_K6_WIKI_INCOMPATIBLE_REVISION_ID.');
+    if (foreignId) {
+      const foreignBase = '/api/projects/' + encodeURIComponent(foreignId);
+      const foreignBefore = await apiJson(foreignBase + '/knowledge');
+      assert.equal(foreignBefore.status, 200);
+      const foreignPages = await inventory(foreignId);
+      const response = await recheck(foreignId, originalId, randomUUID());
+      assert([404, 409].includes(response.status), 'A foreign project must reject this Wiki.');
+      assert.deepEqual((await apiJson(foreignBase + '/knowledge')).body, foreignBefore.body);
+      assert.deepEqual(await inventory(foreignId), foreignPages);
+      assert.deepEqual(await inventory(pid), pagesBefore);
+      assert.deepEqual(await workflowJobs(), jobsBefore, 'Foreign input must not create a Workflow.');
+      checks.foreignProject = { projectId: foreignId, status: response.status, unchanged: true };
+    } else notRun.push('Foreign existing-project control: set ELIOT_K6_FOREIGN_PROJECT_ID.');
+    const mutationId = randomUUID();
+    const first = await recheck(pid, originalId, mutationId);
+    assert([200, 201, 202].includes(first.status), 'Storage-only recheck must return its committed derived revision synchronously.');
+    assert.equal(first.body.state, 'done', 'A successful recheck must already be committed, never queued.');
+    assert(typeof first.body.revisionId === 'string' && uuid.test(first.body.revisionId), 'Return the derived revisionId.');
+    assert.equal(first.body.pageId, pageId, 'Publish on the original Wiki page.');
+    const derivedId: string = first.body.revisionId;
+    assert.notEqual(derivedId, originalId, 'Keep the retained original immutable.');
+    async function derivedPage(): Promise<SavedPage> {
+      const derived = await storedOperation(pid, derivedId);
+      assert.equal(derived.state, 'done'); assert.equal(derived.operation?.pageId, pageId);
+      assert.deepEqual(derived.usage, { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostMicrousd: 0 });
+      const read = await apiJson(base + '/pages/' + encodeURIComponent(pageId));
+      assert.equal(read.status, 200);
+      const page = read.body.page as SavedPage;
+      assert.equal(page.id, pageId); assert.equal(page.kind, 'wiki'); assert.equal(page.headRevisionId, derivedId);
+      assert(/partial\s*wiki/i.test(page.body), 'The saved body must visibly warn Partial Wiki.');
+      assert(!/times\s+10\s*\^\s*6/i.test(page.body), 'The unsupported exponent section must be dropped.');
+      assert(page.citations.length > 0, 'The partial Wiki must retain cited passages.');
+      return page;
+    }
+    const page = await derivedPage();
+    const pagesAfter = await inventory(pid);
+    assert.deepEqual(pagesAfter.filter(p => p.id !== pageId), pagesBefore.filter(p => p.id !== pageId), 'Only the original Wiki page may advance.');
+    const activeAfter = await apiJson(base + '/knowledge');
+    assert.equal(activeAfter.status, 200);
+    assert.deepEqual(activeAfter.body.operation, { revisionId: derivedId, pageId, kind: 'wiki' }, 'The active row must identify the zero-usage derived Wiki.');
+    assert.equal(activeAfter.body.state, 'done', 'Recheck must leave no queued or running operation.');
+    assert.deepEqual(await workflowJobs(), jobsBefore, 'Recheck must not create a Workflow instance.');
+    for (const repeatId of [mutationId, randomUUID()]) {
+      const repeat = await recheck(pid, originalId, repeatId);
+      assert([200, 201, 202].includes(repeat.status));
+      assert.equal(repeat.body.state, 'done');
+      assert.equal(repeat.body.revisionId, derivedId); assert.equal(repeat.body.pageId, pageId);
+      assert.deepEqual(await derivedPage(), page, 'Same and new mutation IDs must retain the identical accepted head.');
+      assert.deepEqual(await inventory(pid), pagesAfter, 'Repeat recheck must not create another page or head.');
+      assert.deepEqual((await apiJson(base + '/knowledge')).body, activeAfter.body, 'Repeat recheck must not start another operation.');
+      assert.deepEqual(await workflowJobs(), jobsBefore, 'Neither repeat may create a Workflow instance.');
+    }
+    const originalAfter = await storedOperation(pid, originalId);
+    assert.equal(originalAfter.state, original.state); assert.equal(originalAfter.error, original.error);
+    assert.deepEqual(originalAfter.operation, original.operation); assert.deepEqual(originalAfter.usage, original.usage);
+    const texts = new Map<string, Buffer>();
+    for (const citation of page.citations) {
+      assert(Number.isSafeInteger(citation.start) && Number.isSafeInteger(citation.end) && citation.start >= 0 && citation.end > citation.start);
+      const revision = '/api/revisions/' + encodeURIComponent(citation.revisionId);
+      let text = texts.get(citation.revisionId);
+      if (!text) { const whole = await apiBytes(revision + '/text'); assert.equal(whole.status, 200); text = whole.bytes; texts.set(citation.revisionId, text); }
+      const range = await apiBytes(revision + '/range?start=' + citation.start + '&end=' + citation.end);
+      assert.equal(range.status, 200); assert(citation.end <= text.length);
+      assert(range.bytes.equals(text.subarray(citation.start, citation.end)), 'Citation HTTP bytes must equal the original UTF-8 slice.');
+      new TextDecoder('utf-8', { fatal: true }).decode(range.bytes);
+      assert(page.body.includes(citation.label), 'Each retained citation must be present in the partial Wiki.');
+    }
+    Object.assign(checks, { samePage: true, derivedZeroUsage: true, partialWikiWarning: true, unsupportedExponentDropped: true,
+      sameMutationSameHead: true, newMutationSameHead: true, noNewRunningOperation: true, noNewWorkflowJob: true,
+      originalUsageRetained: true, citationByteChecks: page.citations.length });
+    result.workflowJobsAfter = await workflowJobs();
+    result.derived = { revisionId: derivedId, pageId, body: page.body, citations: page.citations };
+  } catch (error) { failed = error; result.error = error instanceof Error ? error.message : String(error); }
+  finally {
+    if (retainedBefore) {
+      try {
+        const after = await retainedSnapshot(); result.retainedAfter = after;
+        assert.deepEqual(after, retainedBefore, 'Original D1 row and R2 raw/input hashes must remain exactly unchanged.');
+        checks.originalD1AndR2Unchanged = true;
+      } catch (error) { if (!failed) { failed = error; result.error = error instanceof Error ? error.message : String(error); } }
+    }
+    try {
+      const after = await monthlyUsage(); result.monthlyAfter = after;
+      assert(before); assert.deepEqual(after, before, 'Recheck must leave monthly spend and budget unchanged.');
+      const settings = await apiJson('/api/settings'); assert.equal(settings.status, 200);
+      assert.deepEqual(settings.body, settingsBefore, 'Recheck must preserve settings and monthly accounting.');
+      checks.settingsAndMonthlyUnchanged = true;
+    } catch (error) { if (!failed) { failed = error; result.error = error instanceof Error ? error.message : String(error); } }
+    result.status = failed ? 'FAIL' : notRun.length ? 'INCOMPLETE' : 'VERIFIED'; result.notRun = notRun;
+    result.wallMs = nowMs() - t0;
+    const path = outDir + '/wiki-recheck-' + Date.now() + '.json';
+    await writeFile(path, JSON.stringify(result, null, 2));
+    console.log(JSON.stringify({ ...result, artifact: path }, null, 2));
+  }
+  return failed || notRun.length ? 1 : 0;
+}
+if (process.argv.includes('--wiki-recheck')) process.exit(await runWikiRecheck());
 type StoredIds = { projectId: string; title: string };
 async function resolveProject(): Promise<StoredIds> {
   const p = await timeIt('GET /api/projects', () => apiJson('/api/projects'));

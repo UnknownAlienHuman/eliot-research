@@ -6,8 +6,8 @@ import type { Actor } from "./auth";
 import type { Block } from "./blocks";
 import type { ComparisonClaim } from "./comparisons";
 import { getProjectKnowledge, renderKnowledge, storeKnowledgeRevision } from "./knowledge";
-import { loadWikiEvidence } from "./knowledge";
-import type { KnowledgeData, KnowledgeSource } from "./knowledge";
+import { loadWikiEvidence, readRetainedWiki, wikiData } from "./knowledge";
+import type { KnowledgeData, KnowledgeInputs, KnowledgeSource } from "./knowledge";
 
 // These cases call the real storage functions, not loadKnowledgeInputs. Keep
 // the latter's unrelated K3 Workflow import out of the native SQLite runner.
@@ -290,6 +290,33 @@ function candidateRow(f: Fixture, revisionId = f.candidateId) {
     generation_payload_key AS payloadKey FROM page_revision WHERE id=?`).get(revisionId);
 }
 
+function seedRetainedWiki(f: Fixture) {
+  const wiki = addWikiCandidate(f);
+  const source = f.data.sources[0], topic = f.data.topics[0];
+  if (!source || !topic) throw new Error("Missing frozen Wiki fixture topic or source");
+  const quote = "Точность достигла 81%.";
+  const evidence = { quote, citation: { revisionId: "source-a-r1", sourceId: "source-a", sourceTitle: "Source A",
+    block: 2, start: 12, end: 12 + new TextEncoder().encode(quote).byteLength, deleted: false,
+    label: "[Rsource-a-r1:2]" } };
+  const inputs: KnowledgeInputs = {
+    kind: "wiki", topicId: topic.id, changed: [],
+    previous: { ...f.data, topics: [{ ...topic, sourceIds: [source.sourceId] },
+      ...f.data.sources.filter((other) => other.sourceId !== source.sourceId)
+        .map((other) => ({ id: "topic-" + other.sourceId, title: other.title, sourceIds: [other.sourceId] }))] },
+    sources: [{ ...source, guide: null,
+      claims: f.data.comparisons.flatMap((group) => group.rows).filter((row) => row.sourceId === "source-a") }],
+    wikiEvidence: [evidence],
+  };
+  const raw = { sections: [
+    { labels: [evidence.citation.label], text: quote },
+    { labels: [evidence.citation.label], text: "Точность достигла 99%." },
+  ] };
+  f.bucket.seed(`page/${wiki.revisionId}/inputs.json`, JSON.stringify(inputs));
+  f.bucket.seed(`page/${wiki.revisionId}/call-1.json`, JSON.stringify(raw));
+  f.db.prepare("UPDATE page_revision SET generation_state='failed',model_calls=1 WHERE id=?").run(wiki.revisionId);
+  return { ...wiki, inputs, raw, evidence };
+}
+
 async function storeMap(f: Fixture) {
   return storeKnowledgeRevision(f.env, OWNER, {
     projectId: f.projectId, pageId: f.pageId, revisionId: f.candidateId,
@@ -308,6 +335,135 @@ describe("K6 storage functions on migrated SQLite and in-memory R2", () => {
     fixtures.push(f);
     return f;
   }
+
+  it("reads a supported retained subset from frozen evidence without rebinding source bytes or usage", async () => {
+    const f = create(), wiki = seedRetainedWiki(f);
+    const original = { ...candidateRow(f, wiki.revisionId) };
+    const inputsBytes = f.bucket.textAt(`page/${wiki.revisionId}/inputs.json`);
+    const rawBytes = f.bucket.textAt(`page/${wiki.revisionId}/call-1.json`);
+    f.bucket.seed("source/source-a-r1/text.md", "Replacement bytes report 99%.");
+    f.bucket.seed("source/source-a-r1/blocks.json", "[]");
+
+    const retained = await readRetainedWiki(f.env, f.projectId, wiki.revisionId);
+    expect(retained).not.toBeNull();
+    expect(retained).toMatchObject({ pageId: wiki.pageId, originalRevisionId: wiki.revisionId,
+      inputs: wiki.inputs, checked: { kept: 1, dropped: [{ index: 1, reason: "unsupported-numeric-facts" }], missingSourceIds: [] } });
+    expect(retained?.checked.body).toBe(wiki.evidence.quote + "\n\n" + wiki.evidence.citation.label);
+    expect(retained?.checked.citations).toEqual([wiki.evidence.citation]);
+    expect((await getProjectKnowledge(f.env, OWNER, { projectId: f.projectId, operationId: wiki.revisionId })).canRecheckWiki).toBe(true);
+    expect(f.bucket.gets.every(({ key }) => key.startsWith("page/"))).toBe(true);
+    expect(f.bucket.attempts).toHaveLength(0);
+    expect(f.bucket.textAt(`page/${wiki.revisionId}/inputs.json`)).toBe(inputsBytes);
+    expect(f.bucket.textAt(`page/${wiki.revisionId}/call-1.json`)).toBe(rawBytes);
+    expect(candidateRow(f, wiki.revisionId)).toEqual(original);
+  });
+
+  it("does not offer recheck for legacy evidence, incompatible raw output, an empty subset or an undispatched operation", async () => {
+    const f = create(), wiki = seedRetainedWiki(f);
+    const legacy = { ...wiki.inputs };
+    delete legacy.wikiEvidence;
+    f.bucket.seed(`page/${wiki.revisionId}/inputs.json`, JSON.stringify(legacy));
+    expect(await readRetainedWiki(f.env, f.projectId, wiki.revisionId)).toBeNull();
+    expect((await getProjectKnowledge(f.env, OWNER, { projectId: f.projectId })).canRecheckWiki).toBe(false);
+    expect(f.bucket.gets.some(({ key }) => key.startsWith("source/"))).toBe(false);
+
+    f.bucket.seed(`page/${wiki.revisionId}/inputs.json`, JSON.stringify(wiki.inputs));
+    f.bucket.seed(`page/${wiki.revisionId}/call-1.json`, JSON.stringify({ sections: [{ labels: ["[Rother:2]"], text: "Other output." }] }));
+    expect(await readRetainedWiki(f.env, f.projectId, wiki.revisionId)).toBeNull();
+    f.bucket.seed(`page/${wiki.revisionId}/call-1.json`, JSON.stringify({ sections: [wiki.raw.sections[1]] }));
+    expect(await readRetainedWiki(f.env, f.projectId, wiki.revisionId)).toBeNull();
+    f.bucket.seed(`page/${wiki.revisionId}/call-1.json`, JSON.stringify(wiki.raw));
+    f.db.prepare("UPDATE page_revision SET model_calls=0 WHERE id=?").run(wiki.revisionId);
+    expect(await readRetainedWiki(f.env, f.projectId, wiki.revisionId)).toBeNull();
+    expect(f.bucket.attempts).toHaveLength(0);
+  });
+
+  it("follows one checkedFrom directly to the original model operation and rejects a recheck chain", async () => {
+    const f = create(), wiki = seedRetainedWiki(f);
+    const checkedId = "wiki-checked", chainId = "wiki-checked-again";
+    insertPageRevision(f.db, { id: checkedId, pageId: wiki.pageId, revisionNo: 2, status: "accepted",
+      inputs: wiki.inputs.sources.map((source) => source.revisionId), now: f.now, generationState: "done", cost: 0 });
+    const checkedInputs = { ...wiki.inputs, checkedFrom: wiki.revisionId };
+    f.bucket.seed(`page/${checkedId}/inputs.json`, JSON.stringify(checkedInputs));
+    const retained = await readRetainedWiki(f.env, f.projectId, checkedId);
+    expect(retained).toMatchObject({ pageId: wiki.pageId, originalRevisionId: wiki.revisionId, inputs: wiki.inputs, checked: { kept: 1 } });
+    expect(f.bucket.gets.some(({ key }) => key === `page/${checkedId}/call-1.json`)).toBe(false);
+    insertPageRevision(f.db, { id: chainId, pageId: wiki.pageId, revisionNo: 3, status: "proposed",
+      inputs: wiki.inputs.sources.map((source) => source.revisionId), now: f.now, generationState: "done", cost: 0 });
+    f.bucket.seed(`page/${chainId}/inputs.json`, JSON.stringify({ ...wiki.inputs, checkedFrom: checkedId }));
+    expect(await readRetainedWiki(f.env, f.projectId, chainId)).toBeNull();
+  });
+
+  it("denies foreign-project, foreign-page and map links before exposing retained output", async () => {
+    const f = create(), wiki = seedRetainedWiki(f);
+    f.db.prepare("INSERT INTO project(id,title,created_at,updated_at) VALUES('foreign-project','Other',?,?)").run(f.now, f.now);
+    expect(await readRetainedWiki(f.env, "foreign-project", wiki.revisionId)).toBeNull();
+    expect(await readRetainedWiki(f.env, f.projectId, f.candidateId)).toBeNull();
+    expect(f.bucket.gets).toHaveLength(0);
+    const otherPageId = addUnrelatedAcceptedPage(f);
+    f.db.prepare("UPDATE page_revision SET model_calls=1 WHERE page_id=?").run(otherPageId);
+    f.bucket.seed(`page/${wiki.revisionId}/inputs.json`, JSON.stringify({ ...wiki.inputs, checkedFrom: "unrelated-head" }));
+    expect(await readRetainedWiki(f.env, f.projectId, wiki.revisionId)).toBeNull();
+    expect(f.bucket.gets.some(({ key }) => key.startsWith("page/unrelated-head/"))).toBe(false);
+    f.bucket.seed(`page/${wiki.revisionId}/inputs.json`, JSON.stringify({ ...wiki.inputs, checkedFrom: wiki.revisionId }));
+    expect(await readRetainedWiki(f.env, f.projectId, wiki.revisionId)).toBeNull();
+  });
+
+  it("builds Wiki data from only the exact frozen sources and selected topic", () => {
+    const f = create(), wiki = seedRetainedWiki(f);
+    const initial = wiki.inputs.previous;
+    if (!initial) throw new Error("Missing previous fixture map");
+    const previous = { ...initial, topics: [...initial.topics,
+      { id: "overlapping-topic", title: "Other topic", sourceIds: ["source-a"] }] };
+    const frozen = { ...wiki.inputs, previous,
+      sources: wiki.inputs.sources.map((source) => ({ ...source, title: "Frozen title" })) };
+    const before = JSON.stringify(frozen);
+    const data = wikiData(frozen);
+    expect(data.sources).toEqual([{ sourceId: "source-a", revisionId: "source-a-r1", title: "Frozen title" }]);
+    expect(data.topics).toEqual([{ id: "topic-results", title: "Classification results", sourceIds: ["source-a"] }]);
+    expect(data.comparisons).toEqual([]);
+    expect(data.gaps.every((row) => row.sourceIds.every((id) => id === "source-a"))).toBe(true);
+    expect(data.routes.every((row) => row.sourceIds.every((id) => id === "source-a"))).toBe(true);
+    expect(JSON.stringify(frozen)).toBe(before);
+    expect(() => wikiData({ ...wiki.inputs, previous: null })).toThrow(/frozen map/i);
+    expect(() => wikiData({ ...wiki.inputs, sources: [] })).toThrow(/topic and sources/i);
+    expect(() => wikiData({ ...wiki.inputs,
+      sources: wiki.inputs.sources.map((source) => ({ ...source, revisionId: "source-a-r2" })) })).toThrow(/topic and sources/i);
+    const selected = initial.topics.find((topic) => topic.id === wiki.inputs.topicId);
+    if (!selected) throw new Error("Missing selected fixture topic");
+    expect(() => wikiData({ ...wiki.inputs, previous: { ...initial,
+      topics: [{ ...selected, sourceIds: ["source-a", "source-b"] }] } })).toThrow(/topic and sources/i);
+  });
+
+  it("publishes a review warning atomically with the accepted Wiki head", async () => {
+    const f = create(), wiki = addWikiCandidate(f);
+    const data = scopeData(f.data, "source-a"), rendered = renderKnowledge(data);
+    const warning = "Only the supported retained sentences were saved. Review the omitted output.";
+    f.d1.beforeBatch = () => {
+      expect(headId(f, wiki.pageId)).toBeNull();
+      expect(f.db.prepare("SELECT generation_error AS error FROM page_revision WHERE id=?").get(wiki.revisionId)).toMatchObject({ error: null });
+    };
+    const result = await storeKnowledgeRevision(f.env, OWNER, { projectId: f.projectId, pageId: wiki.pageId,
+      revisionId: wiki.revisionId, data, inputs: wiki.inputs, title: "Topic wiki", kind: "wiki",
+      ...rendered, reviewWarning: warning });
+    expect(result).toMatchObject({ accepted: true, page: { headRevisionId: wiki.revisionId } });
+    const view = await getProjectKnowledge(f.env, OWNER, { projectId: f.projectId });
+    expect(view).toMatchObject({ state: "done", error: warning, canRecheckWiki: false });
+    expect(candidateRow(f, wiki.revisionId)).toMatchObject({ calls: 0, reservedCost: 321 });
+  });
+
+  it("rolls a review warning back with the revision when head publication fails", async () => {
+    const f = create(), wiki = addWikiCandidate(f);
+    const data = scopeData(f.data, "source-a"), rendered = renderKnowledge(data);
+    f.db.exec(`CREATE TRIGGER reject_wiki_head BEFORE UPDATE OF head_revision_id ON page
+      WHEN NEW.id='wiki-page' BEGIN SELECT RAISE(ABORT,'Injected Wiki head failure'); END`);
+    await expect(storeKnowledgeRevision(f.env, OWNER, { projectId: f.projectId, pageId: wiki.pageId,
+      revisionId: wiki.revisionId, data, inputs: wiki.inputs, title: "Topic wiki", kind: "wiki",
+      ...rendered, reviewWarning: "Retained subset requires review." })).rejects.toThrow("Injected Wiki head failure");
+    expect(headId(f, wiki.pageId)).toBeNull();
+    expect(f.db.prepare("SELECT status,generation_state AS state,generation_error AS error FROM page_revision WHERE id=?")
+      .get(wiki.revisionId)).toMatchObject({ status: "proposed", state: "running", error: null });
+  });
 
   it("renders exact persistent citations and writes every R2 output before atomically advancing the head", async () => {
     const f = create();

@@ -8,6 +8,8 @@ if (contour === 'k2' && process.argv.includes('--models-browser')) {
 } else if (contour === 'k2' && process.argv.includes('--command-code-smoke')) {
   const { runCommandCodeSmoke } = await import('./command-code.ts');
   await runCommandCodeSmoke();
+} else if (contour === 'k6' && process.argv.includes('--replacement')) {
+  await import('./k6-replacement.mjs');
 } else {
   await import('./' + contour + '.ts');
 }

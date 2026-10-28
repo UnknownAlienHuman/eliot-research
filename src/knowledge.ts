@@ -7,6 +7,8 @@ import type { ComparisonAliases, ComparisonClaim, ComparisonGroup } from "./comp
 import { getPage, type SavedPage } from "./pages";
 import { getUnderstanding } from "./understanding";
 import { LibraryError } from "./library";
+import { checkWikiOutput, wikiSchema } from "./wiki";
+import type { WikiOutputCheck } from "./wiki";
 
 export interface KnowledgeSource {
   sourceId: string;
@@ -25,9 +27,27 @@ export interface KnowledgeData {
   aliases?: ComparisonAliases;
 }
 
+export interface KnowledgeInputs {
+  kind: "map" | "wiki";
+  topicId?: string;
+  sources: KnowledgeSource[];
+  previous: KnowledgeData | null;
+  changed: string[];
+  wikiEvidence?: WikiEvidence[];
+  checkedFrom?: string;
+}
+
+export interface RetainedWiki {
+  pageId: string;
+  originalRevisionId: string;
+  inputs: KnowledgeInputs;
+  checked: WikiOutputCheck;
+}
+
 export interface KnowledgeView {
   state: "none" | "running" | "paused" | "done" | "failed";
   error: string | null;
+  canRecheckWiki: boolean;
   operation: { revisionId: string; pageId: string; kind: "map" | "wiki" } | null;
   page: SavedPage | null;
   data: KnowledgeData | null;
@@ -462,6 +482,92 @@ function validCitation(value: unknown, sources: Map<string, KnowledgeData["sourc
   return source !== undefined && source.revisionId === revisionId && source.title === sourceTitle;
 }
 
+export function wikiData(inputs: KnowledgeInputs): KnowledgeData {
+  if (inputs.kind !== "wiki" || !inputs.previous || !inputs.topicId) {
+    throw new LibraryError("conflict", "The frozen map needed by this Wiki is missing.", 409);
+  }
+  const previous = inputs.previous;
+  const topic = previous.topics.find((item) => item.id === inputs.topicId);
+  const sources = inputs.sources.map(({ sourceId, revisionId, title }) => ({ sourceId, revisionId, title }));
+  const sourceById = new Map(sources.map((source) => [source.sourceId, source]));
+  const previousSources = new Map(previous.sources.map((source) => [source.sourceId, source]));
+  if (!topic || sources.length === 0 || sourceById.size !== sources.length
+    || new Set(topic.sourceIds).size !== topic.sourceIds.length || topic.sourceIds.length !== sources.length
+    || sources.some((source) => !topic.sourceIds.includes(source.sourceId)
+      || previousSources.get(source.sourceId)?.revisionId !== source.revisionId)) {
+    throw new LibraryError("conflict", "The frozen Wiki topic and sources do not match.", 409);
+  }
+  const retain = <T extends { sourceIds: string[] }>(rows: T[]): T[] => rows
+    .map((row) => ({ ...row, sourceIds: row.sourceIds.filter((id) => sourceById.has(id)) }))
+    .filter((row) => row.sourceIds.length > 0);
+  return {
+    ...previous, sources, topics: retain([topic]), gaps: retain(previous.gaps), routes: retain(previous.routes),
+    comparisons: previous.comparisons.map((group) => ({ ...group, rows: group.rows.filter((row) =>
+      sourceById.get(row.sourceId)?.revisionId === row.revisionId) }))
+      .filter((group) => new Set(group.rows.map((row) => row.sourceId)).size >= 2),
+  };
+}
+
+export async function readRetainedWiki(env: Env, projectId: string, revisionId: string): Promise<RetainedWiki | null> {
+  interface Operation { pageId: string; calls: number; inputsKey: string | null; inputsJson: string }
+  const operation = (id: string) => env.DB.prepare(`SELECT r.page_id AS pageId,r.model_calls AS calls,
+    r.generation_payload_key AS inputsKey,r.inputs_json AS inputsJson FROM page_revision r JOIN page p ON p.id=r.page_id
+    WHERE r.id=? AND p.project_id=? AND p.kind='wiki' AND r.origin='job'`)
+    .bind(id, projectId).first<Operation>();
+  const json = async (key: string): Promise<unknown> => {
+    const object = await env.BUCKET.get(key);
+    if (!object) return null;
+    try { return await object.json<unknown>(); } catch { return null; }
+  };
+  const snapshot = async (id: string, row: Operation): Promise<KnowledgeInputs | null> => {
+    if (row.inputsKey !== `page/${id}/inputs.json`) return null;
+    const value = await json(row.inputsKey);
+    if (!isRecord(value) || value.kind !== "wiki" || typeof value.topicId !== "string"
+      || !Array.isArray(value.sources) || value.sources.length === 0 || !isKnowledgeData(value.previous)
+      || !isStringArray(value.changed) || (value.checkedFrom !== undefined && typeof value.checkedFrom !== "string")) return null;
+    if (!value.sources.every((source) => isRecord(source) && typeof source.sourceId === "string"
+      && typeof source.revisionId === "string" && typeof source.title === "string"
+      && (source.guide === null || typeof source.guide === "string") && Array.isArray(source.claims)
+      && source.claims.every((claim) => isComparisonClaim(claim)
+        && claim.sourceId === source.sourceId && claim.revisionId === source.revisionId))) return null;
+    const sources = value.sources as KnowledgeSource[];
+    const revisions = inputRevisionIds(sources.map((source) => source.revisionId));
+    let saved: unknown;
+    try { saved = JSON.parse(row.inputsJson); } catch { return null; }
+    const expected = inputRevisionIds(saved);
+    if (!revisions || !expected || !sameRevisionIds(revisions, expected)) return null;
+    return value as unknown as KnowledgeInputs;
+  };
+
+  const selected = await operation(revisionId);
+  if (!selected) return null; // Scope before any R2 reads, including checkedFrom.
+  const selectedInputs = await snapshot(revisionId, selected);
+  if (!selectedInputs) return null;
+  let originalRevisionId = revisionId, original = selected, inputs = selectedInputs;
+  if (inputs.checkedFrom !== undefined) {
+    const from = inputs.checkedFrom;
+    if (!from || from === revisionId || /[/\\]/.test(from)) return null;
+    const linked = await operation(from);
+    if (!linked || linked.pageId !== selected.pageId) return null;
+    const linkedInputs = await snapshot(from, linked);
+    if (!linkedInputs || linkedInputs.checkedFrom !== undefined) return null; // Never traverse a recheck chain.
+    originalRevisionId = from; original = linked; inputs = linkedInputs;
+  }
+  if (original.calls <= 0 || !inputs.wikiEvidence?.length) return null;
+  const sources = new Map(inputs.sources.map((source) => [source.sourceId, source]));
+  const revisions = new Set(inputs.sources.map((source) => source.revisionId));
+  if (!Array.isArray(inputs.wikiEvidence) || !inputs.wikiEvidence.every((item) => isRecord(item)
+    && typeof item.quote === "string" && item.quote.trim().length > 0 && validCitation(item.citation, sources, revisions)
+    && new TextEncoder().encode(item.quote).byteLength === item.citation.end - item.citation.start)) return null;
+  const labels = inputs.wikiEvidence.map((item) => item.citation.label);
+  if (new Set(labels).size !== labels.length) return null;
+  try { wikiData(inputs); } catch { return null; }
+  const parsed = wikiSchema(inputs.wikiEvidence).safeParse(await json(`page/${originalRevisionId}/call-1.json`));
+  if (!parsed.success) return null;
+  const checked = checkWikiOutput(parsed.data, inputs.wikiEvidence, inputs.sources.map((source) => source.sourceId));
+  return checked.kept > 0 ? { pageId: selected.pageId, originalRevisionId, inputs, checked } : null;
+}
+
 async function putKnowledgeObject(env: Env, key: string, body: string, contentType: string): Promise<void> {
   const bytes = new TextEncoder().encode(body);
   const saved = await env.BUCKET.put(key, bytes, {
@@ -536,7 +642,9 @@ export async function getProjectKnowledge(env: Env, actor: Actor | null, input: 
       data = stored;
     }
   }
-  return { state, error, operation, page, data, usage };
+  const canRecheckWiki = operation?.kind === "wiki" && (state === "done" || state === "failed")
+    && await readRetainedWiki(env, input.projectId, operation.revisionId) !== null;
+  return { state, error, operation, page, data, usage, canRecheckWiki };
 }
 
 async function currentInputsMatch(env: Env, projectId: string, kind: "map" | "wiki", inputs: string[]): Promise<boolean> {
@@ -574,6 +682,7 @@ export async function storeKnowledgeRevision(env: Env, actor: Actor | null, inpu
   kind: "map" | "wiki";
   body?: string;
   citations?: Citation[];
+  reviewWarning?: string;
 }): Promise<{ accepted: boolean; stale: boolean; page: SavedPage | null }> {
   const title = input.title.trim();
   if (!input.projectId || !input.pageId || !input.revisionId || !title || title.length > 200
@@ -651,11 +760,11 @@ export async function storeKnowledgeRevision(env: Env, actor: Actor | null, inpu
   const now = Date.now();
   const results = await env.DB.batch([
     env.DB.prepare(`UPDATE page_revision SET body_key=?,citations_key=?,status='accepted',
-      generation_state='done',generation_error=NULL WHERE id=? AND page_id=? AND inputs_json=? AND generation_state='running'
+      generation_state='done',generation_error=? WHERE id=? AND page_id=? AND inputs_json=? AND generation_state='running'
       AND EXISTS(SELECT 1 FROM project p JOIN page pg ON pg.id=? AND pg.project_id=p.id
         WHERE p.id=? AND p.knowledge_active_revision_id=page_revision.id
           AND (?='wiki' OR p.knowledge_page_id=pg.id) AND (${matches}))`)
-      .bind(bodyKey, citationsKey, input.revisionId, input.pageId, row.inputsJson,
+      .bind(bodyKey, citationsKey, input.reviewWarning ?? null, input.revisionId, input.pageId, row.inputsJson,
         input.pageId, input.projectId, input.kind, ...matchBinds),
     env.DB.prepare(`UPDATE page SET title=?,kind=?,head_revision_id=?,freshness='current',updated_at=?
       WHERE id=? AND project_id=? AND EXISTS(SELECT 1 FROM project p WHERE p.id=?

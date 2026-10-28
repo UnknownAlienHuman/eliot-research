@@ -214,10 +214,11 @@ comparable runs rather than making one provider fluctuation invalidate the archi
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
-Local WIP on 2026-10-26 registers only three external generation choices through the owner's existing OpenRouter
-default BYOK credential: `dots-studio/dots-3-note-preview:free`, `thinkingmachines/inkling:free`, and
-`nvidia/nemotron-3.5-super-vl:free`, each under `gateway:openrouter/<exact-id>`. Native defaults stay unchanged.
-Their real provider capacities remain visible in advanced details; current chat/distill jobs retain the existing
+The retained OpenRouter smoke on 2026-10-26 tested three owner-selected models through the existing default BYOK
+credential: `dots-studio/dots-3-note-preview:free`, `thinkingmachines/inkling:free`, and
+`nvidia/nemotron-3.5-super-vl:free`, each under `gateway:openrouter/<exact-id>`. These are historical test choices;
+the selectable catalogue comes from provider APIs and has no model-name allowlist. Native defaults stay unchanged.
+Provider capacities remain visible in advanced details; current chat/distill jobs retain the existing
 8,192-token output bound. Zero catalog prices do not imply unlimited quota; unavailable models fail visibly with no
 paid fallback. Existing credential metadata grants no consent; the owner must connect explicitly, and saved connection
 configuration does not prove provider usability.
@@ -445,18 +446,33 @@ map and inspect evidence for every comparison.
 
 Local K6 implementation on 2026-10-27 wires explicit Refresh/Wiki callers, the post-distillation batch caller,
 bounded Workflows, revision-owned usage, immutable R2 publication and the existing Material overview reader.
-Lint/typecheck, 269 tests, build and generated-binding checks pass. Native SQLite cases cover historical spend,
-concurrent admission, replacement/detachment staleness, immutable writes and guarded accepted-head publication.
-The real local GET returns the empty `KnowledgeView` without model work; three warm reads measured p50/p95
-12.364/13.562 ms (only three loopback storage reads, excluding generation). Settings and usage stayed unchanged.
-The actual `pnpm eval k6` stored-only run exits nonzero because no map is generated yet. Model synthesis, three real
-comparison groups, source-replacement HTTP acceptance and O1–O5 owner usefulness remain NOT_RUN. This is not K6
-acceptance or a deployment. Fresh no-cache 1440/390 px captures show the map reader first in the accepted Material
-frame, with no overflow or overlay. Earlier dimming was not reproduced; its capture cause remains unverified.
+Lint/typecheck, 292 tests and build pass. Native SQLite cases cover historical spend, concurrent admission,
+replacement/detachment staleness, immutable writes, retained-output scope and guarded accepted-head publication.
+The real Flash map used one call, 75,188 input / 1,273 output tokens and 11,915 micro-USD: nine topics cover all ten
+sources, with four questions and three reading routes. Unchanged Refresh reuses the same head with no model work.
+Three actual comparison candidates were inspected with six byte-exact quotes; none established compatible protocols.
+The full stored-only eval still reports zero of three required groups and owner O1–O5 NOT_RUN; its unchanged primary
+corpus contains no replacement. A separate copied namespace exercised one real native-Markdown replacement:
+exactly one dependent map became stale, seven unrelated heads/bodies/citations stayed unchanged, the old complete
+text and range remained byte-exact, and the new canonical text matched all 39,592 supplied bytes. Existing model
+counters and usage stayed unchanged, with zero conversion/distill calls on the new revision. The first harness
+incorrectly rejected the expected freshness change; its failure is retained, and completion used reads only without
+a second upload. No quality gate is weakened and no K6 acceptance is claimed.
+The first Wiki attempt failed. A later primary-passage attempt used one call, 8,542 input / 1,079 output tokens and
+1,821 micro-USD; its text omitted ResNet and restored an unsupported exponent from flattened canonical bytes.
+The explicit storage-only Wiki recheck removed that whole section, retained eleven exact citations and saved a
+Partial Wiki with missing-source coverage visible. Same/new mutation repeats reused the head, incompatible old
+output and foreign-project controls returned 409, and original D1/R2 hashes and usage stayed unchanged. No new
+model call or Workflow was created; monthly usage stayed 787,485 / 4,158,177 micro-USD. Two concurrent recheck POSTs
+also returned the same new head with exactly one storage revision; a local stale-Wiki fixture returned 409 without
+creating a revision. An independent review against the original frozen passages supports the nine retained sentences;
+missing ResNet coverage remains explicit. The retained local-binding
+failure still holds its reservation; successful later work does not erase it. These are local service results,
+not owner acceptance or deployment. The existing Material map/reader remains in use.
 
-Conservative additions are 1,608 non-test `src/` lines (13 removed), including all new UI/CSS. This exceeds the
+Non-test `src/` additions are 2,232 lines (58 removed), including all new UI/CSS and excluding generated bindings. This exceeds the
 1,200-line ceiling: the excess implements strict numeric/condition compatibility, current-input and R2/head publication
-guards, and the complete owner reader. No new backend, generic job/effects ledger or optional search dependency is
+guards, the complete owner reader and frozen-output Wiki checks. No new backend, generic job/effects ledger or optional search dependency is
 introduced; the ceiling is not raised.
 
 **Not now.** Graph database, centrality, automatic Wiki for every topic.

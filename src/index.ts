@@ -14,7 +14,7 @@ import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
 import { getOverview, getUnderstanding } from "./understanding";
 import { getProjectKnowledge } from "./knowledge";
-import { requestProjectKnowledge } from "./workflows/knowledge";
+import { recheckSavedWiki, requestProjectKnowledge } from "./workflows/knowledge";
 
 export { IngestWorkflow } from "./workflows/ingest";
 export { ChatAgent } from "./chat";
@@ -195,6 +195,10 @@ app.post("/api/projects/:id/knowledge", async (c) => {
 app.post("/api/projects/:id/knowledge/wiki", async (c) => {
   const input = z.object({ mutationId: uuid, topicId: z.string().min(1).max(80), model: z.string().min(1).max(1100).optional() }).strict().parse(await c.req.json());
   return c.json(await requestProjectKnowledge(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...input }), 202);
+});
+app.post("/api/projects/:id/knowledge/wiki/recheck", async (c) => {
+  const input = z.object({ mutationId: uuid, revisionId: uuid }).strict().parse(await c.req.json());
+  return c.json(await recheckSavedWiki(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...input }), 202);
 });
 app.get("/api/revisions/:id/text", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id"))));
 app.get("/api/revisions/:id/range", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
