@@ -33,6 +33,18 @@ const origin = assertEvalBrowserOrigin(process.env.ELIOT_URL || 'http://127.0.0.
 const nativeOnly = process.argv.includes('--native-only');
 const duplicatesOnly = process.argv.includes('--duplicates-only');
 const allowNetUrl = duplicatesOnly || !nativeOnly || process.env.ELIOT_EVAL_NET === '1';
+// Native-only default is immutable public UTF-8 text so the duplicate-URL
+// journey exercises Attach-existing without requiring document conversion.
+// Full runs keep the HTML default to retain conversion coverage.
+// ELIOT_EVAL_URL overrides both defaults; URL guard/allowlist unchanged.
+const NATIVE_URL_DEFAULT = 'https://www.rfc-editor.org/rfc/rfc9110.txt';
+const HTML_URL_DEFAULT = 'https://example.com/';
+function resolveEvalUrl(): string {
+  const override = (process.env.ELIOT_EVAL_URL || '').trim();
+  if (override) return override;
+  if (nativeOnly || duplicatesOnly) return NATIVE_URL_DEFAULT;
+  return HTML_URL_DEFAULT;
+}
 const H: Record<string, string> = { Origin: origin };
 if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
   H['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID;
@@ -177,7 +189,7 @@ if (duplicatesOnly) {
   assert.equal(dqT2.status, 409, 'Second identical text import must be 409 before conversion, got ' + dqT2.status);
   assert.equal(dqT2.body.duplicate.sourceId, dqTextId, 'Text duplicate must identify the original source.');
   assert.equal(dqT2.body.duplicate.revisionId, dqTextRev, 'Text duplicate must identify the original revision.');
-  const dqUrl = 'https://example.com/';
+  const dqUrl = resolveEvalUrl();
   let dqUrlId = '';
   let dqUrlRev = '';
   let dqUrlIsNew = false;
@@ -296,7 +308,7 @@ if (duplicatesOnly) {
   const dqReport = [
     '# K1 duplicates-only',
     'Origin: ' + origin + '; primary: ' + dqPrimary + '; attach-target: ' + dqSecondary,
-    'Projects created: 2; new sources: ' + dqNewSources + ' (text 1, url ' + (dqUrlIsNew ? '1 new conversion' : '0 reused') + ').',
+    'Projects created: 2; new sources: ' + dqNewSources + ' (text 1, url ' + (dqUrlIsNew ? '1 new source' : '0 reused') + ').',
     'Text 409: second identical import returned 409 with sourceId ' + dqTextId + ' revision ' + dqTextRev + '; browser Attach existing reused the same source and revision with 0 conversions.',
     'URL 409: identical import returned 409 with sourceId ' + dqUrlId + ' revision ' + dqUrlRev + ' (converter ' + dqUrlConverter + ', calls ' + dqUrlCalls + '); browser Attach existing reused the same source and revision.',
     'Viewports captured: 390 k1-duplicates-390.png and 1440 k1-duplicates-1440.png; no route mocking; no Access headers in the browser.',
@@ -660,7 +672,7 @@ try {
   const mainPid = new URL(copied).pathname.split('/')[2] as string;
   const dupeTextTitle = name + ' dupe text';
   const dupeTextBody = '# Дубликат\n\nТот же текст дважды ' + name + '.\n';
-  const dupeUrl = 'https://example.com/';
+  const dupeUrl = resolveEvalUrl();
   let dupeUrlSrc: any = null;
   await page.goto(origin + '/p/' + mainPid + '/sources');
   // Source list chrome: title/status visible, no storage/telemetry. No paper body here.
@@ -691,7 +703,7 @@ try {
         if (fetched && fetched.readableState === 'readable') { dupeUrlSrc = fetched; break; }
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }
-      assert(dupeUrlSrc && dupeUrlSrc.readableState === 'readable', 'Example URL must settle readable.');
+      assert(dupeUrlSrc && dupeUrlSrc.readableState === 'readable', 'Stable URL must settle readable (' + dupeUrl + ').');
     }
   }
   const other = await apiJson('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: name + ' attached' }) });
