@@ -40,7 +40,7 @@ export function reportedProviderUsage(usage: LanguageModelUsage, model?: Pick<Mo
 // completion totals already include it). Contradictory detail counts reset to unknown,
 // and a total below prompt or reasoning above the computed output keeps output unknown
 // so the reservation is retained instead of billing an inconsistent number.
-const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
+export const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
   const prompt = count(usage?.prompt_tokens);
   let cacheRead = count(usage?.prompt_tokens_details?.cached_tokens);
   if (cacheRead !== undefined && prompt !== undefined && cacheRead > prompt) cacheRead = undefined;
@@ -100,9 +100,6 @@ function openRouterBody(responseFormatAllowed: boolean) {
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 export async function resolveModelTransport(
   env: Pick<Env, "AI" | "DB">,
   model: ModelSpec,
@@ -182,30 +179,17 @@ export async function resolveModelTransport(
 }
 
 export function modelFailure(error: unknown, model: ModelSpec): string {
-  if (!model.route.startsWith("gateway:")) {
-    const status = errorStatusCode(error);
-    if (status !== undefined) return `Model stream failed (HTTP ${status}).`;
-    // Preserve the safe per-question validation category in the existing text
-    // format: predispatch AI_Invalid* (allowlisted names above) and in-band
-    // invalid_request_error. No message/body/secrets are echoed.
-    const directValidationStream = streamProviderErrorNames(error)[0];
-    const causedValidationStream = streamProviderErrorNames(error instanceof Error ? error.cause : undefined)[0];
-    const validationStream = directValidationStream === "AI_StreamProviderError:invalid_request_error"
-      ? directValidationStream
-      : causedValidationStream === "AI_StreamProviderError:invalid_request_error" ? causedValidationStream : undefined;
-    const name = validationStream ?? knownErrorName(error) ?? (error instanceof Error ? knownErrorName(error.cause) : undefined);
-    return name === undefined ? NATIVE_FAILURE : `Model stream failed (${name}).`;
-  }
   const status = errorStatusCode(error);
+  if (model.route.startsWith("gateway:")) {
+    if (status !== undefined) {
+      return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started.";
+    }
+    return EXTERNAL_FAILURE;
+  }
   if (status !== undefined) {
-    const hint = status === 400 ? validationFieldHint(error) : "";
-    return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started." + hint;
+    return "Model stream failed (HTTP " + status + ").";
   }
-  const cause = errorCauseName(error);
-  if (cause !== undefined) {
-    return "External model request failed (cause: " + cause + "). Check the Gateway connection and provider status; no retry was started.";
-  }
-  return EXTERNAL_FAILURE;
+  return NATIVE_FAILURE;
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -220,87 +204,10 @@ function checkStatusCode(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 100 && value <= 599 ? value : undefined;
 }
 
-const KNOWN_ERROR_NAMES = ["Error", "TypeError", "AbortError", "TimeoutError", "AI_APICallError",
-  "AI_StreamProviderError", "AI_InvalidPromptError", "AI_InvalidArgumentError", "AI_NoObjectGeneratedError", "AI_NoOutputGeneratedError", "AI_InvalidResponseDataError",
-  "AI_TypeValidationError", "AiGatewayError", "AiError", "ZodError"] as const;
-
-function knownErrorName(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  return (KNOWN_ERROR_NAMES as readonly string[]).includes(error.name) ? error.name : undefined;
-}
-
-// The shared projection for operator logs. Keep only allowlisted names and a
-// validated HTTP status; provider messages, bodies, codes and request data stay private.
+// Shared projection for operator logs. Keeps only a validated HTTP status;
+// provider messages, bodies, codes and request data stay private. No retry is
+// started from this projection; callers surface the stored message as-is.
 export function safeErrorLogProjection(error: unknown): { name: string; status?: number } {
-  const name = knownErrorName(error) ?? (error instanceof Error ? knownErrorName(error.cause) : undefined);
   const status = errorStatusCode(error);
-  return { name: name ?? "unknown", ...(status === undefined ? {} : { status }) };
-}
-
-// Minimal 400-only validation hint: report only fixed OpenAI request field
-// names that literally appear in the provider error's param/message. Never
-// include raw message/body text, codes, types, keys, headers, data or prompt.
-const VALIDATION_FIELDS = ["messages", "role", "content", "reasoning_content",
-  "reasoning_details", "thought_signature", "max_tokens", "response_format", "stream_options"] as const;
-
-function validationFieldHint(error: unknown): string {
-  const seen: string[] = [];
-  const haystacks: string[] = [];
-  const pushText = (value: unknown) => {
-    if (typeof value === "string" && value.length > 0) haystacks.push(value.slice(0, 8192));
-  };
-  const err = error as { data?: unknown; responseBody?: unknown } | null | undefined;
-  pushText(err?.responseBody);
-  const data = err?.data;
-  if (typeof data === "string") pushText(data);
-  else if (data !== null && typeof data === "object") {
-    const record = data as Record<string, unknown>;
-    pushText(record.param);
-    pushText(record.message);
-    const nested = record.error;
-    if (nested !== null && typeof nested === "object") {
-      const inner = nested as Record<string, unknown>;
-      pushText(inner.param);
-      pushText(inner.message);
-    }
-  }
-  if (error instanceof Error) pushText(error.message);
-  for (const field of VALIDATION_FIELDS) {
-    const token = '"' + field + '"';
-    const bare = new RegExp("(^|[^a-zA-Z0-9_])" + field + "([^a-zA-Z0-9_]|$)");
-    if (haystacks.some((text) => text.includes(token) || bare.test(text))) seen.push(field);
-  }
-  return seen.length > 0 ? " Validation mentions fields: " + seen.join(", ") + "." : "";
-}
-
-function errorCauseName(error: unknown): string | undefined {
-  const cause = error instanceof Error ? error.cause : undefined;
-  if (error instanceof Error && error.name === "AI_NoObjectGeneratedError" && cause instanceof Error && cause.name === "AI_JSONParseError") return "AI_JSONParseError";
-  const directStreamError = streamProviderErrorNames(error)[0];
-  if (directStreamError) return directStreamError;
-  const causedStreamError = streamProviderErrorNames(cause)[0];
-  if (causedStreamError) return causedStreamError;
-  // Preserve predispatch validation in the existing cause format when the
-  // top-level error itself carries it; cause-only lookup would strip it.
-  if (error instanceof Error && (error.name === "AI_InvalidPromptError" || error.name === "AI_InvalidArgumentError")) return error.name;
-  return knownErrorName(cause);
-}
-
-// Pinned @ai-sdk/openai-compatible 3.0.79 streams a mid-stream provider error
-// as the raw `{ error: { message, type?, code? } }` chunk payload with no HTTP
-// status attached. Surface only the standard SDK error name plus a fixed
-// OpenAI error-type allowlist; never echo raw message/body, keys or codes.
-const STREAM_ERROR_TYPES = ["invalid_request_error", "authentication_error",
-  "permission_error", "not_found_error", "rate_limit_error", "server_error",
-  "overloaded_error", "timeout_error", "invalid_response_error"] as const;
-
-function streamProviderErrorNames(error: unknown): string[] {
-  if (!(error instanceof Error) || error.name !== "AI_StreamProviderError") return [];
-  const data = (error as { data?: unknown }).data;
-  const nested = isRecord(data) && isRecord(data.error) ? data.error : data;
-  if (!isRecord(nested)) return ["AI_StreamProviderError"];
-  const record = nested;
-  const type = typeof record.type === "string" ? record.type : undefined;
-  if (type !== undefined && (STREAM_ERROR_TYPES as readonly string[]).includes(type)) return ["AI_StreamProviderError:" + type];
-  return ["AI_StreamProviderError"];
+  return { name: error instanceof Error ? "Error" : "unknown", ...(status === undefined ? {} : { status }) };
 }

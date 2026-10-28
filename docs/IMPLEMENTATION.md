@@ -302,9 +302,6 @@ are retained but excluded by readers, context and later FTS queries. No original
 Calls, tokens, estimated cost, original model wall time and retained provider usage telemetry remain unchanged.
 A repeated save of the checked head returns the same result. GET exposes `canRecover` from compatible stored output
 only; failed output is never re-queued.
-Storage-only publication is exemplified by `eval/out/openrouter-smoke/partial-save.json`; it records Save behavior only,
-not complete source understanding or K3 acceptance.
-
 ## 7. Shared tools
 
 Tools return compact Markdown with explicit pagination and a default 4,000-token cap:
@@ -484,10 +481,6 @@ ID; no direct provider key or alternate route is used. Cloudflare Gateway BYOK d
 credential; OpenRouter `usage.is_byok` describes an upstream provider key and does not prove Cloudflare wholesale or
 fallback behavior. Live enforcement and external provider billing acceptance remain unverified.
 
-Recorded provider evidence remains under eval/out/openrouter-smoke/, and the NotebookLM baseline remains at
-eval/out/notebooklm-20261026/answers.md. These materials do not establish all twelve K2 questions, K3 semantic
-quality, owner acceptance, no-wholesale enforcement or deployment.
-
 Official provider facts remain subject to recheck before implementation or merge. References include the [OpenRouter
 catalog](https://openrouter.ai/api/v1/models), its [provider-routing contract](https://openrouter.ai/docs/guides/routing/provider-selection),
 the [Cloudflare Agents AI SDK](https://developers.cloudflare.com/agents/models/ai-sdk/) (updated 2026-10-26),
@@ -557,32 +550,19 @@ Checked against official Cloudflare documentation on 2026-10-24. Recheck before 
 
 ### Unmerged proposal PR #419 (explicitly unaccepted)
 
-[PR #419](https://github.com/UnknownAlienHuman/eliot-research/pull/419) (`docs/final-contract-audit` @
-`4dfcd8eb308e84f26c6c7e42a921aec25746a19c`) is **CLOSED / UNMERGED**, superseded by #420; GitHub retains
-`mergeStateStatus: DIRTY`. Checked live 2026-10-27 against comparison main `8078e150`.
-The PR has one commit changing 18 documentation/migration files, including rewrites of
-`0001`–`0004` and new `0005_search.sql`, `0006_project.sql`, `0007_jobs.sql`; it supplies no converter runtime.
-Its proposed contracts are not accepted architecture or evidence that the current product implements them.
+[PR #419](https://github.com/UnknownAlienHuman/eliot-research/pull/419) at
+`4dfcd8eb308e84f26c6c7e42a921aec25746a19c` remains closed and unmerged (checked 2026-10-28). Its proposed converter,
+read APIs and rewritten migrations are not accepted contracts. Current K1 retains native UTF-8 text or
+`env.AI.toMarkdown().transform()` with embedded-image opt-out and PDF metadata disabled; those request options alone
+do not prove that service output contains no derived image descriptions. Existing canonical revisions and citations
+must remain intact.
 
-The PR's §5 rejects `AI.toMarkdown` as canonical evidence and proposes deterministic UTF-8/PDF/HTML extraction.
-Current K1 code on `origin/main` and local WIP still uses native text or `env.AI.toMarkdown().transform()`;
-standalone images are rejected before conversion, and embedded HTML/DOCX/PDF images request
-`convert: false, maxConvertedImages: 0`, with PDF metadata disabled. Installed `@cloudflare/workers-types`
-`5.20261024.1` exposes those embedded-image controls; that type contract does not prove service output contains
-no generated descriptions. The PR's contrary platform claim is also not established by its documentation alone.
-Existing K1 corpus evidence belongs to the recorded converter/output, not an unimplemented replacement;
-no new image-heavy PDF check or conversion was run in this reconciliation.
-
-The proposed PDF donor is already pinned: `unjs/unpdf@87c7edc43ee99a17d2aa20acf271c4889332720b`, package
-`1.9.1`, MIT, paths `src/text.ts` and `examples/cloudflare/index.ts` verified at that commit. Its text helpers
-use `Promise.all` over pages, so the PR's sequential-page requirement still needs implementation and measurement.
-Both registries retain legacy Eliot `7c034569b908d3b03a8b821b7c537477a24b10f7` and Agents
-`321814b6c13f72cff82161e7eb20312574ac9b7a`; the current registry retains
-`packages/cloudflare-markdown/src/markdown-conversion.ts`, while the PR removes that converter donor.
+The proposed `unjs/unpdf@87c7edc43ee99a17d2aa20acf271c4889332720b` (`1.9.1`, MIT, `src/text.ts` and
+`examples/cloudflare/index.ts`) is not adopted. Its parallel page extraction would need measurement before replacing K1.
 
 | Choice needing owner decision | Implication |
 |---|---|
-| Read API: current `/text`, `/range`, `/outline` or PR `/text?start=&end=` and `/blocks` | The PR endpoints are not implemented. Retain current callers until an explicit API contract change is accepted. |
-| Canonical converter: retain current K1 path or adopt deterministic extraction | Current instruction retains `toMarkdown`; adopting the pinned `unpdf`/HTML proposal requires an explicit converter change and fresh K1 acceptance. Existing canonical revisions/citations must remain intact. |
-| Image evidence: current no-OCR policy or a separately accepted OCR/description path | Keep originals and `needs_conversion`; embedded-image opt-out needs real output verification. Accepting derived image text as canonical evidence would require an explicit policy and a new revision, not a silent reinterpretation of old text. |
-| Schema: current revision-owned state or PR attempt/reservation tables | Reconcile deliberately with current callers and retained local data. PR `0001` excludes `workers_ai_markdown` and replaces `readable_size` with `canonical_size`; `0002` renames the budget field and adds `budget_month`/`budget_reservation`; `0003` adds `distill_run`/`claim.distill_run_id` and different paused states, whereas local WIP retains revision-owned `distill_started_at`, `distill_calls` and `distill_ms`. These are incompatible contracts, not append-only migrations ready to apply. |
+| Read API: `/text`, `/range`, `/outline` or PR `/text?start=&end=` and `/blocks` | Retain current callers unless an API change is explicitly accepted. |
+| Canonical converter: current K1 path or deterministic PDF/HTML extraction | A replacement needs an explicit converter decision and fresh K1 acceptance. |
+| Image evidence: no OCR or a separately accepted OCR/description path | Retain originals and `needs_conversion`; changed evidence needs a new revision and policy. |
+| Schema: revision-owned state or PR attempt/reservation tables | PR rewrites `0001`–`0004`, renames columns and adds run/reservation tables. These incompatible contracts require deliberate migration design; do not apply them to retained data. |

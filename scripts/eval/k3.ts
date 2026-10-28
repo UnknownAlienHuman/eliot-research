@@ -32,8 +32,10 @@ if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
 }
 if (process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.env.ELIOT_OWNER_JWT).trim();
 const nativeOnly = process.argv.includes('--native-only');
+const unchangedOnly = process.argv.includes('--unchanged-only');
 const readerBrowser = process.argv.includes('--reader-browser');
 const runModel = process.env.ELIOT_K3_MODEL === '1';
+assert(!unchangedOnly || !runModel, '--unchanged-only forbids model work.');
 const outDir = fileURLToPath(new URL('../../eval/out/k3/', import.meta.url));
 await mkdir(outDir, { recursive: true });
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
@@ -230,18 +232,6 @@ async function dailyUsage() {
   for (const k of ['inputTokens', 'outputTokens', 'cachedTokens', 'unknownUsages']) assert(Number.isSafeInteger(u[k]) && u[k] >= 0, 'Invalid daily usage: ' + k);
   return u;
 }
-const m0 = await dailyUsage();
-const modelList = await apiJson('/api/models');
-assert.equal(modelList.status, 200, 'Read current catalogue before reporting the acceptance bound.');
-const flash = (modelList.body.models || []).find((model) => model.route === FLASH_MODEL);
-assert(flash && flash.enabled, 'Flash metadata is required; no model substitution is allowed.');
-assert(Number.isSafeInteger(flash.contextTokens) && flash.contextTokens > 0, 'Flash context must be known.');
-const outputBound = flash.outputReserveTokens ?? flash.maxOutputTokens;
-assert(Number.isSafeInteger(outputBound) && outputBound > 0, 'Flash output bound must be known.');
-const callTokenLimit = flash.contextTokens + outputBound;
-const fullFreshCalls = 28;
-const boundReport = 'Fresh full K3 bound: baseline 10*2 + overflow 2*2 + answers 4*1 = 28 calls, per-call token limit ' + callTokenLimit + ' (ctx+output), two-call distill ' + (2 * callTokenLimit) + '. No monthly budget; no neuron conversion. Historical calls are not reset or silently counted as fresh.';
-console.log(boundReport);
 const whole = new Map();
 async function checkRange(rev, st, en) {
   let w = whole.get(rev);
@@ -262,6 +252,94 @@ const understandingWired = u0.status !== 404;
 const overviewWired = o0.status !== 404;
 if (understandingWired) assertUnderstanding(u0.body, 'probe');
 if (overviewWired) assert(o0.body && Array.isArray(o0.body.sources), 'GET overview must return the direct Overview object with sources array.');
+if (unchangedOnly) {
+  assert(understandingWired && overviewWired, 'K3 unchanged-only requires wired understanding and overview routes.');
+  assert.equal(scoped.length, 10, 'K3 unchanged-only needs the frozen 10 arxiv readable sources; prep K1 first, no re-ingest.');
+  const settingsBeforeRaw = await apiJson('/api/settings');
+  assert.equal(settingsBeforeRaw.status, 200, 'GET /api/settings must be 200 (before).');
+  assert(typeof settingsBeforeRaw.body.settings?.answerModel === 'string', 'GET settings must include the configured model.');
+  const settingsBefore = JSON.stringify(settingsBeforeRaw.body);
+  const frozen = [];
+  const preflightViolations = [];
+  let callsBefore = 0;
+  for (const s of scoped) {
+    const r = await apiJson('/api/sources/' + encodeURIComponent(s.id) + '/understanding?revisionId=' + encodeURIComponent(s.currentRevisionId));
+    if (r.status !== 200) { preflightViolations.push(s.originalFilename + ': GET understanding ' + r.status); continue; }
+    try { assertUnderstanding(r.body, 'unchanged preflight ' + s.originalFilename); } catch (e) { preflightViolations.push(s.originalFilename + ': ' + String((e && e.message) || e).split(EOL)[0]); continue; }
+    if (r.body.revisionId !== s.currentRevisionId) { preflightViolations.push(s.originalFilename + ': revisionId mismatch'); continue; }
+    if (r.body.state !== 'done' && r.body.state !== 'partial') { preflightViolations.push(s.originalFilename + ': state=' + r.body.state + ' (need terminal done/partial, no POST)'); continue; }
+    const rep = r.body.report;
+    if (!rep || !rep.usage || !Number.isSafeInteger(rep.usage.calls) || rep.usage.calls < 0 || rep.usage.calls > 2) { preflightViolations.push(s.originalFilename + ': invalid report call count'); continue; }
+    callsBefore += rep.usage.calls;
+    frozen.push({ sourceId: s.id, filename: s.originalFilename, revisionId: s.currentRevisionId, state: r.body.state, body: r.body, reportJson: JSON.stringify(rep), claimIds: JSON.stringify((r.body.claims || []).map((c) => c && c.id)), claimsJson: JSON.stringify(r.body.claims), usageJson: JSON.stringify(rep.usage) });
+  }
+  if (preflightViolations.length > 0 || frozen.length !== 10) {
+    const mdFail = ['# K3 unchanged-only reuse (partial scope, storage-only)', '', '- project: ' + title, '- preflight: ' + frozen.length + '/10 frozen terminal, violations: ' + preflightViolations.length, '', '## Preflight open', ''].concat(preflightViolations.map((v) => '- ' + v)).concat(['', '- no POST made (rejected before any POST).', '- full K3 acceptance NOT claimed; K2/K3 remain not accepted.', '']).join(EOL);
+    console.log(mdFail);
+    await writeFile(outDir + '/k3-unchanged-only-' + Date.now() + '.md', mdFail);
+    assert.equal(preflightViolations.length, 0, 'K3 unchanged-only preflight OPEN (no POST made): ' + preflightViolations.join('; '));
+    assert.equal(frozen.length, 10, 'K3 unchanged-only needs 10 frozen terminal revisions.');
+    process.exit(1);
+  }
+  let postedUnchanged = 0;
+  for (const f of frozen) {
+    const p = await apiJson('/api/sources/' + encodeURIComponent(f.sourceId) + '/understanding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionId: f.revisionId }) });
+    assert.equal(p.status, 202, 'POST unchanged understanding must be 202 idempotent for ' + f.filename + '.');
+    assert(p.body && p.body.revisionId === f.revisionId, 'POST unchanged must echo {revisionId} for ' + f.filename + '.');
+    postedUnchanged++;
+  }
+  const reuseViolations = [];
+  let callsAfter = 0;
+  const byFile = new Map();
+  for (const f of frozen) {
+    const r = await apiJson('/api/sources/' + encodeURIComponent(f.sourceId) + '/understanding?revisionId=' + encodeURIComponent(f.revisionId));
+    if (r.status !== 200) { reuseViolations.push(f.filename + ': re-GET ' + r.status); continue; }
+    if (r.body.revisionId !== f.revisionId) reuseViolations.push(f.filename + ': revisionId moved');
+    if (r.body.state !== f.state) reuseViolations.push(f.filename + ': state moved ' + f.state + ' -> ' + r.body.state);
+    if (JSON.stringify(r.body.report) !== f.reportJson) reuseViolations.push(f.filename + ': report JSON changed');
+    if (JSON.stringify((r.body.claims || []).map((c) => c && c.id)) !== f.claimIds) reuseViolations.push(f.filename + ': claim IDs moved');
+    if (JSON.stringify(r.body.claims) !== f.claimsJson) reuseViolations.push(f.filename + ': claims moved');
+    if (JSON.stringify(r.body.report && r.body.report.usage) !== f.usageJson) reuseViolations.push(f.filename + ': usage moved');
+    if (r.body.report && r.body.report.usage && typeof r.body.report.usage.calls === 'number') callsAfter += r.body.report.usage.calls;
+    const claims = Array.isArray(r.body.claims) ? r.body.claims : [];
+    for (const c of claims) {
+      const rr = await apiBytes('/api/revisions/' + encodeURIComponent(f.revisionId) + '/range?start=' + c.start + '&end=' + c.end);
+      if (rr.status !== 200 || rr.bytes.toString('utf8') !== c.quote) { reuseViolations.push(f.filename + ': stored quote bytes moved'); break; }
+    }
+    byFile.set(f.filename, claims.map((c) => ({ quote: c && c.quote, statement: c && c.statement })));
+  }
+  const settingsAfterRaw = await apiJson('/api/settings');
+  assert.equal(settingsAfterRaw.status, 200, 'GET /api/settings must be 200 (after).');
+  if (JSON.stringify(settingsAfterRaw.body) !== settingsBefore) reuseViolations.push('settings or usage changed');
+  if (callsAfter !== callsBefore) reuseViolations.push('call count delta: before ' + callsBefore + ' after ' + callsAfter);
+  const missing = checkAnchors(byFile);
+  const md = ['# K3 unchanged revisions', '', '- project: ' + title, '- origin: ' + origin,
+    '- frozen terminal revisions: ' + frozen.length, '- idempotent POSTs: ' + postedUnchanged,
+    '- stored calls before/after: ' + callsBefore + '/' + callsAfter,
+    '- settings and usage unchanged: ' + (JSON.stringify(settingsAfterRaw.body) === settingsBefore),
+    '- report JSON and claims unchanged: ' + (reuseViolations.length === 0),
+    '- Scope: unchanged-revision reuse only. Full K3 and claim-mode C1–C4 are not accepted by this check.', '',
+    '## Reuse violations (' + reuseViolations.length + ')', '',
+    ...reuseViolations.map((v) => '- ' + v), '', '## Missing semantic anchors (' + missing.length + ')', '',
+    ...missing.map((v) => '- ' + v), ''].join(EOL);
+  console.log(md);
+  await writeFile(outDir + '/k3-unchanged-only-' + Date.now() + '.md', md);
+  assert.equal(reuseViolations.length, 0, 'K3 unchanged-only reuse OPEN: ' + reuseViolations.join('; '));
+  if (missing.length > 0) assert.equal(missing.length, 0, 'K3 full semantic anchors OPEN (partial reuse only, K2/K3 not accepted): ' + missing.join(', '));
+  process.exit(0);
+}
+const m0 = await dailyUsage();
+const modelList = await apiJson('/api/models');
+assert.equal(modelList.status, 200, 'Read current catalogue before reporting the acceptance bound.');
+const flash = (modelList.body.models || []).find((model) => model.route === FLASH_MODEL);
+assert(flash && flash.enabled, 'Flash metadata is required; no model substitution is allowed.');
+assert(Number.isSafeInteger(flash.contextTokens) && flash.contextTokens > 0, 'Flash context must be known.');
+const outputBound = flash.outputReserveTokens ?? flash.maxOutputTokens;
+assert(Number.isSafeInteger(outputBound) && outputBound > 0, 'Flash output bound must be known.');
+const callTokenLimit = flash.contextTokens + outputBound;
+const fullFreshCalls = 28;
+const boundReport = 'Fresh full K3 bound: baseline 10*2 + overflow 2*2 + answers 4*1 = 28 calls, per-call token limit ' + callTokenLimit + ' (ctx+output), two-call distill ' + (2 * callTokenLimit) + '. No monthly budget; no neuron conversion. Historical calls are not reset or silently counted as fresh.';
+console.log(boundReport);
 if (nativeOnly) {
   assert(understandingWired && overviewWired, 'K3 native smoke requires the actual understanding and overview routes.');
   {

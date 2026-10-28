@@ -122,18 +122,10 @@ open any readable source with outline and exact passage links.
 `pnpm eval k1` includes the real phone journey, immutable old-revision checks and recovery from an offline upload.
 The browser journeys also exercise duplicate pasted text and duplicate static URLs through explicit Attach existing.
 `ELIOT_EVAL_NET=1 pnpm eval k1 --native-only` includes the real public static-URL case; without that opt-in its network
-journey is explicitly NOT_RUN. The 2026-10-26 run passed both duplicate journeys with the same stored revision and
-zero new conversion/model usage. The URL guard was unchanged.
+journey is explicitly not run. Both duplicate journeys must retain the same stored revision and perform no new
+conversion/model work; the URL guard remains in force.
 `ELIOT_EVAL_LIMIT=1` adds the actual 25 MiB file and 25 MiB + 1 byte rejection cases. CI runs
 `pnpm eval k1 --native-only` with remote AI bindings disabled; it does not claim PDF-service acceptance.
-
-Local run on 2026-10-25: 13 readable sources, the scan negative, 52 exact ranges and the phone journey passed. The
-25 MiB native file was readable with zero conversion calls; 25 MiB + 1 byte returned 413. Readable PDF conversion
-p50/p95 was 1,697/4,604 ms from the recorded latest attempts. Those 14 corpus sources retain 13 conversion calls and
-189,269 reported conversion tokens; the native source used zero. Across deliberate diagnostics and corrected reruns,
-the local revision rows record 29 conversion attempts in total, with no automatic retry. Model/search calls were zero.
-The sampled local workerd-process RSS peak was 653,914,112 bytes across two processes; isolate peak heap was not
-available and production memory/deployment qualification is not claimed.
 
 **Measured budget.** Peak Worker memory is inspected during the 25 MiB case; no exceeded-memory event. Conversion count
 must equal the number of files that actually require conversion.
@@ -187,11 +179,9 @@ comparable runs rather than making one provider fluctuation invalidate the archi
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
-K2 is not fully accepted or deployed. The unchanged twelve-question NotebookLM comparison remains the quality baseline
-at eval/out/notebooklm-20261026/answers.md. Its recorded semantic review flags O1 terminology and overstatement, O2
-unsupported inference and a language defect, and O3 training/fine-tuning confusion and coverage gaps. Owner semantic
-review remains open. The provider, browser and answer evidence artifacts remain under eval/out/; they do not replace
-the full contour gates. Neither K2 nor K3 is deployed.
+K2 is not fully accepted or deployed: citation validity, latency and owner quality review remain open. The unchanged
+twelve-question NotebookLM baseline is retained at `eval/out/notebooklm-20261026/answers.md`; comparison results belong
+in the PR, and do not replace these gates. Neither K2 nor K3 is deployed.
 
 ## K3 — Distill
 
@@ -219,6 +209,8 @@ re-distilled automatically.
 **Hard acceptance — `pnpm eval k3`**
 
 - All ten papers reach `done` or a documented `partial` state; a second eval run performs no re-distillation of unchanged revisions.
+  `pnpm eval k3 --unchanged-only` preflights all ten terminal revisions, submits each exact revision ID once and compares
+  the stored reports, claims, call counts and usage. This reuse check does not waive the semantic or claim-mode gates.
 - Every stored quote is an exact byte range; numeric result fields are cleared when not supported by their quote.
 - Transformer, ResNet and LoRA anchor expectations in `eval/arxiv-10/questions.md` are present with correct conditions;
   no unsupported number is stored. Claim count and drop rate are reported, not quality gates.

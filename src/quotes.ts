@@ -3,43 +3,17 @@ import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
 
 /**
- * K3 exact-quote verifier (IMPLEMENTATION 5): pure byte-exact search over
- * canonical text, stated block first, immediate neighbours second, and only
- * then a conservative whitespace/quote/dash/soft-hyphen fold mapped back to
- * original bytes. No case folding, no NFKC, no model calls.
- *
- * Dropped reasons are stable strings: "empty-quote", "unknown-block",
- * "unmatched", "unsupported-statement-numbers",
- * "unsupported-condition-numbers". Ambiguous duplicates are kept with
- * ambiguous=true, preferring the stated-block occurrence. Statement and
- * conditions prose must not assert numbers the quote cannot show: every
- * maximal digit group of either (model names included, with no
- * special-casing) must occur as a whole maximal digit group in the verified
- * original quote. Task, metric and dataset stay identifier keys and are not
- * number-checked. A structured number survives only when every maximal
- * ASCII digit group of valueText occurs as a whole maximal digit group in
- * the verified original quote; otherwise valueText, valueNumber and unit
- * are cleared while conditions are retained. The stored quote is always the
- * verified canonical slice, never the model-supplied candidate string.
- * numbersSupported exposes the shared digit-group rule for digest and
- * glossary prose checked against verified quotes. Decimal fractions
- * additionally require a complete token, with only unambiguous decimal-comma
- * normalization: 41.8/41,8 is not supported by 41.0 plus a lone 8. resolveQuoteBlock maps one
- * exact S1 compact label to its canonical block slice for the single-source
- * K3 job; any other alias is out of scope. cleanDistillText strips only
- * authority-declared reference tokens from model prose before the numeric
- * guard runs, so markers never read as facts. splitDistillStatements cuts
- * model prose into sentences for per-sentence guard validation, keeping
- * fenced code as one exact unit and decimals/exponents intact.
- *
- * resultStatement formats one stored result card after verification: a
- * result claim keeps only its single parsed scalar
- * (task/dataset/conditions plus metric:valueText+unit) and returns null
- * when that composed record is not supported by the same quote.
- * Non-result claims pass through untouched. A result needs a non-empty
- * valueText; a missing valueNumber stays allowed (raw scientific or unit
- * values may remain unparsed) while a present one must be finite.
- * No calculations, no unit conversion and no new bindings.
+ * K3 exact-quote verifier (IMPLEMENTATION 5/6).
+ * verifyClaims: byte-exact search in the stated block, then adjacent blocks,
+ * then a conservative whitespace/quote/dash/soft-hyphen fold mapped to
+ * original bytes. Drops empty/unknown/unmatched and number-unsupported
+ * statements (shared numbersSupported digit-group plus decimal-token rule).
+ * Stored quote is the canonical slice; ambiguous duplicates are kept.
+ * resolveQuoteBlock maps one [S1:N] label; cleanDistillText strips only
+ * declared reference tokens; splitDistillStatements keeps fenced code as one
+ * unit. resultStatement formats one scalar result card and rejects it when
+ * the composed task/dataset/conditions plus metric:valueText+unit lacks numeric
+ * support. verifyClaims leaves task/metric/dataset unchecked by itself.
  */
 
 export interface CandidateClaim {

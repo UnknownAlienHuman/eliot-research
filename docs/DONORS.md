@@ -90,19 +90,17 @@ The model-choice discovery baseline is [`lidge-jun/opencodex@9f0d40a25f8b842c33a
 from `src/providers/model-discovery.ts`, adapted through the model-catalogue boundary. The editable provider array
 feeds that same discovery mechanism; HTML pricing and private assistant-wire machinery are removed. Compatible routing narrowly adapts
 `packages/agents/src/models/core/transport.ts` from the registered Agents pin below (MIT): receiver-bound `AI.fetch`,
-provider-native path, raw body, headers, method and signal. No SDK retry/resume framework is copied. The retained
-universal attempt failed; the separate native-path caller smoke passed, without model-quality acceptance.
+provider-native path, raw body, headers, method and signal. No SDK retry/resume framework is copied.
 The installed AI SDK supplies SSE parsing and usage handling. Command Code uses the current question and frozen source
 context without previous assistant protocol data. OpenCodex private replay, fabricated markers, process-memory caches,
 tool-call capture and CLI protocols are discarded; no model-family list, proxy platform or replay framework is imported.
 No local proxy/backend, cache/registry, model-selection policy/default seed or vendored/cross-provider pricing is
-imported; missing prices stay null. Picker interaction/layout retains the approved legacy MIT pin and paths above,
+imported. Picker interaction/layout retains the approved legacy MIT pin and paths above,
 with provider/native-ID pair identity and dynamic API data instead of legacy qualification/admin layers.
 The same `src/web/ModelPicker.tsx` now serves Settings, the chat composer and source Understanding; the latter two
 discard their separate plain-select implementations. No model-name policy or additional picker family is introduced.
-`src/native-model-catalog.ts` separately consumes the installed AI binding's `models()` metadata API, not a static
-native model set; page1/per100 returned 73 rows / 39 text-generation rows on 2026-10-27
-(`eval/out/catalogue-native/page1.json`), with zero inference. No other donor architecture is adopted.
+`src/native-model-catalog.ts` consumes the installed AI binding's `models()` metadata API, keeping discovery separate
+from inference and native metadata separate from per-job output bounds. No other donor architecture is adopted.
 
 ### Agents SDK and examples
 

@@ -322,7 +322,7 @@ describe("chat-stream K2 wire regression", () => {
       const r1 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t1, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
       expect(r1.state).toBe("partial");
       expect(r1.answer).toBe("Held [S1:1] ");
-      expect(r1.error).toBe("External model request failed (cause: AI_StreamProviderError:server_error). Check the Gateway connection and provider status; no retry was started.");
+      expect(r1.error).toBe("External model request failed. Check the Gateway connection and provider status; no retry was started.");
       expect(r1.tokenLimit).toBe(TOKEN_BOUND);
       expect(r1.estimatedCostMicrousd).toBeUndefined();
       expect(r1.inputTokens).toBeNull();
