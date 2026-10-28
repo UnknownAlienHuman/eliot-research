@@ -225,6 +225,23 @@ describe("modelFailure", () => {
     expect(namedText).not.toContain("inner detail");
   });
 
+  it("preserves predispatch validation names without raw details", () => {
+    for (const name of ["AI_InvalidPromptError", "AI_InvalidArgumentError"]) {
+      const direct = new Error("outer sk-live-SECRET123");
+      direct.name = name;
+      for (const model of [DOTS, NATIVE]) {
+        const text = modelFailure(direct, model);
+        expect(text).toContain(name);
+        expect(text).not.toContain("SECRET");
+        expect(text).not.toContain("outer");
+      }
+      const nested = new Error("outer", { cause: Object.assign(new Error("inner sk-live-SECRET123"), { name }) });
+      const nestedText = modelFailure(nested, DOTS);
+      expect(nestedText).toContain(name);
+      expect(nestedText).not.toContain("SECRET");
+    }
+  });
+
   it("adds only fixed field names for a 400 without raw provider text", () => {
     const bad = new Error("outer sk-live-SECRET123");
     (bad as unknown as Record<string, unknown>).statusCode = 400;

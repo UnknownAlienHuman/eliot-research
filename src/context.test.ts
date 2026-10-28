@@ -662,7 +662,7 @@ describe("buildContext K3 claims fallback", () => {
       texts: { r9: { text: body, guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 300, heading: null }, { id: 2, type: "paragraph", start: 300, end: 600, heading: null }] } },
       claims: { r9: [{ ordinal: 1, statement: "Finding one", quote: "quoted one", conditions: null, blockIndex: 2, ambiguous: 0 }] },
     });
-    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 1200, maxOutputTokens: 100 }, question: "Q" + "q".repeat(539), instructions: "I" + "i".repeat(539) });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 1200, maxOutputTokens: 100 }, question: "Q" + "q".repeat(459), instructions: "I" + "i".repeat(459) });
     expect(res.mode).toBe("claims");
     expect(res.revisionIds).toEqual(["r9"]);
     expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
@@ -921,5 +921,177 @@ describe("orientation from stored guides", () => {
     const body = res.messages.map((m) => m.content).join(NL);
     expect(body).not.toContain("Derived orientation");
     expect(body).not.toContain("Partial gist");
+  });
+});
+
+describe("bare-label header regression", () => {
+  it("whole headers avoid bare labels while keeping exact passages and literals", async () => {
+    const literalText = "Alpha [S1] literal.";
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r1", createdAt: 1 }],
+      revisions: [{ id: "r1", readableState: "readable", readableSize: 20, distillState: "done", guideSummary: "Guide [S1] overview [S1:1] done.", deletedAt: null }],
+      texts: { r1: { text: literalText, blocks: [{ id: 1, type: "paragraph", start: 0, end: literalText.length, heading: null }] } },
+    });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
+    expect(res.mode).toBe("whole");
+    const sourceText = res.messages[1]?.content ?? "";
+    const orientText = res.messages[2]?.content ?? "";
+    expect(sourceText).toContain("[S1:1] Alpha [S1] literal.");
+    expect(sourceText).toContain("Source S1");
+    expect(sourceText).toContain("Paper A");
+    expect(sourceText).not.toMatch(/^\[S\d+\] /m);
+    expect(orientText).toContain("Derived orientation only");
+    expect(orientText).toContain("Source S1");
+    expect(orientText).toContain("overview");
+    expect(orientText).not.toMatch(/\[S\d+\]/);
+    expect(orientText).not.toMatch(/\[S\d+:\d+\]/);
+  });
+
+  it("claims headers and orientation avoid bare labels while keeping exact quotes and literals", async () => {
+    const passage = "Model Alpha uses [S1] literal.";
+    const passageEnd = new TextEncoder().encode(passage).byteLength;
+    const text = passage + NL + "Unselected source material. ".repeat(400);
+    const byteLength = new TextEncoder().encode(text).byteLength;
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: byteLength, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 }],
+      texts: {
+        r9: {
+          text,
+          guide: "No guide passages selected.",
+          blocks: [
+            { id: 2, type: "paragraph", start: 0, end: passageEnd, heading: null },
+            { id: 3, type: "paragraph", start: passageEnd + 1, end: byteLength, heading: null },
+          ],
+        },
+      },
+      claims: { r9: [{ ordinal: 1, statement: "Finding [S1] claim [S1:2] here", quote: passage, conditions: null, blockIndex: 2, ambiguous: 0 }] },
+    });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+    expect(res.mode).toBe("claims");
+    const sourceText = res.messages[1]?.content ?? "";
+    const orientText = res.messages[2]?.content ?? "";
+    expect(sourceText).toContain("[S1:2] " + passage);
+    expect(sourceText).toContain("Source S1");
+    expect(sourceText).toContain("Paper A");
+    expect(sourceText).not.toMatch(/^\[S\d+\] /m);
+    expect(orientText).toContain("Source S1");
+    expect(orientText).toContain("Finding");
+    expect(orientText).not.toMatch(/\[S\d+\]/);
+    expect(orientText).not.toMatch(/\[S\d+:\d+\]/);
+  });
+});
+describe("history reference continuity", () => {
+  it("retains stable current stored reference", async () => {
+    const { env } = twoSourceEnv();
+    const res = await buildContext(env, actor, {
+      projectId: "p1",
+      scopeMode: "project_default",
+      model: MODEL,
+      history: [
+        { role: "user", content: "Prior question", revisionIds: ["r1", "r2"] },
+        { role: "assistant", content: "Kept fact [S1:1] here", turnId: "t1", revisionIds: ["r1"], citations: [{ revisionId: "r1", sourceId: "s1", block: 1, start: 0, end: 8, sourceTitle: "Paper A", deleted: false, label: "[S1:1]" }] },
+      ],
+    });
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).toContain("Kept fact [S1:1] here");
+  });
+  it("strips reordered scope even with stored proof", async () => {
+    const { env } = twoSourceEnv();
+    const res = await buildContext(env, actor, {
+      projectId: "p1",
+      scopeMode: "project_default",
+      model: MODEL,
+      history: [
+        { role: "user", content: "Prior question", revisionIds: ["r2", "r1"] },
+        { role: "assistant", content: "Kept fact [S1:1] here", turnId: "t1", revisionIds: ["r1"], citations: [{ revisionId: "r1", sourceId: "s1", block: 1, start: 0, end: 8, sourceTitle: "Paper A", deleted: false, label: "[S1:1]" }] },
+      ],
+    });
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).toContain("Kept fact");
+    expect(body).not.toContain("Kept fact [S1:1] here");
+  });
+  it("strips unstored labels by default", async () => {
+    const { env } = twoSourceEnv();
+    const res = await buildContext(env, actor, {
+      projectId: "p1",
+      scopeMode: "project_default",
+      model: MODEL,
+      history: [
+        { role: "user", content: "Prior question", revisionIds: ["r1", "r2"] },
+        { role: "assistant", content: "Old answer [S1:1] kept", revisionIds: ["r1"] },
+      ],
+    });
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).toContain("Old answer");
+    expect(body).not.toContain("Old answer [S1:1] kept");
+  });
+  it("strips foreign, stale, bare and unknown refs", async () => {
+    const { env } = twoSourceEnv();
+    const res = await buildContext(env, actor, {
+      projectId: "p1",
+      scopeMode: "project_default",
+      model: MODEL,
+      history: [
+        { role: "user", content: "Prior question", revisionIds: ["r1", "r2"] },
+        { role: "assistant", content: "Mix [S1:1] good [S2:1] foreign [S1] bare [S9:9] unknown", turnId: "t1", revisionIds: ["r1"], citations: [{ revisionId: "r1", sourceId: "s1", block: 1, start: 0, end: 8, sourceTitle: "Paper A", deleted: false, label: "[S1:1]" }] },
+      ],
+    });
+    const assistants = res.messages.filter((m) => m.role === "assistant").map((m) => m.content).join(NL);
+    expect(assistants).toContain("Mix [S1:1] good");
+    expect(assistants).not.toContain("[S2:1]");
+    expect(assistants).not.toContain("[S9:9]");
+  });
+  it("maps persistent R token to current compact S", async () => {
+    const rev = "11111111-1111-1111-1111-111111111111";
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: rev, createdAt: 1 }],
+      revisions: [{ id: rev, readableState: "readable", readableSize: 20, distillState: "done", guideSummary: null, deletedAt: null }],
+      texts: { [rev]: { text: "Alpha.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 6, heading: null }] } },
+    });
+    const rLabel = "[R" + rev + ":1]";
+    const res = await buildContext(env, actor, {
+      projectId: "p1",
+      scopeMode: "project_default",
+      model: MODEL,
+      history: [
+        { role: "user", content: "Prior question", revisionIds: [rev] },
+        { role: "assistant", content: "Kept fact " + rLabel + " here", turnId: "t1", revisionIds: [rev], citations: [{ revisionId: rev, sourceId: "s1", block: 1, start: 0, end: 6, sourceTitle: "Paper A", deleted: false, label: rLabel }] },
+      ],
+    });
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).toContain("Kept fact [S1:1] here");
+    expect(body).not.toContain(rLabel);
+  });
+  it("claims retains present block and strips absent block", async () => {
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: 26214400, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 4 }],
+      texts: { r9: { guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 9, heading: null }, { id: 2, type: "paragraph", start: 10, end: 19, heading: null }, { id: 3, type: "paragraph", start: 20, end: 29, heading: null }] } },
+      claims: { r9: [{ ordinal: 1, statement: "First finding", quote: "quoted one", conditions: null, blockIndex: 2, ambiguous: 0 }] },
+    });
+    const res = await buildContext(env, actor, {
+      projectId: "p1",
+      scopeMode: "project_default",
+      model: { contextTokens: 2000, maxOutputTokens: 100 },
+      history: [
+        { role: "user", content: "Prior question", revisionIds: ["r9"] },
+        { role: "assistant", content: "Keep two [S1:2] drop one [S1:1]", turnId: "t2", revisionIds: ["r9"], citations: [{ revisionId: "r9", sourceId: "s1", block: 2, start: 10, end: 19, sourceTitle: "Paper A", deleted: false, label: "[S1:2]" }, { revisionId: "r9", sourceId: "s1", block: 1, start: 0, end: 9, sourceTitle: "Paper A", deleted: false, label: "[S1:1]" }] },
+      ],
+    });
+    expect(res.mode).toBe("claims");
+    const body = res.messages.map((m) => m.content).join(NL);
+    expect(body).toContain("Keep two [S1:2]");
+    expect(body).not.toContain("drop one [S1:1]");
+  });
+  it("marks prior prose as conversation context not evidence", async () => {
+    const { env } = twoSourceEnv();
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
+    expect(res.messages[0]?.content).toContain("conversation context, not evidence");
+    expect(res.messages[0]?.content).toContain("re-ground");
   });
 });

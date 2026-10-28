@@ -38,14 +38,18 @@ const notebookAnswersPath = (process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS ?? '').trim
 const order = ['C1', 'C2', 'C3', 'C4', 'O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8'];
 await mkdir(outDir, { recursive: true });
 async function apiJson(path, init) {
-  const r = await fetchEval(origin + path, { ...init, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } }, origin, configuredOrigin);
+  // Finite READ default (30s observer bound); explicit caller signal (e.g. 90s POST) is preserved verbatim.
+  const readSignal = init && init.signal ? init.signal : AbortSignal.timeout(30000);
+  const r = await fetchEval(origin + path, { ...init, signal: readSignal, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } }, origin, configuredOrigin);
   const t = await r.text();
   let b = null;
   try { b = t ? JSON.parse(t) : null; } catch { b = { raw: t.slice(0, 300) }; }
   return { status: r.status, body: b };
 }
-async function apiBytes(path) {
-  const r = await fetchEval(origin + path, { headers: { ...H } }, origin, configuredOrigin);
+async function apiBytes(path, init) {
+  // Same finite READ default for range/text GETs; explicit caller signal preserved verbatim.
+  const readSignal = init && init.signal ? init.signal : AbortSignal.timeout(30000);
+  const r = await fetchEval(origin + path, { ...init, signal: readSignal, headers: { ...H, ...((init && init.headers) || {}) } }, origin, configuredOrigin);
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
 }
 const pct = (a, p) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
@@ -634,8 +638,8 @@ if (!chatId) {
 }
 const chatPath = '/api/projects/' + encodeURIComponent(proj.id) + '/chats/' + encodeURIComponent(chatId);
 let configuredBudgetMicrousd = null;
-async function getChat(what) {
-  const h = await apiJson(chatPath);
+async function getChat(what, signal) {
+  const h = await apiJson(chatPath, signal ? { signal } : undefined);
   assert.equal(h.status, 200, 'GET chat must be 200 and storage-only (' + what + ').');
   assert(h.body && typeof h.body.chat === 'object', 'GET chat must return {chat, turns, monthlyUsedMicrousd, monthlyBudgetMicrousd}.');
   assert(Array.isArray(h.body.turns), 'GET chat must return turns array.');
@@ -794,9 +798,27 @@ function dispatchUnavailable(status, body, turn) {
   const error = body?.error ?? body?.turn?.error ?? turn?.error ?? null;
   const code = String(error?.code ?? body?.code ?? '').toLowerCase();
   const message = String(error?.message ?? error ?? body?.message ?? '');
-  return [401, 402, 403, 408, 429, 500, 502, 503, 504].includes(status)
-    || ['auth', 'unauthorized', 'forbidden', 'budget', 'unavailable', 'busy', 'rate_limited'].includes(code)
-    || /credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|provider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|gateway.{0,24}(?:unavailable|error|failed)/i.test(message);
+  if ([401, 402, 403, 408, 429, 500, 502, 503, 504].includes(status)) return true;
+  if (['auth', 'unauthorized', 'forbidden', 'budget', 'unavailable', 'busy', 'rate_limited'].includes(code)) return true;
+  if (/credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|\bprovider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|\bgateway.{0,24}(?:unavailable|error|failed)/i.test(message)) return true;
+  // Own 90 s deadline stays continuable: the next distinct question may dispatch.
+  if (/exceeded the 90 s time bound|Time bound exceeded before dispatch/i.test(message)) return false;
+  // Exact-turn timeout reconciliation stores provider failures as HTTP 200 with
+  // the failure embedded in turn.error (model-transport.ts modelFailure shapes).
+  // Stop on the same codes when embedded as HTTP; an explicit non-stop HTTP
+  // code (e.g. 400 validation) keeps the prior continue behavior.
+  if (/\bHTTP\s+(401|402|403|408|429|500|502|503|504)\b/i.test(message)) return true;
+  if (/\bHTTP\s+\d{3}\b/i.test(message)) return false;
+  // Per-question validation stays continuable in either existing failure
+  // format: predispatch AI_Invalid* and in-band invalid_request_error.
+  // Still stops 5xx/auth/rate/budget above and continues the own 90s deadline.
+  if (/AI_InvalidPromptError|AI_InvalidArgumentError/i.test(message)) return false;
+  if (/AI_StreamProviderError:invalid_request_error/i.test(message)) return false;
+  // Validation-shaped stream failures stay per-question and do not stop the batch.
+  if (/Model stream failed\s*\((?:AI_Invalid|Zod)/i.test(message)) return false;
+  if (/External model request failed|Model stream failed/i.test(message)) return true;
+  if (/authentication_error|permission_error|rate_limit_error|server_error|overloaded_error/i.test(message)) return true;
+  return false;
 }
 if (!runModel && !storedOnly) {
   const h1 = await getChat('re-read');
@@ -857,6 +879,70 @@ let actualKnownUsd = 0, actualKnownCount = 0, actualUnknown = 0, actualUnknownNe
 let newCount = 0, hardFailures = 0, ownerRequired = false, manual = 0;
 let dispatchStopped = false, stopReason = null;
 const used = new Set();
+const unknownDispatchIds = new Map();
+function isTerminalReconciledTurn(stored) {
+  const s = stored && typeof stored.state === 'string' ? stored.state : null;
+  return s === 'completed' || s === 'partial' || s === 'failed' || s === 'cancelled';
+}
+async function observeDispatchedTurn(requestTurnId, qid) {
+  // READ-ONLY reconciliation of an already-dispatched turn id after a POST
+  // wait timed out. Bounded storage-only GET observation (at most two chat
+  // snapshots, each GET with a finite AbortSignal deadline): never another
+  // POST, never the same question again. Returns the stored turn only when
+  // the submitted id is visible AND terminal (completed/partial/failed/
+  // cancelled); a visible pending turn (started/streaming/running/unknown)
+  // stays tracked as DISPATCH_UNKNOWN with reservation UNKNOWN, never
+  // adopted and never zeroed. Only the matching submitted turnId is adopted.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let snap = null;
+    try { snap = await getChat('reconcile-' + qid + '-attempt-' + attempt, AbortSignal.timeout(30000)); }
+    catch (readError) { snap = null; }
+    const found = snap && Array.isArray(snap.turns)
+      ? snap.turns.find((t) => t && t.turnId === requestTurnId) : null;
+    if (found && isTerminalReconciledTurn(found)) return found;
+    if (attempt === 1) await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  return null;
+}
+async function adoptReconciledTurn(qid, stored, wall, via) {
+  // Inspect an already-accepted stored turn found by read reconciliation and
+  // fold its actual state/body/citations/reserved cost into the aggregates.
+  // Unknown input/output stays UNKNOWN; nothing is re-dispatched.
+  let persistenceError = null;
+  try { await saveTurn(qid, stored, { src: via, wall, question: Q.get(qid) }); }
+  catch (error) { persistenceError = error instanceof Error ? error.message : String(error); }
+  let row;
+  try { row = await inspectTurn(qid, stored, via, wall, benchmarkModel, false); }
+  catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    row = { qid, answer: typeof stored?.answer === 'string' ? stored.answer : null, model: stored?.model ?? null,
+      turnState: stored?.state ?? 'UNKNOWN', routeStatus: stored?.model === benchmarkModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
+      status: 'QUALITY_FAIL', reason, factChecks: [], hardFailures: [reason], citationRanges: [], citationSummary: 'CHECK_FAILED',
+      timing: { firstTokenMs: stored?.firstTokenMs ?? null, totalMs: stored?.totalMs ?? null, wallMs: wall },
+      usage: { inputTokens: stored?.inputTokens ?? null, cachedTokens: stored?.cachedTokens ?? null, outputTokens: stored?.outputTokens ?? null,
+        estimatedCostMicrousd: stored?.estimatedCostMicrousd ?? null, actualProviderCostUsd: actualProviderCostUsd(stored) } };
+  }
+  row.hardFailures = [...(row.hardFailures ?? []), 'Dispatch wait timed out; this accepted turn was reconciled by bounded storage-only read of the submitted turn id (' + via + '). No retry was sent and the question was not repeated.'];
+  if (persistenceError) row.hardFailures = [...row.hardFailures, 'Could not preserve the new raw turn artifact: ' + persistenceError];
+  compareRows.set(qid, row);
+  unknownDispatchIds.delete(qid);
+  newCount++;
+  if (row.status === 'OWNER_REVIEW_REQUIRED') ownerRequired = true;
+  else if (row.status !== 'MECHANICAL_PASS') hardFailures++;
+  const reconciledCost = stored.estimatedCostMicrousd;
+  if (typeof reconciledCost === 'number' && Number.isSafeInteger(reconciledCost) && reconciledCost >= 0) {
+    reportedMicro += reconciledCost;
+    newCostMicro += reconciledCost;
+  } else {
+    unknownNewCosts++;
+  }
+  const reconciledActual = actualProviderCostUsd(stored);
+  if (reconciledActual === null) { actualUnknown++; }
+  else { actualKnownUsd += reconciledActual; actualKnownCount++; }
+  if (typeof stored.firstTokenMs === 'number') firstMs.push(stored.firstTokenMs);
+  if (typeof stored.totalMs === 'number') totalMs.push(stored.totalMs);
+  return row;
+}
 for (const qid of order) {
   if (dispatchStopped) {
     hardFailures++;
@@ -884,11 +970,33 @@ for (const qid of order) {
     } catch (error) { requestError = error instanceof Error ? error.message : String(error); }
     wall = Date.now() - started;
     if (requestError) {
-      const reason = 'Turn dispatch outcome unknown; no retry: ' + requestError;
+      // The POST wait timed out, but the turn may already be stored server-side
+      // under requestTurnId. Reconcile that exact id with bounded storage-only
+      // GET observation (each GET has a finite AbortSignal deadline): never
+      // another POST, never the same question again. A matching terminal turn
+      // (completed/partial/failed/cancelled, including its own 90s deadline or
+      // cancel) is recorded and the explicit 12-question batch continues with
+      // the next distinct question. Only an unknown outcome or provider/auth/
+      // budget unavailability stops the rest. Partial/quality warnings never
+      // stop the batch.
+      let reconciled = null;
+      try { reconciled = await observeDispatchedTurn(requestTurnId, qid); }
+      catch (observeError) { reconciled = null; }
+      if (reconciled) {
+        turn = reconciled;
+        await adoptReconciledTurn(qid, turn, wall, 'reconciled-timeout-read');
+        if (dispatchUnavailable(200, null, turn)) {
+          dispatchStopped = true;
+          stopReason = 'Reconciled turn ' + qid + ' reports provider/auth/budget unavailability; no further questions were dispatched: ' + requestError;
+        }
+        continue;
+      }
+      const reason = 'Turn dispatch outcome unknown after bounded read reconciliation; no retry: ' + requestError;
       compareRows.set(qid, { qid, answer: null, model: benchmarkModel, turnState: 'DISPATCH_UNKNOWN', routeStatus: 'GLOBAL_DEFAULT',
         status: 'DISPATCH_UNAVAILABLE', reason, factChecks: [{ name: 'dispatch', status: 'FAIL', detail: reason }], hardFailures: [reason],
         citationRanges: [], citationSummary: 'NOT_RUN', timing: { firstTokenMs: null, totalMs: null, wallMs: wall },
         usage: { inputTokens: null, cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, actualProviderCostUsd: null } });
+      unknownDispatchIds.set(qid, requestTurnId);
       hardFailures++; dispatchStopped = true; stopReason = reason;
       continue;
     }
@@ -972,11 +1080,31 @@ try {
 } catch (error) { hardFailures++; finalReadError = error instanceof Error ? error.message : String(error); }
 if (!finalChat) stopReason = 'Final storage/usage re-read failed: ' + (finalReadError || 'unknown error');
 else {
-  if (finalChat.turns.length !== h0.turns.length + newCount) { hardFailures++; finalReadError = 'Chat turn count does not match the pre-existing turns plus exactly one request per new question.'; }
-  if (unknownNewCosts > 0) { hardFailures++; finalReadError = 'At least one new turn has unknown estimated cost; UNKNOWN is not treated as free.'; }
-  if (finalChat.monthlyUsedMicrousd - m0 !== newCostMicro && unknownNewCosts === 0) { hardFailures++; finalReadError = 'Monthly usage delta differs from the estimates for new turns.'; }
-  if (finalChat.monthlyUsedMicrousd > finalChat.monthlyBudgetMicrousd) { hardFailures++; finalReadError = 'Monthly model budget is exceeded.'; }
-  if (finalReadError) stopReason = [stopReason, finalReadError].filter(Boolean).join(' ');
+  // Final-read reconciliation: any still-unresolved dispatched id is looked up
+  // once more in the final storage snapshot. Only an accepted matching terminal
+  // turn (completed/partial/failed/cancelled) is adopted with its actual
+  // state/body/citations/reserved cost (unknown input/output preserved);
+  // a still-pending visible turn (started/streaming/running/unknown) or an
+  // unresolvable id keeps DISPATCH_UNKNOWN with reservation UNKNOWN,
+  // never zero. No POST anywhere.
+  for (const pendingQid of unknownDispatchIds.keys()) {
+    const pendingRow = compareRows.get(pendingQid);
+    const pendingId = unknownDispatchIds.get(pendingQid);
+    const stored = Array.isArray(finalChat.turns)
+      ? finalChat.turns.find((t) => t && t.turnId === pendingId) : null;
+    if (!stored) continue;
+    if (!isTerminalReconciledTurn(stored)) continue;
+    hardFailures--; // undo the DISPATCH_UNAVAILABLE increment; judge the reconciled row below.
+    await adoptReconciledTurn(pendingQid, stored, pendingRow && pendingRow.timing ? pendingRow.timing.wallMs : null, 'reconciled-final-read');
+  }
+  const finalErrors = [];
+  if (finalChat.turns.length !== h0.turns.length + newCount) { hardFailures++; finalErrors.push('Chat turn count does not match the pre-existing turns plus exactly one request per new question.'); }
+  if (unknownNewCosts > 0) { hardFailures++; finalErrors.push('At least one new turn has unknown estimated cost; UNKNOWN is not treated as free.'); }
+  const unresolvedCount = unknownDispatchIds.size;
+  if (unresolvedCount > 0) { hardFailures++; finalErrors.push(unresolvedCount + ' dispatched turn(s) remain unresolved after bounded read reconciliation; any held reservation is UNKNOWN, not zero.'); }
+  else if (finalChat.monthlyUsedMicrousd - m0 !== newCostMicro && unknownNewCosts === 0) { hardFailures++; finalErrors.push('Monthly usage delta differs from the estimates for new turns.'); }
+  if (finalChat.monthlyUsedMicrousd > finalChat.monthlyBudgetMicrousd) { hardFailures++; finalErrors.push('Monthly model budget is exceeded.'); }
+  if (finalErrors.length) { finalReadError = finalErrors.join(' '); stopReason = [stopReason, finalReadError].filter(Boolean).join(' '); }
 }
 const status = hardFailures > 0 ? 'FAIL' : ownerRequired ? 'OWNER_REQUIRED' : 'MECHANICAL_PASS';
 await writeCompare(compareRows, { mode: 'default-model benchmark; frozen global route; one request per unanswered question; no retry',

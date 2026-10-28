@@ -317,8 +317,11 @@ quotes from the same block. Keep derived claim statements and conditions in a se
 non-evidence; only original quoted passages provide evidence and citation labels. Source and orientation text both
 count toward the same context budget.
 
-Estimate text as UTF-8 bytes / 3. Include newest in-scope history up to 10% of context, stripped of labels except for
-the Command Code protocol path. For that path, replay the captured assistant wire message unchanged only when the prior
+Estimate text as UTF-8 bytes / 3. Include newest in-scope history up to 10% of context. Public assistant history retains
+a citation only when the prior full ordered scope is a prefix of the current scope and its stored source, revision,
+block and exact range match a currently supplied passage. Render that citation with its current compact alias;
+strip unverified, stale and unavailable references. Prior assistant prose remains conversation context, not evidence.
+For the Command Code protocol path, replay the captured assistant wire message unchanged only when the prior
 turn's full ordered source scope is a prefix of the current frozen scope. The complete serialized wire message,
 including private reasoning, counts toward both history and request bounds. Historical labels are not new evidence.
 A partial prior answer is identified as incomplete without changing its protocol data. Missing or mismatched private
@@ -331,6 +334,14 @@ citation, token, timing, cost, invalid-label and terminal-state fields. WebSocke
 read-only state snapshots; they never enqueue or dispatch paid work. GET, history, reconnect and Save never start model/search work. One active turn
 and one queued submission are allowed; the next returns `409/busy`. Stop stores partial text, closing a tab does not
 cancel, and failed streams are not automatically continued. Retry is a new owner submission.
+The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
+cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
+Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the existing
+reservation and is never treated as zero cost.
+Missing-citation and unsupported-number diagnostics are advisory UTF-16 answer ranges stored in the existing
+ChatAgent turn JSON and exposed by snapshots/history. They mark affected rendered prose without rewriting the answer
+or changing a normally finished stream to partial. Truncation, stream/protocol failure and invalid resolved labels
+remain real failures. Saved output carries a concise review note when warnings exist. D1 schema and usage are unchanged.
 
 Chat always streams ordinary Markdown with inline compact `[Sx:N]` labels. There is no JSON sentence/label enum or
 parse-repair call. One generic `SYSTEM_PROMPT` applies across questions and corpora: answer in the user's language,
@@ -339,9 +350,8 @@ as untrusted data. Project instructions remain caller-provided context; no fixed
 server citation resolver maps valid labels to exact source/revision and UTF-8 ranges. Bare `Page N` / `Страница N`
 page headings and empty headings are ineligible for labels; canonical bytes and the block map remain unchanged.
 
-A turn is partial when it contains missing/invalid citations, an uncovered source-derived factual statement or a
-numeric unit unsupported by its adjacent cited range. These deterministic checks do not prove semantic entailment.
-Owner semantic review remains required. The unchanged C1–C4/O1–O8 question set, citation-opening checks and owner review
+Citation and numeric diagnostics do not prove semantic entailment. A normally completed answer with advisory warnings
+can still fail acceptance. Owner semantic review remains required. The unchanged C1–C4/O1–O8 question set, citation-opening checks and owner review
 are the K2 boundary in MAP; K2 is not fully accepted or deployed.
 
 Broadcast the first nonempty rendered answer immediately and measure `firstTokenMs` from that text, not the first

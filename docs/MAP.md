@@ -166,6 +166,8 @@ across corpora, with no fixed-paper coaching or JSON sentence/label enum. The se
 Page-only `Page N` / `Страница N` headings and empty headings are not labelable; canonical text and block maps are
 unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
 never retried automatically.
+Missing citation/numeric-support spans are advisory marks, not stream-state transitions. A completed generation can
+still fail the quality gate; diagnostics do not waive citation, expected-fact or owner-review requirements.
 
 **Hard acceptance — `pnpm eval k2`**
 
