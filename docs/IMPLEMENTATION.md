@@ -348,6 +348,8 @@ Missing-citation and unsupported-number diagnostics are advisory UTF-16 answer r
 ChatAgent turn JSON and exposed by snapshots/history. They mark affected rendered prose without rewriting the answer
 or changing a normally finished stream to partial. Truncation, stream/protocol failure and invalid resolved labels
 remain real failures. Saved output carries a concise review note when warnings exist. D1 schema and usage are unchanged.
+An answer over a nonempty whole/claim source scope with no resolved citation is incomplete; this hard citation-presence
+gate is separate from advisory spans. General answers in explicitly empty scope do not require Library citations.
 
 Chat always streams ordinary Markdown with inline compact `[Sx:N]` labels. There is no JSON sentence/label enum or
 parse-repair call. One generic `SYSTEM_PROMPT` applies across questions and corpora: answer in the user's language,
@@ -455,6 +457,11 @@ Neither API nor HTML prices are required or parsed for new model selection/admis
 metadata blocks dispatch. The UI filters do not run discovery or change selection.
 The admitted external `ModelSpec` carries the provider configuration and Gateway ID from that same catalogue read;
 transport uses this frozen routing instead of reading changed settings after admission.
+Published `supported_parameters` may advertise temperature support; those requests use temperature 0 for source-faithful
+generation, while missing metadata leaves the parameter unset. OpenRouter structured jobs disable reasoning only when
+the same snapshot advertises its control and explicitly marks it non-mandatory. Chat, mandatory reasoning and unknown
+capabilities are not silently given that override. The existing output/call bounds remain unchanged; truncation is a
+failed structured result, retained for inspection without an automatic repair call.
 
 Cloudflare documents R2 object consistency in the [Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 (dateModified: 2026-07-31), supporting the single-object snapshot timestamp contract.

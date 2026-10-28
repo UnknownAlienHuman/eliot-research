@@ -247,6 +247,10 @@ export class ChatAgent extends Agent<Env, ChatState> {
     if (turn.state === "completed" && turn.invalidLabels > 0) {
       turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
     }
+    if (turn.state === "completed" && turn.citations.length === 0
+      && (sourceMode === "whole" || sourceMode === "claims") && turn.answer.trim().length > 0) {
+      turn.state = "partial"; turn.error = "No source citations were resolved. This answer is incomplete.";
+    }
     // Step1 advisory warnings: missing-citation and unsupported-number never change state.
     // Real truncation, stream, provider and protocol failures above keep partial/failed.
     // Reuse the existing numeric-label and R2 quote path; no extra source rereads.

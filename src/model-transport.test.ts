@@ -234,6 +234,73 @@ describe("resolveModelTransport", () => {
   });
 });
 
+describe("bounded-output request body", () => {
+  const OFFICIAL_GENERIC_PROVIDER = { id: "official-generic", type: "openai-compatible", gatewaySlug: "custom-slug", gatewayPath: "v1", baseUrl: "https://openrouter.ai/api/v1", enabled: true };
+  const OFFICIAL_GENERIC_PROVIDERS = [...MIGRATION_PROVIDERS, FIXTURE_PROVIDER, OFFICIAL_GENERIC_PROVIDER];
+  const OFFICIAL_MODEL: ModelSpec = { ...BASE, route: "gateway:official-generic/synth-model", id: "synth-model", label: "Synth", maxOutputTokens: 8192, outputReserveTokens: 8192, structuredOutputs: true, responseFormat: true, supportsTemperature: true, optionalReasoning: true };
+  type BodyModel = { config: { transformRequestBody: (body: Record<string, unknown>) => Record<string, unknown> } };
+  async function bodyFor(model: ModelSpec, providerId: string, affinity: string, options?: { structuredOutput?: boolean }, providers: Array<Record<string, unknown>> = [...MIGRATION_PROVIDERS as Array<Record<string, unknown>>, FIXTURE_PROVIDER as unknown as Record<string, unknown>, OFFICIAL_GENERIC_PROVIDER as unknown as Record<string, unknown>]) {
+    const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response("ok"));
+    const binding = { fetch } as unknown as Env["AI"];
+    const seen = makeEnv("my-gw", providers as typeof MIGRATION_PROVIDERS);
+    const frozenModel = frozen(model, providerId, "my-gw", providers);
+    const resolved = (await resolveModelTransport({ AI: binding, DB: seen.env.DB }, frozenModel, affinity, options ?? {})) as unknown as BodyModel;
+    expect(seen.prepared).toEqual([]);
+    return resolved.config.transformRequestBody;
+  }
+
+  it("disables reasoning only for official structured output with published optional reasoning", async () => {
+    const transform = await bodyFor(OFFICIAL_MODEL, "official-generic", "sess-structured", { structuredOutput: true }, OFFICIAL_GENERIC_PROVIDERS as unknown as Array<Record<string, unknown>>);
+    const out = transform({ model: "synth-model", stream: true, response_format: { type: "json_object" }, provider: { allow_fallbacks: true } });
+    expect(out.reasoning).toEqual({ enabled: false });
+    expect(out.temperature).toBe(0);
+    expect(out.provider).toMatchObject({ allow_fallbacks: false, require_parameters: true });
+    expect(out.response_format).toEqual({ type: "json_object" });
+  });
+
+  it("never disables reasoning for chat, even when the catalogue publishes it as optional", async () => {
+    const transform = await bodyFor(OFFICIAL_MODEL, "official-generic", "sess-chat", undefined, OFFICIAL_GENERIC_PROVIDERS as unknown as Array<Record<string, unknown>>);
+    const out = transform({ model: "synth-model", stream: true, response_format: { type: "json_object" } });
+    expect(out).not.toHaveProperty("reasoning");
+    // Chat still uses the published deterministic temperature.
+    expect(out.temperature).toBe(0);
+    expect(out.provider).toMatchObject({ allow_fallbacks: false, require_parameters: true });
+  });
+
+  it("keeps reasoning enabled for natively mandatory or unknown catalog metadata", async () => {
+    const mandatory: ModelSpec = { ...OFFICIAL_MODEL };
+    delete mandatory.optionalReasoning;
+    const unknownTransform = await bodyFor(mandatory, "official-generic", "sess-unknown", { structuredOutput: true }, OFFICIAL_GENERIC_PROVIDERS as unknown as Array<Record<string, unknown>>);
+    expect(unknownTransform({ model: "synth-model", stream: true })).not.toHaveProperty("reasoning");
+    const falseTransform = await bodyFor({ ...OFFICIAL_MODEL, optionalReasoning: false }, "official-generic", "sess-false", { structuredOutput: true }, OFFICIAL_GENERIC_PROVIDERS as unknown as Array<Record<string, unknown>>);
+    expect(falseTransform({ model: "synth-model", stream: true })).not.toHaveProperty("reasoning");
+  });
+
+  it("omits temperature when the catalogue does not advertise it", async () => {
+    const noTemp: ModelSpec = { ...OFFICIAL_MODEL };
+    delete noTemp.supportsTemperature;
+    const transform = await bodyFor(noTemp, "official-generic", "sess-no-temp", { structuredOutput: true }, OFFICIAL_GENERIC_PROVIDERS as unknown as Array<Record<string, unknown>>);
+    const out = transform({ model: "synth-model", stream: true });
+    expect(out).not.toHaveProperty("temperature");
+    // Reasoning still disables from the published optional flag alone.
+    expect(out.reasoning).toEqual({ enabled: false });
+  });
+
+  it("forwards temperature on the generic compatible body without ever sending reasoning", async () => {
+    const transform = await bodyFor({ ...FIXTURE_MODEL, supportsTemperature: true, optionalReasoning: true }, "fixture-provider", "sess-compat");
+    const out = transform({ model: "fixture-model-1", stream: true, response_format: { type: "json_object" }, provider: { allow_fallbacks: false } });
+    expect(out.temperature).toBe(0);
+    expect(out).not.toHaveProperty("reasoning");
+    expect(out).not.toHaveProperty("provider");
+    expect(out.response_format).toEqual({ type: "json_object" });
+    const stripped = await bodyFor({ ...FIXTURE_MODEL, responseFormat: false, structuredOutputs: false, optionalReasoning: true }, "fixture-provider", "sess-compat-plain");
+    const plain = stripped({ model: "x", stream: true, response_format: { type: "json_object" } });
+    expect(plain).not.toHaveProperty("response_format");
+    expect(plain).not.toHaveProperty("temperature");
+    expect(plain).not.toHaveProperty("reasoning");
+  });
+});
+
 describe("reportedProviderUsage", () => {
   it("keeps unknown provider cost unknown and retains verified OpenRouter USD", () => {
     const raw = Object.freeze({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.25 });

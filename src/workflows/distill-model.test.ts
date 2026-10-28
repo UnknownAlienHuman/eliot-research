@@ -288,7 +288,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
     try {
       const steps = await run(f);
       expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
-      expect(resolveModelTransport).toHaveBeenCalledExactlyOnceWith(f.env, snapshot, `distill-${revisionId}`);
+      expect(resolveModelTransport).toHaveBeenCalledExactlyOnceWith(f.env, snapshot, `distill-${revisionId}`, { structuredOutput: true });
       expect(snapshot).toEqual(original);
       finished(f, "Source understanding failed.");
     } finally { f.db.close(); }

@@ -312,6 +312,22 @@ describe("chat-stream K2 wire regression", () => {
     } finally { h.db.close(); }
   });
 
+  it("source-grounded output with no resolved citation stays partial without retry", async () => {
+    const h = makeHarness("A source");
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "The source describes its method." }, "stop", { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 })]);
+      const r = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: "99999999-9999-4999-8999-000000000001", question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+      expect(r.state).toBe("partial");
+      expect(r.error).toContain("No source citations were resolved");
+      expect(r.answer).toBe("The source describes its method.");
+      expect(r.citations).toHaveLength(0);
+      expect(r.invalidLabels).toBe(0);
+      expect(r.tokenLimit).toBe(TOKEN_BOUND);
+      expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); }
+  });
+
   it("interrupted text after partial content settles exact partial with no retry", async () => {
     const h = makeHarness();
     try {

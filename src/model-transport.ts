@@ -79,23 +79,35 @@ export const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
 // provider contract forbids it. The caller adds the explicit schema instruction
 // when model.responseFormat is false; Output.object parses locally either way
 // and failures stay local with no repair calls.
+// Temperature 0 is app strategy for determinism within the published 0-2 range
+// (official OpenRouter ChatRequest), sent only when the catalogue advertises
+// "temperature"; otherwise omitted so provider defaults apply (no fake defaults).
+// Structured-output reasoning off is bounded-output recovery: when the Workflow
+// passes structuredOutput:true and the catalogue publishes optionalReasoning
+// (reasoning.mandatory === false plus advertised "reasoning"), the official
+// OpenRouter body sends reasoning:{enabled:false} (documented ReasoningConfig).
+// Never for chat (structuredOutput false), natively mandatory, or unknown; never
+// on the generic compatible body (standard temperature may forward there).
 // Generic compatible body for the native gateway fetch: no provider routing hint;
 // strip response_format unless the catalog explicitly advertises it. Structured
 // output is enabled only when the catalog sets structuredOutputs; otherwise the
 // caller codec handles plain JSON locally.
-function compatibleBody(responseFormatAllowed: boolean) {
+function compatibleBody(responseFormatAllowed: boolean, supportsTemperature: boolean) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
     const out: Record<string, unknown> = { ...args };
     delete out.provider;
     if (!responseFormatAllowed) delete out.response_format;
+    if (supportsTemperature) out.temperature = 0;
     return out;
   };
 }
-function openRouterBody(responseFormatAllowed: boolean) {
+function openRouterBody(responseFormatAllowed: boolean, options: { supportsTemperature: boolean; optionalReasoning: boolean; structuredOutput: boolean }) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
     const provider = { ...(args.provider as Record<string, unknown> | undefined), allow_fallbacks: false, require_parameters: true };
     const out: Record<string, unknown> = { ...args, provider };
     if (!responseFormatAllowed) delete out.response_format;
+    if (options.supportsTemperature) out.temperature = 0;
+    if (options.structuredOutput && options.optionalReasoning) out.reasoning = { enabled: false };
     return out;
   };
 }
@@ -104,6 +116,7 @@ export async function resolveModelTransport(
   env: Pick<Env, "AI" | "DB">,
   model: ModelSpec,
   sessionAffinity: string,
+  options: { structuredOutput?: boolean } = {},
 ): Promise<LanguageModel> {
   if (model.route.startsWith("workers-ai:")) {
     return createAI({ binding: env.AI }).languageModel(model.id, { ...(model.nativeReasoningEffort ? { reasoningEffort: model.nativeReasoningEffort } : {}), sessionAffinity });
@@ -131,12 +144,17 @@ export async function resolveModelTransport(
   if (isNativeOpenRouterRoute(model)) {
     const structured = model.structuredOutputs === true;
     const responseFormatAllowed = model.responseFormat === true;
+    const transportOptions = {
+      supportsTemperature: model.supportsTemperature === true,
+      optionalReasoning: model.optionalReasoning === true,
+      structuredOutput: options.structuredOutput === true,
+    };
     const openrouter = createOpenAICompatible<string, string, string, string>({
       name: "openrouter",
       baseURL: provider.baseUrl,
       includeUsage: true,
       supportsStructuredOutputs: structured,
-      transformRequestBody: openRouterBody(responseFormatAllowed),
+      transformRequestBody: openRouterBody(responseFormatAllowed, transportOptions),
       convertUsage: convertCompatibleUsage,
     });
     const vendor = openrouter.languageModel(model.id);
@@ -158,10 +176,16 @@ export async function resolveModelTransport(
     "https://workers-binding.ai/ai-gateway/gateways/" + encodeURIComponent(gatewayId) + `/${provider.gatewaySlug}` + gatewayPath + "/chat/completions";
   const responseFormatAllowed = model.responseFormat === true;
   const structured = model.structuredOutputs === true;
+  const supportsTemperature = model.supportsTemperature === true;
+  const transportOptions = {
+    supportsTemperature,
+    optionalReasoning: model.optionalReasoning === true,
+    structuredOutput: options.structuredOutput === true,
+  };
   return createOpenAICompatible({
     name: provider.id, baseURL, includeUsage: true,
     supportsStructuredOutputs: structured, convertUsage: convertCompatibleUsage,
-    transformRequestBody: baseURL === OFFICIAL_OPENROUTER_BASE_URL ? openRouterBody(responseFormatAllowed) : compatibleBody(responseFormatAllowed),
+    transformRequestBody: baseURL === OFFICIAL_OPENROUTER_BASE_URL ? openRouterBody(responseFormatAllowed, transportOptions) : compatibleBody(responseFormatAllowed, supportsTemperature),
     fetch: async (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
       if (url !== baseURL + "/chat/completions" || init?.method !== "POST" || typeof init.body !== "string")

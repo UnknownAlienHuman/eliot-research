@@ -112,7 +112,7 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   if (row.distill_model !== model.route) throw new LibraryError("conflict", "The admitted model snapshot no longer matches the stored model route.", 409);
   const remaining = row.distill_started_at + DISTILL_DEADLINE_MS - Date.now();
   if (remaining <= 0) throw new Error("Source understanding reached its recovery deadline. No paid step will be repeated.");
-  const transport = await resolveModelTransport(env, model, `distill-${revisionId}`);
+  const transport = await resolveModelTransport(env, model, `distill-${revisionId}`, { structuredOutput: true });
   const modelInstructions = model.responseFormat === false ? instructions + "\nReturn one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema)) : instructions;
   const inputBound = Math.ceil(new TextEncoder().encode(modelInstructions + content + JSON.stringify(z.toJSONSchema(schema))).byteLength / 3) + 1024;
   if (inputBound + modelOutputLimit(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");

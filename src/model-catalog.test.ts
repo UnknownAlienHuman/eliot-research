@@ -87,6 +87,41 @@ describe("provider model catalogue discovery", () => {
     expect(models[0]).not.toHaveProperty("outputMicrousdPerMillion");
   });
 
+  it("propagates temperature and optional reasoning only from advertised metadata", async () => {
+    catalogues([], [
+      { id: "provider/synth-both", context_length: 100000, architecture: textChat, supported_parameters: ["temperature", "reasoning"], reasoning: { mandatory: false } },
+      { id: "provider/synth-temp-yes", context_length: 100000, architecture: textChat, supported_parameters: ["temperature"] },
+      { id: "provider/synth-temp-no", context_length: 100000, architecture: textChat, supported_parameters: ["response_format"] },
+      { id: "provider/synth-temp-missing", context_length: 100000, architecture: textChat },
+      { id: "provider/synth-reason-mandatory", context_length: 100000, architecture: textChat, supported_parameters: ["reasoning", "temperature"], reasoning: { mandatory: true } },
+      { id: "provider/synth-reason-unknown", context_length: 100000, architecture: textChat, supported_parameters: ["reasoning", "temperature"] },
+      { id: "provider/synth-reason-unadvertised", context_length: 100000, architecture: textChat, supported_parameters: ["temperature"], reasoning: { mandatory: false } },
+    ]);
+    const models = await discoverGatewayModels(defaultProviders());
+    const byId = new Map(models.map((model) => [model.id, model]));
+    expect(byId.get("provider/synth-both")).toMatchObject({ supportsTemperature: true, optionalReasoning: true, enabled: true });
+    expect(byId.get("provider/synth-temp-yes")).toMatchObject({ supportsTemperature: true, enabled: true });
+    expect(byId.get("provider/synth-temp-yes")).not.toHaveProperty("optionalReasoning");
+    expect(byId.get("provider/synth-temp-no")).not.toHaveProperty("supportsTemperature");
+    expect(byId.get("provider/synth-temp-no")).not.toHaveProperty("optionalReasoning");
+    expect(byId.get("provider/synth-temp-missing")).not.toHaveProperty("supportsTemperature");
+    expect(byId.get("provider/synth-temp-missing")).not.toHaveProperty("optionalReasoning");
+    // Natively mandatory reasoning never disables: temperature may still advertise.
+    expect(byId.get("provider/synth-reason-mandatory")).toMatchObject({ supportsTemperature: true, enabled: true });
+    expect(byId.get("provider/synth-reason-mandatory")).not.toHaveProperty("optionalReasoning");
+    // Missing reasoning metadata means unknown: no inference.
+    expect(byId.get("provider/synth-reason-unknown")).toMatchObject({ supportsTemperature: true, enabled: true });
+    expect(byId.get("provider/synth-reason-unknown")).not.toHaveProperty("optionalReasoning");
+    // mandatory:false without an advertised reasoning parameter means unknown.
+    expect(byId.get("provider/synth-reason-unadvertised")).toMatchObject({ supportsTemperature: true, enabled: true });
+    expect(byId.get("provider/synth-reason-unadvertised")).not.toHaveProperty("optionalReasoning");
+    for (const model of models) {
+      expect(model).not.toHaveProperty("inputMicrousdPerMillion");
+      expect(model).not.toHaveProperty("cachedMicrousdPerMillion");
+      expect(model).not.toHaveProperty("outputMicrousdPerMillion");
+    }
+  });
+
   it("ignores tiered pricing overrides and reports only context/output", async () => {
     catalogues([], [{ id: "provider/tiered", context_length: 1000000, architecture: textChat, pricing: { prompt: "0.000001", completion: "0.000005", input_cache_read: "0.00000005", overrides: [{ min_prompt_tokens: 272000, prompt: "0.000002", completion: "0.0000075", input_cache_read: "0.0000001" }] } }]);
     const models = await discoverGatewayModels(defaultProviders());

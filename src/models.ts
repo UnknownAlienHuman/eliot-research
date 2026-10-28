@@ -53,6 +53,8 @@ export interface CatalogModel {
   outputReserveTokens?: number;
   responseFormat?: boolean;
   structuredOutputs?: boolean;
+  supportsTemperature?: boolean;
+  optionalReasoning?: boolean;
   nativeReasoningEffort?: "low";
   checkedOn: string;
   enabled: boolean;
@@ -134,6 +136,8 @@ function isCatalogModel(value: unknown): value is CatalogModel {
   if (value.outputReserveTokens !== undefined && (!Number.isSafeInteger(value.outputReserveTokens) || (value.outputReserveTokens as number) <= 0)) return false;
   if (value.responseFormat !== undefined && typeof value.responseFormat !== "boolean") return false;
   if (value.structuredOutputs !== undefined && typeof value.structuredOutputs !== "boolean") return false;
+  if (value.supportsTemperature !== undefined && typeof value.supportsTemperature !== "boolean") return false;
+  if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
   if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low") return false;
   return value.unavailableReason === undefined || typeof value.unavailableReason === "string";
 }

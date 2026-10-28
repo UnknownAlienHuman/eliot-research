@@ -59,6 +59,16 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
   // No currency parsing: provider catalogues may carry pricing/rate fields and
   // old R2 snapshots may retain them, but this boundary ignores them entirely.
   const parameters = Array.isArray(row.supported_parameters) ? row.supported_parameters : [];
+  // Temperature support is advertised-only: true when the provider lists
+  // "temperature" in supported_parameters; otherwise omitted as unknown/not
+  // advertised. No static model/provider IDs, no allowlist, no price handling.
+  const supportsTemperature = parameters.includes("temperature");
+  // Optional reasoning is advertised-only: true only when the row publishes
+  // reasoning.mandatory === false (official OpenRouter ModelReasoning: false
+  // means reasoning can be disabled) AND supported_parameters includes
+  // "reasoning". Missing metadata stays omitted (unknown); no inference, no
+  // guessed reasoning budget, no model/provider-name allowlist.
+  const optionalReasoning = record(row.reasoning)?.mandatory === false && parameters.includes("reasoning");
   // Chat support is explicit only: Command Code supported_endpoints when present,
   // otherwise OpenRouter architecture modalities when present. No endpoint guessing:
   // a catalogue without advertised capabilities remains selectable with unknown context.
@@ -80,6 +90,8 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
     contextTokens, maxOutputTokens, outputReserveTokens: 8192,
     responseFormat: parameters.includes("response_format"),
     structuredOutputs: parameters.includes("response_format") && parameters.includes("structured_outputs"),
+    ...(supportsTemperature ? { supportsTemperature: true } : {}),
+    ...(optionalReasoning ? { optionalReasoning: true } : {}),
     checkedOn,
     enabled: unavailableReason === null, ...(unavailableReason ? { unavailableReason } : {}),
   };
