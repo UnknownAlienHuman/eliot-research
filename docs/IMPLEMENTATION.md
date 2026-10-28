@@ -434,8 +434,15 @@ Workers AI's native free allocation is 10,000 Neurons per UTC day, shared across
 reset at 00:00 UTC. On Workers Paid, usage beyond the free allocation is billed; the included allocation alone is not
 a paid-account spending cap ([pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), updated
 2026-10-20). Tokens, Neurons and provider credit balances are separate units. Eliot does not derive one from another or
-apply the Workers AI allocation to OpenRouter/Command Code. Native allowance enforcement must be verified separately
-before calls are enabled; a missing allowance is not treated as zero usage or unlimited access.
+apply the Workers AI allocation to OpenRouter/Command Code.
+
+Migration `0010_native_usage_mode.sql` stores the owner choice in `settings.native_usage_mode`:
+`included` (default) or `standard`. GET/PUT `/api/settings` exposes `nativeUsageMode`; saving the choice performs no
+inference, does not change the selected provider/models and applies to new admissions. `included` keeps native
+requests paused while an exact 10,000-Neuron daily cap cannot be verified/enforced for this connection. It is not a
+working usage meter or a claim that the Paid account stops at that allocation. `standard` explicitly permits normal
+Cloudflare billing, including Paid overage, while retaining each job's token/call/time bounds. Missing or unreadable
+policy fails closed for native requests. Non-native providers use their own limits independently of this setting.
 
 During refresh, each enabled compatible provider supplies its bounded JSON `/models` catalogue; Workers AI uses its
 native binding. Partial failure preserves that provider's last good metadata and its original routing configuration.
@@ -448,8 +455,10 @@ transport uses this frozen routing instead of reading changed settings after adm
 Cloudflare documents R2 object consistency in the [Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 (dateModified: 2026-07-31), supporting the single-object snapshot timestamp contract.
 
-The preserved provider choices are native Workers AI Flash (`workers-ai:@cf/zai-org/glm-5.3-flash`) as answer/distill
-default, the explicit native `workers-ai:@cf/zai-org/glm-5.3` route, Command Code through
+The factory fallback remains native Workers AI Flash (`workers-ai:@cf/zai-org/glm-5.3-flash`); the stored global answer
+and understanding defaults are owner choices. The owner currently uses OpenRouter while native allowance remains paused.
+Benchmarks freeze the configured answer and understanding models for the run; they never switch models per question
+or lower the evidence gates for a provider. Available choices include the explicit native `workers-ai:@cf/zai-org/glm-5.3` route, Command Code through
 `gateway:command-code/<native-id>`, and owner-selected OpenRouter routes
 `gateway:openrouter/dots-studio/dots-3-note-preview:free`,
 `gateway:openrouter/thinkingmachines/inkling:free`, and

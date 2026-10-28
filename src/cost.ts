@@ -8,8 +8,8 @@ import { modelTokenLimit } from "./models";
 // Cloudflare native policy (platform facts checked 2026-10-28):
 // the free allowance is 10,000 neurons/day resetting at 00:00 UTC;
 // paid usage beyond the free allowance is billed per the official pricing
-// (updated 2026-10-20). Whether the owner hard cap or the standard tier
-// applies is still pending clarification. This module performs NO
+// (updated 2026-10-20). The saved native mode selects included-only
+// (paused without a verified cap) or standard billing. This module performs NO
 // neuron<->token conversion: neuron accounting lives with the provider, and
 // unknown allowance is never treated as zero. Token bounds here are
 // request-shape limits only (usable context + output), enforced before

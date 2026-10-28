@@ -1,5 +1,7 @@
 import type { ModelSpec } from "../models";
 
+export type NativeUsageMode = "included" | "standard";
+
 export interface DistillInput { revisionId: string; model: ModelSpec }
 
 export interface OwnerActor {

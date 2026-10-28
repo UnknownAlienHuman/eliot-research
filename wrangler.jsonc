@@ -7,7 +7,7 @@
   "upload_source_maps": true,
   "workers_dev": false,
   "preview_urls": false,
-  "d1_databases": [{ "binding": "DB", "database_name": "eliot-research-library", "migrations_dir": "migrations", "migrations_pattern": "migrations/000[12356789]_*.sql" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "eliot-research-library", "migrations_dir": "migrations", "migrations_pattern": "migrations/{000[12356789],0010}_*.sql" }],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "eliot-research-library" }],
   "ai": { "binding": "AI" },
   "workflows": [

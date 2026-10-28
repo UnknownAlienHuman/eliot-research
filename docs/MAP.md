@@ -153,6 +153,8 @@ stop/reconnect, reopen chat and save an answer as a page.
    store citations/usage/timing/cost and never auto-continue a paid failed stream.
 6. Add chat/page APIs, one visible Material catalogue with answer/understanding defaults, compact chat/project pickers,
    saved answers and the moved chat/evidence UI. Provider configuration is separate from credentials kept in Cloudflare.
+   Persist the native usage choice (included quota or standard Cloudflare billing) without starting a job or changing
+   models. An unverified included-only cap pauses native requests; it must never silently enable paid overage.
 7. Add label/context/cost cases and `pnpm eval k2`.
 
 **Behavioral contract.** Only Send starts answer inference. Each turn freezes its source revisions and admitted model
@@ -167,6 +169,8 @@ still fail the quality gate; diagnostics do not waive citation, expected-fact or
 **Hard acceptance — `pnpm eval k2`**
 
 - Run C1–C4 and O1–O8 from `eval/arxiv-10/questions.md` in whole mode.
+  Freeze the configured global answer model for the complete run. The owner's temporary OpenRouter selection changes
+  the provider, not the questions, source bytes, citation rules or quality gates.
 - Every completed answer has at least one citation, `invalidLabels = 0`, and every cited range opens.
 - C1–C4 contain the expected values and conditions. O8 abstains where the corpus lacks the answer.
 - Owner judges O1, O2, O3 and O8 at least as useful and honest as the recorded NotebookLM baseline.

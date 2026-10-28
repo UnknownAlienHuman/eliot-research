@@ -3,10 +3,22 @@ import type { ModelSpec } from "./models";
 import { LibraryError } from "./library";
 import { readBoundedText } from "./model-catalog";
 
-/** Native allowance policy stays closed while its provider enforcement is being configured. */
-export async function assertProviderAllowance(_env: Env, model: ModelSpec): Promise<void> {
-  if (model.route.startsWith("workers-ai:"))
-    throw new LibraryError("budget", "Workers AI daily allowance is not configured. No model call was started.", 409);
+/** Native admission follows the saved owner choice; included stays paused until upstream enforcement exists. */
+export async function assertProviderAllowance(env: Env, model: ModelSpec): Promise<void> {
+  if (model.route.startsWith("workers-ai:") === false) return;
+  let mode: unknown;
+  try {
+    const row = await env.DB.prepare("SELECT native_usage_mode AS mode FROM settings WHERE id=1").first<{ mode: unknown }>();
+    mode = row?.mode ?? null;
+  } catch {
+    mode = null;
+  }
+  if (mode === "standard") return;
+  throw new LibraryError(
+    "budget",
+    "Workers AI included usage is paused: the exact included cap cannot be enforced or verified on this account. No model call was started. Choose another provider or standard billing in Settings.",
+    409,
+  );
 }
 
 // Provider quota readout. Owner-only POST refresh is the only caller; it pays 0 model calls.

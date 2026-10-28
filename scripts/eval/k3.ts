@@ -23,7 +23,9 @@ const SUPMINUS = String.fromCodePoint(0x207B);
 const SUP8 = String.fromCodePoint(0x2078);
 const UNIMINUS = String.fromCodePoint(0x2212);
 const MIDDOT = String.fromCodePoint(0x00B7);
-const FLASH_MODEL = 'workers-ai:@cf/zai-org/glm-5.3-flash';
+// Selected models are frozen once from stored settings for this run (no hardcoded policy, no allowlist, no override flag).
+let SELECTED_ANSWER_MODEL = '';
+let SELECTED_DISTILL_MODEL = '';
 const origin = assertEvalOrigin(process.env.ELIOT_URL || 'http://127.0.0.1:5173', process.env.ELIOT_ORIGIN);
 const H = { Origin: origin };
 if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
@@ -81,7 +83,8 @@ function checkClaimAnswer(qid, ans) {
 }
 async function assertClaimTurnReadOnly(t, tag, revIdSet, revKey) {
   assert.equal(t.contextMode, 'claims', 'TurnView.contextMode must be claims (' + tag + ').');
-  assert.equal(t.model, FLASH_MODEL, 'Turn model must stay Flash (' + tag + ').');
+  assert(typeof SELECTED_ANSWER_MODEL === 'string' && SELECTED_ANSWER_MODEL.length > 0, 'Selected answerModel must be frozen before claim checks (' + tag + ').');
+  assert.equal(t.model, SELECTED_ANSWER_MODEL, 'Turn model must stay the frozen selected answerModel (' + tag + ').');
   assert.equal(t.scopeMode, 'explicit', 'Claim turn must use the explicit all-large scope (' + tag + ').');
   assert(Array.isArray(t.revisionIds) && t.revisionIds.slice().sort().join(',') === revKey, 'Claim turn must span the full large scope (' + tag + ').');
   assert(typeof t.answer === 'string' && t.answer.trim().length > 0, 'Claim turn needs a non-empty answer (' + tag + ').');
@@ -329,16 +332,29 @@ if (unchangedOnly) {
   process.exit(0);
 }
 const m0 = await dailyUsage();
+const settingsForRun = await apiJson('/api/settings');
+assert.equal(settingsForRun.status, 200, 'GET /api/settings must be 200 to freeze selected models.');
+const storedSettings = settingsForRun.body && settingsForRun.body.settings ? settingsForRun.body.settings : {};
+assert(typeof storedSettings.answerModel === 'string' && storedSettings.answerModel.length > 0, 'Stored settings.answerModel must be a non-empty route.');
+SELECTED_ANSWER_MODEL = storedSettings.answerModel;
+SELECTED_DISTILL_MODEL = storedSettings.distillModel;
+assert(typeof SELECTED_DISTILL_MODEL === 'string' && SELECTED_DISTILL_MODEL.length > 0, 'Stored settings.distillModel must be a non-empty route.');
 const modelList = await apiJson('/api/models');
 assert.equal(modelList.status, 200, 'Read current catalogue before reporting the acceptance bound.');
-const flash = (modelList.body.models || []).find((model) => model.route === FLASH_MODEL);
-assert(flash && flash.enabled, 'Flash metadata is required; no model substitution is allowed.');
-assert(Number.isSafeInteger(flash.contextTokens) && flash.contextTokens > 0, 'Flash context must be known.');
-const outputBound = flash.outputReserveTokens ?? flash.maxOutputTokens;
-assert(Number.isSafeInteger(outputBound) && outputBound > 0, 'Flash output bound must be known.');
-const callTokenLimit = flash.contextTokens + outputBound;
+const answerMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_ANSWER_MODEL);
+assert(answerMeta && answerMeta.enabled, 'Selected answerModel must be present and enabled in the current catalogue; no substitution is made here.');
+assert(Number.isSafeInteger(answerMeta.contextTokens) && answerMeta.contextTokens > 0, 'Selected answerModel context must be known.');
+const answerOutputBound = answerMeta.outputReserveTokens ?? answerMeta.maxOutputTokens;
+assert(Number.isSafeInteger(answerOutputBound) && answerOutputBound > 0, 'Selected answerModel output bound must be known.');
+const distillMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_DISTILL_MODEL);
+assert(distillMeta && distillMeta.enabled, 'Selected distillModel must be present and enabled in the current catalogue; no substitution is made here.');
+assert(Number.isSafeInteger(distillMeta.contextTokens) && distillMeta.contextTokens > 0, 'Selected distillModel context must be known.');
+const distillOutputBound = distillMeta.outputReserveTokens ?? distillMeta.maxOutputTokens;
+assert(Number.isSafeInteger(distillOutputBound) && distillOutputBound > 0, 'Selected distillModel output bound must be known.');
+const answerCallTokenLimit = answerMeta.contextTokens + answerOutputBound;
+const distillCallTokenLimit = distillMeta.contextTokens + distillOutputBound;
 const fullFreshCalls = 28;
-const boundReport = 'Fresh full K3 bound: baseline 10*2 + overflow 2*2 + answers 4*1 = 28 calls, per-call token limit ' + callTokenLimit + ' (ctx+output), two-call distill ' + (2 * callTokenLimit) + '. No monthly budget; no neuron conversion. Historical calls are not reset or silently counted as fresh.';
+const boundReport = 'Fresh full K3 bound: baseline 10*2 + overflow 2*2 + answers 4*1 = 28 calls, distill per-call token limit ' + distillCallTokenLimit + ' (ctx+output, ' + SELECTED_DISTILL_MODEL + '), answer per-call token limit ' + answerCallTokenLimit + ' (ctx+output, ' + SELECTED_ANSWER_MODEL + '), two-call distill ' + (2 * distillCallTokenLimit) + '. No monthly budget; no neuron conversion. Historical calls are not reset or silently counted as fresh. Models frozen once from stored settings for this run.';
 console.log(boundReport);
 if (nativeOnly) {
   assert(understandingWired && overviewWired, 'K3 native smoke requires the actual understanding and overview routes.');
@@ -820,7 +836,7 @@ async function distillOne(s) {
     return;
   }
   if (u.state === 'none' || u.state === 'queued') {
-    const p = await apiJson('/api/sources/' + encodeURIComponent(s.id) + '/understanding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionId: rev }) });
+    const p = await apiJson('/api/sources/' + encodeURIComponent(s.id) + '/understanding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionId: rev, model: SELECTED_DISTILL_MODEL }) });
     assert.equal(p.status, 202, 'POST understanding is always 202 idempotent for ' + s.originalFilename + '.');
     assert(p.body && p.body.revisionId === rev, 'POST understanding must echo {revisionId} for ' + s.originalFilename + '.');
     posted++;
@@ -970,12 +986,10 @@ else {
     const cread = csrc.filter((s) => s.currentRevisionId && (s.readableState === 'readable' || s.readableState === 'readable_with_warnings'));
     for (const rev of scoped.map((s) => s.currentRevisionId)) if (!cread.some((s) => s.currentRevisionId === rev)) claimV.push('Claim project misses baseline revision ' + String(rev).slice(0, 8));
     if (cread.length < scoped.length + 2) claimV.push('Claim project needs the baseline 10 plus at least two extra readable papers (GPT-3/PaLM minimum).');
-    const mj = await apiJson('/api/models');
-    assert.equal(mj.status, 200, 'GET /api/models must be 200.');
-    const flash = (mj.body.models || []).find((x) => x && x.route === FLASH_MODEL);
-    assert(flash && typeof flash.contextTokens === 'number' && typeof flash.maxOutputTokens === 'number' && flash.enabled !== false, 'Flash route must publish context/output numbers.');
     const sizeTokens = cread.reduce((n, s) => n + (typeof s.readableSize === 'number' ? s.readableSize : 0) / 3, 0);
-    if (!(sizeTokens + flash.maxOutputTokens > Math.min(0.6 * flash.contextTokens, 400000))) claimV.push('Claim scope must overflow whole mode (UTF8/3 + output reserve > min(0.6*ctx,400k)).');
+    const answerOverflowReserve = answerMeta.maxOutputTokens ?? answerMeta.outputReserveTokens;
+    assert(Number.isSafeInteger(answerOverflowReserve) && answerOverflowReserve > 0, 'Selected answerModel output reserve must be known for whole-cap.');
+    if (!(sizeTokens + answerOverflowReserve > Math.min(0.6 * answerMeta.contextTokens, 400000))) claimV.push('Claim scope must overflow whole mode (UTF8/3 + output reserve > min(0.6*ctx,400k)).');
     for (const s of cread) {
       const u = await getUnderstanding(s.id, s.currentRevisionId);
       if (u.state !== 'done') claimV.push('Claim scope needs completed understanding, no hidden distill on reads: ' + s.originalFilename + ' is ' + u.state);
@@ -1017,7 +1031,7 @@ else {
           if (prior) throw new Error(tag + ' already ' + (prior.state || 'unknown') + ', no retry');
           assert(runModel, 'K3 claim-mode read-only: missing ' + tag + ' turn, paid POST needs ELIOT_K3_MODEL=1.');
           assert(preOk, 'K3 claim-mode blocked: ' + tag + ' preconditions open, no paid POST.');
-          const p = await apiJson('/api/projects/' + encodeURIComponent(claimProj.id) + '/chats/' + encodeURIComponent(chat.id) + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(120000), body: JSON.stringify({ turnId: crypto.randomUUID(), question: q, scopeMode: 'explicit', sourceIds: srcIds, model: FLASH_MODEL }) });
+          const p = await apiJson('/api/projects/' + encodeURIComponent(claimProj.id) + '/chats/' + encodeURIComponent(chat.id) + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(120000), body: JSON.stringify({ turnId: crypto.randomUUID(), question: q, scopeMode: 'explicit', sourceIds: srcIds, model: SELECTED_ANSWER_MODEL }) });
           assert.equal(p.status, 200, 'POST claim turn (wait=1) must be 200 (' + tag + ').');
           t = p.body && p.body.turn;
           assert(t && typeof t === 'object' && !t.busy, 'POST claim turn must return the TurnView (' + tag + ').');
@@ -1030,7 +1044,7 @@ else {
         claimV.push(tag + ': ' + (e && e.message ? e.message : String(e)));
       }
     }
-    const claimMd = ['# K3 claim-mode C1-C4 (whole-overflow scope, zero mode forcing)', '', '- project: ' + claimTitle, '- chat: ' + (chat.title || chat.id), '- posted turns this run: ' + postedTurns + ' (max 4, one per question)', '- scope revisions: ' + cread.length, '- model: ' + FLASH_MODEL, '- violations: ' + claimV.length, ''].join(EOL);
+    const claimMd = ['# K3 claim-mode C1-C4 (whole-overflow scope, zero mode forcing)', '', '- project: ' + claimTitle, '- chat: ' + (chat.title || chat.id), '- posted turns this run: ' + postedTurns + ' (max 4, one per question)', '- scope revisions: ' + cread.length, '- model: ' + SELECTED_ANSWER_MODEL, '- violations: ' + claimV.length, ''].join(EOL);
     console.log(claimMd);
     await writeFile(outDir + '/k3-claim-' + Date.now() + '.md', claimMd);
   }

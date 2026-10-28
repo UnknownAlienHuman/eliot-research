@@ -79,14 +79,14 @@ app.put("/api/models/connection", async (c) => {
   await c.env.DB.prepare("UPDATE settings SET model_gateway_id=?,updated_at=? WHERE id=1").bind(input.gatewayId, Date.now()).run();
   return c.json({ connection: await getModelConnection(c.env) });
 });
-app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,updated_at AS updatedAt FROM settings WHERE id=1").first(), usage: await usageSummary(c.env) }));
+app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,native_usage_mode AS nativeUsageMode,updated_at AS updatedAt FROM settings WHERE id=1").first(), usage: await usageSummary(c.env) }));
 app.put("/api/settings", async (c) => {
-  const input = z.object({ answerModel: z.string().min(1), distillModel: z.string().min(1).optional() }).strict().parse(await c.req.json());
+  const input = z.object({ answerModel: z.string().min(1), distillModel: z.string().min(1).optional(), nativeUsageMode: z.enum(["included", "standard"]).optional() }).strict().parse(await c.req.json());
   await requireCatalogModel(c.env, input.answerModel);
   if (input.distillModel !== undefined) await requireCatalogModel(c.env, input.distillModel);
-  await c.env.DB.prepare("UPDATE settings SET answer_model=?,distill_model=COALESCE(?,distill_model),updated_at=? WHERE id=1")
-    .bind(input.answerModel, input.distillModel ?? null, Date.now()).run();
-  return c.json({ settings: { ...input, updatedAt: Date.now() } });
+  await c.env.DB.prepare("UPDATE settings SET answer_model=?,distill_model=COALESCE(?,distill_model),native_usage_mode=COALESCE(?,native_usage_mode),updated_at=? WHERE id=1")
+    .bind(input.answerModel, input.distillModel ?? null, input.nativeUsageMode ?? null, Date.now()).run();
+  return c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,native_usage_mode AS nativeUsageMode,updated_at AS updatedAt FROM settings WHERE id=1").first() });
 });
 app.patch("/api/projects/:id/settings", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), project = await getProject(c.env, c.get("actor"), projectId);
