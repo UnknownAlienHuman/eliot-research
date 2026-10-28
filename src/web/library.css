@@ -81,6 +81,14 @@
 .er-lib__row > .er-lib__facts { flex: 1 1 100%; }
 .er-lib__facts-content { display: grid; gap: var(--eliot-space-block-control); min-width: 0; padding-block: var(--eliot-space-block-control); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
 .er-lib__facts-content p { margin: 0; }
+.er-lib__facts-content select {
+  max-width: var(--eliot-type-reading-measure);
+  font: inherit;
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface-container-low);
+  border-radius: var(--eliot-shape-medium);
+  padding: var(--eliot-space-block-control) var(--eliot-space-gutter);
+}
 .er-lib__facts-content > div { display: grid; gap: var(--eliot-space-tight); min-width: 0; }
 .er-lib__revision-list { display: grid; gap: var(--eliot-space-tight); margin: 0; padding-inline-start: var(--eliot-space-group); }
 .er-lib__revision-list li { display: flex; flex-wrap: wrap; gap: var(--eliot-space-tight) var(--eliot-space-gutter); min-width: 0; }

@@ -269,7 +269,8 @@ pipeline uses at most two bounded model calls with zero paid-step retries. Compl
 artifacts on repeat. Budget-paused work resumes
 only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
 Each background distillation call has a 180 s deadline (native paid-step deadline 4 minutes); the K2 chat ceiling stays
-90 s. The reader shows the current attempt count and the pre-dispatch maximum reservation. Long papers can use the
+90 s. The owner reader shows availability, progress, useful model names and verification caveats. Calls, reservations,
+token counts and wall time remain in API/eval diagnostics rather than the reading interface. Long papers can use the
 same bounded two-call pipeline without a chat-sized timeout or a reduced quality target.
 An unconfirmed Workflow dispatch with zero paid calls is terminalized by a `running AND distill_calls=0` compare-and-set,
 releasing its concurrency slot and unused reservation. If paid dispatch already won, its usage/reservation is retained.

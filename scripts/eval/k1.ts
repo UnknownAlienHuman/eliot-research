@@ -97,6 +97,31 @@ async function mapLimit(items: any[], n: number, fn: (v: any, i: number) => Prom
   await Promise.all(ws);
   return out;
 }
+// Reader-UI cleanup (eval-only): UI chrome shows status/filename/revision choice only.
+// API still asserts converter/bytes/tokens below for CLI facts; these guards scope
+// only to visible UI chrome, never to the canonical paper body (.er-lib__text/.er-lib__excerpt).
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+function uiTelemetryHits(label: string, s: string): string[] {
+  const hits: string[] = [];
+  if (UUID_RE.test(s)) hits.push('uuid in ' + label);
+  const pats: Array<[RegExp, string]> = [
+    [/source\s*id/i, 'SourceID in ' + label],
+    [/[0-9][0-9,]*\s+bytes\b/i, 'bytes in ' + label],
+    [/[0-9][0-9,]*\s+tokens?\b/i, 'tokens in ' + label],
+    [/[0-9]+\s*ms\b/i, 'ms in ' + label],
+    [/converter/i, 'converter in ' + label],
+    [/conversion\s*calls/i, 'conversion calls in ' + label],
+    [/\bdebug\b/i, 'debug in ' + label],
+    [/bounded calls/i, 'bounded calls in ' + label],
+    [/reserved/i, 'reserved in ' + label],
+  ];
+  for (const pair of pats) { if (pair[0].test(s)) hits.push(pair[1]); }
+  return hits;
+}
+function assertNoUiTelemetry(label: string, s: string): void {
+  const hits = uiTelemetryHits(label, s);
+  assert.deepEqual(hits, [], 'UI chrome must not expose storage/telemetry (' + label + '): ' + hits.join('; ') + ' :: ' + s.slice(0, 400));
+}
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
@@ -540,6 +565,16 @@ try {
     await expect(page.locator('.er-lib__excerpt pre')).toHaveText(new TextDecoder('utf-8', { ignoreBOM: true }).decode(whole.bytes.subarray(block.start, block.end)));
   }
   await page.goto(reader.href);
+  // Reader chrome: status/filename visible, no storage/telemetry. Paper body excluded.
+  {
+    const head = await page.locator('.er-lib__head').innerText();
+    assert(head.includes('Readable') || head.includes('Converting') || head.includes('Needs') || head.includes('failed'), 'Reader header must show status, got: ' + head.slice(0, 200));
+    assertNoUiTelemetry('reader head', head);
+    const title = await page.locator('.er-lib__title').innerText();
+    assert(title.trim().length > 0, 'Reader must show filename/title.');
+    const facts = page.locator('.er-lib__facts');
+    if (await facts.count() > 0) assertNoUiTelemetry('reader facts', await facts.innerText());
+  }
   await expect(page.locator('.er-lib__text')).toContainText('Точный русский текст');
   await page.locator('.er-lib__text').evaluate((element) => {
     const node = element.firstChild;
@@ -560,13 +595,31 @@ try {
   await expect(page.locator('.er-lib__text')).not.toContainText('Точный русский текст');
   await expect(page.locator('.er-lib__text')).toContainText('Новая ревизия', { timeout: 10000 });
   await page.locator('.er-lib__facts summary').click();
+  // Revision choice stays (Revision N select) but visible UUIDs/bytes/tokens/ms must be gone.
+  {
+    const factsText = await page.locator('.er-lib__facts').innerText();
+    assertNoUiTelemetry('reader facts open', factsText);
+    const revSelectEarly = page.locator('#er-lib-revision');
+    if (await revSelectEarly.count() > 0) {
+      const optEarly = await revSelectEarly.locator('option').allInnerTexts();
+      const joinedEarly = optEarly.join('\n');
+      assert(joinedEarly.includes('Revision '), 'Revision choice must stay visible, got: ' + joinedEarly.slice(0, 300));
+      assertNoUiTelemetry('revision options', joinedEarly);
+    }
+  }
   const sidBefore = new URL(page.url()).pathname.split('/')[4] as string;
   const rowsBefore = (await apiJson('/api/sources/' + sidBefore)).body.revisions as any[];
   const oldRow = rowsBefore.find((r: any) => r.id === revisionId);
   assert(oldRow && Number.isSafeInteger(oldRow.revisionNo) && oldRow.revisionNo >= 1, 'API must report the true original revision number.');
-  const oldRevLink = page.locator('.er-lib__revision-list a[href$="revisionId=' + revisionId + '"]');
-  await expect(oldRevLink).toContainText('Revision ' + oldRow.revisionNo + ' ');
-  await oldRevLink.click();
+  const revSelect = page.locator('#er-lib-revision');
+  await expect(revSelect).toBeVisible();
+  {
+    const optText = await revSelect.locator('option').allInnerTexts();
+    const joined = optText.join('\n');
+    assert(joined.includes('Revision ' + oldRow.revisionNo), 'Revision choice must list original Revision ' + oldRow.revisionNo + ', got: ' + joined.slice(0, 300));
+    assertNoUiTelemetry('revision options open', joined);
+  }
+  await revSelect.selectOption(revisionId);
   await expect(page.locator('.er-lib__text')).not.toContainText('Новая ревизия');
   await expect(page.locator('.er-lib__text')).toContainText('Точный русский текст');
   await reopened.reload();
@@ -610,6 +663,15 @@ try {
   const dupeUrl = 'https://example.com/';
   let dupeUrlSrc: any = null;
   await page.goto(origin + '/p/' + mainPid + '/sources');
+  // Source list chrome: title/status visible, no storage/telemetry. No paper body here.
+  {
+    const rows = page.locator('.er-lib__list');
+    if (await rows.count() > 0) {
+      const listText = await rows.innerText();
+      assert(listText.includes('Readable') || listText.includes('Converting') || listText.includes('Needs') || listText.includes('failed'), 'Source list must show status.');
+      assertNoUiTelemetry('source list', listText);
+    }
+  }
   await expect(page.locator('#er-lib-files')).toBeVisible();
   await page.locator('#er-lib-text-title').fill(dupeTextTitle);
   await page.locator('#er-lib-text-body').fill(dupeTextBody);
