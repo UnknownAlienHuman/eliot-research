@@ -214,10 +214,11 @@ comparable runs rather than making one provider fluctuation invalidate the archi
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
-Local WIP on 2026-10-26 registers only three external generation choices through the owner's existing OpenRouter
-default BYOK credential: `dots-studio/dots-3-note-preview:free`, `thinkingmachines/inkling:free`, and
-`nvidia/nemotron-3.5-super-vl:free`, each under `gateway:openrouter/<exact-id>`. Native defaults stay unchanged.
-Their real provider capacities remain visible in advanced details; current chat/distill jobs retain the existing
+The retained OpenRouter smoke on 2026-10-26 tested three owner-selected models through the existing default BYOK
+credential: `dots-studio/dots-3-note-preview:free`, `thinkingmachines/inkling:free`, and
+`nvidia/nemotron-3.5-super-vl:free`, each under `gateway:openrouter/<exact-id>`. These are historical test choices;
+the selectable catalogue comes from provider APIs and has no model-name allowlist. Native defaults stay unchanged.
+Provider capacities remain visible in advanced details; current chat/distill jobs retain the existing
 8,192-token output bound. Zero catalog prices do not imply unlimited quota; unavailable models fail visibly with no
 paid fallback. Existing credential metadata grants no consent; the owner must connect explicitly, and saved connection
 configuration does not prove provider usability.
