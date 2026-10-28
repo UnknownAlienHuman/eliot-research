@@ -441,7 +441,7 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: { sour
     } catch (error) { throw new LibraryError("conflict", message(error), 409); }
   }
   if (["done", "partial", "running"].includes(row.distill_state)) return { revisionId: row.id };
-  if (row.distill_state === "failed") throw new LibraryError("conflict", "The bounded understanding attempt failed. Its error is retained; it will not be retried automatically.", 409);
+  if (row.distill_state === "failed") throw new LibraryError("conflict", "The previous attempt failed. Its error is saved; it will not restart automatically.", 409);
   const settings = await env.DB.prepare("SELECT distill_model AS model FROM settings WHERE id=1").first<{ model: string }>();
   const model = await requireAvailableModel(env, input.model ?? settings?.model ?? "");
   await env.DB.prepare("UPDATE source_revision SET distill_state='queued',distill_error=NULL,distill_model=? WHERE id=? AND distill_state IN ('none','paused') AND distill_calls=0").bind(model.route, row.id).run();
