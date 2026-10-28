@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { persistentAnswer, persistentResolvedAnswer, resolveCitations, uncitedStatements,
   numericCitationLabels, unsupportedNumericStatements } from "./citations.js";
 import type { Citation, LabelSource } from "./citations.js";
-import type { Block } from "./blocks.js";
+import { isCitableBlock, scanBlocks, sliceUtf8, type Block } from "./blocks.js";
 
 const SRC_A = "223e4567-e89b-12d3-a456-426614174000";
 const SRC_B = "223e4567-e89b-12d3-a456-426614174001";
@@ -57,10 +57,10 @@ describe("resolveCitations", () => {
     expect(out.citations[0]).toMatchObject({ sourceId: SRC_A, label: "[S1:1]" });
   });
 
-  it("drops malformed and truncated labels but keeps plain brackets", () => {
-    const out = resolveCitations("a [S1:] b [S1:x] c [Rabc:1] d [S1] e", makeSources());
-    expect(out.invalidLabels).toBe(3);
-    expect(out.text).toBe("a  b  c  d [S1] e");
+  it("drops malformed, truncated and bare labels but keeps ordinary brackets", () => {
+    const out = resolveCitations("a [S1:] b [S1:x] c [Rabc:1] d [S1] e [note] f [S9] g", makeSources());
+    expect(out.invalidLabels).toBe(5);
+    expect(out.text).toBe("a  b  c  d  e [note] f  g");
     expect(out.citations).toEqual([]);
   });
 
@@ -81,6 +81,16 @@ describe("resolveCitations", () => {
     expect(out.invalidLabels).toBe(0);
     expect(out.text).toBe(answer);
     expect(out.citations).toHaveLength(1);
+  });
+
+  it("drops bare source markers but keeps valid labels, fenced code and links", () => {
+    const answer = "Claim [S1:1] plus bare [S9] plus link [guide](https://example.com) .\n```\n[S9] [S1:1]\n```\nAfter.";
+    const out = resolveCitations(answer, makeSources());
+    expect(out.invalidLabels).toBe(1);
+    expect(out.citations).toHaveLength(1);
+    expect(out.citations[0]).toMatchObject({ sourceId: SRC_A, label: "[S1:1]" });
+    expect(out.text).toContain("[S1:1] plus bare  plus link [guide](https://example.com)");
+    expect(out.text).toContain("```\n[S9] [S1:1]\n```");
   });
 
   it("keeps Cyrillic, emoji and URLs byte-exact", () => {
@@ -244,7 +254,9 @@ describe("uncitedStatements", () => {
 
   it("inline-code labels do not cover prose", () => {
     const r = resolveCitations("A `[S1:1]`.", makeSources());
-    expect(r.citations).toHaveLength(1);
+    expect(r.text).toBe("A `[S1:1]`.");
+    expect(r.citations).toEqual([]);
+    expect(r.invalidLabels).toBe(0);
     expect(uncitedStatements(r.text, r.citations)).toBe(1);
   });
 
@@ -336,42 +348,47 @@ describe("unsupportedNumericStatements", () => {
   }
 
   const tick = String.fromCharCode(96);
-  const badC2Citation: Citation = {
-    revisionId: "ba9dc6dc-7d09-4b81-bad4-08e83698f000",
-    sourceId: "3eb73d59-caa1-45b5-8fff-38b4a09dbd19", block: 3, start: 27, end: 38,
-    sourceTitle: "Attention Is All You Need", deleted: false, label: "[S9:3]",
+  const formula = "score = (input + 3) / 5";
+  const pageHeading = "### Page One\n";
+  const syntheticDocument = "Overview.\n\n" + formula + "\n\n" + pageHeading;
+  const syntheticBlocks = scanBlocks(syntheticDocument);
+  const syntheticSources: LabelSource[] = [{ sourceId: SRC_A, revisionId: REV_A, title: "Synthetic source",
+    blocks: syntheticBlocks.filter((block) => isCitableBlock(block, sliceUtf8(syntheticDocument, block.start, block.end))), alias: "S1" }];
+  const cite = (answer: string): Citation => {
+    const citation = resolveCitations(answer, syntheticSources).citations[0];
+    if (!citation) throw new Error("Synthetic citation did not resolve.");
+    return citation;
   };
-  const formula = "lrate = d_model^{-0.5} · min(step_num^{-0.5}, step_num · warmup_steps^{-1.5})";
-  const formulaQuote = "We varied the learning\nrate over the course of training, according to the formula:"
-    + "lrate = d−0.5model · min(step_num−0.5, step_num · warmup_steps−1.5) (3)\n"
-    + "This corresponds to increasing the learning rate linearly for the first warmup_steps training steps,\n"
-    + "and decreasing it thereafter proportionally to the inverse square root of the step number. We used"
-    + "warmup_steps = 4000.5.4 RegularizationWe employ three types of regularization during training:\n7\n";
+  const formulaBlock = syntheticBlocks.find((block) => block.id === 2);
+  const headingBlock = syntheticBlocks.find((block) => block.id === 3);
+  if (!formulaBlock || !headingBlock) throw new Error("Synthetic document blocks were not scanned as expected.");
+  const formulaQuote = sliceUtf8(syntheticDocument, formulaBlock.start, formulaBlock.end);
+  const pageHeadingQuote = sliceUtf8(syntheticDocument, headingBlock.start, headingBlock.end);
+  const badHeadingCitation = cite("Sample count is 12 [S1:3].");
 
-  it("rejects the actual C2 11-byte page-heading citation for its numeric facts", () => {
+  it("rejects numeric facts supported only by a byte-exact page-heading citation", () => {
     const answer = [
-      "Расписание скорости обучения базового Transformer (статья «Attention Is All You Need») задаётся формулой [S9:3]:",
-      "", tick + formula + tick, "",
-      "- Оптимизатор: Adam с " + tick + "β1 = 0.9" + tick + ", " + tick + "β2 = 0.98" + tick + ", " + tick + "ε = 10^{-9}" + tick + " [S9:3].",
-      "- " + tick + "warmup_steps = 4000" + tick + " [S9:3].",
-      "- В течение первых " + tick + "warmup_steps" + tick + " шагов скорость обучения растёт линейно, после чего убывает пропорционально " + tick + "step_num^{-0.5}" + tick + " (обратный квадратный корень от номера шага) [S9:3].",
+      `The synthetic rule is ${formula} [S1:3].`,
+      "- Sample count is 12 [S1:3].",
+      "- Review period is 7 days [S1:3].",
+      "- Batch size is 4 items [S1:3].",
     ].join("\n");
-    const quotes = new Map([[badC2Citation.label, "### Page 1\n"]]);
-    expect(unsupportedNumericStatements(answer, [badC2Citation], quotes)).toBe(4);
-    expect(numericCitationLabels(answer, [badC2Citation])).toEqual(["[S9:3]"]);
+    const quotes = new Map([[badHeadingCitation.label, pageHeadingQuote]]);
+    expect(unsupportedNumericStatements(answer, [badHeadingCitation], quotes)).toBe(4);
+    expect(numericCitationLabels(answer, [badHeadingCitation])).toEqual(["[S1:3]"]);
   });
 
-  it("accepts the source formula and 4000 only with their actual selected quote", () => {
-    const citation = { ...badC2Citation, block: 34, start: 21114, end: 21572, label: "[S9:34]" };
-    const answer = formula + ", warmup_steps = 4000 " + citation.label + ".";
+  it("accepts a numeric formula only with its own matching selected quote", () => {
+    const citation = cite(formula + " [S1:2].");
+    const answer = formula + " " + citation.label + ".";
     expect(unsupportedNumericStatements(answer, [citation], new Map([[citation.label, formulaQuote]]))).toBe(0);
-    expect(unsupportedNumericStatements(answer, [citation], new Map([[citation.label, "### Page 1\n"]]))).toBe(1);
+    expect(unsupportedNumericStatements(answer, [citation], new Map([[citation.label, pageHeadingQuote]]))).toBe(1);
   });
 
   it("does not borrow supported numbers across neighboring cited sentences", () => {
-    const answer = "Width is 512 [S1:1]. Heads are 8 [S1:2].";
-    expect(check(answer, new Map([["[S1:1]", "8 heads"], ["[S1:2]", "512 dimensions"]]))).toBe(2);
-    expect(check(answer, new Map([["[S1:1]", "512 dimensions"], ["[S1:2]", "8 heads"]]))).toBe(0);
+    const answer = "Container volume is 32 liters [S1:1]. Process duration is 7 minutes [S1:2].";
+    expect(check(answer, new Map([["[S1:1]", "7 minutes"], ["[S1:2]", "32 liters"]]))).toBe(2);
+    expect(check(answer, new Map([["[S1:1]", "32 liters"], ["[S1:2]", "7 minutes"]]))).toBe(0);
   });
 
   it("does not use unrelated map entries or unused resolved citations as evidence", () => {
@@ -441,5 +458,32 @@ describe("unsupportedNumericStatements", () => {
     expect(numericCitationLabels(resolved.text, resolved.citations)).toEqual(["[S1:1]"]);
     expect(unsupportedNumericStatements(resolved.text, resolved.citations,
       new Map([["[S1:1]", "512 dimensions, 8 heads"]]))).toBe(0);
+  });
+});
+
+
+describe("inline code literals", () => {
+  it("leaves inline bare and valid labels untouched while outside bare stays invalid", () => {
+    const bare = resolveCitations("Literal `[S9]`", []);
+    expect(bare.text).toBe("Literal `[S9]`");
+    expect(bare.invalidLabels).toBe(0);
+    expect(bare.citations).toEqual([]);
+    const mixed = resolveCitations("Fact [S1:1] plus `[S1:2]` plus `[S9]`", makeSources());
+    expect(mixed.invalidLabels).toBe(0);
+    expect(mixed.text).toBe("Fact [S1:1] plus `[S1:2]` plus `[S9]`");
+    expect(mixed.citations).toHaveLength(1);
+    expect(mixed.citations[0]).toMatchObject({ sourceId: SRC_A, label: "[S1:1]" });
+    const outside = resolveCitations("x [S9] y", []);
+    expect(outside.invalidLabels).toBe(1);
+    expect(outside.text).toBe("x  y");
+  });
+
+  it("leaves inline labels untouched in persistentResolvedAnswer", () => {
+    const turn = resolveCitations("see [S1:1] plus `[S1:2]`", makeSources());
+    expect(turn.invalidLabels).toBe(0);
+    const saved = persistentResolvedAnswer(turn.text, turn.citations);
+    expect(saved.text).toBe("see [R" + REV_A + ":1] plus `[S1:2]`");
+    expect(saved.citations).toHaveLength(1);
+    expect(saved.invalidLabels).toBe(0);
   });
 });

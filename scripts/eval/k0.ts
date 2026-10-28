@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { chromium, expect } from "@playwright/test";
+import { assertEvalBrowserOrigin, fetchEval } from "./origin.mjs";
 
-const origin = new URL(process.env.ELIOT_URL ?? "http://127.0.0.1:5173").origin;
+const origin = assertEvalBrowserOrigin(process.env.ELIOT_URL ?? "http://127.0.0.1:5173", process.env.ELIOT_ORIGIN);
 const headers: Record<string, string> = {};
 if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
   headers["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
@@ -14,7 +15,7 @@ await mkdir(output, { recursive: true });
 let ready = false;
 for (let attempt = 0; attempt < 60; attempt++) {
   try {
-    const response = await fetch(`${origin}/api/me`, { headers, signal: AbortSignal.timeout(2_000) });
+    const response = await fetchEval(`${origin}/api/me`, { headers, signal: AbortSignal.timeout(2_000) }, origin, process.env.ELIOT_ORIGIN);
     if (response.ok) { ready = true; break; }
     if (response.status === 403) throw new Error("Access denied: configure .dev.vars locally or supply an approved owner service token.");
   } catch (error) {
@@ -26,14 +27,15 @@ assert(ready, "Eliot did not become available. Start pnpm dev before the eval.")
 
 const latency: number[] = [];
 function protectedHeaders(response: Response) {
-  assert.equal(response.headers.get("cache-control"), "private, no-store", "Protected HTTP response must not be cached.");
+  const directives = (response.headers.get("cache-control") ?? "").split(",").map((value) => value.trim().toLowerCase()).sort();
+  assert.deepEqual(directives, ["no-store", "private"], "Protected HTTP response must have exactly private and no-store cache directives.");
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   assert.equal(response.headers.get("x-frame-options"), "DENY");
   assert(response.headers.get("content-security-policy")?.includes("frame-ancestors 'none'"), "Protected document must reject framing.");
 }
 for (let sample = 0; sample < 12; sample++) {
   const started = performance.now();
-  const response = await fetch(`${origin}/api/me`, { headers });
+  const response = await fetchEval(`${origin}/api/me`, { headers }, origin, process.env.ELIOT_ORIGIN);
   assert.equal(response.status, 200);
   protectedHeaders(response);
   const payload = await response.json() as { actor: { type: string; authentication: string } };
@@ -41,24 +43,30 @@ for (let sample = 0; sample < 12; sample++) {
   assert(["local", "access", "service-token"].includes(payload.actor.authentication));
   latency.push(performance.now() - started);
 }
-const missing = await fetch(`${origin}/api/does-not-exist`, { headers });
+const missing = await fetchEval(`${origin}/api/does-not-exist`, { headers }, origin, process.env.ELIOT_ORIGIN);
 assert.equal(missing.status, 404);
 protectedHeaders(missing);
 assert.equal(((await missing.json()) as { error: { code: string } }).error.code, "not_found");
-const foreignOrigin = await fetch(`${origin}/api/me`, {
+const foreignOrigin = await fetchEval(`${origin}/api/me`, {
   method: "POST", headers: { ...headers, Origin: "https://untrusted.invalid" },
-});
+}, origin, process.env.ELIOT_ORIGIN);
 assert.equal(foreignOrigin.status, 403, "Foreign-origin mutations must fail closed.");
 protectedHeaders(foreignOrigin);
-const document = await fetch(origin, { headers });
+const document = await fetchEval(origin, { headers }, origin, process.env.ELIOT_ORIGIN);
 assert.equal(document.status, 200);
 protectedHeaders(document);
 const html = await document.text();
-const script = /<script\b[^>]*\bsrc="([^"]+\.(?:js|tsx|jsx))"/.exec(html)?.[1];
-assert(script, "Owner HTML must contain its application entry module.");
-const entry = new URL(script, origin);
+const entrySources = [...html.matchAll(/<script\b([^>]*)>/gi)].flatMap((match) => {
+  const attributes = match[1] ?? "";
+  if (!/\btype\s*=\s*(?:"module"|'module'|module(?=\s|$))/i.test(attributes)) return [];
+  const src = /\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/i.exec(attributes);
+  return src ? [src[1] ?? src[2]] : [];
+}).map((src) => new URL(src, origin)).filter((url) => /\.(?:js|tsx|jsx)$/i.test(url.pathname));
+assert.equal(entrySources.length, 1, "Owner HTML must contain exactly one application entry module, not only the Vite client.");
+const entry = entrySources[0];
+assert(entry, "Owner HTML must contain its application entry module.");
 assert.equal(entry.origin, origin, "Owner credentials stay on the Eliot origin.");
-const asset = await fetch(entry, { headers });
+const asset = await fetchEval(entry, { headers }, origin, process.env.ELIOT_ORIGIN);
 assert.equal(asset.status, 200);
 protectedHeaders(asset);
 assert(/javascript|ecmascript/.test(asset.headers.get("content-type") ?? ""), "Entry module must not fall back to SPA HTML.");
@@ -69,9 +77,9 @@ const screenshots: string[] = [];
 try {
   for (const width of [1440, 390]) {
     for (const theme of ["light", "dark"] as const) {
-      const context = await browser.newContext({
-        viewport: { width, height: 900 }, colorScheme: theme, extraHTTPHeaders: headers,
-      });
+      // Browser contexts carry no Access headers; only the local Worker bypass
+      // is available here. Node API requests remain origin-pinned above.
+      const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme });
       const page = await context.newPage();
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));

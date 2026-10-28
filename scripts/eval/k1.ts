@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
+import { assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 // K1 Read eval: exact API transport only, no fallbacks.
 // H (Origin + owner credentials) goes only to ELIOT_URL. External PDF downloads send no headers.
 interface Fixture {
@@ -28,9 +29,10 @@ interface SourceRow {
   readableSize: number | null;
   error: string | null;
 }
-const origin = new URL(process.env.ELIOT_URL || 'http://127.0.0.1:5173').origin;
+const origin = assertEvalBrowserOrigin(process.env.ELIOT_URL || 'http://127.0.0.1:5173', process.env.ELIOT_ORIGIN);
 const nativeOnly = process.argv.includes('--native-only');
-const allowNetUrl = !nativeOnly || process.env.ELIOT_EVAL_NET === '1';
+const duplicatesOnly = process.argv.includes('--duplicates-only');
+const allowNetUrl = duplicatesOnly || !nativeOnly || process.env.ELIOT_EVAL_NET === '1';
 const H: Record<string, string> = { Origin: origin };
 if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
   H['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID;
@@ -45,10 +47,10 @@ const outDir = fileURLToPath(new URL('../../eval/out/k1/', import.meta.url));
 await mkdir(cacheDir, { recursive: true });
 await mkdir(outDir, { recursive: true });
 async function apiJson(path: string, init?: any): Promise<any> {
-  const r = await fetch(origin + path, {
+  const r = await fetchEval(origin + path, {
     ...init,
     headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) },
-  });
+  }, origin, process.env.ELIOT_ORIGIN);
   const t = await r.text();
   let b: any = null;
   try {
@@ -59,7 +61,7 @@ async function apiJson(path: string, init?: any): Promise<any> {
   return { status: r.status, body: b };
 }
 async function apiBytes(path: string): Promise<any> {
-  const r = await fetch(origin + path, { headers: { ...H } });
+  const r = await fetchEval(origin + path, { headers: { ...H } }, origin, process.env.ELIOT_ORIGIN);
   assert.equal(r.headers.get('cache-control'), 'private, no-store', 'Source bytes must not be publicly cached.');
   assert.equal(r.headers.get('x-frame-options'), 'DENY');
   assert(r.headers.get('content-security-policy')?.includes("frame-ancestors 'none'"));
@@ -98,6 +100,190 @@ async function mapLimit(items: any[], n: number, fn: (v: any, i: number) => Prom
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
+if (duplicatesOnly) {
+  const dqStamp = Date.now();
+  const dqSettingsBefore = await apiJson('/api/settings');
+  assert.equal(dqSettingsBefore.status, 200, 'GET /api/settings must be 200.');
+  const dqAuto = dqSettingsBefore.body.settings ? dqSettingsBefore.body.settings.autoDistill : undefined;
+  assert(dqAuto === 0 || dqAuto === false, 'Global autoDistill must be 0 before writes; settings were not changed.');
+  const dqUsageBefore = dqSettingsBefore.body.monthlyUsedMicrousd;
+  const dqBudgetBefore = dqSettingsBefore.body.monthlyBudgetMicrousd;
+  const dqPjA = await apiJson('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'k1-dupe-primary-' + dqStamp, description: 'K1 duplicates-only fixture.' }),
+  });
+  assert.equal(dqPjA.status, 201, 'First fixture project must be 201, got ' + dqPjA.status);
+  const dqPrimary = dqPjA.body.project.id;
+  const dqPjB = await apiJson('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'k1-dupe-attached-' + dqStamp, description: 'K1 duplicates-only attach target.' }),
+  });
+  assert.equal(dqPjB.status, 201, 'Second fixture project must be 201, got ' + dqPjB.status);
+  const dqSecondary = dqPjB.body.project.id;
+  let dqNewSources = 0;
+  const dqTextTitle = 'k1 dupe text ' + dqStamp;
+  const dqTextBody = '# K1 duplicate fixture' + String.fromCharCode(10) + String.fromCharCode(10) + 'Exact duplicate probe ' + dqStamp + '.' + String.fromCharCode(10) + String.fromCharCode(10) + 'Second paragraph точность.' + String.fromCharCode(10);
+  const dqT1 = await apiJson('/api/projects/' + encodeURIComponent(dqPrimary) + '/sources/text', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: dqTextTitle, text: dqTextBody }),
+  });
+  assert.equal(dqT1.status, 202, 'First text import must be 202 (new source), got ' + dqT1.status);
+  dqNewSources += 1;
+  const dqTextId = dqT1.body.sourceId;
+  let dqTextSrc = null;
+  for (let dqI = 0; dqI < 40; dqI++) {
+    const dqG = await apiJson('/api/sources/' + encodeURIComponent(dqTextId));
+    assert.equal(dqG.status, 200, 'GET text source must be 200.');
+    if (dqG.body.source && dqG.body.source.readableState === 'readable') { dqTextSrc = dqG.body.source; break; }
+    if (dqG.body.source && (dqG.body.source.readableState === 'failed' || dqG.body.source.readableState === 'needs_conversion')) {
+      assert.fail('Text fixture must stay native readable, got ' + dqG.body.source.readableState);
+    }
+    await new Promise(function (dqR) { setTimeout(dqR, 3000); });
+  }
+  assert(dqTextSrc && dqTextSrc.readableState === 'readable', 'Text fixture never settled readable.');
+  assert.equal(dqTextSrc.conversionCalls, 0, 'Native text must cost 0 conversions, got ' + dqTextSrc.conversionCalls);
+  const dqTextRev = dqTextSrc.currentRevisionId;
+  const dqT2 = await apiJson('/api/projects/' + encodeURIComponent(dqPrimary) + '/sources/text', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: dqTextTitle, text: dqTextBody }),
+  });
+  assert.equal(dqT2.status, 409, 'Second identical text import must be 409 before conversion, got ' + dqT2.status);
+  assert.equal(dqT2.body.duplicate.sourceId, dqTextId, 'Text duplicate must identify the original source.');
+  assert.equal(dqT2.body.duplicate.revisionId, dqTextRev, 'Text duplicate must identify the original revision.');
+  const dqUrl = 'https://example.com/';
+  let dqUrlId = '';
+  let dqUrlRev = '';
+  let dqUrlIsNew = false;
+  let dqUrlConverter = null;
+  let dqUrlCalls = 0;
+  const dqU1 = await apiJson('/api/projects/' + encodeURIComponent(dqPrimary) + '/sources/url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: dqUrl }),
+  });
+  if (dqU1.status === 202) {
+    dqUrlIsNew = true;
+    dqNewSources += 1;
+    dqUrlId = dqU1.body.sourceId;
+    let dqUrlSrc = null;
+    for (let dqJ = 0; dqJ < 40; dqJ++) {
+      const dqH = await apiJson('/api/sources/' + encodeURIComponent(dqUrlId));
+      assert.equal(dqH.status, 200, 'GET URL source must be 200.');
+      if (dqH.body.source && dqH.body.source.readableState === 'readable') { dqUrlSrc = dqH.body.source; break; }
+      if (dqH.body.source && (dqH.body.source.readableState === 'failed' || dqH.body.source.readableState === 'needs_conversion')) {
+        assert.fail('Stable URL must settle readable; got ' + dqH.body.source.readableState + ' (honest failure, no retry).');
+      }
+      await new Promise(function (dqR) { setTimeout(dqR, 3000); });
+    }
+    assert(dqUrlSrc && dqUrlSrc.readableState === 'readable', 'Stable URL never settled readable (honest failure, no retry).');
+    dqUrlRev = dqUrlSrc.currentRevisionId;
+    dqUrlConverter = dqUrlSrc.converter;
+    dqUrlCalls = dqUrlSrc.conversionCalls;
+    assert(dqUrlCalls <= 1, 'At most one URL conversion is allowed, got ' + dqUrlCalls);
+  } else if (dqU1.status === 409) {
+    assert(dqU1.body.duplicate && dqU1.body.duplicate.sourceId, 'Known URL must identify the existing source.');
+    dqUrlId = dqU1.body.duplicate.sourceId;
+    dqUrlRev = dqU1.body.duplicate.revisionId;
+    const dqKnown = await apiJson('/api/sources/' + encodeURIComponent(dqUrlId));
+    assert.equal(dqKnown.status, 200, 'GET reused URL source must be 200.');
+    assert.equal(dqKnown.body.source.readableState, 'readable', 'Reused URL must already be readable; no repeat conversion was run.');
+    assert.equal(dqKnown.body.source.currentRevisionId, dqUrlRev, 'Reused URL revision must match the duplicate identity.');
+    dqUrlConverter = dqKnown.body.source.converter;
+    dqUrlCalls = dqKnown.body.source.conversionCalls;
+  } else {
+    assert.fail('Stable URL import must be 202 or 409, got ' + dqU1.status + ' (honest failure, no retry).');
+  }
+  const dqU2 = await apiJson('/api/projects/' + encodeURIComponent(dqPrimary) + '/sources/url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: dqUrl }),
+  });
+  assert.equal(dqU2.status, 409, 'Second identical URL import must be 409 before conversion, got ' + dqU2.status);
+  assert.equal(dqU2.body.duplicate.sourceId, dqUrlId, 'URL duplicate must identify the same source.');
+  assert.equal(dqU2.body.duplicate.revisionId, dqUrlRev, 'URL duplicate must identify the same revision.');
+  assert(dqNewSources <= 2, 'At most 2 new sources are allowed, got ' + dqNewSources);
+  const dqBrowser = await chromium.launch();
+  try {
+    const dqPhoneCtx = await dqBrowser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark' });
+    const dqPage = await dqPhoneCtx.newPage();
+    const dqPageErrors = [];
+    const dqUndPosts = [];
+    dqPage.on('pageerror', function (dqE) { dqPageErrors.push(String(dqE && dqE.message ? dqE.message : dqE)); });
+    dqPage.on('request', function (dqReq) {
+      if (dqReq.url().indexOf('/understanding') >= 0 && dqReq.method() !== 'GET') { dqUndPosts.push(dqReq.method() + ' ' + dqReq.url()); }
+    });
+    await dqPage.goto(origin + '/p/' + dqSecondary + '/sources');
+    await expect(dqPage.locator('#er-lib-text-title')).toBeVisible({ timeout: 15000 });
+    const dqEmpty = await apiJson('/api/projects/' + encodeURIComponent(dqSecondary) + '/sources');
+    assert.equal(dqEmpty.status, 200, 'GET attach-target sources must be 200.');
+    assert.equal(dqEmpty.body.sources.length, 0, 'Attach target must start empty; duplicates must not attach silently.');
+    await dqPage.locator('#er-lib-text-title').fill(dqTextTitle);
+    await dqPage.locator('#er-lib-text-body').fill(dqTextBody);
+    await dqPage.getByRole('button', { name: 'Save text', exact: true }).click();
+    const dqTextRow = dqPage.locator('.er-lib__progress li', { hasText: dqTextTitle });
+    await expect(dqTextRow.getByRole('button', { name: /^Attach existing/ })).toBeVisible({ timeout: 30000 });
+    const dqMid = await apiJson('/api/projects/' + encodeURIComponent(dqSecondary) + '/sources');
+    assert.equal(dqMid.body.sources.length, 0, 'A text duplicate must not attach silently.');
+    await dqTextRow.getByRole('button', { name: /^Attach existing/ }).click();
+    await expect(dqPage.getByRole('link', { name: dqTextTitle, exact: true })).toBeVisible({ timeout: 15000 });
+    const dqAfterText = await apiJson('/api/projects/' + encodeURIComponent(dqSecondary) + '/sources');
+    const dqAttachedText = dqAfterText.body.sources.find(function (dqS) { return dqS.title === dqTextTitle; });
+    assert(dqAttachedText, 'Attached text must be listed.');
+    assert.equal(dqAttachedText.id, dqTextId, 'Attached text must reuse the original source.');
+    assert.equal(dqAttachedText.revisionId, dqTextRev, 'Attached text must reuse the original revision.');
+    assert.equal(dqAttachedText.conversionCalls, 0, 'Attached text must perform zero conversions.');
+    await dqPage.locator('#er-lib-url').fill(dqUrl);
+    await dqPage.getByRole('button', { name: 'Add URL', exact: true }).click();
+    const dqUrlRow = dqPage.locator('.er-lib__progress li', { hasText: dqUrl });
+    await expect(dqUrlRow.getByRole('button', { name: /^Attach existing/ })).toBeVisible({ timeout: 30000 });
+    const dqMidUrl = await apiJson('/api/projects/' + encodeURIComponent(dqSecondary) + '/sources');
+    assert.equal(dqMidUrl.body.sources.length, 1, 'A URL duplicate must not attach silently.');
+    await dqUrlRow.getByRole('button', { name: /^Attach existing/ }).click();
+    let dqAttachedUrl = null;
+    for (let dqK = 0; dqK < 20; dqK++) {
+      const dqL = await apiJson('/api/projects/' + encodeURIComponent(dqSecondary) + '/sources');
+      if (dqL.body.sources.length === 2) {
+        dqAttachedUrl = dqL.body.sources.find(function (dqS) { return dqS.id !== dqTextId; });
+        break;
+      }
+      await new Promise(function (dqR) { setTimeout(dqR, 1000); });
+    }
+    assert(dqAttachedUrl, 'Attached URL must be listed.');
+    assert.equal(dqAttachedUrl.id, dqUrlId, 'Attached URL must reuse the original source.');
+    assert.equal(dqAttachedUrl.revisionId, dqUrlRev, 'Attached URL must reuse the original revision.');
+    assert.deepEqual(dqUndPosts, [], 'No model inference or Understand POST may run.');
+    assert.deepEqual(dqPageErrors, [], 'Browser runtime errors.');
+    await dqPage.screenshot({ path: outDir + '/k1-duplicates-390.png', fullPage: true });
+    await dqPhoneCtx.close();
+    const dqDeskCtx = await dqBrowser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+    const dqDesk = await dqDeskCtx.newPage();
+    await dqDesk.goto(origin + '/p/' + dqSecondary + '/sources');
+    await expect(dqDesk.getByRole('link', { name: dqTextTitle, exact: true })).toBeVisible({ timeout: 15000 });
+    await dqDesk.screenshot({ path: outDir + '/k1-duplicates-1440.png', fullPage: true });
+    await dqDeskCtx.close();
+  } finally { await dqBrowser.close(); }
+  const dqSettingsAfter = await apiJson('/api/settings');
+  assert.equal(dqSettingsAfter.status, 200, 'GET /api/settings after must be 200.');
+  const dqUsageAfter = dqSettingsAfter.body.monthlyUsedMicrousd;
+  assert.equal(dqUsageAfter, dqUsageBefore, 'No paid model usage may accrue during duplicates-only.');
+  const dqReport = [
+    '# K1 duplicates-only',
+    'Origin: ' + origin + '; primary: ' + dqPrimary + '; attach-target: ' + dqSecondary,
+    'Projects created: 2; new sources: ' + dqNewSources + ' (text 1, url ' + (dqUrlIsNew ? '1 new conversion' : '0 reused') + ').',
+    'Text 409: second identical import returned 409 with sourceId ' + dqTextId + ' revision ' + dqTextRev + '; browser Attach existing reused the same source and revision with 0 conversions.',
+    'URL 409: identical import returned 409 with sourceId ' + dqUrlId + ' revision ' + dqUrlRev + ' (converter ' + dqUrlConverter + ', calls ' + dqUrlCalls + '); browser Attach existing reused the same source and revision.',
+    'Viewports captured: 390 k1-duplicates-390.png and 1440 k1-duplicates-1440.png; no route mocking; no Access headers in the browser.',
+    'Usage microUSD before/after: ' + dqUsageBefore + '/' + dqUsageAfter + ' (budget ' + dqBudgetBefore + '); autoDistill stayed 0; settings unchanged.',
+    'No PDF downloads, no retries, no model inference or Understand POSTs; stable-URL bytes-vary or unavailable would fail honestly without adjustment.',
+  ].join(String.fromCharCode(10)) + String.fromCharCode(10);
+  await writeFile(outDir + '/k1-duplicates-' + new Date().toISOString().slice(0, 10) + '.md', dqReport);
+  process.stdout.write(dqReport);
+  process.exit(0);
+}
 const ax = JSON.parse(await readFile(evalDir + '/arxiv-10/sources.json', 'utf8'));
 const ru = JSON.parse(await readFile(evalDir + '/ru/sources.json', 'utf8'));
 assert.equal(ax.sources.length, 10, 'arxiv-10 must list ten PDFs.');
@@ -161,11 +347,11 @@ await mapLimit(fx, 2, async function (f: any): Promise<void> {
     const fd = new FormData();
     fd.append('file', new Blob([it.bytes], { type: 'application/pdf' }), f.key + '.pdf');
     fd.append('title', f.title);
-    const r = await fetch(origin + '/api/projects/' + encodeURIComponent(pid) + '/sources/file', {
+    const r = await fetchEval(origin + '/api/projects/' + encodeURIComponent(pid) + '/sources/file', {
       method: 'POST',
       headers: { ...H },
       body: fd,
-    });
+    }, origin, process.env.ELIOT_ORIGIN);
     st = r.status;
     const b = await r.json().catch(function () { return null; });
     if (st === 409) {
@@ -325,7 +511,9 @@ for (const f of fx) {
 rows.sort();
 let urlResult = 'Duplicate URL (browser form): NOT_RUN without network (needs ELIOT_EVAL_NET=1; the server URL guard rejects local fixtures, so no controllable local URL exists).';
 const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark', permissions: ['clipboard-read', 'clipboard-write'], extraHTTPHeaders: H });
+// Browser contexts are unauthenticated and local-only; Node API requests use
+// fetchEval for the explicit origin and never follow redirects with credentials.
+const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark', permissions: ['clipboard-read', 'clipboard-write'] });
 try {
   const page = await context.newPage();
   const pageErrors: string[] = [];
@@ -483,7 +671,7 @@ if (process.env.ELIOT_EVAL_LIMIT === '1') {
   const bytes = Buffer.alloc(25 * 1024 * 1024, 97);
   bytes.write(String(Date.now()), bytes.length - 20, 'ascii');
   const body = new FormData(); body.append('file', new Blob([bytes], { type: 'text/plain' }), '25mib.txt');
-  const response = await fetch(origin + '/api/projects/' + pid + '/sources/file', { method: 'POST', headers: H, body });
+  const response = await fetchEval(origin + '/api/projects/' + pid + '/sources/file', { method: 'POST', headers: H, body }, origin, process.env.ELIOT_ORIGIN);
   assert.equal(response.status, 202, 'The actual 25 MiB file must be accepted.');
   const added = await response.json() as { sourceId: string };
   let source: SourceRow | undefined;
@@ -494,7 +682,7 @@ if (process.env.ELIOT_EVAL_LIMIT === '1') {
   }
   assert(source?.readableState === 'readable' && source.readableSize === bytes.length && source.conversionCalls === 0, 'The native boundary case must preserve all bytes without AI.');
   const over = new FormData(); over.append('file', new Blob([bytes, Buffer.from('a')], { type: 'text/plain' }), 'oversized.txt');
-  const rejected = await fetch(origin + '/api/projects/' + pid + '/sources/file', { method: 'POST', headers: H, body: over });
+  const rejected = await fetchEval(origin + '/api/projects/' + pid + '/sources/file', { method: 'POST', headers: H, body: over }, origin, process.env.ELIOT_ORIGIN);
   assert.equal(rejected.status, 413, '25 MiB + 1 byte must be rejected.');
   limitResult = '25 MiB file accepted and readable with zero AI calls; 25 MiB + 1 byte returned 413.';
 }

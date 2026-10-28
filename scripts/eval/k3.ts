@@ -1,4 +1,5 @@
 import { unsupportedNumbers, parseSingleNumber } from "../../src/numbers.ts";
+import { assertEvalOrigin, fetchEval } from "./origin.mjs";
 // K3 Distill eval harness (docs/MAP.md K3; docs/IMPLEMENTATION.md 6, 8, 10, 11).
 // Interface assumptions (backend contract under test):
 //   GET  /api/sources/:sourceId/understanding?revisionId=<rev>
@@ -23,7 +24,7 @@ const SUP8 = String.fromCodePoint(0x2078);
 const UNIMINUS = String.fromCodePoint(0x2212);
 const MIDDOT = String.fromCodePoint(0x00B7);
 const FLASH_MODEL = 'workers-ai:@cf/zai-org/glm-5.3-flash';
-const origin = new URL(process.env.ELIOT_URL || 'http://127.0.0.1:5173').origin;
+const origin = assertEvalOrigin(process.env.ELIOT_URL || 'http://127.0.0.1:5173', process.env.ELIOT_ORIGIN);
 const H = { Origin: origin };
 if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
   H['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID;
@@ -99,14 +100,14 @@ async function assertClaimTurnReadOnly(t, tag, revIdSet, revKey) {
   checkClaimAnswer(tag, t.answer);
 }
 async function apiJson(path, init) {
-  const r = await fetch(origin + path, { ...init, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } });
+  const r = await fetchEval(origin + path, { ...init, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } }, origin, process.env.ELIOT_ORIGIN);
   const t = await r.text();
   let b = null;
   try { b = t ? JSON.parse(t) : null; } catch { b = { raw: t.slice(0, 300) }; }
   return { status: r.status, body: b };
 }
 async function apiBytes(path) {
-  const r = await fetch(origin + path, { headers: { ...H } });
+  const r = await fetchEval(origin + path, { headers: { ...H } }, origin, process.env.ELIOT_ORIGIN);
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

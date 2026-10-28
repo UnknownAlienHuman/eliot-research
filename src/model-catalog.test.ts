@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { Miniflare, Response as LocalResponse } from "../node_modules/.pnpm/node_modules/miniflare/dist/src/index.js";
 import { discoverGatewayModels, enrichSelectedModel } from "./model-catalog";
-import { requireAvailableModel } from "./models";
+import { readModelCatalog, refreshModelCatalog, requireAvailableModel } from "./models";
 import type { CatalogModel } from "./models";
 
 const CC = "https://api.commandcode.ai/provider/v1/models";
@@ -18,6 +18,28 @@ function catalogues(cc: unknown[], or: unknown[]) {
   });
   vi.stubGlobal("fetch", fetcher);
   return fetcher;
+}
+
+function fakeBucket(initial: unknown | null = null) {
+  let stored = initial;
+  const get = vi.fn(async (key: string) => {
+    if (key !== "catalog/models.json" || stored === null) return null;
+    const json = JSON.stringify(stored);
+    return { size: new TextEncoder().encode(json).byteLength, json: async <T>() => JSON.parse(json) as T };
+  });
+  const put = vi.fn(async (key: string, value: unknown, _options?: unknown) => {
+    if (key === "catalog/models.json") stored = JSON.parse(String(value));
+    return {};
+  });
+  return { binding: { get, put } as unknown as R2Bucket, get, put, stored: () => stored };
+}
+
+function fixtureEnv(bucket: R2Bucket): Env {
+  return {
+    DB: { prepare: () => ({ first: async () => ({ gatewayId: "fixture-gateway" }) }) } as unknown as Env["DB"],
+    BUCKET: bucket,
+    AI: { models: async () => [] } as unknown as Env["AI"],
+  } as unknown as Env;
 }
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -55,21 +77,87 @@ describe("provider model catalogue discovery", () => {
 
   it("keeps malformed admission metadata selectable but unknown, and paid resolution rejects it", async () => {
     const base = { context_length: 100000, architecture: textChat, pricing: { prompt: "0", completion: "0" } };
-    catalogues([], [
+    const fetcher = catalogues([], [
       { ...base, id: "provider/zero", context_length: "100000" },
       { ...base, id: "provider/blank", pricing: { prompt: "", completion: "0" } },
       { ...base, id: "provider/negative", pricing: { prompt: "-1", completion: "0" } },
       { ...base, id: "provider/broken-tier", pricing: { prompt: "0", completion: "0", overrides: [{ min_prompt_tokens: 10, prompt: "unknown" }] } },
     ]);
-    const models = await discoverGatewayModels();
+    const bucket = fakeBucket();
+    const env = fixtureEnv(bucket.binding);
+    const refreshed = await refreshModelCatalog(env);
+    const models = refreshed.models.filter((model) => model.route.startsWith("gateway:"));
     expect(models).toHaveLength(4);
     expect(models.every((model) => model.enabled)).toBe(true);
     expect(models[0]?.contextTokens).toBeNull();
     expect(models[1]?.inputMicrousdPerMillion).toBeNull();
     expect(models[2]?.inputMicrousdPerMillion).toBeNull();
     expect(models[3]?.inputMicrousdPerMillion).toBeNull();
-    const env = { DB: { prepare: () => ({ first: async () => ({ gatewayId: "fixture-gateway" }) }) } } as unknown as Pick<Env, "DB">;
+    fetcher.mockClear();
     for (const model of models) await expect(requireAvailableModel(env, model.route)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("writes explicit discovery to R2 and serves the snapshot without another network request", async () => {
+    const fetcher = catalogues(
+      [{ id: "snapshot-vendor/cc-model", name: "Snapshot CC", context_length: 128000, supported_endpoints: ["/chat/completions"] }],
+      [{ id: "snapshot-vendor/or-model", context_length: 96000, architecture: textChat,
+        pricing: { prompt: "0.000001", completion: "0.000002" } }],
+    );
+    const bucket = fakeBucket();
+    const env = fixtureEnv(bucket.binding);
+
+    const refreshed = await refreshModelCatalog(env);
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(bucket.put).toHaveBeenCalledTimes(1);
+    expect(bucket.put.mock.calls[0]?.[0]).toBe("catalog/models.json");
+    expect(bucket.put.mock.calls[0]?.[2]).toMatchObject({
+      httpMetadata: { contentType: "application/json; charset=utf-8" },
+    });
+    expect(bucket.stored()).toMatchObject({
+      updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), warnings: [],
+      models: expect.arrayContaining([
+        expect.objectContaining({ route: "gateway:command-code/snapshot-vendor/cc-model" }),
+        expect.objectContaining({ route: "gateway:openrouter/snapshot-vendor/or-model" }),
+      ]),
+    });
+    expect(bucket.stored()).not.toHaveProperty("gatewayId");
+
+    fetcher.mockClear();
+    const read = await readModelCatalog(env);
+    expect(read).toEqual(refreshed);
+    expect(read.snapshot.refreshNeeded).toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("preserves a previous provider slice when an explicit refresh partially fails", async () => {
+    const bucket = fakeBucket();
+    const env = fixtureEnv(bucket.binding);
+    await catalogues(
+      [{ id: "snapshot-vendor/old-cc", context_length: 64000, supported_endpoints: ["/chat/completions"] }],
+      [{ id: "snapshot-vendor/old-or", context_length: 64000, architecture: textChat }],
+    );
+    await refreshModelCatalog(env);
+
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === CC) return new Response("private upstream body", { status: 503 });
+      if (url === OR) return Response.json({ data: [{ id: "snapshot-vendor/new-or", context_length: 64000, architecture: textChat }] });
+      throw new Error("Unexpected metadata endpoint");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const refreshed = await refreshModelCatalog(env);
+    const gatewayModels = refreshed.models.filter((model) => model.route.startsWith("gateway:"));
+
+    expect(gatewayModels.map((model) => model.route)).toEqual(expect.arrayContaining([
+      "gateway:command-code/snapshot-vendor/old-cc",
+      "gateway:openrouter/snapshot-vendor/new-or",
+    ]));
+    expect(gatewayModels.some((model) => model.route === "gateway:openrouter/snapshot-vendor/old-or")).toBe(false);
+    expect(refreshed.warnings).toEqual([expect.stringContaining("command-code model catalogue")]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(bucket.stored())).not.toContain("private upstream body");
   });
 
   it("deduplicates exact native IDs without collapsing slash/hyphen identities or borrowing metadata", async () => {
@@ -120,7 +208,7 @@ describe("provider model catalogue discovery", () => {
     const warnings: string[] = [];
     const models = await discoverGatewayModels((message) => warnings.push(message));
     expect(models).toEqual([expect.objectContaining({ route: "gateway:" + survivor + "/new-vendor/live-model", enabled: true })]);
-    expect(warnings).toEqual([failed + " model catalogue is unavailable or malformed (HTTP 503)."]);
+    expect(warnings).toEqual([failed + " model catalogue is unavailable (HTTP 503)."]);
     expect(JSON.stringify(warnings)).not.toContain("private upstream failure details");
   });
 
@@ -128,11 +216,46 @@ describe("provider model catalogue discovery", () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("private network details"); }));
     const warnings: string[] = [];
     expect(await discoverGatewayModels((message) => warnings.push(message))).toEqual([]);
-    expect(warnings).toEqual(["command-code model catalogue is unavailable or malformed.", "openrouter model catalogue is unavailable or malformed."]);
+    expect(warnings).toEqual(["command-code model catalogue is unavailable.", "openrouter model catalogue is unavailable."]);
     catalogues([], []);
     const emptyWarnings: string[] = [];
     expect(await discoverGatewayModels((message) => emptyWarnings.push(message))).toEqual([]);
     expect(emptyWarnings).toEqual([]);
+  });
+
+  it("reports a fetch timeout as a timeout without leaking details", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === CC) throw new DOMException("signal timed out", "TimeoutError");
+      return Response.json({ data: [{ id: "surviving/model", architecture: textChat }] });
+    }));
+    const warnings: string[] = [];
+    expect(await discoverGatewayModels((message) => warnings.push(message))).toEqual([
+      expect.objectContaining({ route: "gateway:openrouter/surviving/model" }),
+    ]);
+    expect(warnings).toEqual(["command-code model catalogue request timed out."]);
+    expect(JSON.stringify(warnings)).not.toContain("signal timed out");
+  });
+
+  it("distinguishes an aborted catalogue body from malformed JSON with HTTP 200", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === CC) {
+        return new Response(new ReadableStream({
+          start(controller) { controller.error(new DOMException("stalled body aborted", "AbortError")); },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url === OR) return new Response("{not-json", { status: 200, headers: { "content-type": "application/json" } });
+      throw new Error("Unexpected metadata endpoint");
+    }));
+    const warnings: string[] = [];
+    expect(await discoverGatewayModels((message) => warnings.push(message))).toEqual([]);
+    expect(warnings).toEqual([
+      "command-code model catalogue request timed out.",
+      "openrouter model catalogue is malformed.",
+    ]);
+    expect(JSON.stringify(warnings)).not.toContain("stalled body aborted");
+    expect(JSON.stringify(warnings)).not.toContain("not-json");
+    expect(JSON.stringify(warnings)).not.toContain("(HTTP 200)");
   });
 });
 

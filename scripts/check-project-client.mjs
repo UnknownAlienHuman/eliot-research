@@ -3,10 +3,12 @@
 import { createHash } from "node:crypto";
 import { URLSearchParams } from "node:url";
 import { TextDecoder } from "node:util";
+import { assertEvalOrigin, fetchEval } from "./eval/origin.mjs";
 
 const usage = `Usage: node scripts/check-project-client.mjs --confirm-live --origin https://APP_HOST --project PROJECT_ID --grant GRANT_ID --generation DEPLOYMENT_GENERATION
+Set ELIOT_ORIGIN to the exact remote origin (loopback is allowed without it).
 Set CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET in the service client's private environment.
-Only the explicit HTTPS origin receives these credentials; redirects are refused. No credentials,
+Only the validated loopback or explicit HTTPS origin receives these credentials; redirects are refused. No credentials,
 source text, project titles or response bodies are printed or saved. Success confirms one past
 catalog read, not continuing access, model availability or full-project coverage.`;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
@@ -46,9 +48,12 @@ function argumentsOf(args) {
   if (values.get("--confirm-live") !== true) fail("No request sent. Explicit --confirm-live is required; use --help");
   let origin;
   try { origin = new URL(values.get("--origin")); } catch { fail("An explicit HTTPS origin is required"); }
+  let allowedOrigin;
+  try { allowedOrigin = assertEvalOrigin(origin.href, process.env.ELIOT_ORIGIN); }
+  catch { fail("The target must be loopback or match explicit ELIOT_ORIGIN; no request sent"); }
   if (origin.protocol !== "https:" || origin.username || origin.password || origin.search || origin.hash ||
       origin.pathname !== "/" || origin.origin !== values.get("--origin")) fail("Use a canonical HTTPS origin without a path, credentials or trailing slash");
-  return { origin: origin.origin, project: identifier(values.get("--project"), "Project ID"),
+  return { origin: allowedOrigin, project: identifier(values.get("--project"), "Project ID"),
     grant: identifier(values.get("--grant"), "Grant ID"), generation: identifier(values.get("--generation"), "Deployment generation") };
 }
 async function bodyBytes(response) {
@@ -107,9 +112,9 @@ async function run() {
   if (typeof secret !== "string" || !/^[\x21-\x7e]{1,4096}$/u.test(secret)) fail("CF_ACCESS_CLIENT_SECRET is missing or invalid");
   const url = new URL("/api/v1/research/catalog", config.origin);
   url.search = new URLSearchParams({ project_id: config.project, limit: "1" }).toString();
-  const response = await fetch(url, { method: "GET", redirect: "manual", credentials: "omit", cache: "no-store",
+  const response = await fetchEval(url, { method: "GET", redirect: "manual", credentials: "omit", cache: "no-store",
     signal: globalThis.AbortSignal.timeout(30_000), headers: { accept: "application/json", "CF-Access-Client-Id": clientId,
-      "CF-Access-Client-Secret": secret, "X-Eliotr-Client-Grant": config.grant } });
+      "CF-Access-Client-Secret": secret, "X-Eliotr-Client-Grant": config.grant } }, config.origin, process.env.ELIOT_ORIGIN);
   if (response.redirected || (response.status >= 300 && response.status < 400)) {
     await response.body?.cancel(); fail("Access redirected the request; service identity was not confirmed");
   }

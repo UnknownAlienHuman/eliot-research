@@ -222,7 +222,7 @@ export function Library() {
   if (sources === undefined) return <LoadGate text="Loading sources…" failure={failure} onRetry={() => void load()} />;
   return (
     <section className="er-lib" aria-labelledby="er-lib-sources">
-      <header className="er-lib__head"><Link className="er-button er-button--text" to="/">Projects</Link><h1 className="er-lib__title" id="er-lib-sources">Library</h1><p className="er-lib__hint">Pick many files at once: each uploads alone, two at a time. Lists and reads never start paid work.</p></header>
+      <header className="er-lib__head"><div className="er-lib__actions"><Link className="er-button er-button--text" to="/">Projects</Link><Link className="er-button er-button--text" to={'/p/' + encodeURIComponent(projectId ?? '') + '/overview'}>Project overview</Link></div><h1 className="er-lib__title" id="er-lib-sources">Library</h1><p className="er-lib__hint">Pick many files at once: each uploads alone, two at a time. Lists and reads never start paid work.</p></header>
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
       <div className="er-lib__drop"><label htmlFor="er-lib-files">Choose files (25 MiB cap each, one request per file)</label><input id="er-lib-files" type="file" multiple disabled={uploading} onChange={(e) => { void uploadMany(Array.from(e.currentTarget.files ?? [])); e.currentTarget.value = ""; }} /></div>
       {rows.length > 0 ? (<ul className="er-lib__progress" aria-live="polite">{rows.map((r, i) => (
@@ -241,7 +241,13 @@ export function Library() {
       {sources.length === 0 ? <p className="er-lib__empty">No sources in this project yet.</p> : (
         <ul className="er-lib__list">{sources.map((s) => (
           <li className="er-lib__row" key={s.id}>
-            <span className="er-lib__row-main"><MaterialSymbol name={s.readableState === "failed" ? "error" : "info"} /><span><Link className="er-lib__row-title" to={"/p/" + encodeURIComponent(projectId ?? "") + "/source/" + encodeURIComponent(s.id) + "?revisionId=" + encodeURIComponent(s.currentRevisionId ?? s.revisionId)}>{s.title}</Link><span className="er-lib__row-meta">{s.kind} · <span className="er-lib__badge" data-tone={tone(s.readableState)}>{stateLabel(s.readableState)}</span>{s.blockCount !== null ? " · " + s.blockCount + " blocks" : ""}{s.readableSize !== null ? " · " + s.readableSize + " B text" : ""}{" · " + s.originalSize + " B file"}{s.originalFilename ? " · " + s.originalFilename : ""}</span>{s.warningSummary ? <span className="er-lib__row-meta">{s.warningSummary}</span> : null}{s.error ? <span className="er-lib__error">{s.error}</span> : null}</span></span>
+            <span className="er-lib__row-main"><MaterialSymbol name={s.readableState === "failed" ? "error" : "info"} /><span><Link className="er-lib__row-title" to={"/p/" + encodeURIComponent(projectId ?? "") + "/source/" + encodeURIComponent(s.id) + "?revisionId=" + encodeURIComponent(s.currentRevisionId ?? s.revisionId)}>{s.title}</Link><span className="er-lib__row-meta">{s.kind} · <span className="er-lib__badge" data-tone={tone(s.readableState)}>{stateLabel(s.readableState)}</span></span>{s.warningSummary ? <span className="er-lib__row-meta">{s.warningSummary}</span> : null}{s.error ? <span className="er-lib__error">{s.error}</span> : null}</span></span>
+            <details className="er-lib__facts"><summary>Details</summary><div className="er-lib__facts-content">
+              <p>Source ID: <span className="er-lib__mono">{s.id}</span></p>
+              <p>Current revision: <span className="er-lib__mono">{s.currentRevisionId ?? s.revisionId}</span></p>
+              <p>Current snapshot: {s.blockCount === null ? "block count unavailable" : s.blockCount + " blocks"}{s.readableSize === null ? " · readable size unavailable" : " · " + s.readableSize + " bytes of readable text"}</p>
+              <p>{s.originalFilename ? s.originalFilename + " · " : ""}{s.originalSize} bytes original</p>
+            </div></details>
           </li>))}
         </ul>)}
       {cursor ? <button className="er-button er-button--tonal" type="button" onClick={() => void loadMore()}>Load more</button> : null}
@@ -266,6 +272,7 @@ export function Reader() {
   const preRef = useRef<HTMLPreElement | null>(null);
   const rev = revisions.find((r) => r.id === (revisionId || source?.currentRevisionId || source?.revisionId || revisions[0]?.id || ""));
   const activeRevision = rev?.id ?? "";
+  const activeRevisionNumber = revisions.findIndex((r) => r.id === activeRevision) + 1;
   const activeState = revisionId ? (rev?.readableState ?? "") : (rev?.readableState ?? source?.readableState ?? "");
   const textReady = loadedRev !== "" && loadedRev === activeRevision;
   const hasRange = textReady && Number.isSafeInteger(rangeStart) && Number.isSafeInteger(rangeEnd) && rangeStart >= 0 && rangeEnd > rangeStart;
@@ -337,13 +344,20 @@ export function Reader() {
   if (!source) return <LoadGate text="Opening the source…" failure={failure} onRetry={() => void reloadMeta()} />;
   return (
     <section className="er-lib" aria-labelledby="er-lib-reader">
-      <header className="er-lib__head"><Link className="er-button er-button--text" to={"/p/" + encodeURIComponent(projectId ?? "") + "/sources"}>Sources</Link><h1 className="er-lib__title" id="er-lib-reader">{source.title}</h1><p className="er-lib__hint">Revision <span className="er-lib__mono">{activeRevision || "—"}</span> · <span className="er-lib__badge" data-tone={tone(activeState)}>{stateLabel(activeState)}</span> links stay on this revision.</p></header>
+      <header className="er-lib__head"><Link className="er-button er-button--text" to={"/p/" + encodeURIComponent(projectId ?? "") + "/sources"}>Sources</Link><h1 className="er-lib__title" id="er-lib-reader">{source.title}</h1><p className="er-lib__hint"><span className="er-lib__badge" data-tone={tone(activeState)}>{stateLabel(activeState)}</span> · Passage links stay on their selected revision.</p></header>
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
       {revisionId && !rev ? <p className="er-lib__error" role="alert">This revision is not part of this source. Clear the revision to open the newest readable text.</p> : null}
-      {(rev?.converter || (rev?.conversionCalls ?? 0) > 0) ? <p className="er-lib__row-meta">{rev?.converter ?? "workers_ai_markdown"} · {rev?.conversionCalls} calls{rev?.conversionTokens != null ? " · " + rev.conversionTokens + " tokens" : ""}{rev?.conversionMs != null ? " · " + rev.conversionMs + " ms" : ""}</p> : null}
       {rev?.warningSummary ? <p className="er-lib__row-meta">{rev.warningSummary}</p> : null}
-      {revisions.length > 1 ? (<details className="er-lib__facts"><summary>Revisions ({revisions.length})</summary><ul className="er-lib__list">{revisions.map((r) => (<li key={r.id}><Link to={"?revisionId=" + encodeURIComponent(r.id)}>{r.id.slice(0, 8)} · {r.readableState}</Link></li>))}</ul></details>) : null}
-      {hasRange ? (<div className="er-lib__excerpt" role="note"><p>Exact passage [{rangeStart}, {rangeEnd}) of revision {activeRevision}.</p>{excerpt ? <pre>{excerpt}</pre> : <p className="er-lib__error">This byte range does not open in the loaded text. Clear the range and select the passage again.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(activeRevision)}>Clear range</Link></div>) : null}
+      <details className="er-lib__facts"><summary>Details</summary><div className="er-lib__facts-content">
+        <p>Source ID: <span className="er-lib__mono">{source.id}</span></p>
+        <p>Revision {activeRevisionNumber || "—"}: <span className="er-lib__mono">{activeRevision || "—"}</span></p>
+        {rev ? <p>{rev.converter ?? "workers_ai_markdown"} · {rev.conversionCalls} calls{rev.conversionTokens != null ? " · " + rev.conversionTokens + " tokens" : ""}{rev.conversionMs != null ? " · " + rev.conversionMs + " ms" : ""}</p> : null}
+        <p>Current source snapshot: {source.blockCount === null ? "block count unavailable" : source.blockCount + " blocks"}{source.readableSize === null ? " · readable size unavailable" : " · " + source.readableSize + " bytes of readable text"}{" · " + source.originalSize + " bytes original"}</p>
+        {source.originalFilename ? <p>Original file: {source.originalFilename}</p> : null}
+        {hasRange ? <p>Selected byte range [{rangeStart}, {rangeEnd}) in revision {activeRevision}.</p> : null}
+        {revisions.length > 1 ? <div><p><strong>Revisions</strong></p><ul className="er-lib__revision-list">{revisions.map((r, i) => <li key={r.id}><Link to={"?revisionId=" + encodeURIComponent(r.id)}>{"Revision " + (i + 1) + " · " + r.readableState}</Link><span className="er-lib__mono">{r.id}</span></li>)}</ul></div> : null}
+      </div></details>
+      {hasRange ? (<div className="er-lib__excerpt" role="note"><p>Selected passage from {source.title}.</p>{excerpt ? <pre>{excerpt}</pre> : <p className="er-lib__error">This passage could not be opened in the loaded text. Clear it and choose another passage.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(activeRevision)}>Clear passage</Link></div>) : null}
       <div className="er-lib__reader">
         <nav className="er-lib__outline" aria-label="Outline"><h2>Outline</h2>
           {!textReady || outline.length === 0 ? <p className="er-lib__hint">No outline for this revision.</p> : (<ul className="er-lib__outline-list">{outline.map((b, i) => (<li key={b.start + ":" + b.end + ":" + i}><Link to={"?revisionId=" + encodeURIComponent(activeRevision) + "&start=" + b.start + "&end=" + b.end}>{b.label}</Link></li>))}</ul>)}
@@ -360,7 +374,7 @@ export function Reader() {
           <pre className="er-lib__text" ref={preRef}>{textReady ? text : ""}</pre>
         </div>
       </div>
-      {(activeState === "readable" || activeState === "readable_with_warnings") && activeRevision ? <SourceUnderstanding key={(sourceId ?? "") + activeRevision} projectId={projectId ?? ""} sourceId={sourceId ?? ""} revisionId={activeRevision} /> : null}
+      {(activeState === "readable" || activeState === "readable_with_warnings") && activeRevision ? <SourceUnderstanding key={(sourceId ?? "") + activeRevision} projectId={projectId ?? ""} sourceId={sourceId ?? ""} revisionId={activeRevision} sourceTitle={source.title} /> : null}
     </section>
   );
 }

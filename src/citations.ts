@@ -4,9 +4,9 @@ import { numbersSupported } from "./numbers.ts";
 /**
  * K2 label/citation resolver (IMPLEMENTATION 5, 8; root contract 2026-10-26).
  * Model answer text is untrusted: only exact compact `[S<alias>:<block>]`
- * and persistent `[R<full-revision-uuid>:<block>]` labels outside fenced
+ * and persistent `[R<full-revision-uuid>:<block>]` labels outside fenced and inline
  * code resolve against the frozen source scope. Unknown, out-of-scope,
- * malformed, ambiguous and out-of-range labels are removed and counted.
+ * malformed, ambiguous, out-of-range and bare [S<N>] labels are removed and counted.
  * Offsets come from the block map only; nothing is fabricated.
  * Each citation keeps its sourceId and the label token as emitted in the
  * returned text, so the reader matches c.label (or the persistent label
@@ -41,7 +41,7 @@ export interface ResolvedAnswer {
 
 const UUID_RE =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-const LABEL_RE = /\[(?:S\d+:[^\]\n[]*|R[^:\]\n[]*:[^\]\n[]*)\]/g;
+const LABEL_RE = /\[(?:S\d+:[^\]\n[]*|R[^:\]\n[]*:[^\]\n[]*|S\d+)\]/g;
 const DIGITS_RE = /^\d+$/;
 
 interface Fence {
@@ -143,7 +143,9 @@ function parseToken(token: string, maps: ScopeMaps): ParsedLabel | undefined {
 function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean): ResolvedAnswer {
   const maps = scopeMaps(sources);
   const fences = fencedRanges(answer);
-  const inside = (at: number): boolean => fences.some((range) => at >= range.start && at < range.end);
+  const inline = inlineCodeRanges(answer, fences);
+  const code = [...fences, ...inline].sort((a, b) => a.start - b.start);
+  const inside = (at: number): boolean => code.some((range) => at >= range.start && at < range.end);
   const seen = new Set<string>();
   const citations: Citation[] = [];
   const parts: string[] = [];
@@ -194,8 +196,8 @@ export function persistentAnswer(text: string, sources: LabelSource[]): Resolved
 
 /**
  * Save path for getStoredTurn: rewrites only already server-resolved labels
- * to persistent form, using the existing fence-aware scanner. Labels inside
- * fenced code and any other bytes are preserved untouched. Each returned
+ * to persistent form, using the existing fence- and inline-code-aware scanner.
+ * Labels inside fenced or inline code and any other bytes are preserved untouched. Each returned
  * citation keeps its identity with label set to the persistent token.
  */
 export function persistentResolvedAnswer(text: string, citations: Citation[]): ResolvedAnswer {
@@ -211,7 +213,9 @@ export function persistentResolvedAnswer(text: string, citations: Citation[]): R
     }
   }
   const fences = fencedRanges(text);
-  const inside = (at: number): boolean => fences.some((range) => at >= range.start && at < range.end);
+  const inline = inlineCodeRanges(text, fences);
+  const code = [...fences, ...inline].sort((a, b) => a.start - b.start);
+  const inside = (at: number): boolean => code.some((range) => at >= range.start && at < range.end);
   const parts: string[] = [];
   let last = 0;
   for (const match of text.matchAll(LABEL_RE)) {

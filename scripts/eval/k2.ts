@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { assertEvalOrigin, assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 import { uncitedStatements, unsupportedNumericStatements } from '../../src/citations.ts';
 const EOL = String.fromCharCode(10);
 const TAB = String.fromCharCode(9);
@@ -13,7 +14,9 @@ const SUPMINUS = String.fromCodePoint(0x207B);
 const SUP8 = String.fromCodePoint(0x2078);
 const UNIMINUS = String.fromCodePoint(0x2212);
 const MIDDOT = String.fromCodePoint(0x00B7);
-const origin = new URL(process.env.ELIOT_URL || 'http://127.0.0.1:5173').origin;
+const requestedOrigin = process.env.ELIOT_URL || 'http://127.0.0.1:5173';
+const configuredOrigin = process.env.ELIOT_ORIGIN;
+const origin = assertEvalOrigin(requestedOrigin, configuredOrigin);
 const H = { Origin: origin };
 if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
   H['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID;
@@ -23,20 +26,26 @@ if (process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.e
 const nativeOnly = process.argv.includes('--native-only');
 const runModel = !nativeOnly && process.env.ELIOT_K2_MODEL === '1';
 const storedOnly = process.argv.includes('--stored-only');
+const modelsOnly = process.argv.includes('--models-only');
 const resumeChat = process.env.ELIOT_EVAL_CHAT || null;
-const evalModel = (process.env.ELIOT_EVAL_MODEL ?? '').trim() || null;
+const evalModelOverride = (process.env.ELIOT_EVAL_MODEL ?? '').trim() || null;
+assert(!storedOnly || (!!resumeChat && !runModel && !modelsOnly), '--stored-only requires an existing chat and forbids model dispatch/catalogue tests.');
+assert(!runModel || evalModelOverride === null, 'K2 benchmark uses the frozen global configured default; ELIOT_EVAL_MODEL overrides are disabled.');
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
 const outDir = fileURLToPath(new URL('../../eval/out/k2/', import.meta.url));
+const notebookAnswersPath = (process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS ?? '').trim()
+  || fileURLToPath(new URL('../../eval/out/notebooklm-20261026/answers.md', import.meta.url));
+const order = ['C1', 'C2', 'C3', 'C4', 'O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8'];
 await mkdir(outDir, { recursive: true });
 async function apiJson(path, init) {
-  const r = await fetch(origin + path, { ...init, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } });
+  const r = await fetchEval(origin + path, { ...init, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } }, origin, configuredOrigin);
   const t = await r.text();
   let b = null;
   try { b = t ? JSON.parse(t) : null; } catch { b = { raw: t.slice(0, 300) }; }
   return { status: r.status, body: b };
 }
 async function apiBytes(path) {
-  const r = await fetch(origin + path, { headers: { ...H } });
+  const r = await fetchEval(origin + path, { headers: { ...H } }, origin, configuredOrigin);
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
 }
 const pct = (a, p) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
@@ -53,25 +62,169 @@ function normMath(s) {
 function checkAnswer(qid, ans) {
   const m = normMath(ans);
   const has = (...ss) => ss.every((s) => m.includes(s));
+  const checks = [];
+  const add = (name, passed, detail) => checks.push({ name, status: passed ? 'PASS' : 'FAIL', detail });
+  if (typeof ans !== 'string' || !ans.trim()) return [{ name: 'answer present', status: 'FAIL', detail: 'No answer text was stored.' }];
   if (qid === 'C1') {
-    assert(m.includes('512'), 'C1 must contain 512.');
+    add('d_model=512', m.includes('512'), 'Expected Transformer base model d_model 512.');
     const w = m.split(' ');
     let heads8 = /\bh\s*=\s*8(?!\d)/u.test(m) || /(?:голов[а-яё]*|heads?)[^.!?\n]{0,70}\b8\b|\b8\b[^.!?\n]{0,70}(?:голов[а-яё]*|heads?)/iu.test(m);
     for (let i = 0; i < w.length && !heads8; i++) {
       if (w[i] === '8' && i > 0 && (String(w[i - 1]).includes('head') || String(w[i - 1]).includes('голов'))) heads8 = true;
       if (w[i] === '8' && i + 1 < w.length && (String(w[i + 1]).includes('head') || String(w[i + 1]).includes('голов'))) heads8 = true;
     }
-    assert(heads8 || m.includes(' восемь ') || m.includes(' eight '), 'C1 must contain h=8 or 8 heads in either order.');
+    add('attention heads=8', heads8 || m.includes(' восемь ') || m.includes(' eight '), 'Expected eight attention heads.');
   }
   if (qid === 'C2') {
     const warm = m.includes('warmup') || m.includes('warm-up') || m.includes('warm up') || m.includes('разогрев') || m.includes('прогрев') || m.includes('размин');
     const strictFormula = has('4000') && warm && (m.includes('d model') || m.includes('step')) && m.includes('min') && m.includes('-0.5') && m.includes('-1.5');
     const sqrtFormula = m.includes('sqrt') && has('4000') && warm;
-    assert(strictFormula || sqrtFormula, 'C2 must contain the schedule formula d_model^-0.5 min(step^-0.5, step warmup^-1.5) with warmup 4000, or its sqrt equivalent.');
+    add('learning-rate formula and warmup=4000', strictFormula || sqrtFormula, 'Expected d_model^-0.5 min(step^-0.5, step·warmup^-1.5), warmup 4000, or an equivalent square-root expression.');
   }
-  if (qid === 'C3') assert(has('0.001') && has('0.9') && has('0.999') && (has('1e-8') || m.includes('10 -8') || m.includes('10 - 8') || m.includes('10-8') || has('0.00000001')), 'C3 must contain Adam defaults with the numeric epsilon 1e-8 (the word alone does not pass).');
-  if (qid === 'C4') assert((m.includes('синус') || m.includes('sinus')) && (m.includes('обуч') || m.includes('learn')), 'C4: sinusoidal vs learned.');
-  if (qid === 'O8') assert(/нет в корпусе|в корпусе нет|не решают|не содержат|ни одн(?:а|ой|ого|у)|abstain|not in (the )?corpus|no paper/i.test(ans), 'O8 must abstain: the corpus does not solve hallucinations.');
+  if (qid === 'C3') add('Adam defaults', has('0.001') && has('0.9') && has('0.999') && (has('1e-8') || m.includes('10 -8') || m.includes('10 - 8') || m.includes('10-8') || has('0.00000001')), 'Expected alpha=0.001, beta1=0.9, beta2=0.999 and epsilon=1e-8.');
+  if (qid === 'C4') add('positional encoding contrast', (m.includes('синус') || m.includes('sinus')) && (m.includes('обуч') || m.includes('learn')), 'Expected sinusoidal versus learned positional encodings.');
+  if (qid === 'O8') add('honest abstention', /нет в корпусе|в корпусе нет|не решают|не содержат|ни одн(?:а|ой|ого|у)|abstain|not in (the )?corpus|no paper/i.test(ans), 'Expected an answer that the corpus does not solve hallucinations.');
+  if (['O1', 'O2', 'O3', 'O8'].includes(qid))
+    checks.push({ name: 'semantic quality', status: 'OWNER_REVIEW_REQUIRED', detail: 'Gold facts are shown for owner review; the evaluator does not judge entailment or usefulness.' });
+  else if (['O4', 'O5', 'O6', 'O7'].includes(qid))
+    checks.push({ name: 'semantic coverage', status: 'NOT_AUTOMATED', detail: 'Gold facts are shown; no automatic semantic pass is claimed.' });
+  return checks;
+}
+const qmd = await readFile(evalDir + '/arxiv-10/questions.md', 'utf8');
+const Q = new Map();
+const goldFacts = new Map();
+for (const line of qmd.split(EOL)) {
+  const parts = line.split('|').map((part) => part.trim());
+  if (parts.length >= 4 && order.includes(parts[1]) && parts[2]) {
+    Q.set(parts[1], parts[2]);
+    goldFacts.set(parts[1], parts[3]);
+  }
+}
+assert.equal(Q.size, 12, 'questions.md must define C1-4 and O1-8.');
+async function baselineNotebookSummaries() {
+  const raw = await readFile(evalDir + '/arxiv-10/baseline.md', 'utf8');
+  const answers = new Map();
+  let inNotebookTable = false;
+  for (const line of raw.split(EOL)) {
+    if (/^##\s+Ответы Gemini Notebook/.test(line)) { inNotebookTable = true; continue; }
+    if (inNotebookTable && /^##\s+/.test(line)) break;
+    if (!inNotebookTable || !line.startsWith('|')) continue;
+    const parts = line.split('|').map((part) => part.trim());
+    if (order.includes(parts[1]) && parts[4]) answers.set(parts[1], parts[4]);
+  }
+  return answers;
+}
+function parseNotebookAnswers(raw) {
+  const answers = new Map();
+  let qid = null;
+  let body = [];
+  const save = () => { if (qid && body.join(EOL).trim()) answers.set(qid, body.join(EOL).trim()); };
+  for (const line of raw.split(EOL)) {
+    const heading = /^##\s+(C[1-4]|O[1-8])(?:\s|[-—])/.exec(line);
+    if (heading) { save(); qid = heading[1]; body = []; continue; }
+    if (qid) body.push(line);
+  }
+  save();
+  return answers;
+}
+const baselineAnswers = await baselineNotebookSummaries();
+let notebookAnswers = new Map();
+let notebookAnswerSource = 'eval/arxiv-10/baseline.md (recorded summary)';
+try {
+  notebookAnswers = parseNotebookAnswers(await readFile(notebookAnswersPath, 'utf8'));
+  if (notebookAnswers.size > 0) notebookAnswerSource = notebookAnswersPath;
+} catch { /* use the tracked baseline summary below */ }
+for (const qid of order) {
+  if (!notebookAnswers.has(qid)) {
+    notebookAnswers.set(qid, baselineAnswers.get(qid)
+      || 'Baseline records this response as received and saved; no individual answer text is present in baseline.md.');
+  }
+}
+const compareRows = new Map(order.map((qid) => [qid, {
+  qid,
+  answer: null,
+  model: null,
+  turnState: 'NOT_RUN',
+  status: 'NOT_RUN',
+  factChecks: [],
+  citationRanges: [],
+  citationSummary: 'NOT_RUN',
+  timing: null,
+  usage: null,
+  reason: null,
+} ]));
+function markQuestionNotRun(qid, reason, status = 'NOT_RUN') {
+  compareRows.set(qid, { ...compareRows.get(qid), status, reason, turnState: status });
+}
+function mdCell(value) {
+  return String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\|/g, '&#124;').replace(/\r?\n/g, '<br>');
+}
+async function writeCompare(rows, metadata) {
+  const turnRows = order.map((qid) => rows.get(qid)).filter((row) => row && row.turnState !== 'NOT_RUN'
+    && row.turnState !== 'NOT_REVALIDATED' && row.turnState !== 'DISPATCH_FAILED' && row.turnState !== 'DISPATCH_UNKNOWN');
+  const sumKnown = (field) => {
+    const values = turnRows.map((row) => row.usage?.[field]).filter((value) => typeof value === 'number' && Number.isFinite(value));
+    return { sum: values.reduce((total, value) => total + value, 0), unknown: turnRows.length - values.length, count: values.length };
+  };
+  const percentile = (values, p) => {
+    const sorted = values.filter((value) => typeof value === 'number' && Number.isFinite(value)).sort((a, b) => a - b);
+    if (!sorted.length) return 'NOT_RUN';
+    return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))];
+  };
+  const firstTimes = turnRows.map((row) => row.timing?.firstTokenMs);
+  const totalTimes = turnRows.map((row) => row.timing?.totalMs);
+  const ranges = turnRows.flatMap((row) => Array.isArray(row.citationRanges) ? row.citationRanges : []);
+  const numericCheckDetails = turnRows.flatMap((row) => Array.isArray(row.factChecks) ? row.factChecks : [])
+    .filter((check) => check.name === 'numeric citation support').map((check) => check.detail || '');
+  const unsupportedNumericCount = numericCheckDetails.reduce((total, detail) => total + (Number(/([0-9]+) unsupported/.exec(detail)?.[1]) || 0), 0);
+  const inputs = sumKnown('inputTokens'), cached = sumKnown('cachedTokens'), outputs = sumKnown('outputTokens');
+  const estimates = sumKnown('estimatedCostMicrousd'), actualCosts = sumKnown('actualProviderCostUsd');
+  const lines = [
+    '# K2 — Eliot / NotebookLM comparison',
+    '',
+    '- Questions and gold facts: `eval/arxiv-10/questions.md` (read-only).',
+    '- NotebookLM answer source: ' + mdCell(notebookAnswerSource) + '.',
+    '- Eliot mode: ' + mdCell(metadata.mode) + '.',
+    '- Configured global answer model: ' + mdCell(metadata.defaultModel ?? 'UNKNOWN') + '.',
+    '- Project answer-model override: ' + mdCell(metadata.projectModelOverride ?? 'none') + '.',
+    '- Chat: ' + mdCell(metadata.chatId ?? 'UNKNOWN') + '.',
+    '- Monthly usage before/after: ' + mdCell(metadata.monthlyBefore ?? 'NOT_RECORDED') + '/' + mdCell(metadata.monthlyAfter ?? 'NOT_RECORDED') + ' micro-USD.',
+    '- Turn count before/after: ' + mdCell(metadata.turnCountBefore ?? 'NOT_RECORDED') + '/' + mdCell(metadata.turnCountAfter ?? 'NOT_RECORDED') + '.',
+    '- Diagnostic turn rows with stored usage: ' + turnRows.length + ' / 12.',
+    '- Usage totals (known values only): input ' + inputs.sum + ' (' + inputs.unknown + ' unknown), cached ' + cached.sum + ' (' + cached.unknown + ' unknown), output ' + outputs.sum + ' (' + outputs.unknown + ' unknown), estimated ' + estimates.sum + ' micro-USD (' + estimates.unknown + ' unknown).',
+    '- Provider-reported actual cost: ' + (actualCosts.unknown > 0 ? 'UNKNOWN (known subtotal ' + actualCosts.sum + ' USD; ' + actualCosts.unknown + ' turn(s) unknown, not zero).' : actualCosts.sum + ' USD across ' + actualCosts.count + ' turn(s).'),
+    '- Latency sample n=' + turnRows.filter((row) => typeof row.timing?.firstTokenMs === 'number' && typeof row.timing?.totalMs === 'number').length + ' ms: first p50/p95 ' + percentile(firstTimes, 0.50) + '/' + percentile(firstTimes, 0.95) + '; total p50/p95 ' + percentile(totalTimes, 0.50) + '/' + percentile(totalTimes, 0.95) + '.',
+    '- Exact citation ranges: ' + ranges.filter((range) => range.status === 'PASS').length + '/' + ranges.length + ' opened and matched; failed ' + ranges.filter((range) => range.status !== 'PASS').length + '.',
+    '- Unsupported numeric statements: ' + unsupportedNumericCount + '.',
+    '- Actual Eliot turn model is shown per row; non-default stored answers are diagnostic only.',
+    '- Owner semantic gate: O1/O2/O3/O8 remain `OWNER_REQUIRED`; this report does not judge meaning.',
+    '- Result: ' + mdCell(metadata.status) + (metadata.stopReason ? ' — ' + mdCell(metadata.stopReason) : ''),
+    '',
+    '| # | Turn ID | Question | Gold facts | NotebookLM answer | Eliot answer | Model / state | Status | Fact checks | Citation ranges / quotes | Time / usage |',
+    '|---|---|---|---|---|---|---|---|---|---|---|',
+  ];
+  for (const qid of order) {
+    const row = rows.get(qid) || {};
+    const checkParts = Array.isArray(row.factChecks) ? row.factChecks.map((check) => check.name + ': ' + check.status + (check.detail ? ' (' + check.detail + ')' : '')) : [];
+    if (Array.isArray(row.hardFailures)) checkParts.push(...row.hardFailures);
+    if (row.reason) checkParts.push(row.reason);
+    const factText = checkParts.length ? checkParts.join('; ') : 'NOT_RUN';
+    const rangeText = Array.isArray(row.citationRanges) && row.citationRanges.length
+      ? row.citationRanges.map((r) => r.label + ' ' + r.revisionId + ':' + r.block + '[' + r.start + ',' + r.end + ') ' + r.status + (r.reason ? ' (' + r.reason + ')' : '') + (r.quote ? ' quote=' + r.quote : '')).join('<br>')
+      : row.citationSummary ?? 'NOT_RUN';
+    const usage = row.usage ? [row.usage.inputTokens, row.usage.cachedTokens, row.usage.outputTokens].map((v) => v ?? 'UNKNOWN').join('/')
+      + ' tok; est ' + (row.usage.estimatedCostMicrousd ?? 'UNKNOWN') + ' uUSD; actual ' + (row.usage.actualProviderCostUsd ?? 'UNKNOWN') + ' USD'
+      : 'NOT_RUN';
+    const time = row.timing ? 'first ' + (row.timing.firstTokenMs ?? 'UNKNOWN') + ' ms / total ' + (row.timing.totalMs ?? 'UNKNOWN') + ' ms'
+      + (row.timing.wallMs === null || row.timing.wallMs === undefined ? '' : ' / wall ' + row.timing.wallMs + ' ms') : 'NOT_RUN';
+    lines.push('| ' + [qid, row.turnId ?? 'NOT_RUN', Q.get(qid), goldFacts.get(qid), notebookAnswers.get(qid), row.answer ?? 'NOT_RUN',
+      (row.model ?? 'UNKNOWN') + ' [' + (row.routeStatus ?? 'UNKNOWN_ROUTE') + '] / ' + (row.turnState ?? 'NOT_RUN'), row.status ?? 'NOT_RUN', factText, rangeText, time + '; ' + usage]
+      .map(mdCell).join(' | ') + ' |');
+  }
+  lines.push('');
+  await writeFile(outDir + '/compare.md', lines.join(EOL) + EOL);
+  console.log('K2 compare written: ' + outDir + '/compare.md (' + order.length + ' rows, ' + metadata.status + ').');
 }
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
@@ -83,9 +236,25 @@ if (process.argv.includes('--models-only')) {
   assert.equal(before.status, 200);
   assert.equal(connection.status, 200);
   assert.equal(connection.body.connection.gatewayId, null, 'Use a disconnected local namespace; this check never disables an existing connection.');
-  const models = await apiJson('/api/models');
-  assert.equal(models.status, 200);
-  assert(Array.isArray(models.body.models), 'GET /api/models must return a catalogue array.');
+  const firstRead = await apiJson('/api/models');
+  assert.equal(firstRead.status, 200);
+  assert(Array.isArray(firstRead.body.models), 'GET /api/models must return a catalogue array.');
+  assert(firstRead.body.snapshot && typeof firstRead.body.snapshot.refreshNeeded === 'boolean', 'GET /api/models must report snapshot metadata.');
+  const refreshed = await apiJson('/api/models/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+  assert.equal(refreshed.status, 200, 'Explicit catalogue refresh must succeed as the owner action, got ' + refreshed.status);
+  assert(Array.isArray(refreshed.body.models), 'Refresh must return a catalogue array.');
+  assert(refreshed.body.snapshot && typeof refreshed.body.snapshot.updatedAt === 'string', 'Refresh must stamp the stored snapshot.');
+  const rereadA = await apiJson('/api/models');
+  const rereadB = await apiJson('/api/models');
+  assert.equal(rereadA.status, 200);
+  assert.equal(rereadB.status, 200);
+  assert.deepEqual(rereadA.body.models, refreshed.body.models, 'First GET after refresh must equal the refreshed snapshot (no discovery on GET).');
+  assert.deepEqual(rereadB.body.models, refreshed.body.models, 'Second GET after refresh must equal the refreshed snapshot (no discovery on GET).');
+  assert.deepEqual(rereadA.body.snapshot, refreshed.body.snapshot, 'Snapshot metadata must be identical between refresh and GET.');
+  assert.deepEqual(rereadB.body.snapshot, refreshed.body.snapshot, 'Snapshot metadata must stay stable across GETs.');
+  assert.deepEqual(rereadA.body.warnings, refreshed.body.warnings, 'Warnings must be identical between refresh and GET.');
+  assert.deepEqual(rereadB.body.warnings, refreshed.body.warnings, 'Warnings must stay stable across GETs.');
+  const models = rereadB;
   const warnings = models.body.warnings;
   assert(Array.isArray(warnings) && warnings.every((w) => typeof w === 'string' && w.trim().length > 0), 'Catalogue discovery warnings must remain visible, including partial provider failures.');
   const externals = models.body.models.filter((m) => m && typeof m.route === 'string' && m.route.startsWith('gateway:'));
@@ -158,9 +327,13 @@ if (process.argv.includes('--models-only')) {
     distill = 'LOCAL_DISCONNECTED_BEFORE_ADMISSION_PASS';
   }
   const { chromium, expect } = await import('@playwright/test');
+  const accessHeaderNames = ['CF-Access-Client-Id', 'CF-Access-Client-Secret', 'cf-access-jwt-assertion'];
+  assert(!accessHeaderNames.some((name) => typeof H[name] === 'string' && H[name].length > 0),
+    'Browser eval refuses Access credential headers; use the bare loopback development path.');
+  const browserOrigin = assertEvalBrowserOrigin(origin, configuredOrigin);
   const browser = await chromium.launch();
   try {
-    const context = await browser.newContext({ extraHTTPHeaders: H });
+    const context = await browser.newContext();
     let settingsPuts = 0;
     const mutations = [];
     await context.route('**/api/**', async (route) => {
@@ -174,13 +347,20 @@ if (process.argv.includes('--models-only')) {
       await route.continue();
     });
     const errors = [];
+    async function setAdvancedGateway(page, open) {
+      const region = page.getByRole('region', { name: 'AI Gateway connection', exact: true });
+      const details = region.locator('details.er-models__details');
+      const isOpen = (await details.getAttribute('open')) !== null;
+      if (open && !isOpen) await region.locator('details.er-models__details > summary').click();
+      if (!open && isOpen) await region.locator('details.er-models__details > summary').click();
+    }
     async function openSettings(page) {
       const reads = ['/api/settings', '/api/models/connection', '/api/models'].map(async (path) => {
-        const response = await page.waitForResponse((r) => r.url() === origin + path && r.request().method() === 'GET', { timeout: 30000 });
+        const response = await page.waitForResponse((r) => r.url() === browserOrigin + path && r.request().method() === 'GET', { timeout: 30000 });
         assert.equal(response.status(), 200, 'Settings reader must load ' + path + '.');
         await response.finished();
       });
-      await Promise.all([page.goto(origin + '/settings'), ...reads]);
+      await Promise.all([page.goto(browserOrigin + '/settings'), ...reads]);
       await expect(page.getByRole('region', { name: 'Models', exact: true })).toBeVisible();
       for (const [label, value] of [['Answer model', before.body.settings.answerModel], ['Understanding model', before.body.settings.distillModel]]) {
         const select = page.getByRole('combobox', { name: label, exact: true });
@@ -190,8 +370,10 @@ if (process.argv.includes('--models-only')) {
       await expect(page.getByRole('textbox', { name: 'Monthly budget (USD)', exact: true })).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
       const gateway = page.getByRole('region', { name: 'AI Gateway connection', exact: true });
       await expect(gateway).toBeVisible();
-      await expect(gateway.getByRole('textbox', { name: 'Gateway ID Blank disables.', exact: true })).toHaveValue('');
+      await setAdvancedGateway(page, true);
+      await expect(gateway.getByRole('textbox', { name: 'Gateway ID Blank disables external routing.', exact: true })).toHaveValue('');
       await expect(gateway.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true })).not.toBeChecked();
+      await setAdvancedGateway(page, false);
     }
     async function assertDisabledChoice(page, label) {
       const select = page.getByRole('combobox', { name: label, exact: true });
@@ -220,9 +402,11 @@ if (process.argv.includes('--models-only')) {
     await openSettings(page);
     const gateway = page.getByRole('region', { name: 'AI Gateway connection', exact: true });
     const consent = gateway.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true });
-    const gatewayId = gateway.getByRole('textbox', { name: 'Gateway ID Blank disables.', exact: true });
+    const gatewayId = gateway.getByRole('textbox', { name: 'Gateway ID Blank disables external routing.', exact: true });
+    await setAdvancedGateway(page, true);
     await gatewayId.fill('unconfigured-eval-gateway');
     await expect(gateway.getByRole('button', { name: 'Save connection', exact: true })).toBeDisabled();
+    await setAdvancedGateway(page, false);
     assert((await page.locator('#workspace-main details').count()) >= 1, 'Compact Settings must expose collapsed technical details.');
     assert.strictEqual(await page.locator('#workspace-main details[open]').count(), 0, 'Compact default UI must not display expanded technical walls.');
     const summaries = page.locator('#workspace-main details > summary');
@@ -233,6 +417,7 @@ if (process.argv.includes('--models-only')) {
     await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toHaveValue(before.body.settings.distillModel);
     assert.strictEqual(await page.locator('#workspace-main details[open]').count(), 0, 'Search filters must close without changing the default compact layout.');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Settings must fit the 390px Material layout.');
+    await setAdvancedGateway(page, true);
     await gateway.getByRole('button', { name: 'Save connection' }).scrollIntoViewIfNeeded();
     await expect(gateway.getByRole('button', { name: 'Save connection' })).toBeVisible();
     await page.screenshot({ path: outDir + '/external-models-390.png', fullPage: true });
@@ -250,13 +435,18 @@ if (process.argv.includes('--models-only')) {
     await expect(consent).not.toBeChecked();
     await expect(gateway.getByRole('button', { name: 'Save connection', exact: true })).toBeDisabled();
     await gatewayId.fill('');
+    await setAdvancedGateway(page, false);
     if (sourceId) {
-      const modelsRead = page.waitForResponse((r) => r.url() === origin + '/api/models' && r.request().method() === 'GET', { timeout: 30000 });
-      await page.goto(origin + '/p/' + projectId + '/source/' + sourceId);
+      const modelsRead = page.waitForResponse((r) => r.url() === browserOrigin + '/api/models' && r.request().method() === 'GET', { timeout: 30000 });
+      await page.goto(browserOrigin + '/p/' + projectId + '/source/' + sourceId);
       assert.equal((await modelsRead).status(), 200, 'Understanding model catalogue must load.');
       const understanding = page.getByRole('region', { name: 'Understanding', exact: true });
+      const details = understanding.locator('details.er-und__details');
+      if (await details.getAttribute('open') === null) await understanding.locator('details.er-und__details > summary').click();
+      const sourceProvider = understanding.getByRole('combobox', { name: 'Understanding model: provider', exact: true });
+      await sourceProvider.selectOption(external.route.slice('gateway:'.length).split('/')[0]);
       const select = understanding.getByRole('combobox', { name: 'Understanding model', exact: true });
-      await expect(select).toBeVisible();
+      await expect(select).toBeEnabled({ timeout: 30000 });
       await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
         .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), external.route), { timeout: 30000 }).toEqual([true]);
     }
@@ -416,6 +606,11 @@ for (let i = 0; i < 5; i++) {
 }
 const proj = projects.find((p) => p.title === title);
 if (!proj) { console.log('PREP_K1_NOT_READY: project ' + JSON.stringify(title) + ' not found; prep K1 corpus first, do not upload/convert again.'); process.exit(2); }
+const settingsSnapshot = await apiJson('/api/settings');
+assert.equal(settingsSnapshot.status, 200, 'GET /api/settings must be 200; benchmark model comes from the stored global default.');
+const benchmarkModel = settingsSnapshot.body?.settings?.answerModel;
+const projectModelOverride = typeof proj.answerModel === 'string' && proj.answerModel ? proj.answerModel : null;
+if (runModel) assert(typeof benchmarkModel === 'string' && benchmarkModel.length > 0, 'The stored global answerModel is required; no catalogue refresh or model override is allowed.');
 let sources = [], scur = undefined;
 for (let i = 0; i < 10; i++) {
   const s = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/sources' + (scur ? '?cursor=' + encodeURIComponent(scur) : ''));
@@ -429,14 +624,6 @@ const scoped = sources.filter((s) => want.has(s.originalFilename) && s.currentRe
 if (!nativeOnly && scoped.length < 10) { console.log('PREP_K1_NOT_READY: found ' + scoped.length + '/10 arxiv readable; prep K1 first, do not upload/convert again.'); process.exit(2); }
 const sourceIds = scoped.map((s) => s.id);
 const revSet = new Set(scoped.map((s) => s.currentRevisionId));
-const qmd = await readFile(evalDir + '/arxiv-10/questions.md', 'utf8');
-const order = ['C1', 'C2', 'C3', 'C4', 'O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8'];
-const Q = new Map();
-for (const line of qmd.split(EOL)) {
-  const parts = line.split('|').map((p) => p.trim());
-  if (parts.length >= 3 && order.includes(parts[1]) && parts[2]) Q.set(parts[1], parts[2]);
-}
-assert.equal(Q.size, 12, 'questions.md must define C1-4 and O1-8.');
 let chatId = resumeChat;
 if (!chatId) {
   const cj = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'k2-eval ' + Date.now() }) });
@@ -470,6 +657,122 @@ async function checkRange(rev, st, en) {
   assert(r.bytes.equals(w.subarray(st, en)), 'Cited range must equal the whole-text slice.');
   return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(r.bytes);
 }
+function sameSet(actual, expected) {
+  return Array.isArray(actual) && actual.length === expected.length && expected.every((id) => actual.includes(id));
+}
+function exactStoredTurn(qid, turns, used) {
+  const matches = turns.filter((turn) => turn && typeof turn.turnId === 'string' && !used.has(turn.turnId)
+    && turn.question === Q.get(qid) && turn.scopeMode === 'explicit' && turn.contextMode === 'whole'
+    && sameSet(turn.sourceIds, sourceIds) && sameSet(turn.revisionIds, scoped.map((source) => source.currentRevisionId)));
+  return matches.length ? matches[matches.length - 1] : null;
+}
+async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnostic = false) {
+  const row = {
+    qid,
+    turnId: typeof turn?.turnId === 'string' ? turn.turnId : null,
+    answer: typeof turn?.answer === 'string' ? turn.answer : null,
+    model: typeof turn?.model === 'string' ? turn.model : null,
+    turnState: typeof turn?.state === 'string' ? turn.state : 'UNKNOWN',
+    routeStatus: turn?.model === defaultModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
+    factChecks: [],
+    citationRanges: [],
+    citationSummary: 'NOT_RUN',
+    timing: { firstTokenMs: turn?.firstTokenMs ?? null, totalMs: turn?.totalMs ?? null, wallMs: wall ?? null },
+    usage: {
+      inputTokens: turn?.inputTokens ?? null,
+      cachedTokens: turn?.cachedTokens ?? null,
+      outputTokens: turn?.outputTokens ?? null,
+      estimatedCostMicrousd: turn?.estimatedCostMicrousd ?? null,
+      actualProviderCostUsd: actualProviderCostUsd(turn),
+    },
+    failures: [],
+  };
+  const failures = row.failures;
+  const answer = row.answer ?? '';
+  if (!turn || typeof turn !== 'object') failures.push('stored turn payload is missing');
+  if (typeof turn?.answer !== 'string') failures.push('turn has no answer text');
+  if (turn?.state !== 'completed') failures.push('turn state is ' + String(turn?.state ?? 'UNKNOWN'));
+  if (turn?.model !== defaultModel) failures.push('turn model differs from the frozen global default');
+  if (!sameSet(turn?.sourceIds, sourceIds) || !sameSet(turn?.revisionIds, scoped.map((source) => source.currentRevisionId))) {
+    failures.push('turn scope does not match the exact current arxiv-10 source/revision set');
+  }
+  if (!Array.isArray(turn?.citations) || turn.citations.length === 0) failures.push('turn has no citations');
+  if (typeof turn?.invalidLabels !== 'number' || turn.invalidLabels !== 0) failures.push('invalidLabels is not zero');
+  for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) {
+    if (typeof turn?.[field] !== 'number' || !Number.isFinite(turn[field])) failures.push('turn.' + field + ' is unknown');
+  }
+  if (typeof turn?.totalMs === 'number' && turn.totalMs > 90000) failures.push('completed turn exceeded the 90 second K2 ceiling');
+
+  const citationQuotes = new Map();
+  const citations = Array.isArray(turn?.citations) ? turn.citations : [];
+  const revOwner = new Map(scoped.filter((source) => source && typeof source.currentRevisionId === 'string')
+    .map((source) => [source.currentRevisionId, source.id]));
+  for (const [index, citation] of citations.entries()) {
+    const check = {
+      label: typeof citation?.label === 'string' ? citation.label : 'citation-' + String(index + 1),
+      revisionId: citation?.revisionId ?? 'UNKNOWN',
+      sourceId: citation?.sourceId ?? 'UNKNOWN',
+      block: citation?.block ?? 'UNKNOWN',
+      start: citation?.start ?? 'UNKNOWN',
+      end: citation?.end ?? 'UNKNOWN',
+      status: 'FAIL',
+      reason: null,
+    };
+    const validRange = citation && typeof citation.revisionId === 'string' && typeof citation.sourceId === 'string'
+      && Number.isSafeInteger(citation.block) && Number.isSafeInteger(citation.start) && Number.isSafeInteger(citation.end)
+      && citation.start >= 0 && citation.end > citation.start;
+    if (!validRange) check.reason = 'citation identity/block/byte range is malformed';
+    else if (!Array.isArray(turn.revisionIds) || !turn.revisionIds.includes(citation.revisionId)) check.reason = 'revision is outside the turn frozen scope';
+    else if (revOwner.get(citation.revisionId) !== citation.sourceId) check.reason = 'sourceId does not own the cited revision';
+    else {
+      try {
+        const quote = await checkRange(citation.revisionId, citation.start, citation.end);
+        citationQuotes.set(citation.label, quote);
+        check.quote = quote;
+        check.status = 'PASS';
+      } catch (error) {
+        check.reason = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (check.status !== 'PASS') failures.push(check.label + ': ' + check.reason);
+    row.citationRanges.push(check);
+  }
+  let uncited = null;
+  let unsupportedNumeric = null;
+  try {
+    if (typeof turn?.answer === 'string' && Array.isArray(turn?.citations)) {
+      uncited = uncitedStatements(answer, turn.citations);
+      unsupportedNumeric = unsupportedNumericStatements(answer, turn.citations, citationQuotes);
+    }
+  } catch (error) {
+    failures.push('citation/fact verifier threw: ' + (error instanceof Error ? error.message : String(error)));
+  }
+  if (uncited === null) failures.push('uncited-statement check NOT_RUN (answer/citations unavailable)');
+  else if (uncited > 0) failures.push(uncited + ' factual statement(s) lack adjacent citations');
+  if (unsupportedNumeric === null) failures.push('numeric grounding check NOT_RUN (answer/citations unavailable)');
+  else if (unsupportedNumeric > 0) failures.push(unsupportedNumeric + ' numeric statement(s) are unsupported by their exact citation ranges');
+  if (citations.length) row.citationSummary = citations.length + ' citation(s); ' + row.citationRanges.filter((range) => range.status === 'PASS').length + '/' + citations.length + ' ranges open';
+  else row.citationSummary = '0 citations';
+  const factChecks = checkAnswer(qid, answer);
+  factChecks.push({ name: 'citation byte ranges', status: row.citationRanges.length > 0 && row.citationRanges.every((range) => range.status === 'PASS') ? 'PASS' : 'FAIL', detail: row.citationSummary });
+  factChecks.push({ name: 'uncited factual statements', status: uncited === 0 ? 'PASS' : uncited === null ? 'NOT_RUN' : 'FAIL', detail: uncited === null ? 'Unavailable.' : String(uncited) + ' found.' });
+  factChecks.push({ name: 'numeric citation support', status: unsupportedNumeric === 0 ? 'PASS' : unsupportedNumeric === null ? 'NOT_RUN' : 'FAIL', detail: unsupportedNumeric === null ? 'Unavailable.' : String(unsupportedNumeric) + ' unsupported.' });
+  for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) {
+    factChecks.push({ name: field, status: typeof turn?.[field] === 'number' && Number.isFinite(turn[field]) ? 'PASS' : 'FAIL', detail: String(turn?.[field] ?? 'UNKNOWN') });
+  }
+  row.factChecks = factChecks;
+  for (const check of factChecks) if (check.status === 'FAIL') failures.push(check.name + ' failed');
+  row.hardFailures = [...failures];
+  row.ownerReview = ['O1', 'O2', 'O3', 'O8'].includes(qid) ? 'OWNER_REQUIRED' : 'NOT_A_SEMANTIC_AUTO_GATE';
+  row.source = source;
+  if (!failures.length && row.ownerReview === 'OWNER_REQUIRED') row.status = 'OWNER_REVIEW_REQUIRED';
+  else if (!failures.length) row.status = 'MECHANICAL_PASS';
+  else if (turn?.state === 'partial') row.status = 'PARTIAL';
+  else if (turn?.state === 'failed') row.status = 'FAILED';
+  else row.status = 'QUALITY_FAIL';
+  if (storedDiagnostic && row.routeStatus !== 'GLOBAL_DEFAULT') row.status = 'NON_DEFAULT_DIAGNOSTIC_' + row.status;
+  return row;
+}
 {
   const s0 = scoped[0] || sources.find((source) => source.currentRevisionId && ['readable', 'readable_with_warnings'].includes(source.readableState));
   assert(s0, 'A readable K1 source is required for the native reader check.');
@@ -487,35 +790,13 @@ function actualProviderCostUsd(turn) {
   const v = turn && turn.providerUsage ? turn.providerUsage.costUsd : null;
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 }
-function reusableCandidate(qid, turns, used) {
-  for (const t of turns) {
-    if (!t || typeof t.turnId !== 'string' || used.has(t.turnId) || t.state !== 'completed') continue;
-    if (evalModel !== null && t.model !== evalModel) continue;
-    if (!Array.isArray(t.citations) || t.citations.length < 1 || t.invalidLabels !== 0) continue;
-    if (typeof t.answer !== 'string') continue;
-    if (t.question !== Q.get(qid)) continue;
-    if (t.scopeMode !== 'explicit') continue;
-    if (t.contextMode !== 'whole') continue;
-    if (!Array.isArray(t.sourceIds) || t.sourceIds.length !== sourceIds.length || !sourceIds.every((id) => t.sourceIds.includes(id))) continue;
-    if (!Array.isArray(t.revisionIds) || t.revisionIds.length !== scoped.length || !scoped.every((s) => t.revisionIds.includes(s.currentRevisionId))) continue;
-    if (!t.citations.every((c) => c && revSet.has(c.revisionId))) continue;
-    if (uncitedStatements(t.answer, t.citations) > 0) continue;
-    return t;
-  }
-  return null;
-}
-if (evalModel !== null && runModel && !storedOnly) {
-  const selected = await apiJson('/api/models?selected=' + encodeURIComponent(evalModel));
-  assert.equal(selected.status, 200, 'GET /api/models?selected must be 200 for ELIOT_EVAL_MODEL.');
-  const entry = (selected.body.models || []).find((m) => m && m.route === evalModel);
-  assert(entry, 'ELIOT_EVAL_MODEL must match one live catalogue route; no alias fallback.');
-  assert(typeof entry.id === 'string' && entry.id.trim().length > 0, 'Selected catalogue entry must carry a native ID.');
-  assert(entry.enabled === true, 'Selected model must be enabled for ELIOT_EVAL_MODEL; no fallback or connection write.');
-  assert(Number.isSafeInteger(entry.contextTokens) && entry.contextTokens > 0, 'Selected model context must be usable (unknown context is not admitted).');
-  for (const field of ['inputMicrousdPerMillion', 'outputMicrousdPerMillion']) {
-    const price = entry[field];
-    assert(typeof price === 'number' && Number.isFinite(price) && price >= 0, 'Selected model ' + field + ' must be known (unknown cached pricing is allowed).');
-  }
+function dispatchUnavailable(status, body, turn) {
+  const error = body?.error ?? body?.turn?.error ?? turn?.error ?? null;
+  const code = String(error?.code ?? body?.code ?? '').toLowerCase();
+  const message = String(error?.message ?? error ?? body?.message ?? '');
+  return [401, 402, 403, 408, 429, 500, 502, 503, 504].includes(status)
+    || ['auth', 'unauthorized', 'forbidden', 'budget', 'unavailable', 'busy', 'rate_limited'].includes(code)
+    || /credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|provider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|gateway.{0,24}(?:unavailable|error|failed)/i.test(message);
 }
 if (!runModel && !storedOnly) {
   const h1 = await getChat('re-read');
@@ -527,168 +808,184 @@ if (!runModel && !storedOnly) {
   process.exit(0);
 }
 if (storedOnly) {
-  assert(resumeChat, '--stored-only requires ELIOT_EVAL_CHAT set to an existing completed chat id; this mode never creates chats or submits turns (zero model calls by construction).');
-  const sRows = [];
-  let sFailed = 0;
   const sUsed = new Set();
-  const sCompleted = new Set();
-  const revOwner = new Map(scoped.filter((s) => s && typeof s.currentRevisionId === 'string').map((s) => [s.currentRevisionId, s.id]));
-  let sActualKnownUsd = 0, sActualKnownCount = 0, sActualUnknown = 0;
+  let storedFailures = 0;
+  let ownerRequired = false;
+  let stopReason = null;
   for (const qid of order) {
-    const turn = reusableCandidate(qid, h0.turns, sUsed);
+    const turn = exactStoredTurn(qid, h0.turns, sUsed);
     if (!turn) {
-      sFailed++;
-      sRows.push('| ' + qid + ' | NOT_REVALIDATED | - | - | - | - | - | - | - | - |');
+      storedFailures++;
+      markQuestionNotRun(qid, 'No stored turn has this exact question and exact frozen ten-source revision set.', 'NOT_REVALIDATED');
       continue;
     }
     sUsed.add(turn.turnId);
-    assert(typeof turn.answer === 'string', qid + ': stored turn.answer must be a string.');
-    assert(Array.isArray(turn.citations) && turn.citations.length >= 1, qid + ': stored completed answer needs >=1 citation.');
-    assert(typeof turn.invalidLabels === 'number' && turn.invalidLabels === 0, qid + ': stored invalidLabels must be 0.');
-    const citationQuotes = new Map();
-    for (const c of turn.citations) {
-      assert(c && typeof c.revisionId === 'string', qid + ': citation needs full revisionId.');
-      assert(typeof c.sourceId === 'string', qid + ': citation needs sourceId.');
-      assert(typeof c.block === 'number', qid + ': citation needs numeric block.');
-      assert(typeof c.start === 'number' && typeof c.end === 'number', qid + ': citation needs numeric start/end.');
-      assert(Array.isArray(turn.revisionIds) && turn.revisionIds.includes(c.revisionId), qid + ': citation revisionId must belong to the turn frozen scope.');
-      assert(revOwner.get(c.revisionId) === c.sourceId, qid + ': citation sourceId must be the scoped source owning the cited revision.');
-      if (Array.isArray(turn.sourceIds)) assert(turn.sourceIds.includes(c.sourceId), qid + ': citation sourceId must belong to the turn frozen source scope.');
-      citationQuotes.set(c.label, await checkRange(c.revisionId, c.start, c.end));
+    let row;
+    try { row = await inspectTurn(qid, turn, 'stored-only', null, benchmarkModel, true); }
+    catch (error) {
+      row = { qid, answer: typeof turn.answer === 'string' ? turn.answer : null, model: turn.model ?? null,
+        turnState: turn.state ?? 'UNKNOWN', routeStatus: turn.model === benchmarkModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
+        status: 'QUALITY_FAIL', reason: error instanceof Error ? error.message : String(error), factChecks: [], hardFailures: [], citationRanges: [],
+        citationSummary: 'CHECK_FAILED', timing: { firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: null },
+        usage: { inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null,
+          estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, actualProviderCostUsd: actualProviderCostUsd(turn) } };
     }
-    const sActual = actualProviderCostUsd(turn);
-    if (sActual === null) sActualUnknown++; else { sActualKnownUsd += sActual; sActualKnownCount++; }
-    const unsupportedNumeric = unsupportedNumericStatements(turn.answer, turn.citations, citationQuotes);
-    if (unsupportedNumeric > 0) {
-      sFailed++;
-      sRows.push('| ' + qid + ' | numeric-rejected(' + unsupportedNumeric + ') | ' + turn.citations.length + ' | 0 | '
-        + turn.inputTokens + '/' + turn.cachedTokens + '/' + turn.outputTokens + ' | ' + turn.estimatedCostMicrousd + ' | '
-        + (sActual === null ? 'UNKNOWN' : sActual) + ' | ' + turn.firstTokenMs + ' | ' + turn.totalMs + ' | stored |');
-      continue;
-    }
-    const doc = { chatId, qid, turnId: turn.turnId, reused: true, src: 'stored', question: Q.get(qid), answer: turn.answer ?? null, state: turn.state, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, actualProviderCostUsd: sActual, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: null };
-    await writeFile(outDir + '/k2-stored-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
-    checkAnswer(qid, turn.answer);
-    sCompleted.add(qid);
-    for (const k of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) assert(typeof turn[k] === 'number', qid + ': stored turn.' + k + ' must be a number.');
-    assert(turn.totalMs <= 90000, qid + ': catastrophic ceiling 90s exceeded.');
-    sRows.push('| ' + qid + ' | stored-completed | ' + turn.citations.length + ' | 0 | ' + turn.inputTokens + '/' + turn.cachedTokens + '/' + turn.outputTokens + ' | ' + turn.estimatedCostMicrousd + ' | ' + (sActual === null ? 'UNKNOWN' : sActual) + ' | ' + turn.firstTokenMs + ' | ' + turn.totalMs + ' | stored |');
+    compareRows.set(qid, row);
+    if (row.status === 'OWNER_REVIEW_REQUIRED') ownerRequired = true;
+    else if (row.status !== 'MECHANICAL_PASS') storedFailures++;
   }
-  const hF = await getChat('stored-final');
-  const ownerGate = 'O1/O2/O3/O8 owner-quality gate: NOT_ACCEPTED (OWNER_REQUIRED) — the script never auto-passes human gates; retained historical references below, owner judgment required.';
-  const defects = [
-    'Retained historical reference (older Flash run, not observed here): O2 stored answer unsupported Chinese fragment "下游" (model-introduced; cited English ranges say "transferred"). Terminology defect.',
-    'Retained historical reference (older Flash run, not observed here): O2 stored answer "растёт быстрее, чем модель" growth-rate phrasing has no same-range source basis. Inference defect.',
-    'Retained historical reference (older Flash run, not observed here): O2 stored answer chain-of-thought scale-emergence result absent although the eval expects it (CoT/S4 uncited). Coverage defect.',
-    'Retained historical reference (separate chat recheck-O2.json, not observed here): LoRA "0,01% (4,7 млн вместо 175 млрд)" pairing is arithmetically inconsistent (0.01% of 175B = 17.5M); [S10:42] cites setup text, not the quoted demonstration sentence (sibling labels cover the claims).'
-  ];
-  const sKnownActualText = sActualKnownCount > 0 ? String(sActualKnownUsd) : 'UNKNOWN';
-  const md = ['# K2 Ask eval — stored-only revalidation (zero model calls)', '', '- project: ' + title + ' (10 arxiv explicit scope, exact frozen scope enforced per turn)', '- chat: ' + chatId + ' (stored-only; ELIOT_EVAL_CHAT, never created or submitted)', '- mode: whole revalidation from storage only; estimated/reserved new-turn delta is 0 micro-USD (NOT actual provider spend)', '- monthly before/after: ' + m0 + '/' + hF.monthlyUsedMicrousd + ' micro-USD (must be equal)', '- configured budget, never written or raised: ' + hF.monthlyBudgetMicrousd, '- actual known provider cost (providerUsage.costUsd only; token-rate math is never actual): ' + sKnownActualText + ' USD across ' + sActualKnownCount + ' turn(s); unknown actual ' + sActualUnknown + ' (unknown is never zero)', '- Numeric-rejected completed answers fail whole-answer citation integrity and do not count as a Beam quality pass.', '- ' + ownerGate, '- retained historical reference, not observed here (mechanical PASS does not clear these):'].concat(defects.map((d) => '  - ' + d)).concat(['', '| q | state | cites | invalid | in/cached/out | est_uUSD | actual_usd | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|---|']).concat(sRows).concat(['']).join(EOL);
-  await writeFile(outDir + '/k2-stored-only-' + Date.now() + '.md', md);
-  console.log(md);
-  assert.equal(hF.turns.length, h0.turns.length, 'Stored-only run must not add turns (zero submissions).');
-  assert.equal(hF.monthlyUsedMicrousd, m0, 'Stored-only run must not change monthly usage (zero new model calls).');
-  assert.equal(sFailed, 0, sFailed + ' question(s) have no accepted exact-question/exact-frozen-scope stored turn (missing, incomplete, or numerically unsupported); this mode never submits turns.');
-  assert(order.every((q) => sCompleted.has(q)), 'All 12 questions must revalidate from storage.');
+  let finalChat = null;
+  try { finalChat = await getChat('stored-final'); }
+  catch (error) { stopReason = 'Final storage-only chat/usage read failed: ' + (error instanceof Error ? error.message : String(error)); }
+  if (!finalChat) storedFailures++;
+  else {
+    if (finalChat.turns.length !== h0.turns.length) { storedFailures++; stopReason = 'Stored-only revalidation changed the chat turn count.'; }
+    if (finalChat.monthlyUsedMicrousd !== m0) { storedFailures++; stopReason = 'Stored-only revalidation changed monthly usage.'; }
+  }
+  const status = storedFailures > 0 ? 'FAIL' : ownerRequired ? 'OWNER_REQUIRED' : 'MECHANICAL_PASS';
+  await writeCompare(compareRows, { mode: 'stored-only diagnostic; zero model calls/POSTs; recorded turn route shown per row',
+    defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId, status, stopReason,
+    monthlyBefore: m0, monthlyAfter: finalChat?.monthlyUsedMicrousd ?? 'UNKNOWN',
+    turnCountBefore: h0.turns.length, turnCountAfter: finalChat?.turns.length ?? 'UNKNOWN' });
+  if (storedFailures > 0) process.exit(1);
+  if (ownerRequired) process.exit(2);
   process.exit(0);
 }
-const rows = [];
 const firstMs = [], totalMs = [];
-let newCostMicro = 0, reportedMicro = 0, failed = 0, manual = 0, newCount = 0;
-let unknownCosts = 0, unknownNewCosts = 0;
+let newCostMicro = 0, reportedMicro = 0, unknownCosts = 0, unknownNewCosts = 0;
 let actualKnownUsd = 0, actualKnownCount = 0, actualUnknown = 0, actualUnknownNew = 0;
-const completedQuestions = new Set();
+let newCount = 0, hardFailures = 0, ownerRequired = false, manual = 0;
+let dispatchStopped = false, stopReason = null;
 const used = new Set();
 for (const qid of order) {
-  let turn = null, src = 'new', wall = null;
+  if (dispatchStopped) {
+    hardFailures++;
+    markQuestionNotRun(qid, 'Dispatch stopped after provider/auth/budget unavailability: ' + (stopReason || 'unknown cause'), 'NOT_RUN');
+    continue;
+  }
+  let turn = null, src = 'new', wall = null, requestTurnId = null;
   if (resumeChat) {
-    const cand = reusableCandidate(qid, h0.turns, used);
-    if (cand) { turn = cand; src = 'reused'; used.add(cand.turnId); }
-    else if (h0.turns.some((t) => t && t.question === Q.get(qid))) { rows.push('| ' + qid + ' | PENDING_MANUAL | - | - | - | - | - | - | - | - |'); manual++; continue; }
+    const candidate = exactStoredTurn(qid, h0.turns, used);
+    if (candidate) { turn = candidate; src = 'reused'; used.add(candidate.turnId); }
+    else if (h0.turns.some((existing) => existing && existing.question === Q.get(qid))) {
+      hardFailures++; manual++;
+      markQuestionNotRun(qid, 'A same-question turn already exists but does not match the exact source scope; no repeat was sent.', 'PENDING_MANUAL');
+      continue;
+    }
   }
   if (!turn) {
-    const turnId = randomUUID();
-    const t0 = Date.now();
-    const r = await apiJson(chatPath + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(90000), body: JSON.stringify({ turnId, question: Q.get(qid), scopeMode: 'explicit', sourceIds, ...(evalModel !== null ? { model: evalModel } : {}) }) });
-    wall = Date.now() - t0;
-    assert(r.status === 200 || r.status === 201, 'POST turns?wait=1 must be 200/201 for ' + qid + '.');
-    assert(r.body && typeof r.body.turn === 'object', 'POST turns?wait=1 must return {turn} for ' + qid + '.');
-    turn = r.body.turn;
-    assert.equal(turn.turnId, turnId, qid + ': turn.turnId must echo the request turnId.');
-    if (evalModel !== null) assert.equal(turn.model, evalModel, qid + ': stored turn.model must equal ELIOT_EVAL_MODEL; no cross-model mixing.');
+    requestTurnId = randomUUID();
+    const started = Date.now();
+    let response = null, requestError = null;
+    try {
+      response = await apiJson(chatPath + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(90000), body: JSON.stringify({ turnId: requestTurnId, question: Q.get(qid),
+          scopeMode: 'explicit', sourceIds, model: benchmarkModel }) });
+    } catch (error) { requestError = error instanceof Error ? error.message : String(error); }
+    wall = Date.now() - started;
+    if (requestError) {
+      const reason = 'Turn dispatch outcome unknown; no retry: ' + requestError;
+      compareRows.set(qid, { qid, answer: null, model: benchmarkModel, turnState: 'DISPATCH_UNKNOWN', routeStatus: 'GLOBAL_DEFAULT',
+        status: 'DISPATCH_UNAVAILABLE', reason, factChecks: [{ name: 'dispatch', status: 'FAIL', detail: reason }], hardFailures: [reason],
+        citationRanges: [], citationSummary: 'NOT_RUN', timing: { firstTokenMs: null, totalMs: null, wallMs: wall },
+        usage: { inputTokens: null, cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, actualProviderCostUsd: null } });
+      hardFailures++; dispatchStopped = true; stopReason = reason;
+      continue;
+    }
+    const responseTurn = response?.body?.turn;
+    const responseTurnValid = !!responseTurn && typeof responseTurn === 'object' && !Array.isArray(responseTurn);
+    if (!response || (response.status !== 200 && response.status !== 201) || !response.body || !responseTurnValid) {
+      const status = response?.status ?? 'unread';
+      const errorText = String(response?.body?.error?.message ?? response?.body?.message ?? 'response did not include the owning turn');
+      const reason = 'POST turn failed with status ' + status + ': ' + errorText + '; no retry.';
+      const stop = dispatchUnavailable(response?.status ?? 0, response?.body, null) || !response || !response.body || !responseTurnValid;
+      compareRows.set(qid, { qid, answer: null, model: benchmarkModel, turnState: 'DISPATCH_FAILED', routeStatus: 'GLOBAL_DEFAULT',
+        status: stop ? 'DISPATCH_UNAVAILABLE' : 'DISPATCH_FAILED', reason, factChecks: [{ name: 'dispatch', status: 'FAIL', detail: reason }], hardFailures: [reason],
+        citationRanges: [], citationSummary: 'NOT_RUN', timing: { firstTokenMs: null, totalMs: null, wallMs: wall },
+        usage: { inputTokens: null, cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, actualProviderCostUsd: null } });
+      hardFailures++;
+      if (stop) { dispatchStopped = true; stopReason = reason; }
+      continue;
+    }
+    turn = responseTurn;
     newCount++;
-  } else {
-    assert(typeof turn.turnId === 'string' && turn.turnId.length > 0, qid + ': reused turn.turnId required.');
-    if (evalModel !== null) assert.equal(turn.model, evalModel, qid + ': reused turn.model must equal ELIOT_EVAL_MODEL; no cross-model mixing.');
   }
-  assert(typeof turn.answer === 'string', qid + ': turn.answer must be a string.');
+  let persistenceError = null;
+  if (src === 'new') {
+    try { await saveTurn(qid, turn, { src, wall, question: Q.get(qid) }); }
+    catch (error) { persistenceError = error instanceof Error ? error.message : String(error); }
+  }
+  let row;
+  try { row = await inspectTurn(qid, turn, src, wall, benchmarkModel, false); }
+  catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    row = { qid, answer: typeof turn?.answer === 'string' ? turn.answer : null, model: turn?.model ?? null,
+      turnState: turn?.state ?? 'UNKNOWN', routeStatus: turn?.model === benchmarkModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
+      status: 'QUALITY_FAIL', reason, factChecks: [], hardFailures: [reason], citationRanges: [], citationSummary: 'CHECK_FAILED',
+      timing: { firstTokenMs: turn?.firstTokenMs ?? null, totalMs: turn?.totalMs ?? null, wallMs: wall },
+      usage: { inputTokens: turn?.inputTokens ?? null, cachedTokens: turn?.cachedTokens ?? null, outputTokens: turn?.outputTokens ?? null,
+        estimatedCostMicrousd: turn?.estimatedCostMicrousd ?? null, actualProviderCostUsd: actualProviderCostUsd(turn) } };
+  }
+  if (src === 'new' && turn.turnId !== requestTurnId) {
+    const reason = 'Returned turnId does not match the one submitted; no replacement request was sent.';
+    row.hardFailures = [...(row.hardFailures ?? []), reason];
+    row.status = 'QUALITY_FAIL';
+    dispatchStopped = true; stopReason = reason;
+  }
+  if (persistenceError) {
+    const reason = 'Could not preserve the new raw turn artifact: ' + persistenceError;
+    row.hardFailures = [...(row.hardFailures ?? []), reason];
+    row.status = 'QUALITY_FAIL';
+  }
+  compareRows.set(qid, row);
+  if (row.status === 'OWNER_REVIEW_REQUIRED') ownerRequired = true;
+  else if (row.status !== 'MECHANICAL_PASS') hardFailures++;
   const cost = turn.estimatedCostMicrousd;
-  if (cost === null || cost === undefined) {
-    unknownCosts++;
-    if (src === 'new') unknownNewCosts++;
-  } else {
-    assert(Number.isSafeInteger(cost) && cost >= 0, qid + ': invalid estimated cost.');
+  if (typeof cost === 'number' && Number.isSafeInteger(cost) && cost >= 0) {
     reportedMicro += cost;
     if (src === 'new') newCostMicro += cost;
+  } else {
+    unknownCosts++;
+    if (src === 'new') unknownNewCosts++;
   }
   const actual = actualProviderCostUsd(turn);
-  if (actual === null) {
-    actualUnknown++;
-    if (src === 'new') actualUnknownNew++;
-  } else {
-    actualKnownUsd += actual;
-    actualKnownCount++;
+  if (actual === null) { actualUnknown++; if (src === 'new') actualUnknownNew++; }
+  else { actualKnownUsd += actual; actualKnownCount++; }
+  if (typeof turn.firstTokenMs === 'number') firstMs.push(turn.firstTokenMs);
+  if (typeof turn.totalMs === 'number') totalMs.push(turn.totalMs);
+  if (turn.state === 'running') {
+    dispatchStopped = true;
+    stopReason = 'The turn remained running after the synchronous wait; no additional turn was dispatched.';
+  } else if (dispatchUnavailable(200, null, turn)) {
+    dispatchStopped = true;
+    stopReason = 'The stored turn reports provider/auth/budget unavailability; no further questions were dispatched.';
   }
-  if (turn.state !== 'completed') {
-    await saveTurn(qid, turn, { src, wall, question: Q.get(qid) }); failed++;
-    const metric = (value) => typeof value === 'number' ? value : 'UNKNOWN';
-    rows.push('| ' + qid + ' | ' + turn.state + ' | ' + (Array.isArray(turn.citations) ? turn.citations.length : 'UNKNOWN')
-      + ' | ' + metric(turn.invalidLabels) + ' | ' + metric(turn.inputTokens) + '/' + metric(turn.cachedTokens) + '/' + metric(turn.outputTokens)
-      + ' | ' + metric(cost) + ' | ' + metric(actual) + ' | ' + metric(turn.firstTokenMs) + ' | ' + metric(turn.totalMs) + ' | ' + (wall === null ? '-' : wall) + ' |');
-    break;
-  }
-  assert(Array.isArray(turn.citations) && turn.citations.length >= 1, qid + ': completed answer needs >=1 citation.');
-  assert(typeof turn.invalidLabels === 'number' && turn.invalidLabels === 0, qid + ': invalidLabels must be 0.');
-  const citationQuotes = new Map();
-  for (const c of turn.citations) {
-    assert(c && typeof c.revisionId === 'string', qid + ': citation needs full revisionId.');
-    assert(typeof c.sourceId === 'string', qid + ': citation needs sourceId.');
-    assert(typeof c.block === 'number', qid + ': citation needs numeric block.');
-    assert(typeof c.start === 'number' && typeof c.end === 'number', qid + ': citation needs numeric start/end.');
-    assert(Array.isArray(turn.revisionIds) && turn.revisionIds.includes(c.revisionId), qid + ': citation revisionId must belong to the turn frozen scope.');
-    assert(Array.isArray(turn.sourceIds) && turn.sourceIds.includes(c.sourceId), qid + ': citation sourceId must belong to the turn frozen source scope.');
-    citationQuotes.set(c.label, await checkRange(c.revisionId, c.start, c.end));
-  }
-  assert.equal(unsupportedNumericStatements(turn.answer, turn.citations, citationQuotes), 0,
-    qid + ': completed answer has numeric statements unsupported by their cited source passages.');
-  assert.equal(turn.scopeMode, 'explicit', qid + ': live turn must keep explicit scope (no project-default fallback).');
-  assert.equal(turn.contextMode, 'whole', qid + ': live turn must be whole-reading (no claims/none fallback).');
-  assert(Array.isArray(turn.sourceIds) && turn.sourceIds.length === sourceIds.length && sourceIds.every((id) => turn.sourceIds.includes(id)), qid + ': live turn sourceIds must equal the exact frozen 10-arxiv scope.');
-  assert(Array.isArray(turn.revisionIds) && turn.revisionIds.length === scoped.length && scoped.every((s) => turn.revisionIds.includes(s.currentRevisionId)), qid + ': live turn revisionIds must equal the exact frozen current revisions.');
-  assert(uncitedStatements(turn.answer, turn.citations) === 0, qid + ': completed answer must have no uncited factual statements.');
-  await saveTurn(qid, turn, { src, wall, reused: src === 'reused', question: Q.get(qid) });
-  checkAnswer(qid, turn.answer);
-  completedQuestions.add(qid);
-  for (const k of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) assert(typeof turn[k] === 'number', qid + ': turn.' + k + ' must be a number.');
-  assert(turn.totalMs <= 90000, qid + ': catastrophic ceiling 90s exceeded.');
-  firstMs.push(turn.firstTokenMs); totalMs.push(turn.totalMs);
-  rows.push('| ' + qid + ' | completed(' + src + ') | ' + turn.citations.length + ' | 0 | ' + turn.inputTokens + '/' + turn.cachedTokens + '/' + turn.outputTokens + ' | ' + turn.estimatedCostMicrousd + ' | ' + (actual === null ? 'UNKNOWN' : actual) + ' | ' + turn.firstTokenMs + ' | ' + turn.totalMs + ' | ' + (wall === null ? 'reused' : wall) + ' |');
 }
-const h1 = await getChat('after turns');
-const h2 = await getChat('final re-read');
-const usdNew = newCostMicro / 1e6;
-const knownActualText = actualKnownCount > 0 ? String(actualKnownUsd) : 'UNKNOWN';
-const md = ['# K2 Ask eval', '', '- project: ' + title + ' (10 arxiv explicit scope)', '- chat: ' + chatId + (resumeChat ? ' (resumed, no paid retry)' : ''), '- model override: ' + (evalModel ?? '(none; product default)'), '- mode: whole, one call/turn, no paid retry', '- estimated/reserved cost (NOT actual provider spend): evaluated turns ' + reportedMicro + ' micro-USD; new-turn subtotal ' + newCostMicro + ' micro-USD ($' + usdNew.toFixed(4) + ', configured budget, never written or raised)', '- actual known provider cost (providerUsage.costUsd only; token-rate math is never actual): ' + knownActualText + ' USD across ' + actualKnownCount + ' turn(s); unknown actual ' + actualUnknown + '/' + actualUnknownNew + ' all/new (unknown is never zero)', '- monthly: ' + h1.monthlyUsedMicrousd + '/' + h1.monthlyBudgetMicrousd + ' micro-USD', '- cold first/total: ' + firstMs[0] + '/' + totalMs[0] + ' ms', '- warm first p50/p95: ' + pct(firstMs.slice(1), 0.5) + '/' + pct(firstMs.slice(1), 0.95) + ' ms', '- warm total p50/p95: ' + pct(totalMs.slice(1), 0.5) + '/' + pct(totalMs.slice(1), 0.95) + ' ms', '- O1/O2/O3/O8 quality vs eval/arxiv-10/baseline.md: OWNER_JUDGMENT_REQUIRED (script never auto-passes human gates)', '- Stop/reconnect/Save: NOT_RUN here (root browser journey).', '', '| q | state | cites | invalid | in/cached/out | est_uUSD | actual_usd | first_ms | total_ms | wall_ms |', '|---|---|---|---|---|---|---|---|---|---|'].concat(rows).concat(['']).join(EOL);
-const accounting = EOL + '- observed monthly delta: ' + (h1.monthlyUsedMicrousd - m0)
-  + ' micro-USD (reservation delta, NOT actual provider spend); estimated unknown turns all/new: ' + unknownCosts + '/' + unknownNewCosts
-  + ' (known estimate subtotals are incomplete if an unknown count is nonzero)' + EOL;
-await writeFile(outDir + '/k2-' + Date.now() + '.md', md + accounting);
-console.log(md + accounting);
-assert.equal(failed, 0, failed + ' paid turn(s) did not complete; no retry by design. Operator must create any manual new turn separately.');
-assert.equal(manual, 0, manual + ' question(s) PENDING_MANUAL: a same-question turn exists without an exact reusable completion; no auto re-request. Operator must create any manual new turn separately.');
-assert(order.every((q) => completedQuestions.has(q)), 'All 12 questions must complete.');
-assert.equal(h1.turns.length, h0.turns.length + newCount, 'History must hold exactly the pre-existing plus new turns.');
-assert.equal(unknownNewCosts, 0, 'New-turn cost is incomplete; UNKNOWN must not count as free.');
-assert.equal(h1.monthlyUsedMicrousd - m0, newCostMicro, 'Monthly usage delta must equal new-turn cost only (reused turns cost nothing new).');
-assert(h1.monthlyUsedMicrousd <= h1.monthlyBudgetMicrousd, 'Monthly budget exceeded: ' + h1.monthlyUsedMicrousd + ' > ' + h1.monthlyBudgetMicrousd);
-assert.equal(h2.monthlyUsedMicrousd, h1.monthlyUsedMicrousd, 'Pure history re-read must not change usage.');
+for (const qid of order) if (!compareRows.has(qid)) { hardFailures++; markQuestionNotRun(qid, 'No diagnostic row was produced.', 'NOT_RUN'); }
+let finalChat = null, finalReadError = null;
+try {
+  finalChat = await getChat('after turns');
+  const reread = await getChat('final re-read');
+  if (reread.monthlyUsedMicrousd !== finalChat.monthlyUsedMicrousd) {
+    hardFailures++; finalReadError = 'Monthly usage changed between final storage reads.';
+  }
+} catch (error) { hardFailures++; finalReadError = error instanceof Error ? error.message : String(error); }
+if (!finalChat) stopReason = 'Final storage/usage re-read failed: ' + (finalReadError || 'unknown error');
+else {
+  if (finalChat.turns.length !== h0.turns.length + newCount) { hardFailures++; finalReadError = 'Chat turn count does not match the pre-existing turns plus exactly one request per new question.'; }
+  if (unknownNewCosts > 0) { hardFailures++; finalReadError = 'At least one new turn has unknown estimated cost; UNKNOWN is not treated as free.'; }
+  if (finalChat.monthlyUsedMicrousd - m0 !== newCostMicro && unknownNewCosts === 0) { hardFailures++; finalReadError = 'Monthly usage delta differs from the estimates for new turns.'; }
+  if (finalChat.monthlyUsedMicrousd > finalChat.monthlyBudgetMicrousd) { hardFailures++; finalReadError = 'Monthly model budget is exceeded.'; }
+  if (finalReadError) stopReason = [stopReason, finalReadError].filter(Boolean).join(' ');
+}
+const status = hardFailures > 0 ? 'FAIL' : ownerRequired ? 'OWNER_REQUIRED' : 'MECHANICAL_PASS';
+await writeCompare(compareRows, { mode: 'default-model benchmark; frozen global route; one request per unanswered question; no retry',
+  defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId, status, stopReason,
+  monthlyBefore: m0, monthlyAfter: finalChat?.monthlyUsedMicrousd ?? 'UNKNOWN',
+  turnCountBefore: h0.turns.length, turnCountAfter: finalChat?.turns.length ?? 'UNKNOWN',
+  estimatedNewMicroUsd: newCostMicro, reportedMicroUsd: reportedMicro,
+  actualProviderUsd: actualKnownCount ? actualKnownUsd : 'UNKNOWN', actualUnknownCount: actualUnknown,
+  firstTokenP50P95: [pct(firstMs, 0.5), pct(firstMs, 0.95)], totalP50P95: [pct(totalMs, 0.5), pct(totalMs, 0.95)] });
+if (hardFailures > 0) process.exit(1);
+if (ownerRequired) process.exit(2);
+process.exit(0);

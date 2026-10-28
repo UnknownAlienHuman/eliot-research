@@ -17,6 +17,17 @@ export function sliceUtf8(text: string, start: number, end: number): string {
   return decoder.decode(bytes.subarray(start, end));
 }
 
+export function isCitableBlock(block: Block, passage: string): boolean {
+  const trimmed = passage.trim().replace(/^\uFEFF/u, "").trim();
+  if (!trimmed) return false;
+  const content = block.type === "code" ? trimmed : trimmed
+    .replace(/^ {0,3}#{1,6}(?:[ \t]+|$)/u, "")
+    .replace(/[ \t]+#{1,6}[ \t]*$/u, "")
+    .trim();
+  if (!content) return false;
+  return !/^(?:page|страница)\s+\d+$/iu.test(content);
+}
+
 interface Line { body: string; start: number; end: number; charStart: number; charEnd: number }
 function* lines(text: string): Generator<Line> {
   let charStart = 0, start = 0;

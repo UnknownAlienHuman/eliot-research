@@ -9,10 +9,11 @@ import { addSource, attachSource, createProject, getProject, getSource, LibraryE
 import { readOriginal, readOutline, readText } from "./read";
 import { captureUrl, UrlGuardError } from "./url-guard";
 import { monthlyUsage } from "./cost";
-import { availableModels, getModelConnection, requireCatalogModel, validGatewayId } from "./models";
+import { getModelConnection, readModelCatalog, refreshModelCatalog, requireCatalogModel, validGatewayId } from "./models";
 import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
 import { getOverview, getUnderstanding } from "./understanding";
+import { safeErrorLogProjection } from "./model-transport";
 
 export { IngestWorkflow } from "./workflows/ingest";
 export { ChatAgent } from "./chat";
@@ -54,9 +55,14 @@ async function chatRecord(env: Env, projectId: string, chatId: string) {
   return chat;
 }
 app.get("/api/models", async (c) => {
-  const warnings: string[] = [];
-  const models = await availableModels(c.env, z.string().max(1100).optional().parse(c.req.query("selected")), (warning) => warnings.push(warning));
-  return c.json({ models, warnings, defaultModel: (await c.env.DB.prepare("SELECT answer_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model });
+  const catalog = await readModelCatalog(c.env);
+  return c.json({ ...catalog, defaultModel: (await c.env.DB.prepare("SELECT answer_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model });
+});
+app.post("/api/models/refresh", async (c) => {
+  if (c.get("actor").type !== "owner") throw new AuthError("invalid", "Only the owner may refresh the model catalogue.");
+  const input = z.object({ selectedRoutes: z.array(z.string().min(1).max(1100)).max(20).optional() }).strict().parse(await c.req.json());
+  const catalog = await refreshModelCatalog(c.env, input.selectedRoutes);
+  return c.json({ ...catalog, defaultModel: (await c.env.DB.prepare("SELECT answer_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model });
 });
 app.get("/api/models/connection", async (c) => c.json({ connection: await getModelConnection(c.env) }));
 app.put("/api/models/connection", async (c) => {
@@ -206,7 +212,7 @@ app.onError((error, c) => {
   if (error instanceof AuthError) {
     return c.json({ error: { code: error.code, message: error.message } } satisfies ApiError, error.status);
   }
-  console.error("Request failed", error);
+  console.error("Request failed", safeErrorLogProjection(error));
   return c.json({ error: { code: "unavailable", message: "Eliot could not complete this request. Try again." } } satisfies ApiError, 503);
 });
 

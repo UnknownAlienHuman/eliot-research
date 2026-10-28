@@ -12,13 +12,11 @@
 .er-models__checktext { display: grid; gap: var(--eliot-space-tight); font-size: var(--eliot-type-body-medium-size); line-height: var(--eliot-type-body-medium-line-height); color: var(--md-sys-color-on-surface); }
 .er-models__details { display: grid; gap: var(--eliot-space-block-control); min-width: 0; }
 .er-models__details summary { display: flex; align-items: center; min-height: var(--eliot-size-control); cursor: pointer; color: var(--md-sys-color-on-surface-variant); font-weight: var(--eliot-type-font-weight-medium); }
+.er-models__warnings { display: grid; gap: var(--eliot-space-tight); margin: 0; padding-inline-start: var(--eliot-space-group); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
 .er-models__actions { display: flex; flex-wrap: wrap; gap: var(--eliot-space-block-control); align-items: center; min-height: var(--eliot-size-control); }
 .er-models--compact { display: grid; gap: var(--eliot-space-block-control); }
 .er-models__chip { padding: var(--eliot-space-hairline) var(--eliot-space-block-control); border-radius: var(--eliot-shape-full); background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); font-size: var(--eliot-type-label-medium-size); line-height: var(--eliot-type-label-medium-line-height); font-weight: var(--eliot-type-font-weight-medium); white-space: nowrap; }
 .er-models__chip[data-status='uncertain'] { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
-@media (min-width: 40rem) {
-  .er-models__row { grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr); gap: var(--eliot-space-gutter) var(--eliot-space-panel); align-items: start; }
-}
 @media (forced-colors: active) {
   .er-models__card, .er-models__chip { border: var(--eliot-divider-width) solid CanvasText; }
 }

@@ -13,7 +13,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit --pretty false",
     "lint": "eslint src vite.config.ts",
-    "test": "vitest run --config vitest.k0.config.ts",
+    "test": "vitest run --config vitest.k0.config.ts && node --test scripts/eval/origin.test.mjs",
     "eval": "node scripts/eval/run.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "cf:types": "wrangler types src/worker-configuration.d.ts --include-runtime false --strict-vars false",

@@ -30,31 +30,13 @@ actually occurred. Product tests remain the contour evals.
 Code budgets count new non-test lines under `src/`, excluding UI moved without semantic changes. They are ceilings, not
 quotas.
 
-## Current state — 2026-10-26
+## Current state
 
-- K0 implementation uses `src/index.ts` (Hono), `src/auth.ts` (Access) and the moved Material shell in `src/web/`.
-  `/api/me`, Projects/Settings navigation and System/Light/Dark appearance work locally. All assets pass through auth.
-- Local acceptance includes 84 focused auth/contrast/block/URL cases and the real Worker/browser eval. K0
-  covers 1440/390 px, both themes, explicit appearance persistence, navigation and Cyrillic fonts. Model/search calls: 0.
-- Owner chose to keep the existing `eliotr-core.kleymor-metal.workers.dev` address for now. Its hostname Access app
-  remains in place; this change does not deploy over that legacy Worker. New-domain setup and live browser/service-token
-  acceptance are **not run**, so full deployed K0 acceptance remains open. `scripts/setup.sh` records later custom-domain
-  setup; it defaults to an offline plan.
-- K1 implements projects, shared Library membership, one-file uploads, pasted text/static URLs, immutable replacement
-  revisions, outline, original download and exact UTF-8 ranges. D1/R2/IngestWorkflow run locally; Workers AI `toMarkdown`
-  was exercised against the real service. AI Search and later-contour bindings remain absent.
-- K1 duplicate text/URL forms now retain the 409 source identity and offer explicit Attach existing, delivered to
-  `main` in `d84e8b51`. Both browser scenarios passed on the independent K1 checkout; exact revisions were reused.
-  Lint/typecheck, 84 tests, build and both GitHub CI workflows passed on that commit. No deployment was performed.
-- The protected-response header correction is delivered in `ca440557`: HTML/assets and source downloads now receive
-  private/no-store and framing protection after response construction. K0/K1 real local evals and fast-ci passed on
-  that exact commit; WebSocket read-only upgrades were checked separately in the K2/K3 WIP. No deployment was performed.
-- K2 is implemented locally with an Agents SDK chat, frozen whole-source scope, one structured streaming model call,
-  exact citations, Stop/reconnect, model settings and storage-only Save. Its automatic corpus gates passed; the
-  fresh NotebookLM comparison found answer-quality defects, so K2 quality acceptance and merge remain open.
+- K0 keeps the accepted Material shell with hostname Access auth: `/api/me`, Projects/Settings navigation and System/Light/Dark appearance verified locally on 1440/390 px with Cyrillic fonts, and all assets pass through auth. Live Access and deployed acceptance are not claimed.
+- K1 implements projects, the shared Library with immutable revisions, and exact UTF-8 reading (outline, whole text, ranges, original download). Exact text/URL duplicates return 409 with explicit Attach existing, reusing the stored revision with no silent merge. Conversion stays on the current path: native text locally, Workers AI `toMarkdown` where a document format requires it. AI Search and later-contour bindings remain absent.
+- K2 has a local Markdown chat path with frozen source scope, server-resolved citations, Stop/reconnect and storage-only Save, plus the R2 model snapshot with the owner-only refresh route. K2 and K3 are not fully accepted; their remaining quality and claim-mode gates stay open in their contour sections below.
+- The existing `eliotr-core.kleymor-metal.workers.dev` address is retained per owner decision; the replacement is not deployed over it.
 - Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
-- The accepted Material tokens, local fonts, primitives and frame are adapted from the pinned legacy UI; future features
-  remain in `packages/ui/src/**` and `apps/eliotr-web/src/app/Shell.tsx` until their contour.
 - PR #417 is the authoritative replacement-documentation history and supersedes the stacked plan in PR #416.
 
 ## Contour overview
@@ -166,65 +148,24 @@ stop/reconnect, reopen chat and save an answer as a page.
 **Build**
 
 1. Apply `migrations/0002_ask.sql`; add one `ChatAgent` Durable Object per chat and `/agents/*` routing.
-2. Discover provider API catalogues with an explicit native Flash fallback; separate valid selection from admission
-   requiring known context/input/output prices, using full input rate for unknown cache price and fixed job metadata.
+2. Read provider catalogues from the R2 snapshot. Owner-only `POST /api/models/refresh` performs provider discovery
+   and pricing, with optional `selectedRoutes`; a partial provider failure preserves that provider's prior slice and
+   returns a warning. If no snapshot exists, use the native Flash fallback. Paid admission remains separate and
+   requires known context and input/output prices; estimate unknown cached input at the full input rate.
 3. Build whole-reading context from the frozen readable revisions. When it does not fit, return a clear narrow-scope
    response; claim/search modes arrive later.
 4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.
-5. Use one `runTurn` for WebSocket and eval RPC; persist turn before the model call, stream, resolve labels, store
-   citations/tokens/timings/cost and never auto-continue a paid failed stream.
+5. Use one `runTurn` for WebSocket and eval RPC; persist the turn before the model call, stream once, resolve labels,
+   store citations/usage/timing/cost and never auto-continue a paid failed stream.
 6. Add chat/page APIs, the shared legacy Material catalogue picker, saved answers and the moved chat/evidence UI.
-7. Add label/context/cost tests and `pnpm eval k2`.
+7. Add label/context/cost cases and `pnpm eval k2`.
 
-The model-choice slice uses Cloudflare, Command Code and OpenRouter discovery with independent provider warnings and
-the existing Material picker. Selected-only official HTML pricing requires exact provider/native-ID and currency/unit
-matches; the corrected generic parser's selected Beam GET verified zero rates, while mismatches remain UNKNOWN.
-Browser discovery/selection PASS covers 596 models, 1440/390 px, row 463 and both late-response races; actual project
-PATCH/GET preserved the canonical choice without changing defaults/Gateway. The first legacy-path CC attempt failed
-HTTP 502 and remains retained. A separate provider-native Beam caller smoke completed in 3,843 ms with 415/0/134
-tokens and zero estimated cost; its one-turn manifest cannot redispatch. This **CALLER_SMOKE_PASS** does not close
-K2/K3 quality or deployment gates; 0006's 75-case SQL proof is a separate config result.
-The subsequent Beam corpus run passed C1, then stopped at C2 HTTP 400 without retry. The former fabricated history
-marker is withdrawn in favour of private durable capture and unchanged replay of actual assistant protocol fields;
-legacy missing state requires a new chat before any call. Capability-selected text streaming was checked separately:
-new C2/C3 turns completed under the former workaround, while C4 stayed partial
-because it supplied no citations. Failed/interrupted turns remain retained; O1–O8 on Beam and owner acceptance stay open.
-The retained local Muse run completed C1–C4 with valid labels, but O1/O2 stopped at `length` and remained partial.
-An immutable build of published `main` then failed O3 with unknown usage, retaining its 106,496 micro-USD reservation.
-No failed turn was auto-retried; complete K2 quality, remaining open questions and owner acceptance are unqualified.
-The 2026-10-27 local protocol correction passes the full local check (266 tests), including SQLite reload/replay and
-uncited-answer regressions. A stored-only revalidation under the current coverage gate qualifies C1/C2 only;
-C3/C4 and O1–O8 remain NOT_REVALIDATED. It made no model calls and does not qualify live provider or owner acceptance.
-The separate real Beam C1 protocol attempt returned external HTTP 503 in 1,440 ms. One request was dispatched; no
-retry or second turn followed. Token usage is unknown, estimate zero; no private wire was captured. Failed-state
-persistence after an actual restart passed; that failed attempt did not exercise successful reasoning replay.
-Full K2 quality remains open.
-The later SDK raw-chunk slice replaces the custom SSE parser with the installed provider's original-JSON events.
-Private history also requires its full ordered source scope to remain a prefix of the current scope, preserving
-compact-label identity; selected partial history is explicitly marked incomplete without modifying protocol data.
-Its real two-turn Beam check over one selected Transformer source completed C1 and C2 with exact citations,
-including an actual restart between turns. Usage was 11,429/171 then 11,613/287 input/output tokens; estimates were
-zero, monthly usage remained 449,781 micro-USD, and the original private record hash stayed unchanged. This usable
-protocol slice does not close the twelve-question K2 gates or owner acceptance. The original failures remain retained.
-The protocol-only part added 559 non-test `src/` lines and removed 35 against its published base.
-The following full ten-paper Beam run stopped after C2: C1 had mechanically completed, C2 was partial, and C3–O8
-were not dispatched. A numeric grounding guard added from that concrete failure rejects C1 on stored-only
-revalidation as well: its cited ranges do not support three numeric factual units. The original states remain
-unchanged. Source-local numeric checking, its real R2 range caller and stricter eval pass 303 local tests and
-lint/types/build; whole-corpus K2 quality and owner acceptance remain open. No failed question is automatically
-repeated, and a model's correct-looking values do not establish valid supporting citations.
-Including the shared numeric primitive and R2 grounding check, the correction adds 726 non-test `src/` lines and
-removes 80 against the published base; generated bindings are excluded. No new service, retry layer or model policy
-is introduced.
-
-The shared-picker correction checked on 2026-10-27 passes lint/types, 225 tests and build. `pnpm eval k2
---models-browser` passes at 1440/390 px against 559 live catalogue rows, plus intercepted metadata cases: catalogue
-search/provider changes and refresh preserve selection; a complete nested native ID reaches the intercepted Send
-payload; Enter in model search sends nothing. The source Understanding browser check also passes the delayed-response,
-unknown-price and switch-after-metadata-failure cases. These checks perform no inference or real chat POST; settings,
-Gateway and monthly usage (449,781 micro-USD) are unchanged. Native-default regressions verify live metadata takes
-precedence over the fallback. This slice adds 57 non-test `src/` lines and removes 20, reusing the registered Material
-picker and OpenCodex discovery; it does not close the answer-quality or owner-acceptance gates above.
+**Behavioral contract.** Only Send starts answer inference. Each turn freezes its source revisions and admitted model
+metadata. Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
+across corpora, with no fixed-paper coaching or JSON sentence/label enum. The server resolves labels and byte ranges.
+Page-only `Page N` / `Страница N` headings and empty headings are not labelable; canonical text and block maps are
+unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
+never retried automatically.
 
 **Hard acceptance — `pnpm eval k2`**
 
@@ -240,66 +181,32 @@ comparable runs rather than making one provider fluctuation invalidate the archi
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
-The retained OpenRouter smoke on 2026-10-26 tested three owner-selected models through the existing default BYOK
-credential: `dots-studio/dots-3-note-preview:free`, `thinkingmachines/inkling:free`, and
-`nvidia/nemotron-3.5-super-vl:free`, each under `gateway:openrouter/<exact-id>`. These are historical test choices;
-the selectable catalogue comes from provider APIs and has no model-name allowlist. Native defaults stay unchanged.
-Provider capacities remain visible in advanced details; current chat/distill jobs retain the existing
-8,192-token output bound. Zero catalog prices do not imply unlimited quota; unavailable models fail visibly with no
-paid fallback. Existing credential metadata grants no consent; the owner must connect explicitly, and saved connection
-configuration does not prove provider usability.
-Owner-authorized NASA smoke through the local Worker and real OpenRouter provider is **LIMITED**: Dots chat completed
-and distill reached `done` (four claims, two calls); Nemotron chat completed with a mixed-language defect. Its distill
-initially failed; explicit cached publication then produced readable `partial` with five guide sentences, digest and
-zero claims, preserving both model calls and original usage. Repeat Save was identical and source text unchanged.
-Semantic source review on 2026-10-27 UTC leaves both glossaries **LIMITED**: Dots adds an unsupported rocky-surface
-definition and mixed-script Russian terminology; Nemotron adds unsupported orbit/wobble qualifiers. Its five guide
-sentences and digest are entailed, but numeric/label validity alone does not establish a fully grounded glossary.
-Inkling chat failed with the original cause unknown; its separate non-streaming distill was refused with HTTP 403
-after one attempt, with no retry/bypass. Including two later distinct Dots questions, receipts record five chat attempts
-and five distill steps at zero estimated model cost. Dots client RUN1 observed `started:13 → completed:126` characters
-from one explicit POST (`browser-1793060247504.json`); stored reload/Save proof is separate (`browser-1793058845678.json`).
-Monthly spend/budget stayed 79,537/4,158,177 micro-USD. This single live sample supplies no p50/p95, full K2/K3 acceptance
-or negative fallback proof. OpenRouter `is_byok: false` describes its upstream-key layer, not a Cloudflare wholesale
-verdict; see IMPLEMENTATION §6/§8/§11 for contracts, metrics and boundaries.
-
-Local K2 run on 2026-10-26: all C1–C4/O1–O8 completed with zero invalid labels and byte-checked ranges, at
-$0.120236 estimated model cost. Cold first/total time was 25,724/27,763 ms; warm first-token p50/p95 was
-7,361/23,601 ms and warm total p50/p95 was 23,161/40,703 ms. The initial 40 s p95 target was missed; the 90 s hard
-ceiling passed. Phone Stop/reload restored the empty scope, partial Save and reconnect added no model work; one active
-plus one queued input accepted and the third returned 409. The focused suite has 108 passing cases.
-
-A fresh private Gemini Notebook/NotebookLM notebook received the same ten SHA-256-matched PDFs and the same twelve
-questions without gold hints. All completed; C1–C4 values were correct and O8 abstained. Three representative citations
-opened their source passages. Browser capture did not instrument service latency or expose provider usage/cost.
-Content review found unsupported terminology and an overstatement in Eliot O1, unsupported inferences and a Chinese
-fragment in O2, and training/fine-tuning confusion plus coverage gaps in O3. A three-call prompt experiment cost
-$0.043536 and improved coverage but retained a language defect and introduced a numeric inconsistency; the experimental
-prompt was reverted. No quality pass or owner acceptance is claimed. Do not repeat successful paid turns to tune these
-examples; resolve the evidence/quality failure before accepting K2.
-
----
+K2 is not fully accepted or deployed. The unchanged twelve-question NotebookLM comparison remains the quality baseline
+at eval/out/notebooklm-20261026/answers.md. Its recorded semantic review flags O1 terminology and overstatement, O2
+unsupported inference and a language defect, and O3 training/fine-tuning confusion and coverage gaps. Owner semantic
+review remains open. The provider, browser and answer evidence artifacts remain under eval/out/; they do not replace
+the full contour gates. Neither K2 nor K3 is deployed.
 
 ## K3 — Distill
 
 **Owner outcome.** Each new readable revision receives one guide, verified claim set, digest and EN/RU glossary. The
-project overview is assembled from guides. Large selections can answer from claims. Unchanged revisions are never
+project overview is assembled from guides. Large selections can answer from claims. An unchanged revision is never
 re-distilled automatically.
 
 **Build**
 
 1. Apply `migrations/0003_distill.sql`; add `DistillWorkflow`, scheduler and quote/number verification.
-2. Ingest marks a readable revision queued only when auto-distill is enabled and no completed artifact exists.
-3. Scheduler admits the oldest queued revisions only while concurrency and monthly model budget allow. Budget-blocked
-   work becomes visibly `paused`, not a hidden retry loop. Reconcile stale `running` rows against deterministic Workflow
-   IDs.
-4. First call reads block-labelled text and emits guide + candidate claims. Code verifies quotes/ranges/numbers. Second
-   call receives only verified material and emits digest/glossary. Store raw output/report in R2 and compact claims in
-   D1.
+2. Ingest queues a readable revision once only when auto-distill is enabled and no completed artifact exists.
+3. The scheduler admits queued revisions only while concurrency and the shared monthly dollar budget allow. Budget-
+   blocked work is visibly `paused`; stale `running` rows reconcile against deterministic Workflow IDs. An explicit
+   Understand request schedules only its requested revision.
+4. Use at most two bounded calls: labelled canonical text produces guide and candidate claims; code verifies
+   quotes/ranges/numbers; the second call receives only verified material and produces digest/glossary. Store raw
+   output/report in R2 and compact claims in D1. Paid calls do not retry.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
    an extra overview model call.
 6. Add claim context mode. The same answer prompt and citation resolver are used.
-7. Add reader guide/claims UI, quote tests and `pnpm eval k3`.
+7. Add reader guide/claims UI, quote cases and `pnpm eval k3`.
 
 **Hard acceptance — `pnpm eval k3`**
 
@@ -319,67 +226,10 @@ re-distilled automatically.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 
-Local K3 diagnostics on 2026-10-26 are **not acceptance**. Transformer ended `partial` after two calls (3 kept claims,
-3,123 micro-USD); BERT ended `failed` after one call (no verified claims, 4,444 micro-USD, no second call). Inspection
-of the raw output against canonical bytes found model-joined PDF hyphenation and changed brackets, plus claims with
-numbers absent from their quoted row. The strict verifier correctly rejected them. The second-stage numeric guard
-and closed block-selection request were corrected; that corrected model path has not yet passed service acceptance.
-Existing failed/partial attempts are retained, with no automatic paid retry. Re-requesting the unchanged Transformer
-revision returned identical output, two total calls and zero cost delta. Full K3 remains open, including all ten
-sources, anchors and real claim-mode C1–C4.
-
-A separate retained validation corpus now has ten pipeline-completed revisions. The real Flash service used twenty
-bounded calls (two per revision), totaling 64,651 micro-USD. BatchNorm's
-two saved responses initially failed deterministic digest validation; sentence-level checking recovered nine supported
-claims by explicit storage-only Save, with calls/tokens/cost and original/text bytes unchanged. The zero-headroom save,
-repeat-save idempotence and phone reader/citation journey passed locally. The full service eval failed A1 French
-41.8 BLEU and its 3.5-day/eight-GPU anchor; it did not retry any revision. Raw inspection found a stored statement
-41.8 quoting a passage with 41.0 plus a separate 8: the digit-group guard incorrectly accepted this combination.
-The decimal guard and regression now reject it; retained artifacts are diagnostic evidence, not quality-accepted
-knowledge. The original PDF itself has 41.8 in its abstract/Table 2 and 41.0 in §6.1, and canonical text preserves
-that conflict. This does not demonstrate a converter defect. Source-guide wording was also corrected to exclude
-candidate-review narration; that new request path is **not service-tested**. Automatic claim-mode C1–C4 remain
-**NOT_RUN**. No further paid work is started to turn this failed run green.
-Explicit cached rechecks on the three affected revisions now exclude four rejected claim assertions from the current
-read path: Transformer 10→9, GAN 17→16 and BERT 12→10. All 115 D1 rows remain; `claim_count` selects 111 current cards.
-Checked R2 bodies and the report head publish atomically with current claim metadata. Real phone/browser checks,
-zero-headroom save, exact ranges, unchanged originals/texts, repeat-save identity and unchanged usage passed. The latest
-stored eval has three open gates: the two A1 anchors and claim-mode NOT_RUN, with no numeric violations or new POST.
-
-Raw diagnosis found a general request-shape mismatch: all 14 first-pass Transformer claims were table results, while
-guide items contained 3–4 sentences (653–1,133 characters) assigned to one roughly 1 KiB block. The chosen excerpt pool
-omitted the abstract's headline-result block; call two could not recover material it never received. Label membership
-alone does not establish semantic support. JSON block boundaries, guide-first output and sentence-level guide bounds
-now make that contract explicit without source-specific branches or adding evidence to retained outputs. This changed
-paid request remains **NOT_RUN**; no further paid attempt is started merely to green the eval.
-
-The combined K0/K2/K3 and external-model slice measured before integration adds 1,831 non-test `src/` lines (generated bindings excluded), counting
-all shared UI additions conservatively. The K3 1,200-line target is exceeded; the excess covers exact quote/number
-checking, primary-passage hydration and owner-visible cached-output correction, without an additional platform or
-generic retry layer. This combined count supersedes the earlier approximate 1,440-line figure; it is not a claim that
-all changes belong to K3 or that the target was met.
-The earlier stored run on `.wrangler/state` exited nonzero with 25 violations. The latest stored-only run on the fresh
-ten-source corpus initially had seven violations. After the explicit correction it exits nonzero with three open
-gates. It adds no POST/model work and leaves 64,651 micro-USD unchanged.
-Anchors use only exact claim quotes from their actual source, never generated digest or unsupported conditions as
-evidence. Native-only smoke success and diagnostic-script exit codes are not K3 acceptance.
-The separate 2026-10-27 stored-only check of `Библиотека — PDF и точные ссылки` applies the same-card statement/quote
-gate and exits nonzero with six open items: three ResNet anchors, LoRA's frozen/low-rank mechanism and latency anchor,
-and claim-mode C1–C4 NOT_RUN. Its A1 and LoRA quantitative anchors pass. It changes no stored source, model usage or
-budget. The generic central/qualitative extraction request is corrected, but has not yet passed service acceptance.
-
-Budget evidence is from the same local Worker at `127.0.0.1:5173`, local D1 `DB` under `.wrangler/state/v3/d1`:
-Transformer admission at 07:34:09 UTC reserved 322,766 micro-USD over 828,757 chat usage (1,151,523 total); settlement
-at 07:35:02 replaced that reservation with 3,123 (831,880 total). BERT ran 07:49:24–07:50:32 UTC, settling to 4,444;
-the 14:09 UTC storage check showed 836,324 total against the unchanged 5,000,000 budget. A reservation snapshot is not
-an additional bill. `admitDistill` updates the owning revision atomically before Workflow creation; each model dispatch
-then atomically increments its bounded call count before `generateText`.
-
-**Fresh-run cost bound (2026-10-26).** Ten baseline sources × two calls + two overflow sources × two calls + four
-claim answers = **28 calls**, reserving **4,518,724 micro-USD** at Flash's worst-case model-token bound, plus PDF
-conversion. The twenty-call baseline alone reserves 3,227,660 micro-USD; 24 calls / approximately $3.88 excludes overflow
-and is not the full-run total. The reported remaining 4,078,640 micro-USD cannot admit the full fresh bound; no budget
-increase is assumed.
+K3 is not fully accepted or deployed. Open quality gates remain for three ResNet anchors, the LoRA frozen/low-rank
+mechanism and latency anchors, and claim-mode C1–C4; semantic support for guide, digest and glossary content remains
+separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference and does not
+qualify K3.
 
 ---
 

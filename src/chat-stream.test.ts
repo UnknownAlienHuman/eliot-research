@@ -117,7 +117,7 @@ function usageOnlyWithoutChoices(usage: unknown) {
   return JSON.stringify({ id: "t1", object: "chat.completion.chunk", created: 1, model: "beam", choices: [], usage });
 }
 
-function makeHarness(quote = "A source") {
+function makeHarness(quote = "A source", instructions = "") {
   const quoteBytes = new TextEncoder().encode(quote);
   const db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE chat(id TEXT PRIMARY KEY,project_id TEXT NOT NULL)");
@@ -129,7 +129,7 @@ function makeHarness(quote = "A source") {
           bind: (..._args: SQLInputValue[]) => ({
             first: async (): Promise<unknown> => {
               if (sql.includes("FROM chat WHERE id=")) return { project_id: projectId };
-              if (sql.includes("COALESCE(p.answer_model")) return { model: "gateway:command-code/native-beam", instructions: "" };
+              if (sql.includes("COALESCE(p.answer_model")) return { model: "gateway:command-code/native-beam", instructions };
               if (sql.includes("model_gateway_id")) return { gatewayId: "test-gw" };
               if (sql.includes("FROM source_revision")) return { id: "r1", readable_state: "readable", readable_size: quoteBytes.byteLength,
                 original_key: "fixture-original", original_filename: "fixture.md" };
@@ -180,6 +180,43 @@ beforeEach(() => {
 });
 
 describe("chat-stream K2 wire regression", () => {
+  it("streams explanatory multi-paragraph Markdown without sending a combined JSON schema", async () => {
+    const projectInstructions = "For overview questions, explain the method's motivation and relevant background.";
+    const h = makeHarness(
+      "The paper describes a discriminator objective that learns from replaced tokens rather than only masked-token recovery.",
+      projectInstructions,
+    );
+    try {
+      await h.agent.onStart();
+      const markdown = "The paper trains a discriminator to detect replaced tokens [S1:1].\n\n"
+        + "This gives it a token-level learning signal rather than relying only on masked-token recovery [S1:1].";
+      nextSSE = sse([
+        chunk({ content: "The paper trains a discriminator to detect replaced tokens [S1:1].\n\n" }, null),
+        chunk({ content: "This gives it a token-level learning signal rather than relying only on masked-token recovery [S1:1]." }, "stop",
+          { prompt_tokens: 20, completion_tokens: 18, total_tokens: 38 }),
+      ]);
+
+      const turn = requireTurn(await h.agent.submitTurn({ projectId, chatId,
+        turnId: "aaaaaaaa-aaaa-4aaa-8aaa-000000000010", question: "Explain the method and why it helps.",
+        scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+
+      expect(turn).toMatchObject({ state: "completed", answer: markdown, invalidLabels: 0 });
+      expect(turn.citations).toHaveLength(1);
+      expect(fetchCalls).toBe(1);
+      const contextInput = vi.mocked(buildContext).mock.calls.at(-1)?.[2];
+      expect(contextInput?.instructions).toBe(projectInstructions);
+      const body = sentBodies[0];
+      if (!body) throw new Error("expected an outgoing chat request");
+      expect(body).not.toHaveProperty("response_format");
+      expect(JSON.stringify(body)).not.toContain("cited_answer");
+      expect(JSON.stringify(body)).not.toContain("sentences");
+      const system = body.messages?.filter((message) => message.role === "system");
+      expect(system).toHaveLength(1);
+      expect(system?.[0]?.content).toContain(projectInstructions);
+      expect(system?.[0]?.content).not.toContain("Omit unasked background");
+    } finally { h.db.close(); }
+  });
+
   it.each([{ quote: "by A.B.C", state: "partial" }, { quote: "score81.", state: "completed" }])(
     "checks numeric facts against the exact cited bytes: $state",
     async ({ quote, state }) => {

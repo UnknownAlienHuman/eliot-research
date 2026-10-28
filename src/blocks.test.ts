@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_BLOCK_BYTES, scanBlocks, sliceUtf8 } from "./blocks.js";
+import { isCitableBlock, MAX_BLOCK_BYTES, scanBlocks, sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
 const TE = new TextEncoder();
 function byteLength(value: string): number {
@@ -42,6 +42,22 @@ describe("scanBlocks", () => {
     expect(blocks[4]?.heading).toBe("Детали");
     const head = blocks[1];
     if (head !== undefined) expect(sliceUtf8(text, head.start, head.end)).toBe("# Глава\n");
+  });
+  it("keeps semantic headings citable and rejects empty or PDF page-wrapper blocks", () => {
+    const text = "### Page 1\n\n## Методы 🌿\n\nСтраница 2\n";
+    const blocks = scanBlocks(text);
+    checkInvariants(text, blocks);
+    expect(blocks.map((block) => block.id)).toEqual([1, 2, 3]);
+    const [pageOne, heading, pageTwo] = blocks;
+    if (pageOne === undefined || heading === undefined || pageTwo === undefined) {
+      throw new Error("Expected two page-wrapper blocks and a semantic heading.");
+    }
+    expect(isCitableBlock(pageOne, sliceUtf8(text, pageOne.start, pageOne.end))).toBe(false);
+    expect(isCitableBlock(heading, sliceUtf8(text, heading.start, heading.end))).toBe(true);
+    expect(isCitableBlock(pageTwo, sliceUtf8(text, pageTwo.start, pageTwo.end))).toBe(false);
+    const emptyHeading: Block = { id: 4, type: "heading", start: 0, end: 4, heading: "" };
+    expect(isCitableBlock(emptyHeading, "### \n")).toBe(false);
+    expect(isCitableBlock(pageTwo, "Page 2 appears in a sentence about the method.")).toBe(true);
   });
   it("keeps Cyrillic and emoji on character boundaries", () => {
     const text = "# Привет 🌍\n\nТекст с эмодзи 🙂 и кириллицей.\n";

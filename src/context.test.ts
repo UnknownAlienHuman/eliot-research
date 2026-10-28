@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { scanBlocks, sliceUtf8 } from "./blocks.js";
 import { buildContext } from "./context.js";
 import { resolveCitations } from "./citations.js";
 import { LibraryError } from "./library.js";
@@ -193,7 +194,7 @@ describe("buildContext K2 whole scope", () => {
       scopeMode: "project_default",
       model: MODEL,
       history: [
-        { role: "user", content: "Background [S9:9] note" },
+        { role: "user", content: "Background [S9:9] bare [S9] note" },
         { role: "assistant", content: "Old answer [S1:1] kept", revisionIds: ["r1"] },
         { role: "assistant", content: "Stale answer", revisionIds: ["rz"] },
       ],
@@ -215,9 +216,38 @@ describe("buildContext K2 whole scope", () => {
     expect(body).toContain("[S1:2] Second A.");
     expect(body).toContain("[S2:1] Paper B body.");
     expect(body).not.toContain("[S9:9]");
+    expect(body).not.toContain("[S9]");
     expect(body).toContain("Old answer");
     expect(body).not.toContain("Stale answer");
     expect(res.estimatedInputTokens).toBeGreaterThan(0);
+  });
+
+  it("keeps PDF page markers as unlabelled whole-reading orientation", async () => {
+    const text = "### Page 1\n\n## Методы 🌿\n\nLes mesures sont exactes.\n\n### Страница 2\n";
+    const blocks = scanBlocks(text);
+    const byteLength = new TextEncoder().encode(text).byteLength;
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r1", createdAt: 1 }],
+      revisions: [{ id: "r1", readableState: "readable", readableSize: byteLength, distillState: null, guideSummary: null, deletedAt: null }],
+      texts: { r1: { text, blocks } },
+    });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
+    expect(res.mode).toBe("whole");
+    expect(res.sources[0]?.blocks).toEqual([blocks[1], blocks[2]]);
+    expect(res.sources[0]?.blocks.map((block) => sliceUtf8(text, block.start, block.end))).toEqual([
+      "## Методы 🌿\n", "Les mesures sont exactes.\n",
+    ]);
+    const source = res.messages[1]?.content ?? "";
+    expect(source).toContain("### Page 1\n");
+    expect(source).toContain("### Страница 2\n");
+    expect(source).not.toContain("[S1:1]");
+    expect(source).not.toContain("[S1:4]");
+    expect(source).toContain("[S1:2] ## Методы 🌿");
+    expect(source).toContain("[S1:3] Les mesures sont exactes.");
+    const resolved = resolveCitations("The marker [S1:1] and heading [S1:2].", res.sources);
+    expect(resolved.citations).toMatchObject([{ block: 2, start: blocks[1]?.start, end: blocks[1]?.end }]);
+    expect(resolved.invalidLabels).toBe(1);
   });
 
   it("narrowed scope keeps answers citing only A and drops answers citing B", async () => {
@@ -521,6 +551,53 @@ describe("buildContext K3 claims fallback", () => {
     expect(resolved.citations.length).toBe(1);
     expect(resolved.citations[0]?.sourceId).toBe("s1");
     expect(resolved.invalidLabels).toBe(1);
+  });
+
+  it("filters structural page markers from hydrated claim and guide passages", async () => {
+    const revisionId = "11111111-1111-4111-8111-111111111111";
+    const text = "### Page 1\n\n## Методы 🌿\n\nLes mesures sont exactes.\n\n### Страница 2\n";
+    const blocks = scanBlocks(text);
+    const [pageOne, heading, body, pageTwo] = blocks;
+    if (pageOne === undefined || heading === undefined || body === undefined || pageTwo === undefined) {
+      throw new Error("Expected two page markers, a semantic heading and a body block.");
+    }
+    const byteLength = new TextEncoder().encode(text).byteLength;
+    const { env, requested } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: revisionId, createdAt: 1 }],
+      revisions: [{ id: revisionId, readableState: "readable", readableSize: 10_000, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 }],
+      texts: {
+        [revisionId]: {
+          text,
+          blocks,
+          guide: `Guide [R${revisionId}:${pageOne.id}] [R${revisionId}:${heading.id}] [R${revisionId}:${body.id}] [R${revisionId}:${pageTwo.id}].`,
+        },
+      },
+      claims: {
+        [revisionId]: [
+          { ordinal: 0, statement: "A page marker is present.", quote: "Page 1", conditions: null, blockIndex: pageOne.id, ambiguous: 0 },
+          { ordinal: 1, statement: "The passage reports measurements.", quote: "Les mesures sont exactes.", conditions: null, blockIndex: body.id, ambiguous: 0 },
+        ],
+      },
+    });
+    const res = await buildContext(env, actor, {
+      projectId: "p1", scopeMode: "explicit", sourceIds: ["s1"], model: { contextTokens: 2000, maxOutputTokens: 100 },
+    });
+    expect(res.mode).toBe("claims");
+    expect(res.sources[0]?.blocks).toEqual([heading, body]);
+    const source = res.messages[1]?.content ?? "";
+    expect(source).toContain("[S1:2] ## Методы 🌿");
+    expect(source).toContain("[S1:3] Les mesures sont exactes.");
+    expect(source).not.toContain("[S1:1]");
+    expect(source).not.toContain("[S1:4]");
+    expect(res.messages[2]?.content).toContain("The passage reports measurements.");
+    expect(res.messages[2]?.content).not.toContain("A page marker is present.");
+    expect(requested.filter((key) => key.startsWith(`source/${revisionId}/text.md#r`))).toHaveLength(4);
+    expect(requested).not.toContain(`source/${revisionId}/text.md`);
+    expect(res.sources[0]?.blocks.map((block) => [block.id, block.start, block.end])).toEqual([
+      [heading.id, heading.start, heading.end], [body.id, body.start, body.end],
+    ]);
+    expect(byteLength).toBeGreaterThan(text.length);
   });
 
   it("keeps derived drafts separate and deduplicates only identical original quotes in one block", async () => {

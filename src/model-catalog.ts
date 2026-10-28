@@ -107,15 +107,33 @@ function normalize(provider: Provider, value: unknown, checkedOn: string): Catal
   };
 }
 
+const isCatalogTimeout = (error: unknown): boolean =>
+  error instanceof DOMException
+    ? error.name === "TimeoutError" || error.name === "AbortError"
+    : error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+
 export async function discoverGatewayModels(onError?: (message: string) => void): Promise<CatalogModel[]> {
   const checkedOn = new Date().toISOString().slice(0, 10);
   const providers = Object.keys(ENDPOINTS) as Provider[];
-  const statuses = new Map<Provider, number>();
   const catalogues = await Promise.allSettled(providers.map(async (provider) => {
-    const response = await fetch(ENDPOINTS[provider], { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
-    statuses.set(provider, response.status);
+    let response: Response;
+    try {
+      response = await fetch(ENDPOINTS[provider], { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+    } catch (error) {
+      if (isCatalogTimeout(error)) throw new Error("The " + provider + " model catalogue request timed out.", { cause: error });
+      throw new Error("The " + provider + " model catalogue is unavailable.", { cause: error });
+    }
     if (!response.ok) throw new Error("The " + provider + " model catalogue is unavailable (HTTP " + response.status + ").");
-    const body = await readCatalogue(response);
+    let body: RecordValue;
+    try {
+      body = await readCatalogue(response);
+    } catch (error) {
+      if (isCatalogTimeout(error)) throw new Error("The " + provider + " model catalogue request timed out.", { cause: error });
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("byte bound")) throw new Error("The " + provider + " model catalogue exceeds its byte bound.", { cause: error });
+      if (message.includes("row bound")) throw new Error("The " + provider + " model catalogue exceeds its row bound.", { cause: error });
+      throw new Error("The " + provider + " model catalogue is malformed.", { cause: error });
+    }
     const seen = new Set<string>();
     return (body.data as unknown[]).flatMap((row) => {
       const model = normalize(provider, row, checkedOn);
@@ -130,8 +148,11 @@ export async function discoverGatewayModels(onError?: (message: string) => void)
     else {
       const provider = providers[index];
       if (provider === undefined) continue;
-      const status = statuses.get(provider);
-      onError?.(provider + " model catalogue is unavailable or malformed" + (status === undefined ? "." : " (HTTP " + status + ")."));
+      const reason = catalogue.reason;
+      const message = reason instanceof Error ? reason.message : "";
+      // Forward only fixed safe diagnostics; never echo provider bodies, names, or raw errors.
+      if (message.startsWith("The " + provider + " model catalogue ")) onError?.(message.slice("The ".length));
+      else onError?.(provider + " model catalogue is unavailable or malformed.");
     }
   }
   return models;

@@ -8,6 +8,7 @@ import { decodeOriginal, getSupportedFormats, hasUtf8Bom, isImageInput, isSuppor
 import { nativeConverter, stripBomOnce, withTimeout } from "../ingest";
 import { scanBlocks } from "../blocks";
 import type { Block } from "../blocks";
+import { safeErrorLogProjection } from "../model-transport";
 import { scheduleDistillation } from "./distill";
 
 // Single conversion attempt bound: a stated workflow bound, not a documented hard limit.
@@ -27,13 +28,6 @@ const CONVERT_FAILED = "Eliot could not convert this file to readable text. The 
 // Every step runs once: a retried convert/store step would repeat toMarkdown
 // (spend) and silently overwrite the canonical R2 keys it just wrote.
 const NO_RETRY = { retries: { limit: 0, delay: "1 second" } } as const;
-
-// Operator diagnostic: error name/message only, bounded. Never headers,
-// response bodies, file bytes, or secrets.
-function boundedError(error: unknown): string {
-  if (error instanceof Error) return `${error.name}: ${error.message}`.slice(0, 300);
-  return "unknown error";
-}
 
 interface LoadedRevision {
   revisionId: string;
@@ -126,18 +120,11 @@ async function convertAndStore(env: Env, loaded: LoadedRevision): Promise<Stored
       // failed with AiInternalError on an untyped Blob, so pass the stored MIME.
       const response = await withTimeout(env.AI.toMarkdown().transform({ name: loaded.filename, blob: new Blob([bytes], { type: loaded.mime }) }, AI_OPTIONS), CONVERT_TIMEOUT_MS);
       if (response.format === "error") {
-        const detail = typeof response.error === "string" && response.error.length > 0 ? response.error.slice(0, 200) : "no detail";
-        console.error("ingest conversion provider error", detail);
-        return fail(`${CONVERT_FAILED} Provider said: ${detail}`);
+        console.error("ingest conversion provider error", { code: "provider_error" });
+        return fail(CONVERT_FAILED);
       }
       if (response.format !== "markdown") {
-        // Shape metadata only, never data or file bytes: determines the
-        // runtime array-vs-object binding behavior on unexpected shapes.
-        const shape = response as unknown as Record<string, unknown>;
-        console.error(
-          "ingest conversion unexpected format",
-          JSON.stringify({ isArray: Array.isArray(response), keys: Object.keys(response).slice(0, 12), format: shape.format }).slice(0, 600),
-        );
+        console.error("ingest conversion unexpected format", { code: "unexpected_format" });
         return fail(CONVERT_FAILED);
       }
       // Tokens are recorded when Cloudflare returns them, otherwise NULL
@@ -145,7 +132,7 @@ async function convertAndStore(env: Env, loaded: LoadedRevision): Promise<Stored
       tokens = Number.isSafeInteger(response.tokens) && response.tokens >= 0 ? response.tokens : null;
       data = stripBomOnce(response.data);
     } catch (error) {
-      console.error("ingest conversion threw", boundedError(error));
+      console.error("ingest conversion threw", safeErrorLogProjection(error));
       return fail(CONVERT_FAILED);
     }
     // Empty AI output means a scan with no extractable text: keep the original
@@ -155,7 +142,7 @@ async function convertAndStore(env: Env, loaded: LoadedRevision): Promise<Stored
     }
     return await storeReadable(env, loaded, data, "workers_ai_markdown", null, tokens, calls, started, null);
   } catch (error) {
-    console.error("ingest convert/store threw", boundedError(error));
+    console.error("ingest convert/store threw", safeErrorLogProjection(error));
     return fail(CONVERT_FAILED);
   }
 }

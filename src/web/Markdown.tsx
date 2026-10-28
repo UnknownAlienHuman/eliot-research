@@ -1,8 +1,9 @@
 import { Link } from 'react-router';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import './markdown.css';
 
-export interface MarkdownReference { readonly text: string; readonly href: string; }
+export interface MarkdownReference { readonly text: string; readonly href: string; readonly label?: string; }
 interface MarkdownNode {
   type: string;
   tagName?: string;
@@ -25,7 +26,7 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
       if (at < pos) continue;
       parts.push({ type: 'text', value: value.slice(pos, at) }, {
         type: 'element', tagName: 'a', properties: { href: ref.href },
-        children: [{ type: 'text', value: ref.text }],
+        children: [{ type: 'text', value: ref.label ?? ref.text }],
       });
       pos = at + ref.text.length;
     }
@@ -47,7 +48,7 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
   }
   return <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} rehypePlugins={[citationLinks]} components={{ img: () => null,
     a: ({ href, children, title }) => references.some((ref) => ref.href === href)
-      ? <Link to={href ?? ''} title={title}>{children}</Link>
+      ? <Link className='er-citation' to={href ?? ''} title={title}>{children}</Link>
       : <a href={href} title={title}>{children}</a>,
   }}>{text}</ReactMarkdown>;
 }

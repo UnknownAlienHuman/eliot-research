@@ -6,7 +6,7 @@ vi.mock("agents/models/ai-sdk", () => ({ createAI: vi.fn() }));
 
 import { createAI } from "agents/models/ai-sdk";
 import type * as agentsSdk from "agents/models/ai-sdk";
-import { AssistantWireCapture, modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
+import { AssistantWireCapture, modelFailure, reportedProviderUsage, resolveModelTransport, safeErrorLogProjection } from "./model-transport";
 import type { AssistantWire } from "./model-transport";
 import { Output, streamText } from "ai";
 import type { LanguageModelUsage } from "ai";
@@ -180,12 +180,29 @@ describe("modelFailure", () => {
     expect(text).not.toContain("401");
   });
 
-  it("bounds native errors and falls back without an Error", () => {
-    const err = new Error("x".repeat(500));
-    err.name = "AI_RetryError";
-    const bounded = modelFailure(err, NATIVE);
-    expect(bounded.length).toBeLessThanOrEqual(300);
-    expect(bounded.startsWith("AI_RetryError: ")).toBe(true);
+  it("redacts native messages and projects only a known name or numeric status", () => {
+    const secret = "sk-live-SECRET123 prompt=private source; provider body and Authorization: Bearer key-secret";
+    const named = new TypeError(secret);
+    expect(modelFailure(named, NATIVE)).toBe("Model stream failed (TypeError).");
+    expect(safeErrorLogProjection(named)).toEqual({ name: "TypeError" });
+
+    const statusError = Object.assign(new Error(secret), {
+      statusCode: 503,
+      responseBody: secret,
+      data: { message: secret, code: "provider-key-secret" },
+    });
+    expect(modelFailure(statusError, NATIVE)).toBe("Model stream failed (HTTP 503).");
+    const projection = JSON.stringify(safeErrorLogProjection(statusError));
+    expect(projection).toBe('{"name":"Error","status":503}');
+    for (const privateValue of ["SECRET123", "private source", "provider body", "Authorization", "key-secret", "provider-key-secret"]) {
+      expect(projection).not.toContain(privateValue);
+      expect(modelFailure(statusError, NATIVE)).not.toContain(privateValue);
+    }
+
+    const unknownName = new Error(secret);
+    unknownName.name = "AI_RetryError";
+    expect(modelFailure(unknownName, NATIVE)).toBe("Model stream failed.");
+    expect(safeErrorLogProjection(unknownName)).toEqual({ name: "unknown" });
     expect(modelFailure("boom", NATIVE)).toBe("Model stream failed.");
     expect(modelFailure(undefined, NATIVE)).toBe("Model stream failed.");
   });
@@ -789,5 +806,10 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     expect(text).not.toContain("messages");
     expect(text).not.toContain("invalid payload");
     expect(seen.wire.calls).toBe(1);
+    const logProjection = JSON.stringify(safeErrorLogProjection(streamError));
+    expect(logProjection).toBe('{"name":"AI_StreamProviderError"}');
+    for (const privateValue of ["SECRET", "sk-live", "DROP TABLE", "secret-code-123", "messages", "invalid payload"]) {
+      expect(logProjection).not.toContain(privateValue);
+    }
   });
 });

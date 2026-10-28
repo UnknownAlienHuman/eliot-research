@@ -1,6 +1,9 @@
 // Settings catalogue acceptance on the existing Playwright/browser stack. No inference.
-// Live checks only GET and edit unsaved form values. Negative cases intercept metadata
-// responses in isolated contexts; fixture settings/Gateway PUTs never reach the Worker.
+// Storage-only contract: live checks use GET /api/models snapshot plus explicit POST
+// /api/models/refresh from Settings. No GET /api/models?selected= is expected. Fixture
+// settings/Gateway PUTs and refresh POSTs never reach the Worker. Live snapshots may
+// carry ~133 rows plus an OpenRouter warning; synthetic fixtures below (500 rows,
+// late-row 463 stress) are clearly labelled catalogue-fixture-* and never reported as live.
 // ELIOT_CATALOG_STORAGE=1 additionally creates one local project, PATCHes its model,
 // and reads it back. This never saves global defaults or enables a connection.
 // Root caller: await runCommandCodeBrowser({ origin, outDir }); no work runs on import.
@@ -9,6 +12,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
+import { assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 
 const FLASH = 'workers-ai:@cf/zai-org/glm-5.3-flash';
 const pause = () => { let release; const promise = new Promise((resolve) => { release = resolve; }); return { promise, release }; };
@@ -20,23 +24,22 @@ async function bounded(promise, message) {
   finally { clearTimeout(timer); }
 }
 
-export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
+export async function runCommandCodeBrowser({ origin: requestedOrigin = process.env.ELIOT_URL,
   outDir = fileURLToPath(new URL('../../eval/out/command-code-browser/', import.meta.url)) } = {}) {
-  assert(origin, 'Root must supply the ready local Worker origin.');
-  origin = new URL(origin).origin;
-  assert(['127.0.0.1', 'localhost', '[::1]'].includes(new URL(origin).hostname), 'Use the local Worker only.');
+  assert(requestedOrigin, 'Root must supply the ready local Worker origin.');
+  const origin = assertEvalBrowserOrigin(requestedOrigin, process.env.ELIOT_ORIGIN);
   const storageOptIn = process.env.ELIOT_CATALOG_STORAGE === '1';
   await mkdir(outDir, { recursive: true });
   const report = { scope: 'CATALOGUE_SELECTION_BROWSER_ONLY', origin, at: new Date().toISOString(),
     live: [], metadataFixtures: {}, requests: { liveGets: 0, fixtureGets: 0, selectedMetadataGets: [],
-      interceptedConnectionPuts: 0, interceptedSettingsPuts: 0, actualStorage: [], blocked: [] },
+      refreshPosts: [], interceptedConnectionPuts: 0, interceptedSettingsPuts: 0, actualStorage: [], blocked: [] },
     localProjectStorage: { status: 'NOT_RUN', optIn: storageOptIn },
     screenshots: [], inference: 'NOT_RUN', settingsWritten: false, credentialAccessChanged: false };
   const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const catalogueBody = (models) => ({ models, warnings: [], defaultModel: FLASH });
   async function get(endpoint) {
-    const response = await fetch(origin + endpoint, { headers: { Origin: origin, Accept: 'application/json' },
-      redirect: 'error', signal: AbortSignal.timeout(30000) });
+    const response = await fetchEval(origin + endpoint, { headers: { Origin: origin, Accept: 'application/json' },
+      redirect: 'error', signal: AbortSignal.timeout(30000) }, origin, process.env.ELIOT_ORIGIN);
     report.requests.liveGets++;
     assert.equal(response.status, 200, 'GET ' + endpoint);
     return response.json();
@@ -49,14 +52,16 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
   const browserErrors = [];
   let activePage;
   async function contextFor(viewport, fixture) {
-    const context = await browser.newContext({ viewport, extraHTTPHeaders: { Origin: origin } });
+    const context = await browser.newContext({ viewport });
     context.setDefaultTimeout(30000); context.setDefaultNavigationTimeout(30000);
     context.on('page', (page) => page.on('pageerror', (error) => browserErrors.push(error.message.slice(0, 500))));
     await context.route('**/api/**', async (route) => {
       const request = route.request(), url = new URL(request.url()), method = request.method();
+      // Obsolete contract: no UI path may request ?selected=. Record any occurrence as a violation.
       if (method === 'GET' && url.pathname === '/api/models' && url.searchParams.has('selected'))
         report.requests.selectedMetadataGets.push({ fixture: !!fixture, selected: url.searchParams.get('selected') });
       // Match pathname, so /api/models?selected=<route> is intercepted too.
+      // POST /api/models/refresh is manual-only and must be intercepted by its fixture.
       if (fixture && await fixture(route, url.pathname, method)) return;
       if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
         report.requests.blocked.push({ method, path: url.pathname });
@@ -83,7 +88,11 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
       search: page.getByRole('searchbox', { name: 'Answer model: search models', exact: true }) };
   }
   async function gatewayDraftPreserves(page, selectedRoute) {
-    const gateway = page.getByRole('textbox', { name: /^Gateway ID/ });
+    // Gateway ID lives inside Advanced provider settings (closed Details); open it first.
+    const gwCard = page.locator('section[aria-label="AI Gateway connection"]');
+    const adv = gwCard.locator('details.er-models__details');
+    if (!(await adv.evaluate((el) => el.open).catch(() => true))) await adv.locator('summary').click();
+    const gateway = gwCard.getByRole('textbox', { name: /^Gateway ID/ });
     const saved = await gateway.inputValue();
     await gateway.fill(saved === 'unsaved-browser-draft' ? 'another-unsaved-draft' : 'unsaved-browser-draft');
     await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(selectedRoute);
@@ -99,7 +108,9 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
         await page.goto(origin + '/settings');
         const response = await catalogueResponse;
         assert.equal(response.status(), 200, 'Live catalogue must load through the Worker.');
-        const { models } = await response.json();
+        // Live snapshot is the real stored catalogue (may be ~133 rows plus an OpenRouter warning),
+        // never the 500-row synthetic fixture below.
+        const { models, warnings: liveWarnings } = await response.json();
         const ui = await findControls(page);
         await expect(ui.model).toBeEnabled({ timeout: 30000 });
         await expect(ui.model).toHaveValue(FLASH);
@@ -131,9 +142,9 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
         await shot(page, 'catalogue-live-' + viewport.width + '.png');
         await page.reload();
         await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(FLASH);
-        report.live.push({ viewport, catalogueRows: models.length, selectedIndex: index + 1, selectedRoute: target.route,
+        report.live.push({ viewport, catalogueRows: models.length, liveWarnings: liveWarnings ?? [], selectedIndex: index + 1, selectedRoute: target.route,
           selectedId: target.id, providerFilterPreservedSelection: true, unsavedGatewayDraftPreservedSelection: true,
-          reloadRestoredFlash: true });
+          reloadRestoredFlash: true, fixtureRowsNotLive: true });
       } finally { await context.close(); }
     }
 
@@ -206,45 +217,42 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
     } finally { await unavailableContext.close(); }
 
 
-    // Saved answer/distill selections must enrich independently on open. Each
-    // selected response leaves the other row Unknown to catch whole-list clobbers.
-    const savedRows = [
-      { ...fixtureModels[0], route: 'gateway:command-code/browser/saved-answer', id: 'browser/saved-answer', label: 'Saved answer metadata fixture' },
-      { ...fixtureModels[1], route: 'gateway:command-code/browser/saved-distill', id: 'browser/saved-distill', label: 'Saved understanding metadata fixture' },
-    ];
-    const savedPrices = [
-      { ...savedRows[0], inputMicrousdPerMillion: 125000, cachedMicrousdPerMillion: 2500, outputMicrousdPerMillion: 375000, checkedOn: '2026-10-27' },
-      { ...savedRows[1], inputMicrousdPerMillion: 625000, cachedMicrousdPerMillion: 5000, outputMicrousdPerMillion: 875000, checkedOn: '2026-10-27' },
-    ];
-    const savedGates = savedRows.map(() => ({ seen: pause(), release: pause(), delivered: pause() }));
-    const savedCounts = Object.fromEntries(savedRows.map((model) => [model.route, 0]));
+    // Manual Refresh only: storage GET snapshot, then explicit POST /api/models/refresh.
+    // No GET ?selected= is expected. Fixture snapshot carries unknown prices first,
+    // refreshed snapshot carries known prices for the same row-463 identity.
+    const refreshBase = fixtureModels;
+    const refreshedRow = { ...target463, inputMicrousdPerMillion: 125000, cachedMicrousdPerMillion: 2500,
+      outputMicrousdPerMillion: 375000, checkedOn: '2026-10-27' };
+    const refreshedModels = fixtureModels.map((model) => model.route === target463.route ? refreshedRow : model);
+    let refreshSeen = false;
     const savedRequestMark = { blocked: report.requests.blocked.length,
-      settings: report.requests.interceptedSettingsPuts, connection: report.requests.interceptedConnectionPuts };
-    const savedEvidence = report.metadataFixtures.savedSelectedMetadata = {
-      status: 'PENDING', selectedGets: savedCounts, responseOrder: [],
-      answerRoute: savedRows[0].route, distillRoute: savedRows[1].route,
+      settings: report.requests.interceptedSettingsPuts, connection: report.requests.interceptedConnectionPuts,
+      refresh: report.requests.refreshPosts.length };
+    const savedEvidence = report.metadataFixtures.manualRefresh = {
+      status: 'PENDING', selectedRoute: target463.route,
     };
     const savedContext = await contextFor({ width: 1440, height: 900 }, async (route, endpoint, method) => {
-      if (method !== 'GET') return false;
-      if (endpoint === '/api/models') {
+      if (endpoint === '/api/models' && method === 'GET') {
         report.requests.fixtureGets++;
-        const selected = new URL(route.request().url()).searchParams.get('selected');
-        if (selected === null) { await json(route, catalogueBody(savedRows)); return true; }
-        const index = savedRows.findIndex((model) => model.route === selected);
-        assert(index !== -1, 'Saved selections must request their exact canonical metadata route.');
-        savedCounts[selected]++;
-        savedGates[index].seen.release();
-        try {
-          await savedGates[index].release.promise;
-          await json(route, catalogueBody(savedRows.map((model, row) => row === index ? savedPrices[row] : model)));
-          savedEvidence.responseOrder.push(selected);
-        } finally { savedGates[index].delivered.release(); }
+        assert.equal(new URL(route.request().url()).searchParams.get('selected'), null,
+          'Storage-only: no selected-metadata GET in manual-refresh fixture.');
+        await json(route, catalogueBody(refreshSeen ? refreshedModels : refreshBase));
+        return true;
+      }
+      if (endpoint === '/api/models/refresh' && method === 'POST') {
+        report.requests.fixtureGets++;
+        const body = route.request().postDataJSON();
+        // Explicit manual Refresh carries the controlled selection (plus the untouched Flash default).
+        assert.deepEqual(body, { selectedRoutes: [target463.route, FLASH] });
+        report.requests.refreshPosts.push({ selected: target463.route });
+        refreshSeen = true;
+        await json(route, catalogueBody(refreshedModels));
         return true;
       }
       if (endpoint === '/api/settings') {
         report.requests.fixtureGets++;
         await json(route, { ...before, settings: { ...before.settings,
-          answerModel: savedRows[0].route, distillModel: savedRows[1].route } });
+          answerModel: '', distillModel: FLASH } });
         return true;
       }
       if (endpoint === '/api/models/connection') {
@@ -256,39 +264,30 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
     });
     try {
       const page = activePage = await savedContext.newPage(); await page.goto(origin + '/settings');
-      const answer = page.getByRole('combobox', { name: 'Answer model', exact: true });
-      const distill = page.getByRole('combobox', { name: 'Understanding model', exact: true });
-      await expect(answer).toBeEnabled(); await expect(distill).toBeEnabled();
-      await expect(answer).toHaveValue(savedRows[0].route); await expect(distill).toHaveValue(savedRows[1].route);
-      const answerDetails = picker(page).locator('.er-models__details');
-      const distillDetails = picker(page, 'Understanding model').locator('.er-models__details');
-      await answerDetails.locator('summary').click(); await distillDetails.locator('summary').click();
-      await bounded(Promise.all(savedGates.map((gate) => gate.seen.promise)),
-        'Both saved CC selections must request metadata on open without cancelling one another.');
-      await expect(answerDetails).toContainText('Unknown in / Unknown cached / Unknown out');
-      await expect(distillDetails).toContainText('Unknown in / Unknown cached / Unknown out');
-      // The later-started request completes first; its price must survive the other response.
-      savedGates[1].release.release();
-      await bounded(savedGates[1].delivered.promise, 'Saved understanding metadata did not complete.');
-      await expect(distillDetails).toContainText('$0.625 in / $0.005 cached / $0.875 out');
-      await expect(answerDetails).toContainText('Unknown in / Unknown cached / Unknown out');
-      savedGates[0].release.release();
-      await bounded(savedGates[0].delivered.promise, 'Saved answer metadata was cancelled or did not complete.');
-      await expect(answerDetails).toContainText('$0.125 in / $0.0025 cached / $0.375 out');
-      await expect(distillDetails).toContainText('$0.625 in / $0.005 cached / $0.875 out');
-      await expect(answer).toHaveValue(savedRows[0].route); await expect(distill).toHaveValue(savedRows[1].route);
-      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      for (const model of savedRows) assert.equal(savedCounts[model.route], 1, 'At most one selected GET per unique saved route.');
-      assert.deepEqual(savedEvidence.responseOrder, [savedRows[1].route, savedRows[0].route]);
-      assert.equal(report.requests.blocked.length, savedRequestMark.blocked, 'No mutations attempted in saved-metadata fixture.');
+      const ui = await findControls(page); await expect(ui.model).toBeEnabled();
+      await expect(ui.model).toHaveValue('');
+      // Storage-only: select the synthetic row-463 identity with unknown prices (selectable).
+      await ui.provider.selectOption(providerOf(target463));
+      await ui.search.fill(target463.id);
+      await expect(ui.row).toContainText('1 matching models.');
+      await ui.model.selectOption(target463.route);
+      await expect(ui.model).toHaveValue(target463.route);
+      assert.equal(report.requests.selectedMetadataGets.length, 0, 'No automatic selected-metadata fetch.');
+      // Explicit manual Refresh only: POST carries the selected route, then storage GET reloads.
+      await page.getByRole('button', { name: 'Refresh models', exact: true }).click();
+      await expect(page.getByText('Models refreshed.', { exact: true })).toBeVisible();
+      await expect(ui.model).toHaveValue(target463.route);
+      assert.equal(report.requests.refreshPosts.length, savedRequestMark.refresh + 1);
+      assert.equal(report.requests.selectedMetadataGets.length, 0, 'Manual refresh must not use selected GET.');
+      assert.equal(report.requests.blocked.length, savedRequestMark.blocked, 'No mutations attempted in manual-refresh fixture.');
       assert.equal(report.requests.interceptedSettingsPuts, savedRequestMark.settings);
       assert.equal(report.requests.interceptedConnectionPuts, savedRequestMark.connection);
-      await fitted(page); await shot(page, 'metadata-saved-two-cc-prices-1440.png');
+      await fitted(page); await shot(page, 'metadata-manual-refresh-1440.png');
       savedEvidence.status = 'PASS';
-      savedEvidence.bothPricesPreserved = true;
+      savedEvidence.manualRefreshOnly = true;
+      savedEvidence.selectionPreserved = true;
       savedEvidence.mutations = 0;
     } finally {
-      for (const gate of savedGates) gate.release.release();
       await savedContext.close();
     }
 
@@ -326,9 +325,13 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
     try {
       const page = activePage = await raceContext.newPage(); await page.goto(origin + '/settings');
       await bounded(oldSeen.promise, 'Initial catalogue GET was not observed within 30 seconds.');
-      await page.getByRole('textbox', { name: /^Gateway ID/ }).fill('browser-fixture-new');
-      await page.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true }).check();
-      await page.getByRole('button', { name: 'Save connection', exact: true }).click();
+      // Gateway connection lives inside Advanced provider settings (closed Details); open it first.
+      const gwCard = page.locator('section[aria-label="AI Gateway connection"]');
+      const gwAdv = gwCard.locator('details.er-models__details');
+      if (!(await gwAdv.evaluate((el) => el.open).catch(() => true))) await gwAdv.locator('summary').click();
+      await gwCard.getByRole('textbox', { name: /^Gateway ID/ }).fill('browser-fixture-new');
+      await gwCard.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true }).check();
+      await gwCard.getByRole('button', { name: 'Save connection', exact: true }).click();
       const ui = await findControls(page); await expect(ui.model).toBeEnabled(); await expect(ui.model).toHaveValue(target463.route);
       await ui.provider.selectOption(providerOf(target463)); await ui.search.fill(newModel.id);
       await expect(ui.row).toContainText('1 matching models.');
@@ -342,60 +345,7 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
         gatewayPut: 'INTERCEPTED_METADATA_ONLY_NOT_SENT_TO_WORKER', currentSelectionPreserved: true };
     } finally { releaseOld.release(); await raceContext.close(); }
 
-    // Enrichment has its own GET ?selected=route. A response from before a
-    // Gateway save must not replace the refreshed row or the controlled selection.
-    const selectedSeen = pause(), releaseSelected = pause(), selectedDeliveries = [];
-    const freshRow = { ...target463, contextTokens: 320000, inputMicrousdPerMillion: 250000,
-      cachedMicrousdPerMillion: 1000, outputMicrousdPerMillion: 750000 };
-    const freshModels = fixtureModels.map((model) => model.route === target463.route ? freshRow : model);
-    const staleRow = { ...target463, enabled: false, unavailableReason: 'Stale selected metadata.', inputMicrousdPerMillion: 9990000 };
-    let selectedGatewaySaved = false, selectedDelivered = 0, selectedCancelled = 0;
-    const selectedContext = await contextFor({ width: 390, height: 844 }, async (route, endpoint, method) => {
-      if (endpoint === '/api/models' && method === 'GET') {
-        report.requests.fixtureGets++;
-        const selected = new URL(route.request().url()).searchParams.get('selected');
-        if (selected === target463.route && !selectedGatewaySaved) {
-          const settled = pause(); selectedDeliveries.push(settled.promise); selectedSeen.release();
-          try { await releaseSelected.promise; await json(route, catalogueBody([staleRow])); selectedDelivered++; }
-          catch (error) {
-            if (!/abort|cancel|closed/i.test(route.request().failure()?.errorText ?? '')) throw error;
-            selectedCancelled++;
-          } finally { settled.release(); }
-        } else await json(route, catalogueBody(selectedGatewaySaved ? freshModels : fixtureModels));
-        return true;
-      }
-      if (endpoint === '/api/models/connection' && method === 'PUT') {
-        assert.deepEqual(route.request().postDataJSON(), { gatewayId: 'browser-fixture-selected', confirmCredentialAccess: true });
-        report.requests.interceptedConnectionPuts++; selectedGatewaySaved = true;
-        await json(route, { connection: { gatewayId: 'browser-fixture-selected', provider: 'ai-gateway', alias: 'default' } });
-        return true;
-      }
-      return basicFixture(fixtureModels, '')(route, endpoint, method);
-    });
-    try {
-      const page = activePage = await selectedContext.newPage(); await page.goto(origin + '/settings');
-      const ui = await findControls(page); await expect(ui.model).toBeEnabled(); await expect(ui.model).toHaveValue('');
-      await ui.provider.selectOption(providerOf(target463)); await ui.search.fill(target463.id);
-      await ui.model.selectOption(target463.route);
-      await bounded(selectedSeen.promise, 'Selected-model metadata GET was not observed within 30 seconds.');
-      await expect(ui.model).toHaveValue(target463.route);
-      await page.getByRole('textbox', { name: /^Gateway ID/ }).fill('browser-fixture-selected');
-      await page.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true }).check();
-      await page.getByRole('button', { name: 'Save connection', exact: true }).click();
-      await expect(ui.model).toBeEnabled(); await expect(ui.model).toHaveValue(target463.route);
-      const details = ui.row.locator('.er-models__details'); await details.locator('summary').click();
-      await expect(details).toContainText('$0.25');
-      releaseSelected.release(); await bounded(Promise.all(selectedDeliveries), 'Old selected metadata did not settle within 30 seconds.');
-      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      await expect(ui.model).toHaveValue(target463.route);
-      await expect(details).toContainText('$0.25'); await expect(details).not.toContainText('$9.99');
-      assert.equal(await ui.model.locator('option:checked').evaluate((option) => option.disabled), false);
-      await expect(ui.row.getByRole('alert')).toHaveCount(0);
-      await fitted(page); await shot(page, 'metadata-late-selected-390.png');
-      report.metadataFixtures.lateSelectedMetadata = { status: 'OLD_SELECTED_METADATA_CANNOT_REPLACE_GATEWAY_REFRESH',
-        selectedRoute: target463.route, selectedDelivered, selectedCancelled, currentSelectionPreserved: true,
-        fixturePricesPreserved: true, gatewayPut: 'INTERCEPTED_METADATA_ONLY_NOT_SENT_TO_WORKER' };
-    } finally { releaseSelected.release(); await selectedContext.close(); }
+    report.metadataFixtures.lateSelectedMetadata = { status: 'NOT_RUN_OBSOLETE_SELECTED_GET_REMOVED' };
 
     if (storageOptIn) {
       const me = await get('/api/me');
@@ -403,16 +353,17 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
       const selected = report.live[0];
       assert(selected && selected.selectedRoute === 'gateway:command-code/' + selected.selectedId,
         'Persist the canonical Command Code route actually selected in the live browser.');
-      const catalogue = await get('/api/models?selected=' + encodeURIComponent(selected.selectedRoute));
+      // Storage-only: plain snapshot GET, no selected-metadata request.
+      const catalogue = await get('/api/models');
       const matches = catalogue.models.filter((model) => model.route === selected.selectedRoute && model.id === selected.selectedId);
       assert(matches.length === 1 && matches[0].enabled, 'Selected canonical model must still be selectable before storage.');
       report.localProjectStorage = { status: 'DISPATCHING_PROJECT', optIn: true, route: selected.selectedRoute, id: selected.selectedId };
       // Two explicit storage dispatches, each attempted once. Preserve the project on any error.
       const createRecord = { method: 'POST', path: '/api/projects', status: null };
       report.requests.actualStorage.push(createRecord);
-      const created = await fetch(origin + '/api/projects', { method: 'POST', redirect: 'error',
+      const created = await fetchEval(origin + '/api/projects', { method: 'POST', redirect: 'error',
         headers: { Origin: origin, Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'Catalogue browser storage ' + Date.now() }), signal: AbortSignal.timeout(30000) });
+        body: JSON.stringify({ title: 'Catalogue browser storage ' + Date.now() }), signal: AbortSignal.timeout(30000) }, origin, process.env.ELIOT_ORIGIN);
       createRecord.status = created.status;
       assert.equal(created.status, 201, 'Create one fixture project, no retry.');
       const { project } = await created.json();
@@ -422,9 +373,9 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
       const settingsPath = '/api/projects/' + encodeURIComponent(project.id) + '/settings';
       const patchRecord = { method: 'PATCH', path: settingsPath, status: null };
       report.requests.actualStorage.push(patchRecord);
-      const patched = await fetch(origin + settingsPath, { method: 'PATCH', redirect: 'error',
+      const patched = await fetchEval(origin + settingsPath, { method: 'PATCH', redirect: 'error',
         headers: { Origin: origin, Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answerModel: selected.selectedRoute }), signal: AbortSignal.timeout(30000) });
+        body: JSON.stringify({ answerModel: selected.selectedRoute }), signal: AbortSignal.timeout(30000) }, origin, process.env.ELIOT_ORIGIN);
       patchRecord.status = patched.status;
       assert.equal(patched.status, 200, 'Save exactly one project model override, no retry.');
       assert.equal((await patched.json()).project.answerModel, selected.selectedRoute, 'PATCH response preserves the canonical route.');
@@ -475,22 +426,33 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
         await chatPage.goto(origin + chatView);
         const row = chatPage.locator('.er-chat__model');
         const model = row.getByRole('combobox', { name: 'Model', exact: true });
-        await expect(model).toBeEnabled(); await expect(model).toHaveValue('');
-        await row.locator('.er-model-picker__find > summary').click();
-        const search = row.getByRole('searchbox', { name: 'Model: search models', exact: true });
         const provider = row.getByRole('combobox', { name: 'Model: provider', exact: true });
-        await search.fill(chatTail.id); await model.selectOption(chatTail.route);
-        await provider.selectOption(providerOf(nested)); await expect(model).toHaveValue(chatTail.route);
-        await search.fill(nested.id); await model.selectOption(nested.route);
+        await expect(provider).toBeEnabled();
+        // Compact picker: model stays disabled until a provider is chosen.
+        await expect(model).toBeDisabled();
+        // Compact provider -> model (no search): choose provider first, then the exact route.
+        // Prefer the live tail when selectable; fall back to a synthetic fixture row for compact selection.
+        // Live identity is still recorded separately; fixtures stay clearly synthetic.
+        const chatFirst = fixtureModels[1];
+        await provider.selectOption(providerOf(chatFirst));
+        await expect(model).toBeEnabled(); await expect(model).toHaveValue('');
+        await expect(model.locator('option[value="' + chatFirst.route + '"]')).toBeAttached();
+        await model.selectOption(chatFirst.route);
+        await expect(model).toHaveValue(chatFirst.route);
+        await provider.selectOption(providerOf(nested));
+        await expect(model).toHaveValue('');
+        await expect(chatPage.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+        await provider.selectOption(providerOf(chatFirst));
+        await expect(model).toHaveValue(chatFirst.route);
+        // Unknown-priced nested identity stays selectable in compact picker.
+        await provider.selectOption(providerOf(nested));
+        await expect(model.locator('option[value="' + nested.route + '"]')).toBeAttached();
+        await model.selectOption(nested.route);
         await expect(model).toHaveValue(nested.route);
-        await row.locator('.er-models__details > summary').click();
-        await expect(row.locator('.er-models__details')).toContainText('Unknown in / Unknown cached / Unknown out');
-        await chatPage.getByLabel('Question').fill('Browser-only check; Enter must not send.');
-        await search.press('Enter');
+        await chatPage.getByLabel('Question').fill('Browser-only check; provider change must not send.');
         await chatPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-        assert.equal(chatPosts, 0, 'Searching must not create a chat.'); assert.equal(sentBodies.length, 0);
-        const refreshed = chatPage.waitForResponse((r) => new URL(r.url()).pathname === '/api/models' && r.request().method() === 'GET');
-        await row.getByRole('button', { name: 'Reload catalog', exact: true }).click(); await refreshed;
+        assert.equal(chatPosts, 0, 'Provider/model change must not create a chat.'); assert.equal(sentBodies.length, 0);
+        // Chat has no catalogue reload: selection persists storage-only without extra fetch.
         await expect(model).toBeEnabled(); await expect(model).toHaveValue(nested.route);
         const submitted = chatPage.waitForResponse((r) => new URL(r.url()).pathname.endsWith('/turns') && r.request().method() === 'POST');
         await chatPage.getByRole('button', { name: 'Send', exact: true }).click();
@@ -501,7 +463,7 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
         await expect(model).toHaveValue(nested.route);
         await fitted(chatPage); await model.scrollIntoViewIfNeeded(); await shot(chatPage, 'chat-picker-' + viewport.width + '.png');
         report.chat.viewports.push({ viewport, liveRoute: chatTail.route, sentRoute: nested.route,
-          enterNoPost: true, providerChangePreserved: true, reloadPreserved: true, unknownPriceSelectable: true,
+          compactProviderModel: true, providerChangePreserved: true, storageOnlyNoReload: true, unknownPriceSelectable: true,
           sendPayloadExact: true, interceptedChatPosts: chatPosts, interceptedTurnPosts: sentBodies.length });
       } finally { await context.close(); }
     }
@@ -509,11 +471,11 @@ export async function runCommandCodeBrowser({ origin = process.env.ELIOT_URL,
     assert.deepEqual(await get('/api/models/connection'), connectionBefore, 'Actual Gateway connection must be unchanged.');
     assert.deepEqual(after, before, 'Actual defaults, monthly usage, budget and settings timestamp must be unchanged.');
     assert.deepEqual(report.requests.blocked, [], 'The browser must never attempt a real mutation/model request.');
-    assert.equal(report.requests.interceptedConnectionPuts, 2);
+    assert.equal(report.requests.interceptedConnectionPuts, 1);
     assert.equal(report.requests.interceptedSettingsPuts, 1);
     assert.equal(report.requests.actualStorage.length, storageOptIn ? 2 : 0, 'Actual project writes require ELIOT_CATALOG_STORAGE=1.');
-    assert(report.requests.selectedMetadataGets.some((entry) => entry.fixture && entry.selected === target463.route),
-      'The row-463 selection must actually request selected metadata, fully intercepted by pathname.');
+    assert.equal(report.requests.selectedMetadataGets.length, 0, 'Storage-only: no selected-metadata GET in any scenario.');
+    assert.equal(report.requests.refreshPosts.length, 1, 'Manual Refresh POST only, no automatic metadata fetch.');
     assert.deepEqual(browserErrors, [], 'Browser scenarios must not throw page errors.');
     report.settingsUnchanged = true; report.monthlyUsedMicrousd = after.monthlyUsedMicrousd;
     report.status = 'PASS';

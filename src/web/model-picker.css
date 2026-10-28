@@ -1,14 +1,25 @@
-/* Native selection/search adapted from the MIT model-selection.css donor at
-   7c034569b908d3b03a8b821b7c537477a24b10f7. Current Material controls/tokens only. */
+/* Native Material controls and semantic tokens; no provider-specific model catalogue. */
 .er-model-picker { display: grid; gap: var(--eliot-space-tight); min-inline-size: 0; max-inline-size: var(--eliot-type-reading-measure); }
+.er-model-picker--compact { max-inline-size: none; }
 .er-model-picker__chip { display: flex; align-items: center; gap: var(--eliot-space-tight); min-inline-size: 0; }
 .er-model-picker__chip > .er-symbol { flex-shrink: 0; color: var(--md-sys-color-primary); }
 .er-model-picker__chip > select { min-inline-size: 0; flex: 1 1 auto; }
 .er-model-picker__chip optgroup { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); }
+.er-model-picker__compact { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--eliot-space-gutter); min-inline-size: 0; }
+.er-model-picker__control { display: grid; gap: var(--eliot-space-tight); min-inline-size: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-medium-size); line-height: var(--eliot-type-label-medium-line-height); }
+.er-model-picker__control select { inline-size: 100%; min-inline-size: 0; }
 .er-model-picker__find { min-inline-size: 0; }
 .er-model-picker__find[open] { display: grid; gap: var(--eliot-space-block-control); }
-.er-model-picker__find > summary { display: flex; align-items: center; min-block-size: var(--eliot-size-control); color: var(--md-sys-color-primary); cursor: pointer; font-size: var(--eliot-type-label-large-size); }
+.er-model-picker__find > summary, .er-model-picker__warnings > summary { display: flex; align-items: center; min-block-size: var(--eliot-size-control); color: var(--md-sys-color-primary); cursor: pointer; font-size: var(--eliot-type-label-large-size); }
 .er-model-picker__search { display: grid; gap: var(--eliot-space-tight); min-inline-size: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-medium-size); }
-.er-model-picker__search > input { inline-size: 100%; }
+.er-model-picker__search > input, .er-model-picker__search > select { inline-size: 100%; min-inline-size: 0; }
+.er-model-picker__free { display: flex; align-items: center; gap: var(--eliot-space-gutter); min-block-size: var(--eliot-size-control); color: var(--md-sys-color-on-surface); cursor: pointer; }
+.er-model-picker__free input { flex-shrink: 0; inline-size: var(--eliot-size-checkbox); block-size: var(--eliot-size-checkbox); accent-color: var(--md-sys-color-primary); }
+.er-model-picker__note { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); line-height: var(--eliot-type-body-small-line-height); }
 .er-model-picker__pages { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--eliot-space-tight); }
-.er-model-picker__identity { margin: 0; min-inline-size: 0; overflow-wrap: anywhere; color: var(--md-sys-color-on-surface-variant); font-family: var(--eliot-type-font-family-mono); font-size: var(--eliot-type-body-small-size); }
+.er-model-picker__advanced { display: grid; gap: var(--eliot-space-tight); min-inline-size: 0; padding-block-start: var(--eliot-space-block-control); border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); }
+.er-model-picker__advanced > p { margin: 0; }
+.er-model-picker__identity { min-inline-size: 0; overflow-wrap: anywhere; color: var(--md-sys-color-on-surface-variant); font-family: var(--eliot-type-font-family-mono); font-size: var(--eliot-type-body-small-size); }
+.er-model-picker__warnings { min-inline-size: 0; }
+.er-model-picker__warnings[open] { display: grid; gap: var(--eliot-space-tight); }
+.er-model-picker__warnings ul { display: grid; gap: var(--eliot-space-tight); margin: 0; padding-inline-start: var(--eliot-space-group); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }

@@ -7,6 +7,7 @@
 // Single output file: eval/out/k3/fault-dispatch.json
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { assertEvalBrowserOrigin, fetchEval } from "./origin.mjs";
 if (process.env.ELIOT_FAULT_RUN !== "1") {
   console.log("REFUSING: set ELIOT_FAULT_RUN=1 only on explicit root runtime-ready signal.");
   process.exit(2);
@@ -15,7 +16,7 @@ if (!existsSync("wrangler.jsonc")) {
   console.log("REFUSING: run from the repository root (wrangler.jsonc not found).");
   process.exit(2);
 }
-const ORIGIN = process.env.ELIOT_URL || "http://127.0.0.1:5175";
+const ORIGIN = assertEvalBrowserOrigin(process.env.ELIOT_URL || "http://127.0.0.1:5175", process.env.ELIOT_ORIGIN);
 const CONFIG = process.env.ELIOT_FAULT_CONFIG || "eval/out/k3-final-20261026/wrangler.json";
 const PERSIST = process.env.ELIOT_FAULT_PERSIST || ".wrangler/k3-final-20261026";
 const CRON_PATH = process.env.ELIOT_CRON_PATH || "/cdn-cgi/local/scheduled";
@@ -32,7 +33,7 @@ if (process.env.ELIOT_OWNER_JWT) H["cf-access-jwt-assertion"] = String(process.e
 const record = { origin: ORIGIN, config: CONFIG, persist: PERSIST, cronPath: CRON_PATH, steps: [], ok: false };
 function note(step, detail) { record.steps.push({ step, detail }); console.log("# " + step + (detail === undefined ? "" : " " + JSON.stringify(detail))); }
 async function apiJson(path, init) {
-  const r = await fetch(ORIGIN + path, { ...init, headers: { Accept: "application/json", ...H, ...((init && init.headers) || {}) } });
+  const r = await fetchEval(ORIGIN + path, { ...init, headers: { Accept: "application/json", ...H, ...((init && init.headers) || {}) } }, ORIGIN, process.env.ELIOT_ORIGIN);
   const t = await r.text();
   let b = null;
   try { b = t ? JSON.parse(t) : null; } catch { b = { raw: String(t).slice(0, 300) }; }
@@ -90,7 +91,7 @@ note("slots-held", { running: held });
 if (held !== 2) fail("Expected exactly 2 held running slots, got " + held);
 let cronStatus = 0;
 try {
-  const cr = await fetch(ORIGIN + CRON_PATH, { method: "POST", headers: { ...H } });
+  const cr = await fetchEval(ORIGIN + CRON_PATH, { method: "POST", headers: { ...H } }, ORIGIN, process.env.ELIOT_ORIGIN);
   cronStatus = cr.status;
   await cr.text();
 } catch (e) { cronStatus = -1; }

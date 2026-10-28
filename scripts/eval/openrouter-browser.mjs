@@ -9,8 +9,11 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
+import { assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 
-const origin = new URL(process.env.ELIOT_URL || 'http://127.0.0.1:5173').origin;
+// This journey needs a WebSocket. The scoped HTTP route cannot attach Access
+// headers to WebSocket handshakes, so remote authenticated browser runs fail closed.
+const origin = assertEvalBrowserOrigin(process.env.ELIOT_URL || 'http://127.0.0.1:5173', process.env.ELIOT_ORIGIN);
 const H = { Origin: origin };
 if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
   H['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID;
@@ -28,10 +31,10 @@ await mkdir(OUT, { recursive: true });
 async function apiJson(path, init) {
   const scriptMethod = (init && init.method) || 'GET';
   if (scriptMethod !== 'GET' && scriptMethod !== 'HEAD' && scriptMethod !== 'OPTIONS') mutating.push({ method: scriptMethod, url: origin + path, phase: 'script:dispatch' });
-  const r = await fetch(origin + path, {
+  const r = await fetchEval(origin + path, {
     ...init,
     headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) },
-  });
+  }, origin, process.env.ELIOT_ORIGIN);
   const t = await r.text();
   let b = null;
   try { b = t ? JSON.parse(t) : null; } catch { b = { raw: String(t).slice(0, 300) }; }
@@ -70,7 +73,9 @@ async function getSources() {
 const turnKey = (t) => t.turnId + '|' + t.state + '|' + String(t.answer || '').length;
 
 const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 390, height: 844 }, extraHTTPHeaders: H });
+// The browser uses local development auth; Access credentials stay on Node's
+// origin-pinned HTTP requests and are never installed as context-wide headers.
+const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
 const facts = { origin, liveRoute: live.route, entries: [], mutating };
 process.on('uncaughtException', async (err) => {
   try {
@@ -228,7 +233,7 @@ const citeHref = await opened.page.locator('.er-chat__cite a').first().getAttrib
 assert(citeHref && /\/p\/.+\/source\/.+[?&]revisionId=.+[?&]start=\d+.+[?&]end=\d+/.test(citeHref), 'page must link exact revision bytes, got ' + citeHref);
 const m = /\/source\/([^?]+)\?revisionId=([^&]+)&start=(\d+)&end=(\d+)/.exec(citeHref);
 assert(m, 'citation href must parse.');
-const range = await fetch(origin + '/api/revisions/' + encodeURIComponent(m[2]) + '/range?start=' + m[3] + '&end=' + m[4], { headers: { ...H } });
+const range = await fetchEval(origin + '/api/revisions/' + encodeURIComponent(m[2]) + '/range?start=' + m[3] + '&end=' + m[4], { headers: { ...H } }, origin, process.env.ELIOT_ORIGIN);
 assert.equal(range.status, 200, 'citation range must open (storage-only).');
 const rangeBytes = Buffer.from(await range.arrayBuffer());
 assert.equal(rangeBytes.length, Number(m[4]) - Number(m[3]), 'citation range must return exact bytes.');

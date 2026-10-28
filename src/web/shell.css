@@ -3,8 +3,8 @@
  * apps/eliotr-web/src/app/Shell.tsx + shell.css at 7c034569b908d3b03a8b821b7c537477a24b10f7:
  * a top app bar, a collapsed navigation rail on medium/expanded windows, a bottom
  * navigation bar on compact windows, and one soft rounded reading pane that owns
- * its vertical scroll. K0 serves two destinations (Projects, Settings); the donor
- * sources/tools panes, research tabs and inbox/connections rules are not carried.
+ * its vertical scroll. K0 first wired Projects and Settings; later contour destinations
+ * reuse this geometry without carrying donor panes, research tabs or inbox rules.
  */
 html, body, #root { margin: 0; min-height: 100%; }
 html, body { background: var(--eliot-color-canvas); }

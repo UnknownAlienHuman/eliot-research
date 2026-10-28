@@ -3,7 +3,7 @@
 // only, paper-qa ideas only. Wire types imported from the root server
 // contract src/understanding.ts. All reads are storage-only GETs; the only
 // paid trigger is the explicit Understand button.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { Markdown } from './Markdown';
 import { ModelPicker, type ModelRoute } from './ModelPicker';
@@ -49,7 +49,7 @@ function stateLabel(s: DistillState): string {
   if (s === 'failed') return 'Understanding failed';
   return 'Not yet understood';
 }
-export function SourceUnderstanding({ projectId, sourceId, revisionId }: { readonly projectId: string; readonly sourceId: string; readonly revisionId: string }) {
+export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTitle }: { readonly projectId: string; readonly sourceId: string; readonly revisionId: string; readonly sourceTitle: string }) {
   const [view, setView] = useState<Understanding | undefined>(undefined);
   const [failure, setFailure] = useState('');
   const [busy, setBusy] = useState(false);
@@ -59,10 +59,9 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId }: { reado
   const [modelChoice, setModelChoice] = useState('');
   const [catalogueLoaded, setCatalogueLoaded] = useState(false);
   const [catalogError, setCatalogError] = useState('');
-  const [metaError, setMetaError] = useState('');
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [catalogWarnings, setCatalogWarnings] = useState<readonly string[]>([]);
-  const latestSelected = useRef('');
+  const [modelRoutePending, setModelRoutePending] = useState(false);
   const base = '/api/sources/' + encodeURIComponent(sourceId) + '/understanding';
   const url = base + '?revisionId=' + encodeURIComponent(revisionId);
   const state = view?.state;
@@ -73,29 +72,6 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId }: { reado
     void apiJson<{ models: ModelOption[]; warnings?: string[] }>('/api/models').then((d) => { if (live) { setModels(d.models); setCatalogWarnings(Array.isArray(d.warnings) ? d.warnings : []); setCatalogError(''); setCatalogueLoaded(true); } }).catch((err: unknown) => { if (live) { setCatalogError(err instanceof Error ? err.message : 'Could not load the model catalog.'); setCatalogueLoaded(true); } });
     return () => { live = false; };
   }, [catalogVersion]);
-  const effectiveRoute = modelChoice !== '' ? modelChoice : (view?.progress.configuredModel ?? '');
-  useEffect(() => {
-    setMetaError('');
-    if (!catalogueLoaded || view === undefined || effectiveRoute === '' || !effectiveRoute.startsWith('gateway:command-code/')) return;
-    latestSelected.current = effectiveRoute;
-    const controller = new AbortController();
-    void (async () => {
-      try {
-        const d = await apiJson<{ models: ModelOption[]; warnings?: string[] }>('/api/models?selected=' + encodeURIComponent(effectiveRoute), { signal: controller.signal });
-        if (controller.signal.aborted || latestSelected.current !== effectiveRoute) return;
-        if (Array.isArray(d.warnings)) setCatalogWarnings(d.warnings);
-        const enriched = d.models.find((m) => m.route === effectiveRoute);
-        if (enriched === undefined) return;
-        setModels((prev) => prev.some((m) => m.route === effectiveRoute) ? prev.map((m) => m.route === effectiveRoute ? enriched : m) : [...prev, enriched]);
-      } catch (err: unknown) {
-        if (!controller.signal.aborted && latestSelected.current === effectiveRoute) {
-          setMetaError(err instanceof Error ? err.message : 'Model metadata refresh failed.');
-          setModels((prev) => prev.map((m) => m.route === effectiveRoute ? { ...m, inputMicrousdPerMillion: null, cachedMicrousdPerMillion: null, outputMicrousdPerMillion: null } : m));
-        }
-      }
-    })();
-    return () => { controller.abort(); };
-  }, [catalogueLoaded, view, effectiveRoute]);
   useEffect(() => {
     if (sourceId === '' || revisionId === '' || (state !== undefined && state !== 'queued' && state !== 'running')) return;
     let live = true;
@@ -114,7 +90,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId }: { reado
     return () => { live = false; if (armed) window.clearInterval(timer); };
   }, [sourceId, revisionId, state, url, readVersion]);
   async function understand(): Promise<void> {
-    if (sourceId === '' || revisionId === '' || busy) return;
+    if (sourceId === '' || revisionId === '' || busy || modelRoutePending) return;
     const chosen = models.find((m) => m.route === modelChoice);
     if (modelChoice !== '' && (!chosen || !chosen.enabled)) { setNote(chosen && chosen.unavailableReason ? 'Selected model is unavailable: ' + chosen.unavailableReason : 'Selected model is unavailable.'); return; }
     if (modelChoice === '' && configuredBound === null) { setNote('Model pricing is unavailable.'); return; }
@@ -147,16 +123,25 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId }: { reado
       <section className='er-und' aria-label='Understanding'>
         <h2 className='er-und__title'>Understanding</h2>
         {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : <p className='er-und__hint' role='status'>Loading understanding…</p>}
-        {failure !== '' ? <button className='er-button er-button--tonal' type='button' onClick={() => setReadVersion((v) => v + 1)}>Reload understanding</button> : null}
         {note !== '' ? <p className='er-und__hint' role='status'>{note}</p> : null}
+        {failure !== '' ? <details className='er-und__details'><summary>Details</summary><div className='er-und__details-content'>
+          <button className='er-button er-button--tonal' type='button' onClick={() => setReadVersion((v) => v + 1)}>Reload understanding</button>
+        </div></details> : null}
       </section>
     );
   }
   const canRecover = view.canRecover === true;
   const active = view.state === 'queued' || view.state === 'running';
   const canStart = !active && (view.state === 'none' || view.state === 'paused');
-  const references = view.citations.map((c) => ({ text: '[R' + view.revisionId + ':' + c.block + ']',
-    href: '/p/' + encodeURIComponent(projectId) + '/source/' + encodeURIComponent(sourceId) + '?revisionId=' + encodeURIComponent(view.revisionId) + '&start=' + c.start + '&end=' + c.end }));
+  const references = view.citations.map((c, index) => ({
+    text: '[R' + view.revisionId + ':' + c.block + ']',
+    label: 'Open quote · ' + sourceTitle + ' · ' + (index + 1),
+    block: c.block,
+    start: c.start,
+    end: c.end,
+    href: '/p/' + encodeURIComponent(projectId) + '/source/' + encodeURIComponent(sourceId) + '?revisionId=' + encodeURIComponent(view.revisionId) + '&start=' + c.start + '&end=' + c.end,
+  }));
+  const referenceByBlock = new Map(references.map((reference) => [reference.block, reference] as const));
   const chosen = models.find((m) => m.route === modelChoice);
   const chosenDisabled = modelChoice !== '' && (!chosen || !chosen.enabled);
   const chosenBound = chosen !== undefined && chosen.enabled ? twoCallBound(chosen) : null;
@@ -166,24 +151,37 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId }: { reado
   const revisionModel = view.progress.model;
   const configuredBound = configuredSpec !== undefined ? (configuredSpec.enabled ? twoCallBound(configuredSpec) : null) : view.progress.maximumCostMicrousd;
   const pickerEmptyLabel = 'Use configured default' + (configuredLabel !== null ? ' (' + configuredLabel + ')' : '');
-  const catalogWarningLine = catalogWarnings.length > 0 ? <p className='er-und__hint' role='status'>Model catalog: {catalogWarnings.join(' ')}</p> : null;
-  const reloadCatalog = () => { setCatalogError(''); setMetaError(''); setCatalogWarnings([]); setCatalogVersion((v) => v + 1); };
+  const understandDisabled = busy || modelRoutePending || (modelChoice === '' ? configuredBound === null : chosenDisabled || chosenBound === null);
+  const reloadSnapshot = () => { setCatalogError(''); setCatalogWarnings([]); setCatalogVersion((v) => v + 1); };
   return (
     <section className='er-und' aria-label='Understanding'>
       <h2 className='er-und__title'>Understanding</h2>
-      {catalogWarningLine}
-      {view.authors || view.published ? <p className='er-und__meta'>{[view.authors, view.published].filter(Boolean).join(' · ')}</p> : null}
-      <p className='er-und__hint' role='status'>{stateLabel(view.state)}{view.state === 'paused' ? ' — resume explicitly after resolving the shown reason.' : ''}{active ? ' — refreshes on its own.' : ''}</p>
-      {revisionModel !== null ? <p className='er-und__meta'>Historical revision model: {revisionModel} — the two-call bound above uses the current configured default.</p> : null}
-      {active ? <p className='er-und__meta'>Model attempts {view.progress.attempts}/{view.progress.limit}; each call is bounded to 3 minutes.</p> : null}
+      <p className='er-und__hint' role='status'>{stateLabel(view.state)}{active ? ' — refreshes on its own.' : ''}</p>
       {view.error !== null && view.error !== '' ? <p className='er-und__error' role='alert'>{view.error}</p> : null}
-      {view.state === 'failed' ? <p className='er-und__hint'>Terminal failure is not re-queued; the two-call bound holds and nothing retries automatically.</p> : null}
       {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : null}
-      {view.report !== null ? (<p className='er-und__meta'><span>{view.report.usage.calls} calls</span><span>{view.report.usage.inputTokens === null ? 'unknown' : view.report.usage.inputTokens} in / {view.report.usage.outputTokens === null ? 'unknown' : view.report.usage.outputTokens} out</span><span>{'$' + (view.report.usage.estimatedCostMicrousd / 1000000).toFixed(4)}</span><span>{view.report.usage.wallMs} ms</span></p>) : null}
-      {view.report && view.report.dropped.length > 0 ? <p className='er-und__hint'>{view.report.dropped.length} unsupported candidates were omitted; {view.report.clearedNumbers} numeric fields cleared. No automatic paid retry.</p> : null}
-      {canStart ? (<><ModelPicker label='Understanding model' choices={models} value={modelChoice} onChange={setModelChoice} emptyLabel={pickerEmptyLabel} loading={!catalogueLoaded} error={catalogError} onReload={reloadCatalog} />{metaError !== '' ? <p className='er-und__hint' role='status'>Selected-model metadata refresh failed: {metaError} The selection above stays available with unknown pricing until it succeeds; choose another model or retry the catalog.</p> : null}{modelChoice === '' ? (<p className='er-und__hint'>{configuredBound === null ? 'Model pricing is unavailable.' : 'At most $' + (configuredBound / 1000000).toFixed(4) + ' reserved for two bounded calls; settles to reported usage.'}</p>) : chosen !== undefined && chosen.enabled && chosenBound !== null ? (<p className='er-und__hint'>At most {'$' + (chosenBound / 1000000).toFixed(4)} reserved for two bounded {chosen.label} calls at current prices; settles to reported usage.</p>) : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'Model pricing is unavailable.'}</p>)}<span className='er-und__actions'><button className='er-button er-button--tonal' type='button' disabled={busy || (modelChoice === '' ? configuredBound === null : chosenDisabled || chosenBound === null)} onClick={() => void understand()}>Understand source</button></span></>) : null}
-      {!active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial') ? (<><span className='er-und__actions'><button className='er-button er-button--tonal' type='button' disabled={busy} onClick={() => void saveAvailable()}>{view.state === 'failed' ? 'Save available output' : 'Recheck saved output'}</button></span><p className='er-und__hint'>Storage-only recheck; starts no model work and never re-queues the model.</p></>) : null}
+      {canStart ? <div className='er-und__actions'><button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void understand()}>Understand source</button></div> : null}
       {note !== '' ? <p className='er-und__hint' role='status'>{note}</p> : null}
+      <details className='er-und__details'><summary>Details</summary><div className='er-und__details-content'>
+        {failure !== '' ? <button className='er-button er-button--text' type='button' onClick={() => setReadVersion((v) => v + 1)}>Reload understanding</button> : null}
+        <p className='er-und__meta'>Revision ID: <span className='er-und__mono'>{view.revisionId}</span></p>
+        {view.authors || view.published ? <p className='er-und__meta'>{[view.authors, view.published].filter(Boolean).join(' · ')}</p> : null}
+        {configuredLabel !== null ? <p className='er-und__meta'>Configured model: {configuredLabel}</p> : null}
+        {revisionModel !== null ? <p className='er-und__meta'>Historical revision model: {revisionModel}</p> : null}
+        <p className='er-und__meta'>Attempts {view.progress.attempts}/{view.progress.limit}; each call is bounded to 3 minutes. Automatic retry is off.</p>
+        {canStart ? <div className='er-und__model-details'>
+          <ModelPicker label='Understanding model' choices={models} value={modelChoice} onChange={setModelChoice}
+            emptyLabel={pickerEmptyLabel} loading={!catalogueLoaded} error={catalogError} compact
+            onRoutePendingChange={setModelRoutePending} />
+          <button className='er-button er-button--text' type='button' disabled={!catalogueLoaded} onClick={reloadSnapshot}>Reload snapshot</button>
+          {catalogWarnings.length > 0 ? <p className='er-und__hint' role='status'>Model catalog: {catalogWarnings.join(' ')}</p> : null}
+          {modelChoice === '' ? (<p className='er-und__hint'>{configuredBound === null ? 'Price is unknown; Understand is unavailable until a bounded price is available.' : 'At most $' + (configuredBound / 1000000).toFixed(4) + ' reserved for two bounded calls; settles to reported usage.'}</p>) : chosen !== undefined && chosen.enabled && chosenBound !== null ? (<p className='er-und__hint'>At most {'$' + (chosenBound / 1000000).toFixed(4)} reserved for two bounded {chosen.label} calls at current prices; settles to reported usage.</p>) : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'Price is unknown; Understand is unavailable until a bound is available.'}</p>)}
+        </div> : null}
+        {view.state === 'failed' ? <p className='er-und__hint'>This attempt is terminal and will not be re-queued automatically.</p> : null}
+        {view.report !== null ? (<p className='er-und__meta'><span>{view.report.usage.calls} calls</span><span>{view.report.usage.inputTokens === null ? 'unknown' : view.report.usage.inputTokens} in / {view.report.usage.outputTokens === null ? 'unknown' : view.report.usage.outputTokens} out</span><span>{'$' + (view.report.usage.estimatedCostMicrousd / 1000000).toFixed(4)}</span><span>{view.report.usage.wallMs} ms</span></p>) : null}
+        {view.report && view.report.dropped.length > 0 ? <p className='er-und__hint'>{view.report.dropped.length} unsupported candidates were omitted; {view.report.clearedNumbers} numeric fields cleared. No automatic paid retry.</p> : null}
+        {!active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial') ? <div className='er-und__storage-action'><button className='er-button er-button--tonal' type='button' disabled={busy} onClick={() => void saveAvailable()}>{view.state === 'failed' ? 'Save available output' : 'Recheck saved output'}</button><p className='er-und__hint'>Storage-only; starts no model work and never re-queues the model.</p></div> : null}
+        {references.length > 0 ? <div className='er-und__range-details'><h3>Source passages</h3><ul>{references.map((reference) => <li key={reference.block}>{sourceTitle} · block {reference.block} · bytes [{reference.start}, {reference.end})</li>)}</ul></div> : null}
+      </div></details>
       {(view.state === 'done' || view.state === 'partial') ? (<>
         {view.state === 'partial' ? <p className='er-und__hint'>Partial understanding — some material could not be verified.</p> : null}
         {view.guide !== null && view.guide !== '' ? (<div className='er-und__guide'><h3>Guide</h3><div className='er-und__answer'><Markdown text={view.guide} references={references} /></div></div>) : null}
@@ -196,7 +194,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId }: { reado
             {c.valueText !== null && c.valueText !== '' ? <p className='er-und__meta'><span>{c.valueText}{c.unit !== null && c.unit !== '' ? ' ' + c.unit : ''}</span>{c.conditions !== null && c.conditions !== '' ? <span>{c.conditions}</span> : null}</p> : null}
             {(c.task ?? '') !== '' || (c.metric ?? '') !== '' || (c.dataset ?? '') !== '' ? <p className='er-und__meta'><span>{[c.task, c.metric, c.dataset].filter((x) => x !== null && x !== '').join(' · ')}</span></p> : null}
             <blockquote className='er-und__quote'>{c.quote}</blockquote>
-            <Link className='er-und__cite' to={'/p/' + encodeURIComponent(projectId) + '/source/' + encodeURIComponent(sourceId) + '?revisionId=' + encodeURIComponent(view.revisionId) + '&start=' + c.start + '&end=' + c.end} title={view.revisionId + ' [' + c.start + ', ' + c.end + ')'}>Open quote [block {c.block}] [{c.start}, {c.end})</Link>
+            <Link className='er-und__cite er-citation' to={'/p/' + encodeURIComponent(projectId) + '/source/' + encodeURIComponent(sourceId) + '?revisionId=' + encodeURIComponent(view.revisionId) + '&start=' + c.start + '&end=' + c.end}>{referenceByBlock.get(c.block)?.label ?? 'Open quote · ' + sourceTitle}</Link>
           </li>))}</ul>)}</div>
       </>) : null}
     </section>

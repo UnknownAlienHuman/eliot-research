@@ -36,18 +36,23 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 function hrefFor(projectId: string, c: Citation): string {
   return '/p/' + encodeURIComponent(projectId) + '/source/' + encodeURIComponent(c.sourceId) + '?revisionId=' + encodeURIComponent(c.revisionId) + '&start=' + c.start + '&end=' + c.end;
 }
+function citationDisplayLabel(c: Citation): string {
+  return c.sourceTitle + ' · ' + c.block + (c.deleted ? ' (deleted)' : '');
+}
 function collectRefs(projectId: string, cites: readonly Citation[]): MarkdownReference[] {
   const out: MarkdownReference[] = [];
   for (const c of cites) {
     const href = hrefFor(projectId, c);
-    const cands = [c.label, '[R' + c.revisionId + ':' + c.block + ']'];
-    for (const t of cands) { if (t !== '' && !out.some((r) => r.text === t)) out.push({ text: t, href }); }
+    const label = citationDisplayLabel(c);
+    for (const token of [c.label, '[R' + c.revisionId + ':' + c.block + ']']) {
+      if (token !== '' && !out.some((ref) => ref.text === token)) out.push({ text: token, label, href });
+    }
   }
   return out;
 }
 function Cites({ projectId, cites }: { readonly projectId: string; readonly cites: readonly Citation[] }) {
   if (cites.length === 0) return <p className='er-chat__hint'>No citations recorded for this turn.</p>;
-  return (<ul className='er-chat__cites'>{cites.map((c) => (<li key={c.revisionId + ':' + c.block + ':' + c.start + ':' + c.end} className='er-chat__cite'><Link to={hrefFor(projectId, c)} title={c.revisionId + ' [' + c.start + ', ' + c.end + ')'}>{c.sourceTitle + ' ' + c.label}{c.deleted ? ' (deleted)' : ''}</Link></li>))}</ul>);
+  return (<ul className='er-chat__cites'>{cites.map((c) => (<li key={c.revisionId + ':' + c.block + ':' + c.start + ':' + c.end} className='er-chat__cite'><Link to={hrefFor(projectId, c)} title={'Open the cited passage in ' + c.sourceTitle}>{citationDisplayLabel(c)}</Link></li>))}</ul>);
 }
 export function ChatView() {
   const { projectId, chatId } = useParams();
@@ -66,6 +71,7 @@ export function ChatView() {
   const [modelsError, setModelsError] = useState('');
   const [modelsWarnings, setModelsWarnings] = useState<string[]>([]);
   const [modelRoute, setModelRoute] = useState('');
+  const [modelSelectionPending, setModelSelectionPending] = useState(false);
   const modelsSeq = useRef(0);
   const modelsAbort = useRef<AbortController | null>(null);
   const [selected, setSelected] = useState<string[]>(() => prevScopes.get(pid)?.selected ?? []);
@@ -214,7 +220,7 @@ export function ChatView() {
   }
   async function send(): Promise<void> {
     const q = question.trim();
-    if (pid === '' || q === '' || busy || !chatReady || queued !== null) return;
+    if (pid === '' || q === '' || busy || !chatReady || queued !== null || modelSelectionPending) return;
     setBusy(true); setSendError(''); setSaveNote('');
     try {
       let target = chatId;
@@ -250,7 +256,8 @@ export function ChatView() {
     <section className='er-chat' aria-label='Chat'>
       <header className='er-chat__head'>
         <h1 className='er-chat__title'>Chat</h1>
-        <p className='er-chat__socket' role='status'>Socket: {socket}{socket !== 'open' && chatId !== undefined ? ' — answers arrive on reconnect; nothing is resubmitted.' : ''}</p>
+        {chatId !== undefined && (socket === 'closed' || socket === 'error')
+          ? <p className='er-chat__connection' role='status'>Reconnecting to chat. Messages are not resubmitted.</p> : null}
       </header>
       {chatsError !== '' ? <p className='er-chat__error' role='alert'>{chatsError}</p> : null}
       {chats !== undefined && chats.length > 0 ? (<nav className='er-chat__chats' aria-label='Chats'>
@@ -269,7 +276,7 @@ export function ChatView() {
         {scopeNote !== '' ? <p className='er-chat__hint' role='status'>{scopeNote}</p> : null}
       </details>
       <details className='er-chat__scope'>
-        <summary>Settings</summary>
+        <summary>Project defaults</summary>
         <ModelSettings projectId={pid} />
       </details>
       {turnsError !== '' ? <p className='er-chat__error' role='alert'>{turnsError} <button className='er-button er-button--text' type='button' onClick={() => void loadChat()}>Retry</button></p> : null}
@@ -277,8 +284,19 @@ export function ChatView() {
         {turns.map((t) => (<li key={t.turnId} className='er-chat__turn' data-state={t.state}>
           <p className='er-chat__question'>{t.question}</p>
           <div className='er-chat__answer'>{t.answer === '' ? (t.state === 'started' ? <p className='er-chat__hint' role='status'>Streaming…</p> : <p className='er-chat__hint'>No answer text recorded.</p>) : <Markdown text={t.answer} references={collectRefs(pid, t.citations)} />}</div>
-          <p className='er-chat__meta'><span>{stateLabel(t.state)}</span><span>{scopeLabel(t.scopeMode)}</span><span>context {t.contextMode ?? 'unknown'}</span>{t.firstTokenMs != null ? <span>first token {t.firstTokenMs} ms</span> : null}{t.totalMs != null ? <span>total {t.totalMs} ms</span> : null}{t.inputTokens != null || t.outputTokens != null ? <span>{t.inputTokens ?? 0} in{t.cachedTokens != null && t.cachedTokens > 0 ? ' (' + t.cachedTokens + ' cached)' : ''} / {t.outputTokens ?? 0} out</span> : null}{t.estimatedCostMicrousd != null ? <span>{'$' + (t.estimatedCostMicrousd / 1000000).toFixed(4)} est.</span> : null}{t.invalidLabels > 0 ? <span className='er-chat__badge'>invalid labels: {t.invalidLabels}</span> : null}</p>
-          <Cites projectId={pid} cites={t.citations} />
+          <p className='er-chat__meta'><span>{stateLabel(t.state)}</span><span>{scopeLabel(t.scopeMode)}</span></p>
+          <details className='er-chat__turn-details'>
+            <summary>Details</summary>
+            <dl>
+              {t.contextMode != null ? <div><dt>Context</dt><dd>{t.contextMode}</dd></div> : null}
+              {t.firstTokenMs != null ? <div><dt>First token</dt><dd>{t.firstTokenMs} ms</dd></div> : null}
+              {t.totalMs != null ? <div><dt>Total time</dt><dd>{t.totalMs} ms</dd></div> : null}
+              <div><dt>Tokens</dt><dd>{t.inputTokens == null ? 'Unknown' : t.inputTokens.toLocaleString('en-US')} in{t.cachedTokens != null && t.cachedTokens > 0 ? ' (' + t.cachedTokens.toLocaleString('en-US') + ' cached)' : ''} / {t.outputTokens == null ? 'Unknown' : t.outputTokens.toLocaleString('en-US')} out</dd></div>
+              <div><dt>Estimated cost</dt><dd>{t.estimatedCostMicrousd == null ? 'Unknown' : '$' + (t.estimatedCostMicrousd / 1000000).toFixed(4)}</dd></div>
+              {t.invalidLabels > 0 ? <div><dt>Invalid labels</dt><dd>{t.invalidLabels}</dd></div> : null}
+            </dl>
+            <Cites projectId={pid} cites={t.citations} />
+          </details>
           <span className='er-chat__actions'>
             {t.state === 'started' ? <button className='er-button er-button--tonal' type='button' onClick={() => void stopTurn(t.turnId)}>Stop</button> : null}
             {(t.state === 'completed' || t.state === 'partial') && chatId !== undefined ? <button className='er-button er-button--text' type='button' disabled={savingId !== ''} onClick={() => void saveTurn(t)}>{savingId === t.turnId ? 'Saving…' : 'Save as page'}</button> : null}
@@ -287,14 +305,15 @@ export function ChatView() {
       </ol>
       {turns.length === 0 && chatId !== undefined && turnsError === '' ? <p className='er-chat__hint'>No turns yet. Ask below — sending is the only paid call here.</p> : null}
       {queued !== null ? <p className='er-chat__hint' role='status'>Queued: {queued.question} <button className='er-button er-button--text' type='button' onClick={() => void stopTurn(queued.turnId)}>Cancel queued</button></p> : null}
-      <div className='er-chat__model'>
-        <ModelPicker label='Model' choices={models} value={modelRoute} onChange={setModelRoute} loading={modelsLoading} error={modelsError} onReload={() => void loadModels()} emptyLabel='Project default' />
-        {modelsWarnings.length > 0 ? <p className='er-status' role='status'><span>Model catalog: {modelsWarnings.join(' ')}</span></p> : null}
-      </div>
       <form className='er-chat__composer' onSubmit={(e) => { e.preventDefault(); void send(); }}>
+        <div className='er-chat__model'>
+          <ModelPicker label='Model' choices={models} value={modelRoute} onChange={setModelRoute}
+            loading={modelsLoading} error={modelsError} emptyLabel='Project default' compact warnings={modelsWarnings}
+            onRoutePendingChange={setModelSelectionPending} />
+        </div>
         <label className='er-chat__asklabel' htmlFor='er-chat-q'>Question</label>
         <textarea id='er-chat-q' value={question} onChange={(e) => setQuestion(e.currentTarget.value)} rows={3} maxLength={4000} placeholder='Ask in Russian or English…' />
-        <button className='er-button er-button--primary' type='submit' disabled={busy || question.trim() === '' || !chatReady || queued !== null}>{busy ? 'Sending…' : 'Send'}</button>
+        <button className='er-button er-button--primary' type='submit' disabled={busy || question.trim() === '' || !chatReady || queued !== null || modelSelectionPending}>{busy ? 'Sending…' : 'Send'}</button>
       </form>
       {sendError !== '' ? <p className='er-chat__error' role='alert'>{sendError}</p> : null}
       {saveNote !== '' ? <p className='er-chat__hint' role='status'>{saveNote}</p> : null}
@@ -330,7 +349,10 @@ export function StudioView() {
       {pages === undefined ? <p className='er-chat__hint' role='status'>Loading pages…</p> : pages.length === 0 ? <p className='er-chat__hint'>Nothing saved yet. Save an answer from chat.</p> : (<ul className='er-chat__pages'>
         {pages.map((p) => (<li key={p.id}><button className='er-button er-button--text' type='button' onClick={() => setOpenId(p.id)} aria-current={p.id === openId ? 'page' : undefined}>{p.title}</button></li>))}
       </ul>)}
-      {openId !== '' && body !== '' ? (<article className='er-chat__page'><div className='er-chat__answer'><Markdown text={body} references={collectRefs(pid, cites)} /></div><Cites projectId={pid} cites={cites} /></article>) : null}
+      {openId !== '' && body !== '' ? (<article className='er-chat__page'>
+        <div className='er-chat__answer'><Markdown text={body} references={collectRefs(pid, cites)} /></div>
+        {cites.length > 0 ? <details className='er-chat__turn-details'><summary>Details</summary><Cites projectId={pid} cites={cites} /></details> : null}
+      </article>) : null}
     </section>
   );
 }

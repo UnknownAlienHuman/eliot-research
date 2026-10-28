@@ -331,7 +331,10 @@ export async function resolveModelTransport(
 
 export function modelFailure(error: unknown, model: ModelSpec): string {
   if (!model.route.startsWith("gateway:")) {
-    return error instanceof Error ? (error.name + ": " + error.message).slice(0, 300) : NATIVE_FAILURE;
+    const status = errorStatusCode(error);
+    if (status !== undefined) return `Model stream failed (HTTP ${status}).`;
+    const name = knownErrorName(error) ?? (error instanceof Error ? knownErrorName(error.cause) : undefined);
+    return name === undefined ? NATIVE_FAILURE : `Model stream failed (${name}).`;
   }
   const status = errorStatusCode(error);
   if (status !== undefined) {
@@ -355,6 +358,23 @@ function errorStatusCode(error: unknown): number | undefined {
 
 function checkStatusCode(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 100 && value <= 599 ? value : undefined;
+}
+
+const KNOWN_ERROR_NAMES = ["Error", "TypeError", "AbortError", "TimeoutError", "AI_APICallError",
+  "AI_StreamProviderError", "AI_NoObjectGeneratedError", "AI_NoOutputGeneratedError", "AI_InvalidResponseDataError",
+  "AI_TypeValidationError", "AiGatewayError", "AiError", "ZodError"] as const;
+
+function knownErrorName(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  return (KNOWN_ERROR_NAMES as readonly string[]).includes(error.name) ? error.name : undefined;
+}
+
+// The shared projection for operator logs. Keep only allowlisted names and a
+// validated HTTP status; provider messages, bodies, codes and request data stay private.
+export function safeErrorLogProjection(error: unknown): { name: string; status?: number } {
+  const name = knownErrorName(error) ?? (error instanceof Error ? knownErrorName(error.cause) : undefined);
+  const status = errorStatusCode(error);
+  return { name: name ?? "unknown", ...(status === undefined ? {} : { status }) };
 }
 
 // Minimal 400-only validation hint: report only fixed OpenAI request field
@@ -400,8 +420,7 @@ function errorCauseName(error: unknown): string | undefined {
   if (directStreamError) return directStreamError;
   const causedStreamError = streamProviderErrorNames(cause)[0];
   if (causedStreamError) return causedStreamError;
-  const names = ["Error", "TypeError", "AbortError", "TimeoutError", "AI_APICallError", "AI_StreamProviderError", "AI_NoObjectGeneratedError", "AI_NoOutputGeneratedError", "AI_InvalidResponseDataError", "AI_TypeValidationError", "AiGatewayError", "AiError", "ZodError"];
-  return cause instanceof Error && names.includes(cause.name) ? cause.name : undefined;
+  return knownErrorName(cause);
 }
 
 // Pinned @ai-sdk/openai-compatible 3.0.79 streams a mid-stream provider error
