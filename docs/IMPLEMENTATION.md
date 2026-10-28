@@ -331,6 +331,10 @@ citation, token, timing, cost, invalid-label and terminal-state fields. WebSocke
 read-only state snapshots; they never enqueue or dispatch paid work. GET, history, reconnect and Save never start model/search work. One active turn
 and one queued submission are allowed; the next returns `409/busy`. Stop stores partial text, closing a tab does not
 cancel, and failed streams are not automatically continued. Retry is a new owner submission.
+The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
+cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
+Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the existing
+reservation and is never treated as zero cost.
 
 Chat always streams ordinary Markdown with inline compact `[Sx:N]` labels. There is no JSON sentence/label enum or
 parse-repair call. One generic `SYSTEM_PROMPT` applies across questions and corpora: answer in the user's language,

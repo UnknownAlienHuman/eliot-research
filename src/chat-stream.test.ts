@@ -461,5 +461,61 @@ describe("chat-stream K2 wire regression", () => {
       expect(assistants[0]?.turnId).toBe(first);
     } finally { h.db.close(); }
   });
+  it("explicit Stop settles cancelled with the owner-stop message and keeps the held reservation", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      const callsBefore = fetchCalls;
+      (h.env.AI as unknown as { fetch: (url: unknown, init?: { signal?: AbortSignal }) => Promise<Response> }).fetch = (_url: unknown, init?: { signal?: AbortSignal }) => {
+        fetchCalls += 1;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            const err = new Error("This operation was aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        });
+      };
+      const turnId = "eeeeeeee-eeee-4eee-8eee-000000000001";
+      const pending = h.agent.submitTurn({ projectId, chatId, turnId, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true) as Promise<TurnView>;
+      for (let i = 0; i < 50 && fetchCalls === callsBefore; i += 1) await new Promise((r) => setTimeout(r, 10));
+      expect(fetchCalls).toBeGreaterThan(callsBefore);
+      await h.agent.stopTurn(projectId, turnId);
+      const turn = requireTurn(await pending);
+      expect(turn.state).toBe("cancelled");
+      expect(turn.error).toBe("Stopped. A new Send starts a new turn.");
+      expect(turn.estimatedCostMicrousd).toBe(123);
+      expect(turn.inputTokens).toBeNull();
+    } finally { h.db.close(); }
+  });
+  it("deadline abort without an owner Stop settles failed with a time-bound message and keeps the held reservation", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      const callsBefore = fetchCalls;
+      (h.env.AI as unknown as { fetch: (url: unknown, init?: { signal?: AbortSignal }) => Promise<Response> }).fetch = (_url: unknown, init?: { signal?: AbortSignal }) => {
+        fetchCalls += 1;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            const err = new Error("This operation was aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        });
+      };
+      const turnId = "dddddddd-dddd-4ddd-8ddd-000000000001";
+      const pending = h.agent.submitTurn({ projectId, chatId, turnId, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true) as Promise<TurnView>;
+      for (let i = 0; i < 50 && fetchCalls === callsBefore; i += 1) await vi.advanceTimersByTimeAsync(10);
+      expect(fetchCalls).toBeGreaterThan(callsBefore);
+      await vi.advanceTimersByTimeAsync(90_000);
+      const turn = requireTurn(await pending);
+      expect(turn.state).toBe("failed");
+      expect(turn.error ?? "").toContain("time bound");
+      expect(turn.error ?? "").not.toContain("Stopped.");
+      expect(turn.estimatedCostMicrousd).toBe(123);
+      expect(turn.inputTokens).toBeNull();
+    } finally { h.db.close(); vi.useRealTimers(); }
+  });
 });
 

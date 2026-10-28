@@ -149,9 +149,11 @@ export class ChatAgent extends Agent<Env, ChatState> {
       scopeMode: input.scopeMode, revisionIds: [], sourceIds: input.sourceIds ?? [], citations: [], invalidLabels: 0, inputTokens: null, cachedTokens: null, outputTokens: null,
       estimatedCostMicrousd: null, firstTokenMs: null, totalMs: null, error: null };
     this.writeTurn(turn);
-    this.controller = new AbortController();
-    if (this.state.stopRequested) this.controller.abort();
-    const timer = setTimeout(() => this.controller?.abort(), 90_000);
+    const controller = new AbortController();
+    this.controller = controller;
+    let timedOut = false;
+    if (this.state.stopRequested) controller.abort();
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 90_000);
     let dispatched = false, rowInserted = false, wireCaptured = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
     let labelSources: LabelSource[] = [], sourceMode = "none", streamError = "";
     try {
@@ -215,12 +217,12 @@ export class ChatAgent extends Agent<Env, ChatState> {
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
         .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
       this.writeTurn(turn);
-      if (this.controller.signal.aborted) throw new Error("Stopped before dispatch.");
+      if (controller.signal.aborted) throw new Error(this.state.stopRequested && !timedOut ? "Stopped before dispatch." : "Time bound exceeded before dispatch.");
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
         ...(wireCapture ? { include: { rawChunks: true },
           onChunk: ({ chunk }: { chunk: { type: string; rawValue?: unknown } }) => { if (chunk.type === "raw") wireCapture.push(chunk.rawValue); } } : {}),
-        maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: this.controller.signal,
+        maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
       let lastWrite = 0;
@@ -236,7 +238,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       usage = await result.totalUsage;
       turn.answer = await result.text;
       const finish = await result.finishReason;
-      if (wireCapture && !streamError && !this.controller.signal.aborted) {
+      if (wireCapture && !streamError && !controller.signal.aborted) {
         const wire = wireCapture.message();
         if (wire) {
           try { this.#writeAssistantWire(turn.turnId, model.id, wire); wireCaptured = true; }
@@ -253,9 +255,18 @@ export class ChatAgent extends Agent<Env, ChatState> {
         turn.error = streamError || `The model returned no answer text (finish: ${finish}).`;
       }
     } catch (error) {
-      const stopped = this.controller.signal.aborted;
-      turn.state = turn.answer ? "partial" : stopped ? "cancelled" : "failed";
-      turn.error = stopped ? "Stopped. A new Send starts a new turn." : streamError || (error instanceof LibraryError ? error.message : selectedModel ? modelFailure(error, selectedModel) : "The answer could not be completed.");
+      const ownerStop = controller.signal.aborted && this.state.stopRequested && !timedOut;
+      const deadline = controller.signal.aborted && timedOut && !ownerStop;
+      if (ownerStop) {
+        turn.state = turn.answer ? "partial" : "cancelled";
+        turn.error = "Stopped. A new Send starts a new turn.";
+      } else if (deadline) {
+        turn.state = turn.answer ? "partial" : "failed";
+        turn.error = "The answer exceeded the 90 s time bound. A new Send starts a new turn; no retry was started.";
+      } else {
+        turn.state = turn.answer ? "partial" : "failed";
+        turn.error = streamError || (error instanceof LibraryError ? error.message : selectedModel ? modelFailure(error, selectedModel) : "The answer could not be completed.");
+      }
     } finally { clearTimeout(timer); }
     const resolved = resolveCitations(turn.answer, labelSources);
     turn.answer = resolved.text; turn.citations = resolved.citations; turn.invalidLabels = resolved.invalidLabels;
