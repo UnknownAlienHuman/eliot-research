@@ -35,7 +35,7 @@ WebSocket, MCP, Durable Object and Workflow classes. HTTP, chat, MCP and Workflo
 | `migrations/`, `scripts/eval/` | contour schema and real acceptance |
 
 Bindings arrive only with their contour: K0 `ASSETS`; K1 `DB`, `BUCKET`, `AI`, `INGEST`; K2 `CHAT`; K3 `DISTILL`
-and cron; K5 direct `SEARCH`; K6 `PROJECT_KNOWLEDGE`; K7 `RESEARCH` and optional `BROWSER`. Generate `Env` with
+and reconciliation-only cron; K5 direct `SEARCH`; K6 `PROJECT_KNOWLEDGE`; K7 `RESEARCH` and optional `BROWSER`. Generate `Env` with
 Wrangler; never hand-write it.
 
 A paid effect is a model call, rendered Browser capture, billable AI Search use, or a Workflow that invokes one. Page
@@ -192,10 +192,12 @@ range. K6 owns cross-source normalization; K3 must not pretend raw multilingual 
 
 ## 6. One-time distillation
 
-States: `none|queued|running|paused|done|partial|failed`. Ingest queues a readable revision only once when auto-distill
-is enabled and no completed artifact exists. Cron admits oldest work while concurrency and monthly budget permit;
-insufficient budget becomes visible `paused`. Workflow ID is `distill-<revisionId>`; reconcile stale `running` rows
-against the existing instance instead of creating a retry service.
+States: `none|queued|running|paused|done|partial|failed`. Ingest leaves readable revisions at `none`. Only an explicit
+Understand request queues and admits its requested revision, subject to concurrency and the monthly budget;
+insufficient budget becomes visible `paused` until another explicit request. Cron only reconciles stale `running` rows
+against Workflow ID `distill-<revisionId>`; it never admits queued work. Migration `0007_manual_understanding.sql`
+removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
+resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
 
 `DistillWorkflow` uses two bounded calls:
 
@@ -261,8 +263,8 @@ new internal `DistillInput` is `{ revisionId, model: ModelSpec }`: after admissi
 snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
 Old terminal reports and cached Save retain their recorded usage and shape. Each
 Workflow paid step has zero retries; an atomic per-revision dispatch count prevents step replay from buying a duplicate
-call. Explicit Understand schedules only its requested revision. Auto-distillation queues each eligible readable
-revision once; completed or unchanged work is not automatically re-distilled, and failed paid work is not retried. The
+call. Explicit Understand schedules only its requested revision. Ingest and cron never start source understanding;
+completed or unchanged work is not automatically re-distilled, and failed paid work is not retried. The
 pipeline uses at most two bounded model calls with zero paid-step retries. Completed/partial revisions return existing
 artifacts on repeat. Budget-paused work resumes
 only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.

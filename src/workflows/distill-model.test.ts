@@ -168,7 +168,7 @@ function finished(f: ReturnType<typeof fixture>, error: string) {
 }
 
 describe("DistillWorkflow admitted model snapshot", () => {
-  it("explicit Understand admits only its auto-queued revision while cron remains broad", async () => {
+  it("explicit Understand dispatches only its revision; cron leaves queued untouched", async () => {
     const f = callerFixture();
     vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
     try {
@@ -189,7 +189,18 @@ describe("DistillWorkflow admitted model snapshot", () => {
         ]);
       expect(generateText).not.toHaveBeenCalled();
 
+      // Cron (no target) only reconciles stale running: it must not admit queued work.
       await scheduleDistillation(f.env);
+      expect(f.createWorkflow).toHaveBeenCalledTimes(1);
+      expect(f.db.prepare("SELECT id,distill_state AS state FROM source_revision ORDER BY created_at").all())
+        .toEqual([
+          { id: otherQueuedRevisionId, state: "queued" },
+          { id: explicitlySelectedRevisionId, state: "running" },
+        ]);
+      expect(generateText).not.toHaveBeenCalled();
+
+      // Explicit target admits only its own queued row, no other revision.
+      await scheduleDistillation(f.env, otherQueuedRevisionId);
       expect(f.createWorkflow.mock.calls.map(([input]) => input.id)).toEqual([
         `distill-${explicitlySelectedRevisionId}`,
         `distill-${otherQueuedRevisionId}`,

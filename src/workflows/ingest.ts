@@ -9,7 +9,6 @@ import { nativeConverter, stripBomOnce, withTimeout } from "../ingest";
 import { scanBlocks } from "../blocks";
 import type { Block } from "../blocks";
 import { safeErrorLogProjection } from "../model-transport";
-import { scheduleDistillation } from "./distill";
 
 // Single conversion attempt bound: a stated workflow bound, not a documented hard limit.
 const CONVERT_TIMEOUT_MS = 60_000;
@@ -50,14 +49,6 @@ export class IngestWorkflow extends WorkflowEntrypoint<Env, { revisionId: string
     if (loaded === null) return { revisionId, outcome: "unknown-revision" };
     const stored = await step.do("convert and store", NO_RETRY, async () => convertAndStore(this.env, loaded));
     const outcome = await step.do("commit revision", NO_RETRY, async () => commitRevision(this.env, loaded, stored));
-    if (["readable", "readable_with_warnings"].includes(outcome.outcome)) {
-      await step.do("queue understanding", NO_RETRY, async () => {
-        const queued = await this.env.DB.prepare(`UPDATE source_revision SET distill_state='queued'
-          WHERE id=? AND distill_state='none' AND (SELECT auto_distill FROM settings WHERE id=1)=1`)
-          .bind(revisionId).run();
-        if (queued.meta.changes) await scheduleDistillation(this.env);
-      });
-    }
     return { revisionId, ...outcome };
   }
 }

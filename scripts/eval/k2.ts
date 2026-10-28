@@ -305,9 +305,9 @@ if (process.argv.includes('--models-only')) {
   assert.equal(turn.body.turn.inputTokens, 0);
   assert.equal(turn.body.turn.outputTokens, 0);
   assert.match(turn.body.turn.error, /disconnected|Gateway|credential/i);
-  let distill = 'NOT_RUN: auto-distill must already be disabled';
+  let distill = 'NOT_RUN: storage fixture not attempted';
   let sourceId = null;
-  if (before.body.settings.autoDistill === 0) {
+  {
     const added = await apiJson('/api/projects/' + projectId + '/sources/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'External connection gate', text: 'Storage-only connection fixture ' + randomUUID() + '. This source has no model-derived knowledge.' }) });
     assert.equal(added.status, 202);
     sourceId = added.body.sourceId;
@@ -459,7 +459,7 @@ if (process.argv.includes('--models-only')) {
     assert.deepEqual(errors, [], 'Settings/understanding must not throw browser errors.');
   } finally { await browser.close(); }
   const after = await apiJson('/api/settings');
-  assert.deepEqual(after.body.settings, before.body.settings, 'Native defaults, auto-distill, budget and settings timestamp must be unchanged.');
+  assert.deepEqual(after.body.settings, before.body.settings, 'Native defaults, budget and settings timestamp must be unchanged.');
   assert.equal(after.body.monthlyUsedMicrousd, before.body.monthlyUsedMicrousd);
   assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
   const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, consentRejected: true, disconnectedTurnCost: 0,

@@ -13,8 +13,8 @@ the owner administer retrieval infrastructure.
 > **collect → read → understand → ask → compare → save → revise**
 
 The ordinary path stays ordinary: select sources, ask a question, receive a streamed answer, open every citation at the
-exact passage. Long work is an explicit job with progress, limits and Stop. The system may automate conversion and
-one-time source understanding, but it must never hide recurring model work behind page loads, reconnects or saves.
+exact passage. Long work is an explicit job with progress, limits and Stop. Conversion follows an upload; source
+understanding requires an explicit request. Page loads, reconnects and saves never start model work.
 
 ## Design principles
 
@@ -56,7 +56,7 @@ revision's `text.md`. Generated pages are derived material and never silently re
 | Projects | Create, rename, archive and switch projects; stable project/chat URLs; independent source selection and settings. |
 | Library | Add files, URLs and text; keep originals; show conversion states; detect exact duplicates; attach one source to many projects; replace as a new revision; detach, archive or delete deliberately. |
 | Reading | Open original or readable text, navigate an outline, reopen exact passage links and old revisions even when models/search are unavailable. |
-| Understanding | Automatic guide, suggested questions, verified claims, digest and EN/RU glossary per readable revision; deterministic project overview. |
+| Understanding | Requested guide, suggested questions, verified claims, digest and EN/RU glossary per readable revision; deterministic project overview. |
 | Ask | Russian or English questions over project default, explicit selection or empty scope; streamed answer, exact citations, stop/reconnect, chat history and Save as page. |
 | Retrieval | Whole reading when it fits; verified claims when it does not; AI Search only for scopes that still exceed those modes. Scope is frozen before retrieval and never widened. |
 | Knowledge | Versioned notes, answers, reports and Wiki pages; agent proposals; explicit staleness and refresh. |

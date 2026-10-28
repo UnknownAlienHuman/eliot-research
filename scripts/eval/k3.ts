@@ -259,17 +259,9 @@ const understandingWired = u0.status !== 404;
 const overviewWired = o0.status !== 404;
 if (understandingWired) assertUnderstanding(u0.body, 'probe');
 if (overviewWired) assert(o0.body && Array.isArray(o0.body.sources), 'GET overview must return the direct Overview object with sources array.');
-async function setAutoDistill(on) {
-  const cur = await apiJson('/api/settings');
-  const s = cur.body.settings || {};
-  const r = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: s.answerModel, monthlyModelBudgetMicrousd: s.monthlyModelBudgetMicrousd, autoDistill: on }) });
-  assert.equal(r.status, 200, 'PUT /api/settings autoDistill fixture must be 200.');
-  return s.autoDistill === true || s.autoDistill === 1;
-}
 if (nativeOnly) {
   assert(understandingWired && overviewWired, 'K3 native smoke requires the actual understanding and overview routes.');
-  const wasAuto = await setAutoDistill(false);
-  try {
+  {
   const m1 = await monthlyUsage();
   assert.equal(m1.used, m0.used, 'Native-only probes must not change monthly usage.');
     const recLines = [];
@@ -315,7 +307,7 @@ if (nativeOnly) {
       const s0 = cur.body.settings || {};
       const wasBudget = cur.body.monthlyBudgetMicrousd;
       const mu = await monthlyUsage();
-      const zb = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: s0.answerModel, monthlyModelBudgetMicrousd: mu.used, autoDistill: !!s0.autoDistill }) });
+      const zb = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: s0.answerModel, monthlyModelBudgetMicrousd: mu.used }) });
       assert.equal(zb.status, 200, 'PUT zero-headroom budget must be 200.');
       try {
         const p = await apiJson('/api/sources/' + encodeURIComponent(recSource) + '/understanding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionId: rev, saveAvailable: true }) });
@@ -350,9 +342,9 @@ if (nativeOnly) {
         recLines.push('- recovery source: ' + recSource + ' rev ' + String(rev).slice(0, 8) + ' (' + recStartState + ' -> ' + u1.state + ', terminal cached recheck)');
         recLines.push('- recovery usage unchanged: ' + JSON.stringify(usageBefore) + '; claims: ' + u1.claims.length);
         recLines.push('- recovery checked artifacts: report.artifacts at checked/guide.md, checked/digest.md, checked/glossary.json; canRecover false after save');
-        recLines.push('- recovery text/original bytes identical, repeat POST idempotent, monthly delta 0, allowance+auto restored');
+        recLines.push('- recovery text/original bytes identical, repeat POST idempotent, monthly delta 0, budget restored');
       } finally {
-        const rb = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: (await apiJson('/api/settings')).body.settings.answerModel, monthlyModelBudgetMicrousd: wasBudget, autoDistill: !!s0.autoDistill }) });
+        const rb = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: (await apiJson('/api/settings')).body.settings.answerModel, monthlyModelBudgetMicrousd: wasBudget }) });
         assert.equal(rb.status, 200, 'PUT budget restore must be 200.');
       }
     }
@@ -414,10 +406,10 @@ if (nativeOnly) {
       checkLines.push('- check normal head deterministic: claim IDs identical across two GETs');
       for (const line of checkLines) recLines.push(line);
     }
-    const md = ['# K3 native-only (storage, zero model calls)', '', '- project: ' + title, '- readable arxiv: ' + scoped.length + '/10 (no ingestion/conversion repeats)', '- reader range self-check: 1 exact range', '- understanding route: ' + (understandingWired ? (recSource ? 'wired (probes GET + explicit storage-only save POST when requested)' : 'wired (GET only, no POST)') : 'NOT_WIRED (404)'), '- overview route: ' + (overviewWired ? 'wired (GET only)' : 'NOT_WIRED (404)'), '- autoDistill fixture: set false for this run (was ' + wasAuto + '), restored after', '- monthly usage stable: ' + m0.used + ' micro-USD', '- MODEL_NOT_RUN: set ELIOT_K3_MODEL=1 (root signal) for paid distillation; claim-mode C1-C4: NOT_RUN here.', ''].concat(recLines).concat(['']).join(EOL);
+    const md = ['# K3 native-only (storage, zero model calls)', '', '- project: ' + title, '- readable arxiv: ' + scoped.length + '/10 (no ingestion/conversion repeats)', '- reader range self-check: 1 exact range', '- understanding route: ' + (understandingWired ? (recSource ? 'wired (probes GET + explicit storage-only save POST when requested)' : 'wired (GET only, no POST)') : 'NOT_WIRED (404)'), '- overview route: ' + (overviewWired ? 'wired (GET only)' : 'NOT_WIRED (404)'), '- monthly usage stable: ' + m0.used + ' micro-USD', '- MODEL_NOT_RUN: set ELIOT_K3_MODEL=1 (root signal) for paid distillation; claim-mode C1-C4: NOT_RUN here.', ''].concat(recLines).concat(['']).join(EOL);
   await writeFile(outDir + '/k3-native-' + Date.now() + '.md', md);
   console.log(md);
-  } finally { await setAutoDistill(wasAuto); }
+  }
   process.exit(0);
 }
 if (!runModel) {
@@ -692,7 +684,7 @@ try {
 } catch (e) {
   tailV.push('Monthly usage read failed: ' + String((e && e.message) || e).split('\n')[0]);
 }
-const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- POSTed revisions this run: ' + posted + ' (second scan needs 0)', '- stored distill total: ' + distillMicro + ' micro-USD; newly admitted: ' + newCost, '- monthly usage delta: ' + (m1 ? (m1.used - m0.used) : 'unread'), '- no model or autoDistill settings changed', '- claim-mode C1-C4: NOT_RUN (hard gate remains open)', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | state | claims | calls | in/cached/out | cost_uUSD | wall_ms |', '|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
+const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- POSTed revisions this run: ' + posted + ' (second scan needs 0)', '- stored distill total: ' + distillMicro + ' micro-USD; newly admitted: ' + newCost, '- monthly usage delta: ' + (m1 ? (m1.used - m0.used) : 'unread'), '- no model settings changed', '- claim-mode C1-C4: NOT_RUN (hard gate remains open)', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | state | claims | calls | in/cached/out | cost_uUSD | wall_ms |', '|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
 console.log(md);
 await writeFile(outDir + '/k3-' + Date.now() + '.md', boundReport + EOL + EOL + md);
 const claimTitle = process.env.ELIOT_K3_CLAIM_PROJECT;

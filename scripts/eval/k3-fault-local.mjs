@@ -3,7 +3,7 @@
 //   ELIOT_FAULT_RUN=1 node scripts/eval/k3-fault-local.mjs
 // Uses actual K1 API + wrangler D1 CLI + one devCron trigger. No Workflow
 // instances are created, no model/save POSTs, no settings writes, no deletes.
-// Fixtures: own test project + two unique native text sources (auto stays 0).
+// Fixtures: own test project + two unique native text sources (manual distillation only; no settings writes).
 // Single output file: eval/out/k3/fault-dispatch.json
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -54,9 +54,8 @@ function cleanId(id) { if (!/^[0-9a-fA-F-]{36}$/.test(id)) throw new Error("Refu
 const stamp = Date.now();
 const m0 = await apiJson("/api/settings");
 if (m0.status !== 200) fail("GET /api/settings unreachable: " + m0.status);
-note("monthly-pre", { used: m0.body.monthlyUsedMicrousd, budget: m0.body.monthlyBudgetMicrousd, auto: m0.body.settings && m0.body.settings.autoDistill });
+note("monthly-pre", { used: m0.body.monthlyUsedMicrousd, budget: m0.body.monthlyBudgetMicrousd });
 if (m0.body.monthlyUsedMicrousd !== EXPECT_USED) fail("Pre monthly used is not the controlled 79537: " + m0.body.monthlyUsedMicrousd);
-if ((m0.body.settings && m0.body.settings.autoDistill) !== false && (m0.body.settings && m0.body.settings.autoDistill) !== 0) fail("Pre autoDistill is not 0; refusing (no settings writes allowed).");
 const held0 = firstValue(rowsOf(wrangler("SELECT COUNT(*) AS n FROM source_revision WHERE distill_state IN ('queued','running')"))[0]);
 const sum0 = firstValue(rowsOf(wrangler("SELECT COALESCE(SUM(distill_calls),0) AS c FROM source_revision"))[0]);
 note("d1-pre", { queuedOrRunning: held0, callsSum: sum0 });

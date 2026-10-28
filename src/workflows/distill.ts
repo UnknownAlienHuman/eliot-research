@@ -382,10 +382,10 @@ export async function scheduleDistillation(env: Env, targetRevisionId?: string) 
       else await env.DB.prepare("UPDATE source_revision SET distill_error=? WHERE id=? AND distill_state='running'").bind(detail, row.id).run();
     }
   }
-  const queuedQuery = targetRevisionId === undefined
-    ? env.DB.prepare(`SELECT r.id,COALESCE(r.distill_model,s.distill_model) AS model FROM source_revision r JOIN source source ON source.id=r.source_id CROSS JOIN settings s
-      WHERE r.distill_state='queued' AND r.deleted_at IS NULL AND source.state!='deleted' AND r.readable_state IN ('readable','readable_with_warnings') ORDER BY r.created_at LIMIT 2`)
-    : env.DB.prepare(`SELECT r.id,COALESCE(r.distill_model,s.distill_model) AS model FROM source_revision r JOIN source source ON source.id=r.source_id CROSS JOIN settings s
+  // Manual distillation only: cron (no target) reconciles stale running above
+  // and never admits queued work. An explicit target admits only its own row.
+  if (targetRevisionId === undefined) return;
+  const queuedQuery = env.DB.prepare(`SELECT r.id,COALESCE(r.distill_model,s.distill_model) AS model FROM source_revision r JOIN source source ON source.id=r.source_id CROSS JOIN settings s
       WHERE r.id=? AND r.distill_state='queued' AND r.deleted_at IS NULL AND source.state!='deleted' AND r.readable_state IN ('readable','readable_with_warnings') ORDER BY r.created_at LIMIT 2`)
       .bind(targetRevisionId);
   const rows = await queuedQuery.all<{ id: string; model: string }>();
