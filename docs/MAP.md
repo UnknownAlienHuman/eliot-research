@@ -35,6 +35,7 @@ quotas.
 - K0 keeps the accepted Material shell with hostname Access auth: `/api/me`, Projects/Settings navigation and System/Light/Dark appearance verified locally on 1440/390 px with Cyrillic fonts, and all assets pass through auth. Live Access and deployed acceptance are not claimed.
 - K1 implements projects, the shared Library with immutable revisions, and exact UTF-8 reading (outline, whole text, ranges, original download). Exact text/URL duplicates return 409 with explicit Attach existing, reusing the stored revision with no silent merge. Conversion stays on the current path: native text locally, Workers AI `toMarkdown` where a document format requires it. AI Search and later-contour bindings remain absent.
 - K2 has a local Markdown chat path with frozen source scope, server-resolved citations, Stop/reconnect and storage-only Save, plus the R2 model snapshot with the owner-only refresh route. K2 and K3 are not fully accepted; their remaining quality and claim-mode gates stay open in their contour sections below.
+- K4 and K6 remain isolated, unaccepted work. K6 is frozen until K2/K3 acceptance.
 - The existing `eliotr-core.kleymor-metal.workers.dev` address is retained per owner decision; the replacement is not deployed over it.
 - Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
 - PR #417 is the authoritative replacement-documentation history and supersedes the stacked plan in PR #416.
@@ -148,8 +149,8 @@ stop/reconnect, reopen chat and save an answer as a page.
 **Build**
 
 1. Apply `migrations/0002_ask.sql`; add one `ChatAgent` Durable Object per chat and `/agents/*` routing.
-2. Read provider catalogues from the R2 snapshot. Owner-only `POST /api/models/refresh` performs provider discovery
-   and pricing, with optional `selectedRoutes`; a partial provider failure preserves that provider's prior slice and
+2. Read provider catalogues from the R2 snapshot. The owner edits the provider configuration in Settings; owner-only
+   `POST /api/models/refresh` discovers JSON models and available provider quota data; a partial provider failure preserves that provider's prior slice and
    returns a warning. If no snapshot exists, use the native Flash fallback. Paid admission remains separate and
    requires known context and input/output prices; estimate unknown cached input at the full input rate.
 3. Build whole-reading context from the frozen readable revisions. When it does not fit, return a clear narrow-scope
@@ -157,7 +158,8 @@ stop/reconnect, reopen chat and save an answer as a page.
 4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.
 5. Use one `runTurn` for WebSocket and eval RPC; persist the turn before the model call, stream once, resolve labels,
    store citations/usage/timing/cost and never auto-continue a paid failed stream.
-6. Add chat/page APIs, the shared legacy Material catalogue picker, saved answers and the moved chat/evidence UI.
+6. Add chat/page APIs, one visible Material catalogue with answer/understanding defaults, compact chat/project pickers,
+   saved answers and the moved chat/evidence UI. Provider configuration is separate from credentials kept in Cloudflare.
 7. Add label/context/cost cases and `pnpm eval k2`.
 
 **Behavioral contract.** Only Send starts answer inference. Each turn freezes its source revisions and admitted model

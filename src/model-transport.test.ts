@@ -6,8 +6,7 @@ vi.mock("agents/models/ai-sdk", () => ({ createAI: vi.fn() }));
 
 import { createAI } from "agents/models/ai-sdk";
 import type * as agentsSdk from "agents/models/ai-sdk";
-import { AssistantWireCapture, modelFailure, reportedProviderUsage, resolveModelTransport, safeErrorLogProjection } from "./model-transport";
-import type { AssistantWire } from "./model-transport";
+import { modelFailure, reportedProviderUsage, resolveModelTransport, safeErrorLogProjection } from "./model-transport";
 import { Output, streamText } from "ai";
 import type { LanguageModelUsage } from "ai";
 import { z } from "zod";
@@ -41,7 +40,6 @@ const DOTS: ModelSpec = {
   outputReserveTokens: 8192,
   structuredOutputs: true,
   responseFormat: true,
-  reasoning: { enabled: false },
 };
 
 const INKLING: ModelSpec = {
@@ -65,14 +63,31 @@ const NEMOTRON: ModelSpec = {
   structuredOutputs: true,
   responseFormat: true,
 };
-const COMMAND_CODE: ModelSpec = { ...INKLING, route: "gateway:command-code/proxy-alias", id: "native-model-id", responseFormat: false };
+const COMMAND_CODE: ModelSpec = { ...INKLING, route: "gateway:command-code/native-model-id", id: "native-model-id", label: "Command Code Native", responseFormat: false, structuredOutputs: false };
 
-function makeEnv(gatewayId: string | null) {
+const MIGRATION_PROVIDERS = [
+  { id: "workers-ai", type: "workers-ai", gatewaySlug: null, gatewayPath: "", baseUrl: null, enabled: true },
+  { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1", baseUrl: "https://openrouter.ai/api/v1", enabled: true },
+  { id: "command-code", type: "openai-compatible", gatewaySlug: "custom-command-code", gatewayPath: "v1", baseUrl: "https://api.commandcode.ai/provider/v1", enabled: true },
+];
+const FIXTURE_PROVIDER = { id: "fixture-provider", type: "openai-compatible", gatewaySlug: "fixture-slug", gatewayPath: "v1", baseUrl: "https://fixture.example.com/v1", enabled: true };
+const FIXTURE_MODEL: ModelSpec = { ...BASE, route: "gateway:fixture-provider/fixture-model-1", id: "fixture-model-1", label: "Fixture", maxOutputTokens: 8192, outputReserveTokens: 8192, structuredOutputs: true, responseFormat: true };
+function frozen(model: ModelSpec, providerId: string, gatewayId = "my-gw", providers: Array<Record<string, unknown>> = [...MIGRATION_PROVIDERS as Array<Record<string, unknown>>, FIXTURE_PROVIDER as unknown as Record<string, unknown>]): ModelSpec {
+  const provider = providers.find((entry) => entry["id"] === providerId);
+  if (!provider) throw new Error("missing provider " + providerId);
+  return { ...model, routing: { provider: { ...(provider as object) }, gatewayId } } as unknown as ModelSpec;
+}
+function makeEnv(gatewayId: string | null, providers = MIGRATION_PROVIDERS) {
   const prepared: string[] = [];
   const DB = {
     prepare(sql: string) {
       prepared.push(sql);
-      return { first: async () => ({ gatewayId }) };
+      return {
+        first: async () => {
+          if (sql.includes("model_providers_json")) return { providers: JSON.stringify(providers) };
+          return { gatewayId };
+        },
+      };
     },
   } as unknown as Env["DB"];
   return { env: { AI: {} as unknown as Env["AI"], DB }, prepared };
@@ -93,21 +108,24 @@ describe("resolveModelTransport", () => {
     expect(seen.prepared).toEqual([]);
   });
 
-  it("rejects external before invocation without a valid gateway or exact route binding", async () => {
+  it("rejects external before invocation without frozen routing or exact route binding", async () => {
     const languageModel = vi.fn();
     createAIMock.mockReturnValue({ languageModel } as unknown as ReturnType<typeof createAI>);
-    const mismatched: ModelSpec = { ...DOTS, route: "gateway:openrouter/other:free" };
-    const cases: Array<{ gatewayId: string | null; model: ModelSpec }> = [
-      { gatewayId: null, model: DOTS },
-      { gatewayId: "default", model: DOTS },
-      { gatewayId: "Bad Slug!", model: DOTS },
-      { gatewayId: "my-gw", model: mismatched },
+    const seen = makeEnv("my-gw");
+    const frozenDots = frozen(DOTS, "openrouter");
+    const disabledProvider = { ...((frozenDots.routing as unknown as { provider: Record<string, unknown> }).provider), enabled: false };
+    const cases: ModelSpec[] = [
+      DOTS,
+      frozen(DOTS, "openrouter", "default"),
+      frozen(DOTS, "openrouter", "Bad Slug!"),
+      frozen(DOTS, "openrouter", ""),
+      { ...frozenDots, route: "gateway:openrouter/other:free" },
+      { ...frozenDots, routing: { provider: disabledProvider, gatewayId: "my-gw" } } as unknown as ModelSpec,
     ];
-    for (const c of cases) {
-      const seen = makeEnv(c.gatewayId);
+    for (const model of cases) {
       let err: unknown;
       try {
-        await resolveModelTransport(seen.env, c.model, "chat-1");
+        await resolveModelTransport(seen.env, model, "chat-1");
         expect.unreachable();
       } catch (e) { err = e; }
       expect(err).toBeInstanceOf(LibraryError);
@@ -116,6 +134,7 @@ describe("resolveModelTransport", () => {
     }
     expect(languageModel).not.toHaveBeenCalled();
     expect(createAIMock).not.toHaveBeenCalled();
+    expect(seen.prepared).toEqual([]);
   });
 
   it("passes a vendor object with exact gateway options and no credentials", async () => {
@@ -123,7 +142,7 @@ describe("resolveModelTransport", () => {
     const languageModel = vi.fn().mockReturnValue(sdkModel);
     createAIMock.mockReturnValue({ languageModel } as unknown as ReturnType<typeof createAI>);
     const seen = makeEnv("my-gw");
-    const out = await resolveModelTransport(seen.env, DOTS, "chat-1");
+    const out = await resolveModelTransport(seen.env, frozen(DOTS, "openrouter"), "chat-1");
     expect(out).toBe(sdkModel);
     expect(createAIMock).toHaveBeenCalledWith({ binding: seen.env.AI });
     expect(languageModel).toHaveBeenCalledTimes(1);
@@ -143,7 +162,7 @@ describe("resolveModelTransport", () => {
     });
     expect(options.gateway).toEqual({ id: "my-gw", skipCache: true, collectLog: false, retries: { maxAttempts: 1 } });
     expect(options.vendorKey).toBe("gateway");
-    expect(seen.prepared.some((sql) => sql.includes("model_gateway_id"))).toBe(true);
+    expect(seen.prepared).toEqual([]);
     const serialized = JSON.stringify({ modelId: passed.modelId, options }).toLowerCase();
     expect(serialized).not.toContain("authorization");
     expect(serialized).not.toContain("apikey");
@@ -154,18 +173,91 @@ describe("resolveModelTransport", () => {
     expect(serialized).not.toContain("byokalias");
     expect(serialized).not.toContain("dynamic");
   });
+  it("routes any configured provider via gateway config without hardcoded admission (fixture-provider)", async () => {
+    const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response("ok"));
+    const binding = { fetch } as unknown as Env["AI"];
+    const providers = [...MIGRATION_PROVIDERS, FIXTURE_PROVIDER];
+    const seen = makeEnv("my-gw", providers);
+    const model = (await resolveModelTransport({ AI: binding, DB: seen.env.DB }, frozen(FIXTURE_MODEL, "fixture-provider", "my-gw", providers as unknown as Array<Record<string, unknown>>), "sess-fixture")) as unknown as {
+      config: { fetch: typeof fetch; transformRequestBody: (body: Record<string, unknown>) => Record<string, unknown> };
+    };
+    expect(createAIMock).not.toHaveBeenCalled();
+    await model.config.fetch(
+      "https://fixture.example.com/v1/chat/completions",
+      { method: "POST", body: JSON.stringify(model.config.transformRequestBody({ model: "fixture-model-1", stream: true, messages: [{ role: "user", content: "hi" }], response_format: { type: "json_object" } })) },
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.contexts[0]).toBe(binding);
+    const url = String(fetch.mock.calls[0]?.[0]);
+    expect(url).toBe("https://workers-binding.ai/ai-gateway/gateways/my-gw/fixture-slug/v1/chat/completions");
+    const init = fetch.mock.calls[0]?.[1] as { method?: unknown; headers?: Record<string, string>; body?: unknown };
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ "Content-Type": "application/json", "x-session-affinity": "sess-fixture", "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" });
+    const sent = JSON.parse(String(init.body)) as { model?: unknown; provider?: unknown; response_format?: unknown };
+    expect(sent.model).toBe("fixture-model-1");
+    expect(sent).not.toHaveProperty("provider");
+    expect(sent.response_format).toEqual({ type: "json_object" });
+    expect(JSON.stringify({ url, headers: init.headers, body: sent }).toLowerCase()).not.toMatch(/authorization|bearer|api[-_]?key/);
+    const noFormat: ModelSpec = frozen({ ...FIXTURE_MODEL, responseFormat: false, structuredOutputs: false }, "fixture-provider", "my-gw", providers as unknown as Array<Record<string, unknown>>);
+    const seen2 = makeEnv("my-gw", providers);
+    const model2 = (await resolveModelTransport({ AI: binding, DB: seen2.env.DB }, noFormat, "sess-fixture")) as unknown as {
+      config: { transformRequestBody: (body: Record<string, unknown>) => Record<string, unknown> };
+    };
+    const stripped = model2.config.transformRequestBody({ model: "x", stream: true, response_format: { type: "json_object" }, provider: { allow_fallbacks: false } });
+    expect(stripped).not.toHaveProperty("response_format");
+    expect(stripped).not.toHaveProperty("provider");
+    expect(seen.prepared).toEqual([]);
+    expect(seen2.prepared).toEqual([]);
+  });
+  it("freezes the route so a later DB provider change does not retarget the job", async () => {
+    const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response("ok"));
+    const binding = { fetch } as unknown as Env["AI"];
+    const frozenModel = frozen(FIXTURE_MODEL, "fixture-provider", "my-gw");
+    const mutatedProviders = [...MIGRATION_PROVIDERS, { ...FIXTURE_PROVIDER, baseUrl: "https://mutated.example.com/v1", gatewaySlug: "mutated-slug", gatewayPath: "v9" }];
+    const mutatedEnv = makeEnv("other-gw", mutatedProviders);
+    const model = (await resolveModelTransport({ AI: binding, DB: mutatedEnv.env.DB }, frozenModel, "sess-frozen")) as unknown as {
+      config: { fetch: typeof fetch };
+    };
+    await model.config.fetch("https://fixture.example.com/v1/chat/completions", { method: "POST", body: JSON.stringify({ model: "fixture-model-1" }) });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const url = String(fetch.mock.calls[0]?.[0]);
+    expect(url).toBe("https://workers-binding.ai/ai-gateway/gateways/my-gw/fixture-slug/v1/chat/completions");
+    expect(url).not.toContain("mutated");
+    expect(url).not.toContain("other-gw");
+    expect(mutatedEnv.prepared).toEqual([]);
+  });
+  it("rejects disabled or inexact frozen routes without a second catalog read", async () => {
+    const languageModel = vi.fn();
+    createAIMock.mockReturnValue({ languageModel } as unknown as ReturnType<typeof createAI>);
+    const seen = makeEnv("my-gw", [...MIGRATION_PROVIDERS, FIXTURE_PROVIDER]);
+    const openrouterFrozen = frozen(DOTS, "openrouter");
+    const disabledProvider = { ...((openrouterFrozen.routing as unknown as { provider: Record<string, unknown> }).provider), enabled: false };
+    const disabled = { ...openrouterFrozen, routing: { provider: disabledProvider, gatewayId: "my-gw" } } as unknown as ModelSpec;
+    await expect(resolveModelTransport(seen.env, disabled, "s")).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    const inexact: ModelSpec = { ...frozen(FIXTURE_MODEL, "fixture-provider"), route: "gateway:fixture-provider/wrong-id" };
+    await expect(resolveModelTransport(seen.env, inexact, "s")).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    const missing: ModelSpec = { ...DOTS };
+    await expect(resolveModelTransport(seen.env, missing, "s")).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    expect(languageModel).not.toHaveBeenCalled();
+    expect(createAIMock).not.toHaveBeenCalled();
+    expect(seen.prepared).toEqual([]);
+  });
 });
 
 describe("reportedProviderUsage", () => {
-  it("leaves Command Code cost currency unknown without mutating raw or changing OpenRouter USD", () => {
+  it("keeps unknown provider cost unknown and retains verified OpenRouter USD", () => {
     const raw = Object.freeze({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.25 });
     const usage: LanguageModelUsage = { inputTokens: 10, outputTokens: 5, totalTokens: 15,
       inputTokenDetails: { noCacheTokens: 10, cacheReadTokens: undefined, cacheWriteTokens: undefined },
       outputTokenDetails: { textTokens: 5, reasoningTokens: undefined }, raw };
-    expect(reportedProviderUsage(usage, COMMAND_CODE.route)).toEqual({ inputTokens: 10, outputTokens: 5,
+    const unknownCommandCode = frozen(COMMAND_CODE, "command-code");
+    const unknownFixture = frozen(FIXTURE_MODEL, "fixture-provider");
+    const knownOpenRouter = frozen(DOTS, "openrouter");
+    expect(reportedProviderUsage(usage, unknownCommandCode)).toEqual({ inputTokens: 10, outputTokens: 5,
       totalTokens: 15, cachedTokens: null, reasoningTokens: null, costUsd: null });
-    expect(reportedProviderUsage(usage)?.costUsd).toBe(0.25);
-    expect(reportedProviderUsage(usage, DOTS.route)?.costUsd).toBe(0.25);
+    expect(reportedProviderUsage(usage, unknownFixture)?.costUsd).toBeNull();
+    expect(reportedProviderUsage(usage)?.costUsd).toBeNull();
+    expect(reportedProviderUsage(usage, knownOpenRouter)?.costUsd).toBe(0.25);
     expect(usage.raw).toBe(raw);
     expect(usage.raw?.cost).toBe(0.25);
   });
@@ -279,16 +371,6 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
   function sse(chunks: string[]) {
     return chunks.map((c) => "data: " + c + "\n\n").join("") + "data: [DONE]\n\n";
   }
-  function fragmentedSse(chunks: string[]) {
-    const bytes = new TextEncoder().encode(sse(chunks));
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
-        controller.close();
-      },
-    });
-    return new Response(body, { headers: { "content-type": "text/event-stream" } });
-  }
   function chunk(delta: unknown, finish: string | null, usage?: unknown) {
     return JSON.stringify({ id: "t1", object: "chat.completion.chunk", created: 1, model: "fake",
       choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) });
@@ -306,18 +388,11 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     };
     return { binding: { fetch: fakeFetch }, wire };
   }
-  function rawCapture(capture: AssistantWireCapture) {
-    return { include: { rawChunks: true },
-      onChunk: ({ chunk }: { chunk: { type: string; rawValue?: unknown } }) => {
-        if (chunk.type === "raw") capture.push(chunk.rawValue);
-      } };
-  }
-  function runStructured(model: unknown, abortSignal?: AbortSignal, onError?: (event: { error: unknown }) => void,
-    capture?: AssistantWireCapture) {
+  function runStructured(model: unknown, abortSignal?: AbortSignal, onError?: (event: { error: unknown }) => void) {
     return streamText({ model: model as Parameters<typeof streamText>[0]["model"],
       output: Output.object({ schema, name: "cited_answer" }),
       instructions: "rules", messages: [{ role: "user", content: "hi" }],
-      maxOutputTokens: 64, maxRetries: 0, ...(abortSignal ? { abortSignal } : {}), ...(onError ? { onError } : {}), ...(capture ? rawCapture(capture) : {}) });
+      maxOutputTokens: 64, maxRetries: 0, ...(abortSignal ? { abortSignal } : {}), ...(onError ? { onError } : {}) });
   }
   function sentBody(wire: { init?: { body?: unknown } }) {
     return JSON.parse(String(wire.init?.body)) as { model?: unknown; provider?: unknown; reasoning?: unknown; response_format?: unknown; messages?: Array<{ role?: unknown; content?: unknown }> };
@@ -342,281 +417,22 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     const binding = { fetch, gateway, run: catalogRun } as unknown as Env["AI"];
     return { binding, gateway, run, fetch, catalogRun };
   }
-  const commandCodeModel = (binding: Env["AI"], assistantHistory?: AssistantWire[]) => resolveModelTransport(
-    { AI: binding, DB: makeEnv("my-gw").env.DB }, COMMAND_CODE, "cc-session", assistantHistory);
+  const commandCodeModel = (binding: Env["AI"]) => resolveModelTransport(
+    { AI: binding, DB: makeEnv("my-gw").env.DB }, frozen(COMMAND_CODE, "command-code"), "cc-session");
 
-  it("uses one keyless custom-provider request with the native id and local JSON validation", async () => {
+  it("rejects a command-code alias mismatch before AI fetch", async () => {
     createAIMock.mockClear();
-    const seen = fakeCommandCode(new Response(sse([
-      chunk({ content: JSON.stringify({ sentences: ["original source"] }) }, "stop"),
-      usageOnly({ prompt_tokens: 10 }),
-    ]), { headers: { "content-type": "text/event-stream" } }));
-    const model = await commandCodeModel(seen.binding);
-    const result = streamText({ model, output: Output.object({ schema }), instructions: "Return the JSON schema requested by the caller.",
-      messages: [{ role: "user", content: "hi" }], maxOutputTokens: 64, maxRetries: 0,
-      providerOptions: { commandCode: { provider: { allow_fallbacks: true }, response_format: { type: "json_object" } } } });
-    await expect(result.output).resolves.toEqual({ sentences: ["original source"] });
-    expect((await result.totalUsage).inputTokens).toBe(10);
-    expect((await result.totalUsage).outputTokens).toBeUndefined();
-    expect(seen.fetch).toHaveBeenCalledTimes(1);
-    expect(seen.fetch.mock.contexts[0]).toBe(seen.binding);
-    const url = seen.fetch.mock.calls[0]?.[0];
-    expect(url).toBe('https://workers-binding.ai/ai-gateway/gateways/my-gw/custom-command-code/v1/chat/completions');
-    const init = seen.fetch.mock.calls[0]?.[1] as { method?: unknown; headers?: unknown; body?: unknown };
-    expect(init.method).toBe("POST");
-    expect(init.headers).toEqual({ "Content-Type": "application/json", "x-session-affinity": "cc-session",
-      "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" });
-    const sent = JSON.parse(String(init.body)) as { model?: unknown; stream?: unknown; stream_options?: unknown };
-    expect(sent).toMatchObject({ model: COMMAND_CODE.id, stream: true, stream_options: { include_usage: true } });
-    expect(sent).not.toHaveProperty("provider");
-    expect(sent).not.toHaveProperty("response_format");
-    expect(JSON.stringify({ url, headers: init.headers, body: sent }).toLowerCase()).not.toMatch(/authorization|bearer|api[-_]?key|proxy-alias/);
+    const seen = fakeCommandCode(new Response("unused", { headers: { "content-type": "text/event-stream" } }));
+    const aliased = { ...frozen(COMMAND_CODE, "command-code"), route: "gateway:command-code/proxy-alias" };
+    await expect(resolveModelTransport({ AI: seen.binding, DB: makeEnv("my-gw").env.DB }, aliased, "cc-session"))
+      .rejects.toMatchObject({ code: "unavailable", status: 503 });
+    expect(seen.fetch).not.toHaveBeenCalled();
     expect(createAIMock).not.toHaveBeenCalled();
     expect(seen.gateway).not.toHaveBeenCalled();
     expect(seen.run).not.toHaveBeenCalled();
     expect(seen.catalogRun).not.toHaveBeenCalled();
   });
 
-  it("does not fabricate missing reasoning fields for bare assistant history", async () => {
-    await useRealSDK();
-    const seen = fakeCommandCode(new Response(sse([
-      chunk({ content: JSON.stringify({ sentences: ["ok"] }) }, "stop"),
-    ]), { headers: { "content-type": "text/event-stream" } }));
-    const capture = new AssistantWireCapture();
-    const model = await commandCodeModel(seen.binding, [{ content: "previous answer" }]);
-    const history: Array<{ role: "user" | "assistant"; content: string }> = [
-      { role: "user", content: "first" },
-      { role: "assistant", content: "previous answer" },
-      { role: "user", content: "second" },
-    ];
-    const frozen = JSON.parse(JSON.stringify(history)) as unknown;
-    const result = streamText({ model: model as Parameters<typeof streamText>[0]["model"], messages: history,
-      output: Output.object({ schema: z.object({ sentences: z.array(z.string()) }) }), maxOutputTokens: 64, maxRetries: 0, ...rawCapture(capture) });
-    await expect(result.output).resolves.toEqual({ sentences: ["ok"] });
-    expect(seen.fetch).toHaveBeenCalledTimes(1);
-    expect(history).toEqual(frozen);
-    const sent = JSON.parse(String((seen.fetch.mock.calls[0]?.[1] as { body?: unknown }).body)) as { messages?: Array<Record<string, unknown>> };
-    expect(sent.messages?.[0]).toEqual({ role: "user", content: "first" });
-    expect(sent.messages?.[1]).toEqual({ role: "assistant", content: "previous answer" });
-    expect(sent.messages?.[1]).not.toHaveProperty("reasoning_content");
-    expect(sent.messages?.[1]).not.toHaveProperty("reasoning");
-    expect(sent.messages?.[1]).not.toHaveProperty("reasoning_details");
-    expect(sent.messages?.[2]).toEqual({ role: "user", content: "second" });
-    expect(capture.message()).toEqual({ content: '{"sentences":["ok"]}' });
-  });
-
-  it("replays captured assistant messages in order without rewriting opaque protocol fields", async () => {
-    await useRealSDK();
-    const seen = fakeCommandCode(new Response(sse([
-      chunk({ content: JSON.stringify({ sentences: ["current"] }) }, "stop"),
-    ]), { headers: { "content-type": "text/event-stream" } }));
-    const firstWire: AssistantWire = {
-      content: "first answer",
-      reasoning_content: "first reasoning",
-      reasoning_details: [{ id: "reason-1", index: 0, type: "reasoning.text", text: "first" }],
-    };
-    const secondWire: AssistantWire = {
-      content: "second answer",
-      reasoning: "second reasoning",
-      reasoning_details: [{ id: "opaque-2", index: 1, type: "reasoning.encrypted",
-        signature: "opaque-signature/+:keep", data: "opaque-data/+/==:keep" }],
-    };
-    const assistantHistory = [firstWire, secondWire];
-    const frozenHistory = JSON.stringify(assistantHistory);
-    const model = await commandCodeModel(seen.binding, assistantHistory);
-    const history = [
-      { role: "user" as const, content: "first question" },
-      { role: "assistant" as const, content: "first answer" },
-      { role: "user" as const, content: "second question" },
-      { role: "assistant" as const, content: "second answer" },
-      { role: "user" as const, content: "current question" },
-    ];
-    const result = streamText({ model: model as Parameters<typeof streamText>[0]["model"], messages: history,
-      output: Output.object({ schema }), maxOutputTokens: 64, maxRetries: 0 });
-    await expect(result.output).resolves.toEqual({ sentences: ["current"] });
-    await result.totalUsage;
-
-    expect(seen.fetch).toHaveBeenCalledTimes(1);
-    const init = seen.fetch.mock.calls[0]?.[1] as { body?: unknown } | undefined;
-    const sent = JSON.parse(String(init?.body)) as { messages?: Array<Record<string, unknown>> };
-    expect(sent.messages).toEqual([
-      { role: "user", content: "first question" },
-      { role: "assistant", ...firstWire },
-      { role: "user", content: "second question" },
-      { role: "assistant", ...secondWire },
-      { role: "user", content: "current question" },
-    ]);
-    expect(assistantHistory).toEqual(JSON.parse(frozenHistory) as AssistantWire[]);
-  });
-
-  it("captures raw content and actual reasoning fields across fragmented UTF-8 SSE", async () => {
-    await useRealSDK();
-    const rawContent = '{"sentences":["Привет, café 🧪"]}';
-    const seen = fakeCommandCode(fragmentedSse([
-      chunk({ role: "assistant", content: '{"sentences":["Привет, ', reasoning_content: "мысль ", reasoning: "reason " }, null),
-      chunk({ content: 'café 🧪"]}', reasoning_content: "задача 🧠", reasoning: "detail 🧭" }, "stop"),
-    ]));
-    const capture = new AssistantWireCapture();
-    const model = await commandCodeModel(seen.binding, []);
-    const result = runStructured(model, undefined, undefined, capture);
-    await expect(result.output).resolves.toEqual({ sentences: ["Привет, café 🧪"] });
-    await result.totalUsage;
-
-    expect(seen.fetch).toHaveBeenCalledTimes(1);
-    expect(capture.message()).toEqual({
-      content: rawContent,
-      reasoning_content: "мысль задача 🧠",
-      reasoning: "reason detail 🧭",
-    });
-  });
-
-  it("captures a clean assistant response as content-only when reasoning is absent", async () => {
-    await useRealSDK();
-    const rawContent = '{"sentences":["plain"]}';
-    const seen = fakeCommandCode(new Response(sse([
-      chunk({ role: "assistant", content: rawContent }, "stop"),
-    ]), { headers: { "content-type": "text/event-stream" } }));
-    const capture = new AssistantWireCapture();
-    const model = await commandCodeModel(seen.binding, []);
-    const result = runStructured(model, undefined, undefined, capture);
-    await expect(result.output).resolves.toEqual({ sentences: ["plain"] });
-    await result.totalUsage;
-
-    expect(capture.message()).toEqual({ content: rawContent });
-    expect(capture.message()).not.toHaveProperty("reasoning_content");
-    expect(capture.message()).not.toHaveProperty("reasoning");
-    expect(capture.message()).not.toHaveProperty("reasoning_details");
-    expect(seen.fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("merges cumulative reasoning details by ID and index while preserving opaque signature and data", async () => {
-    await useRealSDK();
-    const rawContent = '{"sentences":["ok"]}';
-    const opaqueDetail = { id: "opaque-2", index: 1, type: "reasoning.encrypted",
-      signature: "opaque-signature/+:keep", data: "opaque-data/+/==:keep" };
-    const seen = fakeCommandCode(new Response(sse([
-      chunk({ role: "assistant", content: rawContent,
-        reasoning_details: [{ id: "reason-1", index: 0, type: "reasoning.text", text: "a" }, opaqueDetail] }, null),
-      chunk({ reasoning_details: [{ id: "reason-1", index: 0, type: "reasoning.text", text: "ab" }, opaqueDetail] }, null),
-      chunk({ reasoning_details: [{ index: 0, text: "ab" }] }, "stop"),
-    ]), { headers: { "content-type": "text/event-stream" } }));
-    const capture = new AssistantWireCapture();
-    const model = await commandCodeModel(seen.binding, []);
-    const result = runStructured(model, undefined, undefined, capture);
-    await expect(result.output).resolves.toEqual({ sentences: ["ok"] });
-    await result.totalUsage;
-
-    expect(capture.message()).toEqual({
-      content: rawContent,
-      reasoning_details: [
-        { id: "reason-1", index: 0, type: "reasoning.text", text: "ab" },
-        opaqueDetail,
-      ],
-    });
-    expect(capture.message()?.reasoning_details?.[0]).toMatchObject({ text: "ab" });
-    expect(capture.message()?.reasoning_details?.[1]).toEqual(opaqueDetail);
-    expect(seen.fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("preserves a shorter incremental reasoning detail that matches the previous prefix", async () => {
-    const seen = fakeCommandCode(fragmentedSse([
-      chunk({ role: "assistant", content: '{"sentences":["ok"]}',
-        reasoning_details: [{ id: "detail-1", index: 0, type: "reasoning.text", text: "analysis" }] }, null),
-      chunk({ reasoning_details: [{ index: 0, text: "anal" }] }, "stop"),
-    ]));
-    const capture = new AssistantWireCapture();
-    const model = await commandCodeModel(seen.binding, []);
-    const result = runStructured(model, undefined, undefined, capture);
-    await expect(result.output).resolves.toEqual({ sentences: ["ok"] });
-    await result.totalUsage;
-    expect(capture.message()).toEqual({
-      content: '{"sentences":["ok"]}',
-      reasoning_details: [{ id: "detail-1", index: 0, type: "reasoning.text", text: "analysisanal" }],
-    });
-    expect(seen.fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("uses the SDK raw JSON hook without requiring a transport sentinel", async () => {
-    const rawContent = '{"sentences":["SDK owns framing"]}';
-    const seen = fakeCommandCode(new Response("data: " + chunk({ role: "assistant", content: rawContent }, "stop") + "\n\n",
-      { headers: { "content-type": "text/event-stream" } }));
-    const capture = new AssistantWireCapture();
-    const model = await commandCodeModel(seen.binding, []);
-    const result = runStructured(model, undefined, undefined, capture);
-    await expect(result.output).resolves.toEqual({ sentences: ["SDK owns framing"] });
-    expect(await result.finishReason).toBe("stop");
-    expect(capture.message()).toEqual({ content: rawContent });
-    expect(seen.fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("publishes AssistantWire only from valid finished SDK raw JSON", async () => {
-    await useRealSDK();
-    const rawContent = '{"sentences":["partial"]}';
-    const abortController = new AbortController();
-    const overLimitContent = JSON.stringify({ sentences: ["ok"], padding: "x".repeat(1024 * 1024) });
-    const cases: Array<{ name: string; response: Response; signal?: AbortSignal; afterDispatch?: () => void }> = [
-      {
-        name: "terminal choice error",
-        response: new Response(sse([
-          chunk({ role: "assistant", content: rawContent }, null),
-          JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "error",
-            error: { message: "synthetic terminal provider failure", type: "server_error" } }] }),
-        ]), { headers: { "content-type": "text/event-stream" } }),
-      },
-      {
-        name: "provider error",
-        response: new Response(sse([
-          chunk({ role: "assistant", content: rawContent }, null),
-          JSON.stringify({ error: { message: "synthetic provider failure", type: "server_error" } }),
-        ]), { headers: { "content-type": "text/event-stream" } }),
-      },
-      {
-        name: "malformed event",
-        response: new Response(sse([
-          chunk({ role: "assistant", content: rawContent }, null),
-          "{malformed-json",
-        ]), { headers: { "content-type": "text/event-stream" } }),
-      },
-      {
-        name: "incomplete stream",
-        response: new Response(sse([chunk({ role: "assistant", content: rawContent }, null)]),
-          { headers: { "content-type": "text/event-stream" } }),
-      },
-      {
-        name: "invalid choices",
-        response: new Response(sse([JSON.stringify({ choices: [null] })]),
-          { headers: { "content-type": "text/event-stream" } }),
-      },
-      {
-        name: "reasoning without answer content",
-        response: new Response(sse([chunk({ reasoning_content: "private reasoning only" }, "stop")]),
-          { headers: { "content-type": "text/event-stream" } }),
-      },
-      {
-        name: "aborted stream",
-        response: new Response(sse([chunk({ role: "assistant", content: rawContent }, "stop")]),
-          { headers: { "content-type": "text/event-stream" } }),
-        signal: abortController.signal,
-        afterDispatch: () => abortController.abort(),
-      },
-      {
-        name: "capture over 1 MiB",
-        response: new Response(sse([chunk({ role: "assistant", content: overLimitContent }, "stop")]),
-          { headers: { "content-type": "text/event-stream" } }),
-      },
-    ];
-
-    for (const scenario of cases) {
-      const capture = new AssistantWireCapture();
-      const seen = fakeCommandCode(scenario.response, scenario.afterDispatch);
-      const model = await commandCodeModel(seen.binding, []);
-      const result = runStructured(model, scenario.signal, () => {}, capture);
-      await Promise.allSettled([result.output, result.totalUsage]);
-
-      expect(capture.message(), scenario.name).toBeUndefined();
-      expect(seen.fetch).toHaveBeenCalledTimes(1);
-    }
-  });
 
   it("keeps existing reasoning fields, user/system messages and history-free bodies unchanged", async () => {
     const seen = fakeCommandCode(new Response(sse([
@@ -661,7 +477,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     ]);
     const seen = fakeBinding(body);
     const model = await resolveModelTransport(
-      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, spec, "sess");
+      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, frozen(spec, "openrouter"), "sess");
     const result = runStructured(model);
     await expect(result.output).resolves.toEqual({ sentences: ["Hello world"] });
     const usage = await result.totalUsage;
@@ -676,8 +492,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     const sent = sentBody(seen.wire);
     expect(sent.model).toBe(id);
     expect(sent.provider).toEqual({ allow_fallbacks: false, require_parameters: true });
-    if (spec.route === DOTS.route) expect(sent.reasoning).toEqual({ enabled: false });
-    else expect(sent).not.toHaveProperty("reasoning");
+    expect(sent).not.toHaveProperty("reasoning");
     const format = sent.response_format as { type?: unknown; json_schema?: { name?: unknown; schema?: unknown } };
     expect(format.type).toBe("json_schema");
     expect(format.json_schema?.name).toBe("cited_answer");
@@ -693,7 +508,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     ]);
     const seen = fakeBinding(body);
     const model = await resolveModelTransport(
-      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, DOTS, "sess");
+      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, frozen(DOTS, "openrouter"), "sess");
     const result = runStructured(model);
     await expect(result.output).resolves.toEqual({ sentences: ["partial"] });
     const usage = await result.totalUsage;
@@ -720,7 +535,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
       ]);
       const seen = fakeBinding(body);
       const model = await resolveModelTransport(
-        { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, DOTS, "sess-" + c.name);
+        { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, frozen(DOTS, "openrouter"), "sess-" + c.name);
       const result = runStructured(model);
       await expect(result.output).resolves.toEqual({ sentences: ["ok"] });
       const usage = await result.totalUsage;
@@ -736,7 +551,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     const noUsage = sse([chunk({ role: "assistant", content: JSON.stringify({ sentences: ["ok"] }) }, "stop")]);
     const seen = fakeBinding(noUsage);
     const model = await resolveModelTransport(
-      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, INKLING, "sess");
+      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, frozen(INKLING, "openrouter"), "sess");
     const result = runStructured(model);
     await expect(result.output).resolves.toEqual({ sentences: ["ok"] });
     const usage = await result.totalUsage;
@@ -755,7 +570,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
 
   it("keeps response_format json_object when the entry allows it without structured outputs", async () => {
     await useRealSDK();
-    const allowed = { ...INKLING, responseFormat: true };
+    const allowed = frozen({ ...INKLING, responseFormat: true }, "openrouter");
     const noUsage = sse([chunk({ role: "assistant", content: JSON.stringify({ sentences: ["ok"] }) }, "stop")]);
     const seen = fakeBinding(noUsage);
     const model = await resolveModelTransport(
@@ -775,7 +590,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     const errBody = sse([JSON.stringify({ error: { message: "provider exploded", type: "provider_error" } })]);
     const seen = fakeBinding(errBody);
     const model = await resolveModelTransport(
-      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, DOTS, "sess");
+      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, frozen(DOTS, "openrouter"), "sess");
     let streamError: unknown;
     const result = runStructured(model, undefined, ({ error }) => { streamError = error; });
     await Promise.allSettled([result.output, result.totalUsage]);
@@ -799,7 +614,7 @@ describe("real SDK streamText over a fake binding (contract fixture, no provider
     const secretBody = sse([JSON.stringify({ error: { message: "sk-live-SECRET123 invalid payload DROP TABLE", type: "invalid_request_error", code: "secret-code-123", param: "messages" } })]);
     const seen = fakeBinding(secretBody);
     const model = await resolveModelTransport(
-      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, DOTS, "sess");
+      { AI: seen.binding as unknown as Env["AI"], DB: makeEnv("my-gw").env.DB }, frozen(DOTS, "openrouter"), "sess");
     let streamError: unknown;
     const result = runStructured(model, undefined, ({ error }) => { streamError = error; });
     await Promise.allSettled([result.output, result.totalUsage]);

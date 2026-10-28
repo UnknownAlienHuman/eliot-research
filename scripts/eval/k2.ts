@@ -236,6 +236,10 @@ assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
 if (process.argv.includes('--models-only')) {
   // Connection/admission checks only. Never enables a Gateway, submits a provider call or changes defaults/budget.
   const before = await apiJson('/api/settings');
+  const providersBefore = await apiJson('/api/models/providers');
+  assert.equal(providersBefore.status, 200, 'GET /api/models/providers must be 200.');
+  assert.equal(providersBefore.body.providers.length, 3, 'Local scratch namespace must start with 3 seeded providers.');
+  let providerCrud = { status: 'NOT_RUN' };
   const connection = await apiJson('/api/models/connection');
   assert.equal(before.status, 200);
   assert.equal(connection.status, 200);
@@ -366,11 +370,28 @@ if (process.argv.includes('--models-only')) {
       });
       await Promise.all([page.goto(browserOrigin + '/settings'), ...reads]);
       await expect(page.getByRole('region', { name: 'Models', exact: true })).toBeVisible();
-      for (const [label, value] of [['Answer model', before.body.settings.answerModel], ['Understanding model', before.body.settings.distillModel]]) {
-        const select = page.getByRole('combobox', { name: label, exact: true });
-        await expect(select).toBeEnabled({ timeout: 30000 });
-        await expect(select).toHaveValue(value);
-      }
+      const answersRadio = page.locator('input[type="radio"][value="answer"]');
+      const understandingRadio = page.locator('input[type="radio"][value="distill"]');
+      await expect(answersRadio).toBeVisible();
+      await expect(understandingRadio).toBeVisible();
+      await expect(page.getByRole('group', { name: 'Use model for' })).toBeVisible();
+      assert.strictEqual(await page.locator('.er-model-picker__find').count(), 0, 'Expanded picker must not use a Find disclosure.');
+      assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Expanded picker must not paginate.');
+      assert.strictEqual(await page.locator('section.er-model-picker__advanced').count(), 0, 'Expanded picker must not hide Model details.');
+      await answersRadio.check();
+      await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toBeVisible();
+      await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toBeEnabled({ timeout: 30000 });
+      await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(before.body.settings.answerModel);
+      await expect(page.getByRole('combobox', { name: 'Answer model: provider', exact: true })).toBeVisible();
+      await expect(page.getByRole('searchbox', { name: 'Answer model: search models', exact: true })).toBeVisible();
+      await expect(page.getByRole('checkbox', { name: /free/i })).toBeVisible();
+      await understandingRadio.check();
+      await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toBeVisible();
+      await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toBeEnabled({ timeout: 30000 });
+      await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toHaveValue(before.body.settings.distillModel);
+      await expect(page.getByRole('combobox', { name: 'Understanding model: provider', exact: true })).toBeVisible();
+      await expect(page.getByRole('searchbox', { name: 'Understanding model: search models', exact: true })).toBeVisible();
+      await answersRadio.check();
       await expect(page.getByRole('textbox', { name: 'Monthly budget (USD)', exact: true })).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
       const gateway = page.getByRole('region', { name: 'AI Gateway connection', exact: true });
       await expect(gateway).toBeVisible();
@@ -379,20 +400,45 @@ if (process.argv.includes('--models-only')) {
       await expect(gateway.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true })).not.toBeChecked();
       await setAdvancedGateway(page, false);
     }
-    async function assertDisabledChoice(page, label) {
+    async function activePicker(page, mode) {
+      const label = mode === 'answers' ? 'Answer model' : 'Understanding model';
+      await page.locator(mode === 'answers' ? 'input[type="radio"][value="answer"]' : 'input[type="radio"][value="distill"]').check();
       const select = page.getByRole('combobox', { name: label, exact: true });
-      const row = page.locator('.er-models__row').filter({ has: select });
-      const find = row.locator('details.er-model-picker__find > summary');
-      await find.click();
-      const provider = row.getByRole('combobox', { name: label + ': provider', exact: true });
-      const search = row.getByRole('searchbox', { name: label + ': search models', exact: true });
+      await expect(select).toBeVisible();
+      await expect(select).toBeEnabled({ timeout: 30000 });
+      return {
+        select,
+        provider: page.getByRole('combobox', { name: label + ': provider', exact: true }),
+        search: page.getByRole('searchbox', { name: label + ': search models', exact: true }),
+        free: page.getByRole('checkbox', { name: /free/i }),
+      };
+    }
+    async function assertDisabledChoice(page, mode) {
+      const label = mode === 'answers' ? 'Answer model' : 'Understanding model';
+      const expected = mode === 'answers' ? before.body.settings.answerModel : before.body.settings.distillModel;
+      const picked = await activePicker(page, mode);
+      const select = picked.select;
+      const provider = picked.provider;
+      const search = picked.search;
+      const free = picked.free;
+      await expect(select).toHaveValue(expected);
+      assert.equal(await select.locator('option').evaluateAll((options, route) => options.filter((option) => option.value === route).length, external.route), 1, 'Expanded catalogue must attach the exact provider/native route without paging (' + label + ').');
       await provider.selectOption(external.route.slice('gateway:'.length).split('/')[0]);
+      await expect(select).toHaveValue(expected);
       await search.fill(external.route);
+      await expect(select).toHaveValue(expected);
       await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
         .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), external.route), { timeout: 30000 }).toEqual([true]);
+      await free.check();
+      await expect(select).toHaveValue(expected);
+      await free.uncheck();
+      await expect(select).toHaveValue(expected);
       await search.fill('');
+      await expect(select).toHaveValue(expected);
       await provider.selectOption('');
-      await find.click();
+      await expect(select).toHaveValue(expected);
+      assert.strictEqual(await page.locator('.er-model-picker__find').count(), 0, 'Filters must not introduce a Find disclosure (' + label + ').');
+      assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Filters must not introduce pagination (' + label + ').');
     }
     const desktop = await context.newPage();
     await desktop.setViewportSize({ width: 1440, height: 900 });
@@ -411,15 +457,22 @@ if (process.argv.includes('--models-only')) {
     await gatewayId.fill('unconfigured-eval-gateway');
     await expect(gateway.getByRole('button', { name: 'Save connection', exact: true })).toBeDisabled();
     await setAdvancedGateway(page, false);
-    assert((await page.locator('#workspace-main details').count()) >= 1, 'Compact Settings must expose collapsed technical details.');
-    assert.strictEqual(await page.locator('#workspace-main details[open]').count(), 0, 'Compact default UI must not display expanded technical walls.');
-    const summaries = page.locator('#workspace-main details > summary');
-    for (let i = 0; i < await summaries.count(); i++) assert((await summaries.nth(i).innerText()).trim().length > 0, 'Every collapsed section must carry an accessible label.');
-    await assertDisabledChoice(page, 'Answer model');
-    await assertDisabledChoice(page, 'Understanding model');
+    assert((await page.locator('#workspace-main details.er-models__details').count()) >= 1, 'Gateway technical details stay collapsed separately from the expanded picker.');
+    assert.strictEqual(await page.locator('#workspace-main details.er-models__details[open]').count(), 0, 'Gateway technical details must start collapsed.');
+    assert.strictEqual(await page.locator('.er-model-picker__find').count(), 0, 'Expanded picker must not introduce a Find disclosure.');
+    assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Expanded picker must not introduce pagination.');
+    assert.strictEqual(await page.locator('section.er-model-picker__advanced').count(), 0, 'Expanded picker must not hide Model details.');
+    const summaries = page.locator('#workspace-main details.er-models__details > summary');
+    for (let i = 0; i < await summaries.count(); i++) assert((await summaries.nth(i).innerText()).trim().length > 0, 'Every collapsed gateway section must carry an accessible label.');
+    await assertDisabledChoice(page, 'answers');
+    await assertDisabledChoice(page, 'understanding');
+    await activePicker(page, 'answers');
     await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(before.body.settings.answerModel);
+    await activePicker(page, 'understanding');
     await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toHaveValue(before.body.settings.distillModel);
-    assert.strictEqual(await page.locator('#workspace-main details[open]').count(), 0, 'Search filters must close without changing the default compact layout.');
+    await activePicker(page, 'answers');
+    assert.strictEqual(await page.locator('.er-model-picker__find').count(), 0, 'Display-only filters must not introduce a Find disclosure.');
+    assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Display-only filters must not introduce pagination.');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Settings must fit the 390px Material layout.');
     await setAdvancedGateway(page, true);
     await gateway.getByRole('button', { name: 'Save connection' }).scrollIntoViewIfNeeded();
@@ -457,14 +510,123 @@ if (process.argv.includes('--models-only')) {
     assert.strictEqual(settingsPuts, 0, 'The entire browser journey must attempt zero settings PUTs.');
     assert.deepEqual(mutations, [], 'The browser journey must attempt no API mutation, including Gateway/model requests.');
     assert.deepEqual(errors, [], 'Settings/understanding must not throw browser errors.');
+    const evalProviderId = 'eval-provider-' + Date.now().toString(36);
+    let providerPuts = 0;
+    let providerGets = 0;
+    let providerSettingsPuts = 0;
+    let providerRefreshPosts = 0;
+    let providerTurnPosts = 0;
+    const providerBlocked = [];
+    const providerErrors = [];
+    const providerContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    providerContext.setDefaultTimeout(30000);
+    providerContext.setDefaultNavigationTimeout(30000);
+    await providerContext.route('**/api/**', async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const method = request.method();
+      const path = url.pathname;
+      if (method === 'GET' && (path === '/api/models/providers' || path === '/api/settings' || path === '/api/models' || path === '/api/models/connection')) {
+        if (path === '/api/models/providers') providerGets += 1;
+        await route.continue();
+        return;
+      }
+      if (method === 'PUT' && path === '/api/models/providers') {
+        providerPuts += 1;
+        await route.continue();
+        return;
+      }
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+        if (path === '/api/settings' && method === 'PUT') providerSettingsPuts += 1;
+        if (path === '/api/models/refresh' && method === 'POST') providerRefreshPosts += 1;
+        providerBlocked.push({ method, path });
+        await route.abort('blockedbyclient');
+        return;
+      }
+      await route.continue();
+    });
+    let providerCrudInner = null;
+    try {
+      const ppage = await providerContext.newPage();
+      ppage.on('pageerror', (error) => providerErrors.push(String(error && error.message ? error.message : error).slice(0, 500)));
+      const providerReads = ['/api/settings', '/api/models/connection', '/api/models', '/api/models/providers'].map((path) => ppage.waitForResponse((r) => r.url() === browserOrigin + path && r.request().method() === 'GET', { timeout: 30000 }));
+      await ppage.goto(browserOrigin + '/settings');
+      for (const pending of providerReads) {
+        const response = await pending;
+        assert.equal(response.status(), 200, 'Provider Settings reader must load ' + response.url() + '.');
+        await response.finished();
+      }
+      await expect(ppage.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
+      assert.equal(await ppage.locator('.er-providers__item').count(), 3, 'Provider editor must start from the 3 seeded providers.');
+      await ppage.getByRole('button', { name: 'Add provider', exact: true }).click();
+      assert.equal(await ppage.locator('.er-providers__item').count(), 4, 'Add provider must append one draft row.');
+      const draft = ppage.locator('.er-providers__item').last();
+      assert.equal(await draft.locator('details.er-providers__details').evaluate((el) => el.open), true, 'New provider draft must open Connection details (isNew stable).');
+      await expect(draft.locator('select')).toHaveValue('openai-compatible');
+      await draft.locator('.er-providers__fields input').first().fill(evalProviderId);
+      assert.equal(await draft.locator('details.er-providers__details').evaluate((el) => el.open), true, 'Editing the provider ID must keep Connection details open.');
+      await draft.locator('input[placeholder="https://"]').fill('https://example.invalid/v1/');
+      await draft.locator('input[placeholder="custom-command-code"]').fill('custom-eval-provider');
+      await draft.locator('input[placeholder="v1"]').fill('v1');
+      await draft.getByRole('checkbox', { name: 'Enabled' }).uncheck();
+      await expect(draft.getByRole('checkbox', { name: 'Enabled' })).not.toBeChecked();
+      const saveProviders = ppage.getByRole('button', { name: 'Save providers', exact: true });
+      await saveProviders.scrollIntoViewIfNeeded();
+      const putResponse = ppage.waitForResponse((r) => r.url() === browserOrigin + '/api/models/providers' && r.request().method() === 'PUT', { timeout: 30000 });
+      await saveProviders.click();
+      assert.equal((await putResponse).status(), 200, 'Explicit Save providers must PUT 200.');
+      await expect(ppage.getByText('Saved.', { exact: true })).toBeVisible();
+      const saved = await apiJson('/api/models/providers');
+      assert.equal(saved.status, 200);
+      assert.equal(saved.body.providers.length, 4, 'Saved providers must append the eval row.');
+      const evalRow = saved.body.providers.find((p) => p && p.id === evalProviderId);
+      assert(evalRow, 'Saved providers must contain the eval provider ID.');
+      assert.equal(evalRow.type, 'openai-compatible');
+      assert.equal(evalRow.baseUrl, 'https://example.invalid/v1', 'Base URL must normalize without a trailing slash.');
+      assert.equal(evalRow.gatewaySlug, 'custom-eval-provider');
+      assert.equal(evalRow.gatewayPath, 'v1');
+      assert.equal(evalRow.enabled, false, 'Eval provider must stay disabled so no discovery or inference runs.');
+      await ppage.reload();
+      await expect(ppage.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
+      await expect(ppage.locator('.er-providers__item', { hasText: evalProviderId })).toBeVisible();
+      assert.equal(providerRefreshPosts, 0, 'Save/load/edit must not trigger an automatic catalogue refresh.');
+      assert.equal(providerTurnPosts, 0, 'Provider editing must not start a model turn.');
+      assert.equal(providerSettingsPuts, 0, 'Provider editing must not PUT global model settings.');
+      assert.deepEqual(providerBlocked, [], 'Provider phase must attempt no blocked mutation besides the explicit provider PUT.');
+      assert.deepEqual(providerErrors, [], 'Provider editing must not throw page errors.');
+      providerCrudInner = { evalProviderId, puts: providerPuts, gets: providerGets, settingsPuts: providerSettingsPuts, refreshPosts: providerRefreshPosts, turnPosts: providerTurnPosts, blocked: providerBlocked, restored: false };
+      providerCrud = providerCrudInner;
+    } finally {
+      const restore = await apiJson('/api/models/providers', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ providers: providersBefore.body.providers }) });
+      assert.equal(restore.status, 200, 'Restore of the 3 seeded providers must PUT 200.');
+      const reread = await apiJson('/api/models/providers');
+      assert.equal(reread.status, 200);
+      assert.equal(reread.body.providers.length, 3, 'Restored providers must return to 3 rows.');
+      assert.deepEqual(reread.body.providers, providersBefore.body.providers, 'Restored providers must equal the pre-eval snapshot.');
+      providerCrud.restored = true;
+      await providerContext.close().catch(() => undefined);
+    }
+    const providerReloadContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    try {
+      const reloadPage = await providerReloadContext.newPage();
+      await reloadPage.goto(browserOrigin + '/settings');
+      await expect(reloadPage.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
+      assert.equal(await reloadPage.locator('.er-providers__item').count(), 3, 'Reload after restore must show 3 providers.');
+      await expect(reloadPage.locator('.er-providers__item', { hasText: evalProviderId })).toHaveCount(0);
+    } finally {
+      await providerReloadContext.close().catch(() => undefined);
+    }
   } finally { await browser.close(); }
   const after = await apiJson('/api/settings');
-  assert.deepEqual(after.body.settings, before.body.settings, 'Native defaults, budget and settings timestamp must be unchanged.');
+  assert.equal(after.body.settings.answerModel, before.body.settings.answerModel, 'Answer default must be unchanged.');
+  assert.equal(after.body.settings.distillModel, before.body.settings.distillModel, 'Understanding default must be unchanged.');
+  assert.equal(after.body.settings.monthlyModelBudgetMicrousd, before.body.settings.monthlyModelBudgetMicrousd, 'Monthly budget must be unchanged.');
   assert.equal(after.body.monthlyUsedMicrousd, before.body.monthlyUsedMicrousd);
   assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
   const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, consentRejected: true, disconnectedTurnCost: 0,
     catalogue: { externalModels: externals.length, providers: [...new Set(nativePairs.map((pair) => pair[0]))], discovery: warnings.length ? 'PARTIAL' : 'NO_WARNINGS', warnings },
     monthlyUsedMicrousd: after.body.monthlyUsedMicrousd, provider: 'NOT_RUN', streaming: 'NOT_RUN', distill, browser390: 'LOCAL_PASS', credentialAccess: 'NOT_ENABLED' };
+  result.providerCrud = providerCrud;
   await writeFile(outDir + '/external-models-native.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
   process.exit(0);

@@ -1,7 +1,8 @@
 // Adapted from apps/eliotr-web/src/app/ChatModelPicker.tsx and model-selection.css
 // at 7c034569b908d3b03a8b821b7c537477a24b10f7. Copyright (c) 2026 ELIOT Project, MIT.
 // Pair-key codec also from apps/eliotr-web/src/query/modelCatalog.ts at the same pin.
-// Provider/search/paging/controlled selection only; no donor runtime/qualification/key handling.
+// Provider/search display-only filtering with controlled selection; no donor
+// runtime/qualification/key handling, no pricing/capacity output, no paging.
 import { useEffect, useId, useRef, useState } from 'react';
 import { MaterialSymbol } from './ui/MaterialSymbol';
 import './model-picker.css';
@@ -9,7 +10,6 @@ import './model-picker.css';
 export interface ModelRoute {
   readonly route: string;
   readonly id: string;
-  readonly aliases?: readonly string[];
   readonly label: string;
   readonly enabled: boolean;
   readonly unavailableReason?: string | null;
@@ -47,9 +47,6 @@ export function modelCatalogEntryKey(model: ModelRoute): string {
   const provider = providerId(model);
   return `${provider.length}:${provider}${model.id}`;
 }
-function capacity(value: number | null): string {
-  return value == null ? 'Unknown' : value.toLocaleString('en-US') + ' tokens';
-}
 
 export function ModelPicker({ label, choices, value, onChange, emptyLabel, loading = false, error = '',
   compact = false, warnings = [], onRoutePendingChange }: {
@@ -68,7 +65,6 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
   const [search, setSearch] = useState('');
   const [provider, setProvider] = useState('');
   const [freeOnly, setFreeOnly] = useState(false);
-  const [page, setPage] = useState(1);
   const [compactProvider, setCompactProvider] = useState(() => routeProviderId(value));
   const pendingNotify = useRef(onRoutePendingChange);
   const [routePending, setRoutePending] = useState(false);
@@ -79,7 +75,7 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
     pendingNotify.current?.(false);
   }, [value]);
 
-  const matches = (route: string) => choices.filter((model) => model.route === route || model.aliases?.includes(route));
+  const matches = (route: string) => choices.filter((model) => model.route === route);
   const selectedMatches = value === '' ? [] : matches(value);
   const selected = selectedMatches.length === 1 ? selectedMatches[0] : undefined;
   const keyCounts = new Map<string, number>();
@@ -99,18 +95,13 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
     const haystack = (model.label + ' ' + model.route + ' ' + model.id + ' ' + providerLabel(model)).toLocaleLowerCase();
     return terms.every((term) => haystack.includes(term));
   });
-  const pageCount = Math.max(1, Math.ceil(filtered.length / 50));
-  const currentPage = Math.min(page, pageCount);
-  const visible = filtered.slice((currentPage - 1) * 50, currentPage * 50);
   const groups = new Map<string, ModelRoute[]>();
-  for (const model of visible) {
+  for (const model of filtered) {
     const name = providerLabel(model);
     const group = groups.get(name);
     if (group) group.push(model); else groups.set(name, [model]);
   }
-  const selectedVisible = visible.some((model) => model.route === value);
-  const bound = selected?.outputReserveTokens ?? selected?.maxOutputTokens ?? null;
-  const jobOutput = bound !== null && selected?.maxOutputTokens != null ? Math.min(bound, selected.maxOutputTokens) : bound;
+  const selectedVisible = filtered.some((model) => model.route === value);
   const compactModels = choices.filter((model) => providerId(model) === compactProvider);
   const currentProvider = selected ? providerId(selected) : routeProviderId(value);
   const displayedCompactValue = value !== '' && currentProvider === compactProvider ? value : '';
@@ -184,6 +175,28 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
           </div>
         ) : (
           <>
+            <div className='er-model-picker__filters'>
+              <label className='er-model-picker__search' htmlFor={id + '-provider'}>
+                <span>Provider</span>
+                <select id={id + '-provider'} aria-label={label + ': provider'} value={provider}
+                  onChange={(event) => setProvider(event.currentTarget.value)}>
+                  <option value=''>All providers</option>
+                  {provider !== '' && !providers.has(provider) ? <option value={provider} disabled>{provider} — unavailable</option> : null}
+                  {[...providers].map(([key, name]) => <option key={key} value={key}>{name}</option>)}
+                </select>
+              </label>
+              <label className='er-model-picker__free'>
+                <input type='checkbox' checked={freeOnly} onChange={(event) => setFreeOnly(event.currentTarget.checked)} />
+                <span>Only free (name or ID contains “free”)</span>
+              </label>
+              <label className='er-model-picker__search' htmlFor={id + '-search'}>
+                <span>Search</span>
+                <input id={id + '-search'} type='search' aria-label={label + ': search models'} value={search} maxLength={512}
+                  onChange={(event) => setSearch(event.currentTarget.value)} />
+              </label>
+              <p className='er-model-picker__note'>Filters display text only.</p>
+              <p className='er-status' role='status'><span>{filtered.length === 0 ? 'No models match your search.' : filtered.length.toLocaleString('en-US') + ' matching models.'}</span></p>
+            </div>
             <div className='er-model-picker__chip'>
               <MaterialSymbol name='spark' />
               <select id={id + '-select'} aria-label={label} value={value}
@@ -201,39 +214,6 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
                 </optgroup>)}
               </select>
             </div>
-            <details className='er-model-picker__find'>
-              <summary>Find a model</summary>
-              <label className='er-model-picker__search' htmlFor={id + '-provider'}>
-                <span>Provider</span>
-                <select id={id + '-provider'} aria-label={label + ': provider'} value={provider}
-                  onChange={(event) => { setProvider(event.currentTarget.value); setPage(1); }}>
-                  <option value=''>All providers</option>
-                  {provider !== '' && !providers.has(provider) ? <option value={provider} disabled>{provider} — unavailable</option> : null}
-                  {[...providers].map(([key, name]) => <option key={key} value={key}>{name}</option>)}
-                </select>
-              </label>
-              <label className='er-model-picker__search' htmlFor={id + '-search'}>
-                <span>Search models</span>
-                <input id={id + '-search'} type='search' aria-label={label + ': search models'} value={search} maxLength={512}
-                  onChange={(event) => { setSearch(event.currentTarget.value); setPage(1); }} />
-              </label>
-              <label className='er-model-picker__free'>
-                <input type='checkbox' checked={freeOnly} onChange={(event) => { setFreeOnly(event.currentTarget.checked); setPage(1); }} />
-                <span>Name or ID contains “free”</span>
-              </label>
-              <p className='er-model-picker__note'>Filters display text only.</p>
-              <p className='er-status' role='status'><span>{filtered.length === 0 ? 'No models match your search.' : filtered.length.toLocaleString('en-US') + ' matching models.'}</span></p>
-              <nav className='er-model-picker__pages' aria-label={label + ': model pages'}>
-                <button className='er-button er-button--text' type='button' disabled={loading || currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Previous models</button>
-                <span>{currentPage} / {pageCount}</span>
-                <button className='er-button er-button--text' type='button' disabled={loading || currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>More models</button>
-              </nav>
-              {selected ? <section className='er-model-picker__advanced' aria-label={label + ' advanced details'}>
-                <p><strong>Model details</strong></p>
-                <p className='er-status'><span>{selected.label} · context {capacity(selected.contextTokens)} · max output {capacity(selected.maxOutputTokens)} · job output bound {capacity(jobOutput)}.</span></p>
-                <p className='er-model-picker__identity'>{selected.route}</p>
-              </section> : null}
-            </details>
           </>
         )}
         {routePending ? <p className='er-status' role='status'><span>Choose a model from this provider to use it.</span></p> : null}

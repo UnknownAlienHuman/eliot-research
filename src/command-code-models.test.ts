@@ -1,15 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { estimateCost } from "./cost";
 import { availableModels, DEFAULT_MODEL, MODELS, modelOutputLimit, readModelCatalog, refreshModelCatalog, requireAvailableModel, requireCatalogModel } from "./models";
-import type { CatalogModel } from "./models";
+import type { CatalogModel, ModelProvider } from "./models";
+import type * as ModelCatalogModule from "./model-catalog";
 
-vi.mock("./model-catalog", () => ({ discoverGatewayModels: vi.fn(), enrichSelectedModel: vi.fn(async (model: CatalogModel) => model) }));
-import { discoverGatewayModels, enrichSelectedModel } from "./model-catalog";
+vi.mock("./model-catalog", () => ({ discoverGatewayModels: vi.fn() }));
+import { discoverGatewayModels } from "./model-catalog";
 vi.mock("./native-model-catalog", () => ({ discoverNativeModels: vi.fn() }));
 import { discoverNativeModels } from "./native-model-catalog";
 const discoverNative = vi.mocked(discoverNativeModels);
 const discover = vi.mocked(discoverGatewayModels);
-const enrich = vi.mocked(enrichSelectedModel);
+
+// D1 settings fixture uses the actual migration 0008 provider JSON contract.
+const fixtureProviders: ModelProvider[] = [
+  { id: "workers-ai", type: "workers-ai", gatewaySlug: null, gatewayPath: "", baseUrl: null, enabled: true },
+  { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1", baseUrl: "https://openrouter.ai/api/v1", enabled: true },
+  { id: "command-code", type: "openai-compatible", gatewaySlug: "custom-command-code", gatewayPath: "v1", baseUrl: "https://api.commandcode.ai/provider/v1", enabled: true },
+];
 
 function fakeBucket(initial: unknown | null) {
   let stored = initial;
@@ -18,7 +25,7 @@ function fakeBucket(initial: unknown | null) {
     const json = JSON.stringify(stored);
     return { size: new TextEncoder().encode(json).byteLength, json: async <T>() => JSON.parse(json) as T };
   });
-  const put = vi.fn(async (key: string, value: unknown) => {
+  const put = vi.fn(async (key: string, value: unknown, _options?: unknown) => {
     if (key === "catalog/models.json") stored = JSON.parse(String(value));
     return {};
   });
@@ -26,18 +33,20 @@ function fakeBucket(initial: unknown | null) {
 }
 
 let seededModels: CatalogModel[] = [];
-function localConnection(gatewayId: string | null, models: CatalogModel[] | null = seededModels) {
-  const first = vi.fn(async () => ({ gatewayId }));
-  const prepare = vi.fn(() => ({ first }));
+function localConnection(gatewayId: string | null, models: CatalogModel[] | null = seededModels, providers: ModelProvider[] = fixtureProviders) {
+  const prepare = vi.fn((sql: string) => ({
+    first: vi.fn(async () => sql.includes("model_providers_json") ? { providers: JSON.stringify(providers) } : { gatewayId }),
+    bind: vi.fn(() => ({ run: vi.fn(async () => ({})) })),
+  }));
   const bucket = fakeBucket(models === null ? null : {
-    updatedAt: "2026-10-28T00:00:00.000Z", warnings: [], models,
+    updatedAt: "2026-10-28T00:00:00.000Z", warnings: [], models, providers,
   });
   const env: Pick<Env, "DB" | "BUCKET"> = { DB: { prepare } as unknown as Env["DB"], BUCKET: bucket.binding };
   return { env, prepare, bucket };
 }
 
-function nativeConnection(gatewayId: string | null, models: CatalogModel[] | null = seededModels) {
-  const local = localConnection(gatewayId, models);
+function nativeConnection(gatewayId: string | null, models: CatalogModel[] | null = seededModels, providers: ModelProvider[] = fixtureProviders) {
+  const local = localConnection(gatewayId, models, providers);
   return { ...local, env: { ...local.env, AI: {} as Env["AI"] } };
 }
 
@@ -57,7 +66,6 @@ beforeEach(() => {
     cachedMicrousdPerMillion: 2000, outputMicrousdPerMillion: 200000, checkedOn: "2026-10-27" };
   discover.mockResolvedValue([model]);
   discoverNative.mockResolvedValue([]);
-  enrich.mockImplementation(async (candidate) => candidate);
   seededModels = [model];
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -69,37 +77,46 @@ describe("Command Code catalogue model admission", () => {
     vi.stubGlobal("fetch", fetcher);
     expect(MODELS.some((fallback) => fallback.route === model.route)).toBe(false);
     expect(await availableModels(local.env)).toEqual(expect.arrayContaining([expect.objectContaining(model)]));
-    expect(await requireAvailableModel(local.env, model.route)).toEqual(model);
+    expect(await requireAvailableModel(local.env, model.route)).toEqual({ ...model,
+      routing: { provider: fixtureProviders.find((provider) => provider.id === 'command-code'), gatewayId: 'fixture-gateway' } });
     expect(fetcher).not.toHaveBeenCalled();
     expect(discover).not.toHaveBeenCalled();
     expect(discoverNative).not.toHaveBeenCalled();
-    expect(enrich).not.toHaveBeenCalled();
     expect(MODELS.some((fallback) => fallback.route === model.route)).toBe(false);
   });
 
-  it("writes refreshed metadata to R2 and enriches only an explicitly selected route", async () => {
-    const local = localConnection("fixture-gateway", null);
+  it("writes refreshed provider catalogue to R2 without selected routes or enrichment", async () => {
+    const local = nativeConnection("fixture-gateway", null);
     const other: CatalogModel = { ...model, route: "gateway:command-code/other/model", id: "other/model", label: "Other" };
     discover.mockResolvedValue([model, other]);
-    enrich.mockImplementation(async (candidate) => candidate.route === model.route
-      ? { ...candidate, inputMicrousdPerMillion: 234000 } : candidate);
+    discoverNative.mockResolvedValue([]);
 
-    const refreshed = await refreshModelCatalog(local.env, [model.route]);
+    const refreshed = await refreshModelCatalog(local.env);
 
     expect(discover).toHaveBeenCalledTimes(1);
-    expect(enrich).toHaveBeenCalledTimes(1);
-    expect(enrich).toHaveBeenCalledWith(model);
+    expect(discover).toHaveBeenCalledWith(fixtureProviders, expect.any(Function));
+    expect(discoverNative).toHaveBeenCalledTimes(1);
     expect(local.bucket.put).toHaveBeenCalledTimes(1);
     expect(local.bucket.put.mock.calls[0]?.[0]).toBe("catalog/models.json");
     expect(local.bucket.stored()).toMatchObject({
-      updatedAt: expect.stringMatching(/^2026-10-28T/),
-      models: expect.arrayContaining([expect.objectContaining({ route: model.route, inputMicrousdPerMillion: 234000 })]),
+      updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      warnings: [],
+      models: expect.arrayContaining([
+        expect.objectContaining({ route: model.route, inputMicrousdPerMillion: model.inputMicrousdPerMillion }),
+        expect.objectContaining({ route: other.route, inputMicrousdPerMillion: other.inputMicrousdPerMillion }),
+      ]),
+      providers: expect.arrayContaining([
+        expect.objectContaining({ id: "command-code", type: "openai-compatible" }),
+        expect.objectContaining({ id: "workers-ai", type: "workers-ai" }),
+      ]),
     });
     expect(local.bucket.stored()).not.toHaveProperty("gatewayId");
     expect(refreshed.models).toEqual(expect.arrayContaining([
-      expect.objectContaining({ route: model.route, inputMicrousdPerMillion: 234000 }),
-      expect.objectContaining({ route: other.route, inputMicrousdPerMillion: other.inputMicrousdPerMillion }),
+      expect.objectContaining({ route: model.route }),
+      expect.objectContaining({ route: other.route }),
     ]));
+    expect(refreshed.warnings).toEqual([]);
+    expect(refreshed.snapshot.refreshNeeded).toBe(false);
   });
 
   it("keeps nullable provider capacity separate from the positive job output bound", async () => {
@@ -117,7 +134,7 @@ describe("Command Code catalogue model admission", () => {
       maxOutputTokens: null, outputReserveTokens: 8192,
       inputMicrousdPerMillion: 150000, cachedMicrousdPerMillion: 30000, outputMicrousdPerMillion: 500000,
     });
-    expect(local.prepare).toHaveBeenCalledTimes(1);
+    expect(local.prepare).toHaveBeenCalledTimes(2);
     expect(discover).not.toHaveBeenCalled();
     expect(discoverNative).not.toHaveBeenCalled();
   });
@@ -222,19 +239,6 @@ describe("Command Code catalogue model admission", () => {
     await expect(requireAvailableModel(local.env, model.route)).rejects.toMatchObject({ code: "unavailable", status: 503 });
   });
 
-  it("resolves a unique discovered alias and preserves the exact selected route", async () => {
-    const alias = "gateway:command-code/choice-" + crypto.randomUUID();
-    const aliased = { ...model, aliases: [alias] };
-    expect(await requireCatalogModel(localConnection("fixture-gateway", [aliased]).env, alias)).toMatchObject({ ...model, aliases: [alias], route: alias });
-    expect(await requireAvailableModel(localConnection("fixture-gateway", [aliased]).env, alias)).toMatchObject({ ...model, aliases: [alias], route: alias });
-  });
-
-  it("rejects an ambiguous alias instead of selecting a provider model arbitrarily", async () => {
-    const alias = "gateway:command-code/shared-choice";
-    const aliased = [{ ...model, aliases: [alias] }, { ...model, id: "another/model", route: "gateway:command-code/another/model", aliases: [alias] }];
-    await expect(requireAvailableModel(localConnection("fixture-gateway", aliased).env, alias)).rejects.toThrow("ambiguous");
-  });
-
   it("rejects absent or explicitly disabled catalogue entries", async () => {
     const local = localConnection("fixture-gateway", []);
     await expect(requireAvailableModel(local.env, "gateway:command-code/absent-" + crypto.randomUUID())).rejects.toMatchObject({ code: "unavailable", status: 503 });
@@ -260,5 +264,62 @@ describe("Command Code catalogue model admission", () => {
     expect(catalog.warnings).toEqual([expect.stringContaining("has not been refreshed")]);
     expect(discover).not.toHaveBeenCalled();
     expect(discoverNative).not.toHaveBeenCalled();
+  });
+});
+
+describe("registry-driven bounded catalogue", () => {
+  it("discovers configured providers without hardcoded endpoints and keeps generic models selectable", async () => {
+    const actual = await vi.importActual<typeof ModelCatalogModule>("./model-catalog");
+    const providers = [
+      { id: "generic", type: "openai-compatible", baseUrl: "https://generic.example/v1/", gatewaySlug: "generic", gatewayPath: "", enabled: true },
+      { id: "cc", type: "openai-compatible", baseUrl: "https://cc.example/api", gatewaySlug: "cc", gatewayPath: "", enabled: true },
+      { id: "or", type: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1", gatewaySlug: "openrouter", gatewayPath: "v1", enabled: true },
+      { id: "failing", type: "openai-compatible", baseUrl: "https://failing.example/", gatewaySlug: "failing", gatewayPath: "", enabled: true },
+      { id: "disabled", type: "openai-compatible", baseUrl: "https://disabled.example/", gatewaySlug: "disabled", gatewayPath: "", enabled: false },
+      { id: "workers-ai", type: "workers-ai", baseUrl: null, gatewaySlug: null, gatewayPath: "", enabled: true },
+    ];
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "https://generic.example/v1/models") return Response.json({ data: [
+        { id: "plain-model" },
+        { id: "plain-model" },
+        { id: "explicit-nontext", architecture: { input_modalities: ["image"], output_modalities: ["text"] } },
+      ] });
+      if (url === "https://cc.example/api/models") return Response.json({ data: [
+        { id: "chat-model", name: "Chat", context_length: 128000, supported_endpoints: ["/chat/completions"] },
+        { id: "nonchat", supported_endpoints: ["/embeddings"] },
+      ] });
+      if (url === "https://openrouter.ai/api/v1/models") return Response.json({ data: [
+        { id: "or-model", context_length: 100000, architecture: { input_modalities: ["text"], output_modalities: ["text"] },
+          pricing: { prompt: "0.000001", completion: 0.000002 }, supported_parameters: ["response_format", "structured_outputs"],
+          top_provider: { max_completion_tokens: 20000 } },
+      ] });
+      if (url === "https://failing.example/models") return new Response("private upstream body", { status: 503 });
+      throw new Error("Unexpected endpoint " + url);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const errors: Array<{ id: string; message: string }> = [];
+    const models = await actual.discoverGatewayModels(providers as never, (id, message) => errors.push({ id, message }));
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher.mock.calls.map((call) => String(call[0]))).toEqual(expect.arrayContaining([
+      "https://generic.example/v1/models",
+      "https://cc.example/api/models",
+      "https://openrouter.ai/api/v1/models",
+      "https://failing.example/models",
+    ]));
+    expect(JSON.stringify(fetcher.mock.calls)).not.toContain("disabled.example");
+    expect(JSON.stringify(fetcher.mock.calls)).not.toContain("workers-ai");
+    const byRoute = new Map(models.map((m) => [m.route, m]));
+    expect(byRoute.get("gateway:generic/plain-model")).toMatchObject({ id: "plain-model", enabled: true, contextTokens: null,
+      inputMicrousdPerMillion: null, outputMicrousdPerMillion: null });
+    expect(models.filter((m) => m.route === "gateway:generic/plain-model")).toHaveLength(1);
+    expect(byRoute.get("gateway:generic/explicit-nontext")).toMatchObject({ enabled: false });
+    expect(byRoute.get("gateway:cc/chat-model")).toMatchObject({ id: "chat-model", label: "Chat", contextTokens: 128000, enabled: true });
+    expect(byRoute.get("gateway:cc/nonchat")).toMatchObject({ enabled: false });
+    expect(byRoute.get("gateway:or/or-model")).toMatchObject({ contextTokens: 100000, maxOutputTokens: 20000,
+      inputMicrousdPerMillion: 1000000, outputMicrousdPerMillion: 2000000, cachedMicrousdPerMillion: null,
+      responseFormat: true, structuredOutputs: true, enabled: true });
+    expect(errors).toEqual([{ id: "failing", message: expect.stringContaining("failing model catalogue") }]);
+    expect(JSON.stringify(errors)).not.toContain("private upstream body");
   });
 });

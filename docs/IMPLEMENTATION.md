@@ -323,11 +323,9 @@ Estimate text as UTF-8 bytes / 3. Include newest in-scope history up to 10% of c
 a citation only when the prior full ordered scope is a prefix of the current scope and its stored source, revision,
 block and exact range match a currently supplied passage. Render that citation with its current compact alias;
 strip unverified, stale and unavailable references. Prior assistant prose remains conversation context, not evidence.
-For the Command Code protocol path, replay the captured assistant wire message unchanged only when the prior
-turn's full ordered source scope is a prefix of the current frozen scope. The complete serialized wire message,
-including private reasoning, counts toward both history and request bounds. Historical labels are not new evidence.
-A partial prior answer is identified as incomplete without changing its protocol data. Missing or mismatched private
-wire state fails before dispatch and requires a new chat; no synthetic marker or repair call is allowed.
+The Command Code adapter sends the current question and frozen source context without previous conversation turns.
+It does not capture or synthesize private reasoning fields. Existing private wire records remain untouched; the
+ordinary chat path uses public text and verified labels only. A partial prior answer is identified as incomplete.
 
 Resolve one `ModelSpec` for each turn and freeze it across admission, context limits, request bounds and settlement.
 The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, reserve against the monthly
@@ -405,18 +403,38 @@ freeze the admitted `ModelSpec` for the job, and preserve unknown actual provide
 output bound is separate from published model capacity. Provider errors/limits remain visible; there is no artificial
 quota, paid fallback or model-name allowlist/banlist.
 
+**Providers.** Migration `0008_model_providers.sql` stores the editable provider configuration in
+`settings.model_providers_json`: ID, adapter type (`workers-ai` or `openai-compatible`), HTTPS API base URL, enabled
+flag and the existing Cloudflare provider slug/path prefix. ID supplies the `gateway:<id>/<native model>` identity;
+the Cloudflare slug/path supplies routing, including the required `custom-` prefix for custom providers. These values
+contain no credentials. Owner-only PUT `/api/models/providers` saves configuration; GET reads it. Neither discovers
+models or starts inference. The seeded providers preserve the existing Workers AI, OpenRouter and Command Code routes.
+
 **Catalogue and refresh.** R2 `catalog/models.json` is the model snapshot. GET `/api/models`, settings/model selection
 and paid admission read stored metadata only. The owner-only POST `/api/models/refresh` accepts
-`{ selectedRoutes?: string[] }` and is the only provider discovery/pricing path. Refresh stores the timestamp in the
+an empty object and is the only provider discovery path. Refresh stores the timestamp and provider configuration in the
 same R2 object; no D1/settings migration is required. A provider refresh failure preserves that provider's prior slice
 and returns a warning while available provider slices may update. On an absent snapshot, GET returns the native Flash
 fallback, `snapshot.updatedAt: null`, `snapshot.refreshNeeded: true` and a refresh-needed warning. The snapshot
 contains no credentials.
 
-During refresh, provider discovery is dynamic. Selected-route official pricing enrichment requires an exact provider,
-native-ID and published currency/unit match; missing or ambiguous facts remain unknown with a warning, with no
-cross-provider price fallback. The selected route may remain selectable, but admission blocks until required metadata
-is known. The UI filters do not run discovery or change selection.
+Provider quotas are optional display data in the same R2 snapshot. Explicit Refresh reads OpenRouter's documented
+`GET /api/v1/key` through the configured Gateway's receiver-bound `AI.fetch`, without a provider Authorization header.
+The installed Agents 0.30.1 native path preserves the method and headers; the OpenRouter GET path was verified on
+2026-10-28. The read has one attempt, a 15-second timeout and a 64-KiB body bound. Unsupported or unavailable quota
+data remains null; no unit or reset date is invented. Stored quota values are tied to their provider route and Gateway
+ID, and GET only reads those stored values. A quota-read failure does not invalidate successfully refreshed models.
+Quota data is separate from Eliot's admission budget. The official endpoint is described in
+[OpenRouter's key-limit documentation](https://openrouter.ai/docs/api_reference/limits.md) and
+[OpenAPI schema](https://openrouter.ai/openapi.json), retrieved 2026-10-28; no publication date was exposed.
+
+During refresh, each enabled compatible provider supplies its bounded JSON `/models` catalogue; Workers AI uses its
+native binding. Partial failure preserves that provider's last good metadata and its original routing configuration.
+Changing a provider's base URL or Gateway route invalidates old external metadata until an explicit refresh succeeds.
+Prices still required by dollar admission come only from published API metadata; HTML pricing enrichment is removed.
+Missing required metadata blocks paid admission. The UI filters do not run discovery or change selection.
+The admitted external `ModelSpec` carries the provider configuration and Gateway ID from that same catalogue read;
+transport uses this frozen routing instead of reading changed settings after admission.
 
 Cloudflare documents R2 object consistency in the [Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 (dateModified: 2026-07-31), supporting the single-object snapshot timestamp contract.
@@ -430,8 +448,9 @@ default, the explicit native `workers-ai:@cf/zai-org/glm-5.3` route, Command Cod
 catalogue restriction. Provider APIs provide the selectable catalogue; no model-name allowlist or ban is introduced.
 OpenRouter embed/rerank IDs remain separate future K5 capabilities, not chat choices.
 
-Settings provider/search/free-name filters are display-only. Chat uses compact provider then model selection with
-project default available; technical route, capacity, output and price data live under Details. Refresh preserves the
+Settings uses one visible provider/search/free-name filter and catalogue, with Answers/Understanding choosing which
+default is being edited. Filters are display-only; the catalogue has no pagination or technical model-details panel.
+Chat and project settings use compact provider then model selection with the applicable default available. Refresh preserves the
 selected provider/native-ID pair. A route may remain selectable with unknown prices, but paid dispatch is blocked until
 required admission metadata is known.
 
@@ -441,14 +460,11 @@ GET `/api/models/connection` and PUT read/save the exact existing named Gateway 
 consent/configuration only and does not prove Gateway or provider usability. No credential input, secret, direct
 provider Authorization header or dummy key is stored in Eliot; credentials remain in Cloudflare's default BYOK alias.
 
-Command Code uses the installed `@ai-sdk/openai-compatible` provider through the pinned Agents provider-native
+Compatible providers use the installed `@ai-sdk/openai-compatible` provider through the pinned Agents provider-native
 `AI.fetch` adapter, with one attempt, no-wholesale, skip-cache and no-log controls. Source forwarding of those controls
-does not prove live Gateway enforcement. Its multi-turn protocol uses actual assistant content and reasoning fields
-captured from raw SDK chunks in the existing private ChatAgent SQLite `assistant_wire`; replay is unchanged and
-server-only. A missing/incomplete capture fails before dispatch and requires a new chat. No fabricated protocol marker,
-provider-family allowlist, retry or additional store is used. The original wire is retained unchanged under the
-Reflection multi-turn contract (updated 2026-10-16; https://developers.reflection.ai/reasoning#reasoning-in-multi-turn-conversations).
-See §8 for frozen-scope replay rules.
+does not prove live Gateway enforcement. Command Code receives the current question and frozen source context without
+history, avoiding a private multi-turn protocol dependency. It uses no fabricated reasoning marker, private capture,
+repair call or automatic retry. See §8 for public history and frozen source rules.
 
 OpenRouter uses the installed Agents AI Gateway adapter and `@ai-sdk/openai-compatible`, with provider fallbacks
 disabled and the same one-attempt/no-wholesale/skip-cache/no-log intent. The gateway route contains the native model

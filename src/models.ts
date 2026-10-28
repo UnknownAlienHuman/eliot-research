@@ -1,10 +1,51 @@
 import { LibraryError } from "./library";
-import { discoverGatewayModels, enrichSelectedModel } from "./model-catalog";
+import { discoverGatewayModels } from "./model-catalog";
 import { discoverNativeModels } from "./native-model-catalog";
+import { z } from "zod";
+import { readProviderQuotas } from "./model-quota";
+import type { ProviderQuota } from "./model-quota";
+
+export const modelProviderSchema = z.object({
+  id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+  type: z.enum(["workers-ai", "openai-compatible"]),
+  gatewaySlug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).nullable(),
+  gatewayPath: z.string().regex(/^(?:[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)?$/),
+  baseUrl: z.string().trim().url().transform((value) => value.replace(/\/+$/, "")).nullable(),
+  enabled: z.boolean(),
+}).strict().superRefine((provider, ctx) => {
+  if (provider.type === "workers-ai") {
+    if (provider.id !== "workers-ai" || provider.baseUrl !== null || provider.gatewaySlug !== null || provider.gatewayPath !== "")
+      ctx.addIssue({ code: "custom", message: "Workers AI uses its native binding and no base URL." });
+  } else {
+    let url: URL | null = null;
+    try { url = provider.baseUrl ? new URL(provider.baseUrl) : null; } catch { /* Input validation reports malformed URLs below. */ }
+    if (!url || url.protocol !== "https:" || url.username || url.password || url.search || url.hash || provider.id === "workers-ai" || !provider.gatewaySlug)
+      ctx.addIssue({ code: "custom", message: "Use a provider HTTPS base URL without credentials, query or fragment." });
+  }
+});
+export const modelProvidersSchema = z.array(modelProviderSchema).superRefine((providers, ctx) => {
+  if (new Set(providers.map((provider) => provider.id)).size !== providers.length)
+    ctx.addIssue({ code: "custom", message: "Each provider ID must be unique." });
+});
+export type ModelProvider = z.infer<typeof modelProviderSchema>;
+
+export async function getModelProviders(env: Pick<Env, "DB">): Promise<ModelProvider[]> {
+  const row = await env.DB.prepare("SELECT model_providers_json AS providers FROM settings WHERE id=1").first<{ providers: string }>();
+  let value: unknown;
+  try { value = row ? JSON.parse(row.providers) : null; } catch { value = null; }
+  const providers = modelProvidersSchema.safeParse(value);
+  if (!providers || !providers.success) throw new LibraryError("unavailable", "Provider settings are unavailable.", 503);
+  return providers.data;
+}
+export async function saveModelProviders(env: Pick<Env, "DB">, providers: ModelProvider[]): Promise<ModelProvider[]> {
+  const checked = modelProvidersSchema.parse(providers);
+  await env.DB.prepare("UPDATE settings SET model_providers_json=?,updated_at=? WHERE id=1")
+    .bind(JSON.stringify(checked), Date.now()).run();
+  return checked;
+}
 
 export interface CatalogModel {
   route: string;
-  aliases?: string[];
   id: string;
   label: string;
   contextTokens: number | null;
@@ -12,7 +53,6 @@ export interface CatalogModel {
   outputReserveTokens?: number;
   responseFormat?: boolean;
   structuredOutputs?: boolean;
-  reasoning?: { enabled: false };
   nativeReasoningEffort?: "low";
   inputMicrousdPerMillion: number | null;
   cachedMicrousdPerMillion: number | null;
@@ -25,6 +65,7 @@ export interface ModelSpec extends CatalogModel {
   contextTokens: number;
   inputMicrousdPerMillion: number;
   outputMicrousdPerMillion: number;
+  routing?: { provider: ModelProvider; gatewayId: string };
 }
 export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
 // Owner-selected native default metadata is a fallback, not a provider allowlist.
@@ -64,10 +105,16 @@ interface StoredModelCatalog {
   updatedAt: string;
   warnings: string[];
   models: CatalogModel[];
+  providers?: ModelProvider[];
+  quotas?: ProviderQuota[];
+  quotaGatewayId?: string | null;
 }
 export interface ModelCatalogView {
   models: CatalogModel[];
   warnings: string[];
+  providers: ModelProvider[];
+  gatewayId: string | null;
+  quotas: ProviderQuota[];
   snapshot: { updatedAt: string | null; refreshNeeded: boolean };
 }
 type StoredCatalogRead = { ok: true; snapshot: StoredModelCatalog | null } | { ok: false; snapshot: null };
@@ -89,18 +136,17 @@ function isCatalogModel(value: unknown): value is CatalogModel {
     !nullableFinite(value.contextTokens) || !nullableFinite(value.maxOutputTokens) ||
     !nullableFinite(value.inputMicrousdPerMillion) || !nullableFinite(value.cachedMicrousdPerMillion) ||
     !nullableFinite(value.outputMicrousdPerMillion)) return false;
-  if (value.aliases !== undefined && (!Array.isArray(value.aliases) || !value.aliases.every((alias) => typeof alias === "string"))) return false;
   if (value.outputReserveTokens !== undefined && (!Number.isSafeInteger(value.outputReserveTokens) || (value.outputReserveTokens as number) <= 0)) return false;
   if (value.responseFormat !== undefined && typeof value.responseFormat !== "boolean") return false;
   if (value.structuredOutputs !== undefined && typeof value.structuredOutputs !== "boolean") return false;
-  if (value.reasoning !== undefined && (!isRecord(value.reasoning) || value.reasoning.enabled !== false)) return false;
   if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low") return false;
   return value.unavailableReason === undefined || typeof value.unavailableReason === "string";
 }
 function isStoredModelCatalog(value: unknown): value is StoredModelCatalog {
   return isRecord(value) && typeof value.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt)) &&
     Array.isArray(value.warnings) && value.warnings.every((warning) => typeof warning === "string") &&
-    Array.isArray(value.models) && value.models.every(isCatalogModel);
+    Array.isArray(value.models) && value.models.every(isCatalogModel) &&
+    (value.providers === undefined || modelProvidersSchema.safeParse(value.providers).success);
 }
 async function readStoredModelCatalog(env: ModelEnvironment): Promise<StoredCatalogRead> {
   try {
@@ -113,29 +159,58 @@ async function readStoredModelCatalog(env: ModelEnvironment): Promise<StoredCata
     return { ok: false, snapshot: null };
   }
 }
-function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string | null): CatalogModel[] {
+export function providerForRoute(providers: ModelProvider[], route: string): ModelProvider | undefined {
+  return providers.find((provider) => provider.type === "workers-ai"
+    ? route.startsWith("workers-ai:") : route.startsWith(`gateway:${provider.id}/`));
+}
+function sameProviderRoute(provider: ModelProvider, previous: ModelProvider | undefined): boolean {
+  return previous !== undefined && previous.type === provider.type && previous.baseUrl === provider.baseUrl &&
+    previous.gatewaySlug === provider.gatewaySlug && previous.gatewayPath === provider.gatewayPath;
+}
+function isProviderQuota(value: unknown): value is ProviderQuota {
+  return isRecord(value) && typeof value.providerId === "string" &&
+    [value.usage, value.limit].every((amount) => amount === null || (typeof amount === "number" && Number.isFinite(amount) && amount >= 0)) &&
+    (value.resetAt === null || typeof value.resetAt === "string") && (value.unit === null || value.unit === "USD") &&
+    (value.error === null || typeof value.error === "string");
+}
+function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string | null, providers: ModelProvider[]): CatalogModel[] {
   const models = new Map<string, CatalogModel>(MODELS.map((model) => [model.route, { ...model }]));
   for (const model of snapshot?.models ?? []) {
     const fallback = models.get(model.route);
     models.set(model.route, { ...model, label: fallback?.label ?? model.label,
       maxOutputTokens: model.maxOutputTokens ?? fallback?.maxOutputTokens ?? null });
   }
-  if (!gatewayId) {
-    for (const [route, model] of models) {
-      if (route.startsWith("gateway:")) models.set(route, { ...model, enabled: false, unavailableReason: "Connect AI Gateway in Settings." });
-    }
+  for (const [route, model] of models) {
+    const provider = providerForRoute(providers, route);
+    const previous = snapshot?.providers?.find((entry) => entry.id === provider?.id);
+    const changed = provider?.type === "openai-compatible" && !sameProviderRoute(provider, previous);
+    const reason = !provider ? "Provider is not configured." : !provider.enabled ? "Provider is disabled."
+      : route.startsWith("gateway:") && !gatewayId ? "Connect AI Gateway in Settings."
+        : changed ? "Refresh models after editing provider settings." : null;
+    if (reason) models.set(route, { ...model, enabled: false, unavailableReason: reason });
   }
   return [...models.values()];
 }
 export async function readModelCatalog(env: ModelEnvironment): Promise<ModelCatalogView> {
-  const [stored, connection] = await Promise.all([readStoredModelCatalog(env), getModelConnection(env)]);
+  const [stored, connection, providers] = await Promise.all([readStoredModelCatalog(env), getModelConnection(env), getModelProviders(env)]);
   const warnings = stored.ok
     ? [...(stored.snapshot?.warnings ?? [])]
     : [SNAPSHOT_UNAVAILABLE];
   if (stored.ok && stored.snapshot === null) warnings.push(REFRESH_NEEDED);
+  const snapshot = stored.ok ? stored.snapshot : null;
+  const storedQuotas = Array.isArray(snapshot?.quotas) ? snapshot.quotas.filter(isProviderQuota) : [];
+  const quotas = providers.map<ProviderQuota>((provider) => {
+    const prior = snapshot?.providers?.find((entry) => entry.id === provider.id);
+    const quota = storedQuotas.find((entry) => entry.providerId === provider.id);
+    return provider.enabled && snapshot?.quotaGatewayId === connection.gatewayId && sameProviderRoute(provider, prior) && quota
+      ? quota : { providerId: provider.id, usage: null, limit: null, resetAt: null, unit: null, error: "quota-unknown" };
+  });
   return {
-    models: snapshotModels(stored.ok ? stored.snapshot : null, connection.gatewayId),
+    models: snapshotModels(stored.ok ? stored.snapshot : null, connection.gatewayId, providers),
     warnings,
+    providers,
+    gatewayId: connection.gatewayId,
+    quotas,
     snapshot: { updatedAt: stored.ok ? stored.snapshot?.updatedAt ?? null : null,
       refreshNeeded: !stored.ok || stored.snapshot === null || warnings.length > 0 },
   };
@@ -143,24 +218,21 @@ export async function readModelCatalog(env: ModelEnvironment): Promise<ModelCata
 export async function availableModels(env: ModelEnvironment): Promise<CatalogModel[]> {
   return (await readModelCatalog(env)).models;
 }
-export async function refreshModelCatalog(env: ModelEnvironment, selectedRoutes: string[] = []): Promise<ModelCatalogView> {
+export async function refreshModelCatalog(env: ModelEnvironment): Promise<ModelCatalogView> {
   const previous = await readStoredModelCatalog(env);
   if (!previous.ok) throw new LibraryError("unavailable", "The existing model catalogue snapshot could not be read; refresh was not saved.", 503);
 
   const warnings: string[] = [];
-  const [gateway, native] = await Promise.allSettled([
-    discoverGatewayModels((warning) => warnings.push(warning)),
-    env.AI ? discoverNativeModels(env.AI) : Promise.resolve(null),
-  ]);
+  const [providers, connection] = await Promise.all([getModelProviders(env), getModelConnection(env)]);
   const failedProviders = new Set<string>();
-  if (gateway.status === "fulfilled") {
-    for (const warning of warnings) {
-      if (warning.startsWith("command-code model catalogue ")) failedProviders.add("command-code");
-      if (warning.startsWith("openrouter model catalogue ")) failedProviders.add("openrouter");
-    }
-  } else {
-    failedProviders.add("command-code");
-    failedProviders.add("openrouter");
+  const nativeEnabled = providers.some((provider) => provider.type === "workers-ai" && provider.enabled);
+  const [gateway, native, quotas] = await Promise.allSettled([
+    discoverGatewayModels(providers, (id, warning) => { failedProviders.add(id); warnings.push(warning); }),
+    nativeEnabled ? env.AI ? discoverNativeModels(env.AI) : Promise.resolve(null) : Promise.resolve([]),
+    readProviderQuotas(env, providers, connection),
+  ]);
+  if (gateway.status === "rejected") {
+    for (const provider of providers) if (provider.type === "openai-compatible" && provider.enabled) failedProviders.add(provider.id);
     warnings.push("External model catalogues could not be refreshed.");
   }
   const nativeFailed = native.status === "rejected" || (native.status === "fulfilled" && native.value === null);
@@ -168,47 +240,44 @@ export async function refreshModelCatalog(env: ModelEnvironment, selectedRoutes:
 
   const models = new Map<string, CatalogModel>();
   for (const model of previous.snapshot?.models ?? []) {
-    const provider = model.route.startsWith("gateway:command-code/") ? "command-code"
-      : model.route.startsWith("gateway:openrouter/") ? "openrouter" : model.route.startsWith("workers-ai:") ? "workers-ai" : null;
-    if ((provider && failedProviders.has(provider)) || (provider === "workers-ai" && nativeFailed)) models.set(model.route, model);
+    const provider = providerForRoute(providers, model.route);
+    if (provider && (!provider.enabled || failedProviders.has(provider.id) || (provider.type === "workers-ai" && nativeFailed))) models.set(model.route, model);
   }
   if (gateway.status === "fulfilled") for (const model of gateway.value) models.set(model.route, model);
   if (!nativeFailed && native.status === "fulfilled" && native.value !== null) {
     for (const model of native.value) models.set(model.route, model);
   }
 
-  const connection = await getModelConnection(env);
-  const selected = new Set(selectedRoutes.filter((route) => typeof route === "string"));
-  if (connection.gatewayId) {
-    for (const model of [...models.values()]) {
-      if (!model.enabled || !model.route.startsWith("gateway:command-code/") ||
-        (!selected.has(model.route) && !model.aliases?.some((alias) => selected.has(alias)))) continue;
-      try {
-        models.set(model.route, await enrichSelectedModel(model));
-      } catch {
-        warnings.push("The selected Command Code model's pricing could not be verified. Selection is kept; prices remain Unknown.");
-      }
-      const enriched = models.get(model.route);
-      if (enriched && (enriched.inputMicrousdPerMillion === null || enriched.outputMicrousdPerMillion === null))
-        warnings.push("The selected Command Code model's pricing could not be verified. Selection is kept; prices remain Unknown.");
-    }
-  }
-
-  const snapshot: StoredModelCatalog = { updatedAt: new Date().toISOString(), warnings, models: [...models.values()] };
+  const refreshedProviders = providers.flatMap((provider) => {
+    const failed = !provider.enabled || failedProviders.has(provider.id) || (provider.type === "workers-ai" && nativeFailed);
+    const prior = previous.snapshot?.providers?.find((entry) => entry.id === provider.id);
+    return failed ? prior ? [{ ...prior, enabled: provider.enabled }] : [] : [provider];
+  });
+  const quotaValues = quotas.status === "fulfilled" ? quotas.value : providers.map<ProviderQuota>((provider) =>
+    ({ providerId: provider.id, usage: null, limit: null, resetAt: null, unit: null, error: "quota-unavailable" }));
+  const snapshot: StoredModelCatalog = { updatedAt: new Date().toISOString(), warnings, models: [...models.values()], providers: refreshedProviders,
+    quotas: quotaValues, quotaGatewayId: connection.gatewayId };
   const serialized = JSON.stringify(snapshot);
   if (new TextEncoder().encode(serialized).byteLength > MAX_MODEL_CATALOG_BYTES)
     throw new LibraryError("unavailable", "The model catalogue exceeds its storage bound; the previous snapshot was kept.", 503);
   await env.BUCKET.put(MODEL_CATALOG_KEY, serialized, { httpMetadata: { contentType: "application/json; charset=utf-8" } });
   return readModelCatalog(env);
 }
-export async function requireCatalogModel(env: ModelEnvironment, route: string): Promise<CatalogModel> {
-  const matches = (await availableModels(env)).filter((model) => model.route === route || model.aliases?.includes(route));
-  if (matches.length > 1) throw new LibraryError("unavailable", "This model alias is ambiguous. Select its full catalogue ID.", 503);
+function catalogModel(models: CatalogModel[], route: string): CatalogModel {
+  const matches = models.filter((model) => model.route === route);
+  if (matches.length > 1) throw new LibraryError("unavailable", "This model identity is ambiguous.", 503);
   const model = matches[0];
   if (!model || !model.enabled) throw new LibraryError("unavailable", model?.unavailableReason ?? "This model is absent from the current provider catalogue.", 503);
   return { ...model, route };
 }
+export async function requireCatalogModel(env: ModelEnvironment, route: string): Promise<CatalogModel> {
+  return catalogModel((await readModelCatalog(env)).models, route);
+}
 export async function requireAvailableModel(env: ModelEnvironment, route: string): Promise<ModelSpec> {
-  const model = await requireCatalogModel(env, route);
-  return resolved(model, route);
+  const catalog = await readModelCatalog(env);
+  const model = resolved(catalogModel(catalog.models, route), route);
+  if (!route.startsWith("gateway:")) return model;
+  const provider = providerForRoute(catalog.providers, route);
+  if (!provider || !provider.enabled || !catalog.gatewayId) throw new LibraryError("unavailable", "The provider connection is unavailable.", 503);
+  return { ...model, routing: { provider: { ...provider }, gatewayId: catalog.gatewayId } };
 }

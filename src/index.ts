@@ -9,7 +9,7 @@ import { addSource, attachSource, createProject, getProject, getSource, LibraryE
 import { readOriginal, readOutline, readText } from "./read";
 import { captureUrl, UrlGuardError } from "./url-guard";
 import { monthlyUsage } from "./cost";
-import { getModelConnection, readModelCatalog, refreshModelCatalog, requireCatalogModel, validGatewayId } from "./models";
+import { getModelConnection, getModelProviders, modelProvidersSchema, readModelCatalog, refreshModelCatalog, requireCatalogModel, saveModelProviders, validGatewayId } from "./models";
 import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
 import { getOverview, getUnderstanding } from "./understanding";
@@ -60,9 +60,15 @@ app.get("/api/models", async (c) => {
 });
 app.post("/api/models/refresh", async (c) => {
   if (c.get("actor").type !== "owner") throw new AuthError("invalid", "Only the owner may refresh the model catalogue.");
-  const input = z.object({ selectedRoutes: z.array(z.string().min(1).max(1100)).max(20).optional() }).strict().parse(await c.req.json());
-  const catalog = await refreshModelCatalog(c.env, input.selectedRoutes);
+  z.object({}).strict().parse(await c.req.json());
+  const catalog = await refreshModelCatalog(c.env);
   return c.json({ ...catalog, defaultModel: (await c.env.DB.prepare("SELECT answer_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model });
+});
+app.get("/api/models/providers", async (c) => c.json({ providers: await getModelProviders(c.env) }));
+app.put("/api/models/providers", async (c) => {
+  if (c.get("actor").type !== "owner") throw new AuthError("invalid", "Only the owner may edit providers.");
+  const input = z.object({ providers: modelProvidersSchema }).strict().parse(await c.req.json());
+  return c.json({ providers: await saveModelProviders(c.env, input.providers) });
 });
 app.get("/api/models/connection", async (c) => c.json({ connection: await getModelConnection(c.env) }));
 app.put("/api/models/connection", async (c) => {

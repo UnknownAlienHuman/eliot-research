@@ -79,13 +79,24 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
     await page.screenshot({ path: path.join(outDir, name), fullPage: true });
     report.screenshots.push(name);
   }
-  async function findControls(page) {
-    const row = picker(page), find = row.locator('.er-model-picker__find');
-    await expect(find).toBeVisible();
-    if (!await find.evaluate((element) => element.open)) await find.locator('summary').click();
-    return { row, model: page.getByRole('combobox', { name: 'Answer model', exact: true }),
-      provider: page.getByRole('combobox', { name: 'Answer model: provider', exact: true }),
-      search: page.getByRole('searchbox', { name: 'Answer model: search models', exact: true }) };
+  async function findControls(page, mode = 'answers') {
+    const label = mode === 'answers' ? 'Answer model' : 'Understanding model';
+    await expect(page.locator('input[type="radio"][value="answer"]')).toBeVisible();
+    await expect(page.locator('input[type="radio"][value="distill"]')).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Use model for' })).toBeVisible();
+    assert.strictEqual(await page.locator('.er-model-picker__find').count(), 0, 'Expanded picker must not use a Find disclosure.');
+    assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Expanded picker must not paginate.');
+    assert.strictEqual(await page.locator('section.er-model-picker__advanced').count(), 0, 'Expanded picker must not hide Model details.');
+    await page.locator(mode === 'answers' ? 'input[type="radio"][value="answer"]' : 'input[type="radio"][value="distill"]').check();
+    const row = picker(page, label);
+    const model = page.getByRole('combobox', { name: label, exact: true });
+    await expect(model).toBeVisible();
+    return { row, mode, label, model,
+      provider: page.getByRole('combobox', { name: label + ': provider', exact: true }),
+      search: page.getByRole('searchbox', { name: label + ': search models', exact: true }),
+      free: page.getByRole('checkbox', { name: /free/i }),
+      answersRadio: page.locator('input[type="radio"][value="answer"]'),
+      understandingRadio: page.locator('input[type="radio"][value="distill"]') };
   }
   async function gatewayDraftPreserves(page, selectedRoute) {
     // Gateway ID lives inside Advanced provider settings (closed Details); open it first.
@@ -94,6 +105,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
     if (!(await adv.evaluate((el) => el.open).catch(() => true))) await adv.locator('summary').click();
     const gateway = gwCard.getByRole('textbox', { name: /^Gateway ID/ });
     const saved = await gateway.inputValue();
+    await page.locator('input[type="radio"][value="answer"]').check();
     await gateway.fill(saved === 'unsaved-browser-draft' ? 'another-unsaved-draft' : 'unsaved-browser-draft');
     await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(selectedRoute);
     await gateway.fill(saved);
@@ -111,10 +123,17 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
         // Live snapshot is the real stored catalogue (may be ~133 rows plus an OpenRouter warning),
         // never the 500-row synthetic fixture below.
         const { models, warnings: liveWarnings } = await response.json();
-        const ui = await findControls(page);
+        const ui = await findControls(page, 'answers');
         await expect(ui.model).toBeEnabled({ timeout: 30000 });
         await expect(ui.model).toHaveValue(FLASH);
-        await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toHaveValue(FLASH);
+        await expect(ui.provider).toBeVisible();
+        await expect(ui.search).toBeVisible();
+        await expect(ui.free).toBeVisible();
+        const understanding = await findControls(page, 'understanding');
+        await expect(understanding.model).toBeEnabled({ timeout: 30000 });
+        await expect(understanding.model).toHaveValue(FLASH);
+        const back = await findControls(page, 'answers');
+        await expect(back.model).toHaveValue(FLASH);
         const unique = (model) => models.filter((entry) => entry.route === model.route).length === 1
           && models.filter((entry) => providerOf(entry) === providerOf(model) && entry.id === model.id).length === 1;
         // Choose from the actual catalogue tail, never a four-route runtime allowlist.
@@ -124,27 +143,37 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
         const selected = candidates.find(({ index }) => index === 462) ?? candidates.at(-1);
         assert(selected);
         const { model: target, index } = selected;
-        assert(index >= 50, 'Live choice must be outside the first display page.');
-        await ui.provider.selectOption(providerOf(target));
-        await expect(ui.model).toHaveValue(FLASH);
-        await ui.search.fill(target.id);
-        assert.equal(await ui.model.locator('option').evaluateAll((options, route) => options.filter((option) => option.value === route).length, target.route), 1,
-          'Search must reach the exact catalogue route outside the initial display page.');
-        await ui.model.selectOption(target.route);
-        await expect(ui.model).toHaveValue(target.route);
+        assert(index >= 50, 'Live choice must be outside the former first display page; the expanded picker must not paginate.');
+        assert((await back.model.locator('option[value]').count()) > 50, 'Expanded picker must attach more than 50 options without pagination.');
+        assert.equal(await back.model.locator('option').evaluateAll((options, route) => options.filter((option) => option.value === route).length, target.route), 1,
+          'Expanded catalogue must attach the exact late provider/native route without paging.');
+        await back.provider.selectOption(providerOf(target));
+        await expect(back.model).toHaveValue(FLASH);
+        await back.search.fill(target.id);
+        await expect(back.model).toHaveValue(FLASH);
+        assert.equal(await back.model.locator('option').evaluateAll((options, route) => options.filter((option) => option.value === route).length, target.route), 1,
+          'Search must keep the exact catalogue route attached; filters are display-only.');
+        await back.free.check();
+        await expect(back.model).toHaveValue(FLASH);
+        await back.free.uncheck();
+        await expect(back.model).toHaveValue(FLASH);
+        await back.model.selectOption(target.route);
+        await expect(back.model).toHaveValue(target.route);
         const other = models.find((model) => providerOf(model) !== providerOf(target));
         assert(other, 'Provider-change regression needs another provider.');
-        await ui.provider.selectOption(providerOf(other));
-        await expect(ui.model).toHaveValue(target.route);
+        await back.provider.selectOption(providerOf(other));
+        await expect(back.model).toHaveValue(target.route);
         await gatewayDraftPreserves(page, target.route);
-        await ui.provider.selectOption(providerOf(target));
+        await back.provider.selectOption(providerOf(target));
+        await expect(back.model).toHaveValue(target.route);
         await fitted(page);
         await shot(page, 'catalogue-live-' + viewport.width + '.png');
         await page.reload();
-        await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(FLASH);
+        const reloaded = await findControls(page, 'answers');
+        await expect(reloaded.model).toHaveValue(FLASH);
         report.live.push({ viewport, catalogueRows: models.length, liveWarnings: liveWarnings ?? [], selectedIndex: index + 1, selectedRoute: target.route,
           selectedId: target.id, providerFilterPreservedSelection: true, unsavedGatewayDraftPreservedSelection: true,
-          reloadRestoredFlash: true, fixtureRowsNotLive: true });
+          reloadRestoredFlash: true, fixtureRowsNotLive: true, expandedNoPagination: true, freeDisplayOnly: true });
       } finally { await context.close(); }
     }
 
@@ -177,28 +206,34 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
     });
     try {
       const page = activePage = await emptyContext.newPage(); await page.goto(origin + '/settings');
-      const ui = await findControls(page); await expect(ui.model).toBeEnabled();
+      const ui = await findControls(page, 'answers'); await expect(ui.model).toBeEnabled();
       await expect(ui.model).toHaveValue('');
-      assert(await ui.model.locator('optgroup option').count() <= 50, 'Display page remains bounded to 50 choices.');
-      assert.equal(await ui.model.locator('option').evaluateAll((options, route) => options.filter((option) => option.value === route).length, target463.route), 0);
+      assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Expanded fixture picker must not paginate.');
+      assert((await ui.model.locator('option[value]').count()) > 50, 'Expanded picker must attach more than 50 fixture options without pagination.');
+      assert.equal(await ui.model.locator('option').evaluateAll((options, route) => options.filter((option) => option.value === route).length, target463.route), 1, 'Expanded picker attaches the late row-463 route without paging.');
       await ui.provider.selectOption(providerOf(target463)); await expect(ui.model).toHaveValue('');
       await ui.search.fill(target463.id);
       await expect(ui.row).toContainText('1 matching models.');
+      await expect(ui.model).toHaveValue('');
+      await ui.free.check(); await expect(ui.model).toHaveValue(''); await ui.free.uncheck(); await expect(ui.model).toHaveValue('');
       await ui.model.selectOption(target463.route); await expect(ui.model).toHaveValue(target463.route);
       await ui.provider.selectOption('catalogue-fixture-b'); await expect(ui.model).toHaveValue(target463.route);
       await gatewayDraftPreserves(page, target463.route);
       await ui.provider.selectOption(providerOf(target463));
+      await expect(ui.model).toHaveValue(target463.route);
       await fitted(page); await shot(page, 'metadata-row463-empty-390.png');
       await page.getByRole('region', { name: 'Models', exact: true }).getByRole('button', { name: 'Save', exact: true }).click();
       await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
       await page.reload();
-      const restored = await findControls(page);
+      const restored = await findControls(page, 'answers');
       await expect(restored.model).toBeEnabled(); await expect(restored.model).toHaveValue(target463.route);
       await restored.provider.selectOption('catalogue-fixture-b'); await expect(restored.model).toHaveValue(target463.route);
+      await restored.free.check(); await expect(restored.model).toHaveValue(target463.route); await restored.free.uncheck();
+      await expect(restored.model).toHaveValue(target463.route);
       await shot(page, 'metadata-saved-row463-reopened-390.png');
       report.metadataFixtures.row463 = { rows: 500, initialSelection: '', selectedIndex: 463, route: target463.route,
-        searchBeforeDisplayCap: true, unknownPricesSelectableWithoutInference: true, selectionPreserved: true,
-        savedAndReopened: true, save: 'INTERCEPTED_STORAGE_METADATA_ONLY_NOT_SENT_TO_WORKER' };
+        expandedNoPagination: true, unknownPricesSelectableWithoutInference: true, selectionPreserved: true,
+        freeDisplayOnly: true, savedAndReopened: true, save: 'INTERCEPTED_STORAGE_METADATA_ONLY_NOT_SENT_TO_WORKER' };
     } finally { await emptyContext.close(); }
 
     const unavailable = fixtureModels.map((model) => model.route === target463.route
@@ -206,7 +241,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
     const unavailableContext = await contextFor({ width: 390, height: 844 }, basicFixture(unavailable, target463.route));
     try {
       const page = activePage = await unavailableContext.newPage(); await page.goto(origin + '/settings');
-      const ui = await findControls(page); await expect(ui.model).toBeEnabled();
+      const ui = await findControls(page, 'answers'); await expect(ui.model).toBeEnabled();
       await expect(ui.model).toHaveValue(target463.route);
       await expect(ui.row.getByRole('alert')).toContainText('Fixture provider unavailable.');
       assert(await ui.model.locator('option:checked').evaluate((option) => option.disabled));
@@ -243,7 +278,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
         report.requests.fixtureGets++;
         const body = route.request().postDataJSON();
         // Explicit manual Refresh carries the controlled selection (plus the untouched Flash default).
-        assert.deepEqual(body, { selectedRoutes: [target463.route, FLASH] });
+        assert.deepEqual(body, {});
         report.requests.refreshPosts.push({ selected: target463.route });
         refreshSeen = true;
         await json(route, catalogueBody(refreshedModels));
@@ -264,7 +299,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
     });
     try {
       const page = activePage = await savedContext.newPage(); await page.goto(origin + '/settings');
-      const ui = await findControls(page); await expect(ui.model).toBeEnabled();
+      const ui = await findControls(page, 'answers'); await expect(ui.model).toBeEnabled();
       await expect(ui.model).toHaveValue('');
       // Storage-only: select the synthetic row-463 identity with unknown prices (selectable).
       await ui.provider.selectOption(providerOf(target463));
@@ -332,7 +367,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
       await gwCard.getByRole('textbox', { name: /^Gateway ID/ }).fill('browser-fixture-new');
       await gwCard.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true }).check();
       await gwCard.getByRole('button', { name: 'Save connection', exact: true }).click();
-      const ui = await findControls(page); await expect(ui.model).toBeEnabled(); await expect(ui.model).toHaveValue(target463.route);
+      const ui = await findControls(page, 'answers'); await expect(ui.model).toBeEnabled(); await expect(ui.model).toHaveValue(target463.route);
       await ui.provider.selectOption(providerOf(target463)); await ui.search.fill(newModel.id);
       await expect(ui.row).toContainText('1 matching models.');
       releaseOld.release(); await bounded(Promise.all(oldDeliveries), 'Old catalogue deliveries did not settle within 30 seconds.');

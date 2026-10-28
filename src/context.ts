@@ -16,10 +16,8 @@ export interface ContextHistoryTurn {
   content: string;
   /** Private caller identity survives history selection, never source evidence. */
   turnId?: string;
-  /** Full wire message cost, including private reasoning, when replay is required. */
-  wireTokens?: number;
-  /** User: the prior turn's full ordered revision scope, required for private wire replay
-   * and retained only as a prefix of the current frozen order so compact aliases stay stable.
+  /** User: the prior turn's full ordered revision scope, retained only as a prefix of the
+   * current frozen order so compact aliases stay stable.
    * Assistant: actual resolved citation revisions, used to select reusable public text. */
   revisionIds?: string[];
   /** Previously server-resolved citations, kept in memory only to select reusable history labels. */
@@ -181,8 +179,6 @@ function selectHistory(
       continue;
     }
     i += 2;
-    if (assistant.wireTokens !== undefined && (user.revisionIds === undefined
-      || user.revisionIds.some((id, index) => !frozen.has(id) || orderedFrozen[index] !== id))) continue;
     if ((assistant.revisionIds ?? []).some((id) => !frozen.has(id))) continue;
     const userContent = stripLabels(user.content).trim();
     const prefixOk = isScopePrefix(user.revisionIds, orderedFrozen);
@@ -192,7 +188,7 @@ function selectHistory(
       { role: "user", content: userContent },
       { role: "assistant", content: assistantContent, ...(assistant.turnId ? { turnId: assistant.turnId } : {}) },
     ];
-    exchanges.push({ messages, tokens: estimateTokens(userContent) + Math.max(estimateTokens(assistantContent), assistant.wireTokens ?? 0) });
+    exchanges.push({ messages, tokens: estimateTokens(userContent) + estimateTokens(assistantContent) });
   }
   const picked: ContextMessage[] = [];
   let used = 0;

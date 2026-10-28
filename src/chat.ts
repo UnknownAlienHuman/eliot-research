@@ -8,8 +8,7 @@ import type { LabelSource } from "./citations";
 import { admitTurn, estimateCost } from "./cost";
 import { DEFAULT_MODEL, modelOutputLimit, requireAvailableModel } from "./models";
 import type { ModelSpec } from "./models";
-import { AssistantWireCapture, modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
-import type { AssistantWire } from "./model-transport";
+import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
 import { LibraryError } from "./library";
 import { readText } from "./read";
 import type { RunTurnInput, TurnView } from "./shared/api";
@@ -27,7 +26,6 @@ export class ChatAgent extends Agent<Env, ChatState> {
   private current: Promise<TurnView> | undefined;
   async onStart() {
     void this.sql`CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL)`;
-    void this.sql`CREATE TABLE IF NOT EXISTS assistant_wire(turn_id TEXT PRIMARY KEY,payload TEXT NOT NULL)`;
     if (this.state.active) {
       const turn = this.readTurn(this.state.active);
       if (turn?.state === "started") {
@@ -57,18 +55,6 @@ export class ChatAgent extends Agent<Env, ChatState> {
     void this.sql`INSERT INTO turns(id,payload,created_at) VALUES(${turn.turnId},${JSON.stringify(turn)},${Date.now()})
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`;
     this.broadcast(JSON.stringify({ type: "turn", turn }));
-  }
-  #readAssistantWire(turnId: string, modelId: string): AssistantWire | undefined {
-    const row = this.sql<{ payload: string }>`SELECT payload FROM assistant_wire WHERE turn_id=${turnId}`[0];
-    if (!row) return undefined;
-    try {
-      const stored = JSON.parse(row.payload) as { modelId: string; message: AssistantWire };
-      return stored.modelId === modelId && typeof stored.message?.content === "string" ? stored.message : undefined;
-    } catch { return undefined; }
-  }
-  #writeAssistantWire(turnId: string, modelId: string, message: AssistantWire) {
-    void this.sql`INSERT INTO assistant_wire(turn_id,payload) VALUES(${turnId},${JSON.stringify({ modelId, message })})
-      ON CONFLICT(turn_id) DO UPDATE SET payload=excluded.payload`;
   }
   private async ensureProject(projectId: string) {
     const row = await this.env.DB.prepare("SELECT project_id FROM chat WHERE id=?").bind(this.name).first<{ project_id: string }>();
@@ -159,7 +145,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     if (this.state.stopRequested) controller.abort();
     // First abort wins: an owner Stop that already aborted must not be overwritten by the deadline.
     const timer = setTimeout(() => { if (controller.signal.aborted) return; timedOut = true; controller.abort(); }, 90_000);
-    let dispatched = false, rowInserted = false, wireCaptured = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
+    let dispatched = false, rowInserted = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
     let labelSources: LabelSource[] = [], sourceMode = "none", streamError = "";
     try {
       const settings = await this.env.DB.prepare(`SELECT COALESCE(p.answer_model,s.answer_model) AS model,p.instructions
@@ -168,7 +154,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       turn.model = input.model ?? settings.model;
       const model = await requireAvailableModel(this.env, turn.model);
       selectedModel = model;
-      const commandCode = model.route.startsWith("gateway:command-code/");
+      const commandCode = model.routing?.provider.baseUrl === "https://api.commandcode.ai/provider/v1";
       await this.env.DB.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at)
         VALUES(?,?,?,?,?,'none','started',?)`).bind(this.name, turn.turnId, turn.model, turn.scopeMode, "[]", started).run();
       rowInserted = true;
@@ -177,16 +163,10 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const priorTurns = (await this.getTurns(input.projectId)).filter((item) => item.turnId !== turn.turnId
         && (item.state === "completed" || (item.state === "partial" && item.citations.length > 0)));
       const partialTurnIds = new Set(priorTurns.filter((item) => item.state === "partial").map((item) => item.turnId));
-      const wireByTurn = new Map<string, AssistantWire>();
-      if (commandCode) for (const prior of priorTurns) {
-        const wire = this.#readAssistantWire(prior.turnId, model.id);
-        if (wire) wireByTurn.set(prior.turnId, wire);
-      }
-      const history = priorTurns.flatMap((item) => {
-        const wire = wireByTurn.get(item.turnId);
+      // Command Code uses question plus current frozen context without prior conversation history.
+      const history = commandCode ? [] : priorTurns.flatMap((item) => {
         return [{ role: "user" as const, content: item.question, revisionIds: item.revisionIds },
           { role: "assistant" as const, content: item.answer, turnId: item.turnId,
-            ...(wire ? { wireTokens: Math.ceil(new TextEncoder().encode(JSON.stringify(wire)).byteLength / 3) } : {}),
             revisionIds: [...new Set(item.citations.map((citation) => citation.revisionId))],
             citations: item.citations }];
       });
@@ -199,26 +179,14 @@ export class ChatAgent extends Agent<Env, ChatState> {
       turn.contextMode = context.mode;
       turn.sourceIds = context.sources.map((source) => source.sourceId);
       labelSources = context.sources; sourceMode = context.mode;
-      const assistantHistory: AssistantWire[] = [];
-      if (commandCode) for (const message of context.messages) {
-        if (message.role !== "assistant") continue;
-        const wire = message.turnId ? wireByTurn.get(message.turnId) : undefined;
-        if (!wire) throw new LibraryError("conflict",
-          "This history has no complete original protocol state for the selected model. Start a new chat; no model call was made.", 409);
-        assistantHistory.push(wire);
-      }
-      const transport = await resolveModelTransport(this.env, model, this.name, commandCode ? assistantHistory : undefined);
-      const wireCapture = commandCode ? new AssistantWireCapture() : undefined;
+      const transport = await resolveModelTransport(this.env, model, this.name);
       const partialHistory = context.messages.some((message) => message.role === "assistant" && message.turnId !== undefined && partialTurnIds.has(message.turnId));
       const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions,
         ...(partialHistory ? [PARTIAL_HISTORY_NOTICE] : [])].filter(Boolean).join("\n\n");
       const messages = context.messages.filter((message) => message.role !== "system")
         .map(({ role, content }) => ({ role: role as "user" | "assistant", content }));
       messages.push({ role: "user", content: input.question });
-      let assistantIndex = 0;
-      const wireMessages = commandCode ? messages.map((message) => message.role === "assistant"
-        ? { role: message.role, ...assistantHistory[assistantIndex++] } : message) : messages;
-      const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages: wireMessages })).byteLength / 3) + messages.length * 32 + 1024;
+      const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages })).byteLength / 3) + messages.length * 32 + 1024;
       if (inputTokens + modelOutputLimit(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
         .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
@@ -226,8 +194,6 @@ export class ChatAgent extends Agent<Env, ChatState> {
       if (controller.signal.aborted) throw new Error(this.state.stopRequested && !timedOut ? "Stopped before dispatch." : "Time bound exceeded before dispatch.");
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
-        ...(wireCapture ? { include: { rawChunks: true },
-          onChunk: ({ chunk }: { chunk: { type: string; rawValue?: unknown } }) => { if (chunk.type === "raw") wireCapture.push(chunk.rawValue); } } : {}),
         maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
@@ -244,13 +210,6 @@ export class ChatAgent extends Agent<Env, ChatState> {
       usage = await result.totalUsage;
       turn.answer = await result.text;
       const finish = await result.finishReason;
-      if (wireCapture && !streamError && !controller.signal.aborted) {
-        const wire = wireCapture.message();
-        if (wire) {
-          try { this.#writeAssistantWire(turn.turnId, model.id, wire); wireCaptured = true; }
-          catch { /* Missing private state is surfaced by the completion guard below. */ }
-        }
-      }
       if (finish === "stop" && !streamError) turn.state = "completed";
       else {
         turn.state = "partial";
@@ -276,9 +235,6 @@ export class ChatAgent extends Agent<Env, ChatState> {
     } finally { clearTimeout(timer); }
     const resolved = resolveCitations(turn.answer, labelSources);
     turn.answer = resolved.text; turn.citations = resolved.citations; turn.invalidLabels = resolved.invalidLabels;
-    if (turn.state === "completed" && selectedModel?.route.startsWith("gateway:command-code/") && !wireCaptured) {
-      turn.state = "partial"; turn.error = "The original assistant protocol state could not be preserved. Start a new chat; no retry was started.";
-    }
     if (turn.state === "completed" && turn.invalidLabels > 0) {
       turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
     }
@@ -313,7 +269,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       delete turn.warnings;
     }
     if (usage) {
-      turn.providerUsage = reportedProviderUsage(usage, turn.model);
+      turn.providerUsage = reportedProviderUsage(usage, selectedModel);
       turn.inputTokens = usage.inputTokens ?? null; turn.cachedTokens = usage.inputTokenDetails.cacheReadTokens ?? null; turn.outputTokens = usage.outputTokens ?? null;
       if (selectedModel && turn.inputTokens !== null && turn.outputTokens !== null) {
         turn.estimatedCostMicrousd = estimateCost(selectedModel, turn.inputTokens, turn.cachedTokens ?? 0, turn.outputTokens);

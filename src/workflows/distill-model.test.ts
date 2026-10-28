@@ -23,7 +23,7 @@ vi.mock("../model-transport", async () => ({
   resolveModelTransport: vi.fn(),
   modelFailure: () => "Unexpected model failure projection",
 }));
-vi.mock("../model-catalog", () => ({ discoverGatewayModels: vi.fn(), enrichSelectedModel: vi.fn() }));
+vi.mock("../model-catalog", () => ({ discoverGatewayModels: vi.fn() }));
 vi.mock("../native-model-catalog", () => ({ discoverNativeModels: vi.fn() }));
 vi.mock("../models", async () => ({
   ...await vi.importActual<typeof Models>("../models"),
@@ -33,7 +33,7 @@ vi.mock("../models", async () => ({
 import { generateText } from "ai";
 import { resolveModelTransport } from "../model-transport";
 import { availableModels, requireAvailableModel, requireCatalogModel } from "../models";
-import { discoverGatewayModels, enrichSelectedModel } from "../model-catalog";
+import { discoverGatewayModels } from "../model-catalog";
 import { discoverNativeModels } from "../native-model-catalog";
 import { DistillWorkflow, requestUnderstanding, scheduleDistillation } from "./distill";
 
@@ -138,7 +138,7 @@ function documentWithBlocks(parts: Array<{ type: Block["type"]; text: string }>)
 }
 
 const forbiddenLookups = [requireAvailableModel, requireCatalogModel, availableModels,
-  discoverGatewayModels, enrichSelectedModel, discoverNativeModels];
+  discoverGatewayModels, discoverNativeModels];
 beforeEach(() => {
   vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation"));
   vi.mocked(resolveModelTransport).mockReset().mockRejectedValue(new Error("Fixture transport stopped before dispatch."));

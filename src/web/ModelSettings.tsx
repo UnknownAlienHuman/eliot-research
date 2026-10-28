@@ -7,12 +7,19 @@
 // (GET/PUT /api/models/connection, gatewayId only, no secrets).
 import { useEffect, useRef, useState } from 'react';
 import { ModelPicker } from './ModelPicker';
+import { ModelProviders } from './ModelProviders';
+import type { ProviderQuota } from '../model-quota';
 import type { ModelRoute } from './ModelPicker';
 import './model-settings.css';
 interface GlobalSettings { readonly answerModel: string; readonly distillModel: string; readonly monthlyModelBudgetMicrousd: number; readonly updatedAt: number; }
 interface ProjectSettings { readonly instructions: string; readonly answerModel: string | null; }
 interface GatewayConnection { readonly gatewayId: string | null; readonly provider: string; readonly alias: string; }
-interface ModelCatalog { readonly models: ModelRoute[]; readonly warnings: string[]; readonly defaultModel: string; }
+interface ModelCatalog { readonly models: ModelRoute[]; readonly warnings: string[]; readonly defaultModel: string; readonly quotas?: ProviderQuota[]; }
+function quotaLabels(quotas: ProviderQuota[]): Record<string, string | null> {
+  return Object.fromEntries(quotas.map((quota) => [quota.providerId,
+    quota.usage === null && quota.limit === null && quota.resetAt === null ? quota.error === 'quota-unavailable' ? 'Quota unavailable' : null :
+      `Last refresh: usage ${quota.usage?.toLocaleString('en-US') ?? 'unknown'} / ${quota.limit?.toLocaleString('en-US') ?? 'unknown'}${quota.unit ? ' ' + quota.unit : ''} · Reset ${quota.resetAt ?? 'unknown'}`]));
+}
 async function apiErrorMessage(res: Response): Promise<string> {
   try { const b = (await res.json()) as { error?: { message?: string } }; if (b.error && b.error.message) return b.error.message; } catch { /* status text */ }
   return 'Request failed with status ' + res.status + '.';
@@ -31,6 +38,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState('');
   const [modelsWarnings, setModelsWarnings] = useState<string[]>([]);
+  const [providerQuotas, setProviderQuotas] = useState<Record<string, string | null>>({});
   const [answerModel, setAnswerModel] = useState('');
   const [distillModel, setDistillModel] = useState('');
   const [useGlobal, setUseGlobal] = useState(true);
@@ -41,8 +49,8 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   const [modelsRefreshing, setModelsRefreshing] = useState(false);
   const [ready, setReady] = useState(false);
   const [gatewayId, setGatewayId] = useState('');
-  const [gatewayAlias, setGatewayAlias] = useState('default');
   const [allowGateway, setAllowGateway] = useState(false);
+  const [editingTarget, setEditingTarget] = useState<'answer' | 'distill'>('answer');
   const [gatewayNote, setGatewayNote] = useState('');
   const [gatewaySaving, setGatewaySaving] = useState(false);
   const catalogRequest = useRef({ sequence: 0, controller: null as AbortController | null });
@@ -73,6 +81,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
       const d = await apiJson<ModelCatalog>('/api/models', { signal: controller.signal });
       if (!current()) return;
       setModelsWarnings(d.warnings);
+      setProviderQuotas(quotaLabels(d.quotas ?? []));
       setModels((previous) => current() ? d.models : previous);
       return d.models;
     } catch (err) {
@@ -99,7 +108,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     let settings: Promise<void>;
     if (projectId === undefined) {
       settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setBudgetUsd(String(d.settings.monthlyModelBudgetMicrousd / 1000000)); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
-      void apiJson<{ connection: GatewayConnection }>('/api/models/connection', { signal: reads.signal }).then((d) => { if (!live || gatewayGeneration.current !== generation) return; setGatewayId(d.connection.gatewayId ?? ''); setGatewayAlias(d.connection.alias); setAllowGateway(false); }).catch((err: unknown) => { if (live && gatewayGeneration.current === generation) setGatewayNote(err instanceof Error ? err.message : 'Gateway connection status unavailable.'); });
+      void apiJson<{ connection: GatewayConnection }>('/api/models/connection', { signal: reads.signal }).then((d) => { if (!live || gatewayGeneration.current !== generation) return; setGatewayId(d.connection.gatewayId ?? ''); setAllowGateway(false); }).catch((err: unknown) => { if (live && gatewayGeneration.current === generation) setGatewayNote(err instanceof Error ? err.message : 'Gateway connection status unavailable.'); });
     } else {
       const pid = projectId;
       settings = apiJson<{ project: ProjectSettings }>('/api/projects/' + encodeURIComponent(pid), { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.project.answerModel ?? ''); setUseGlobal(d.project.answerModel === null); setInstructions(d.project.instructions); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
@@ -132,12 +141,11 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     if (modelsRefreshing || modelsLoading) return;
     setModelsRefreshing(true);
     setRefreshNote('');
-    const selectedRoutes = [...new Set([answerModel, distillModel].filter((route) => route !== ''))];
     try {
       await apiRequest('/api/models/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(selectedRoutes.length > 0 ? { selectedRoutes } : {}),
+        body: '{}',
       });
       await reloadModels();
       setRefreshNote('Models refreshed.');
@@ -150,7 +158,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   async function saveGateway(): Promise<void> {
     setGatewayNote('');
     const trimmed = gatewayId.trim();
-    if (trimmed !== '' && !allowGateway) { setGatewayNote('Check the BYOK consent box to connect a Gateway, or clear the field to disable.'); return; }
+    if (trimmed !== '' && !allowGateway) { setGatewayNote('Check the box to connect a Gateway, or clear the field to disable.'); return; }
     const generation = ++gatewayGeneration.current;
     const current = () => gatewayGeneration.current === generation;
     invalidateModels();
@@ -162,7 +170,6 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
       const d = await apiJson<{ connection: GatewayConnection }>('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!current()) return;
       setGatewayId(d.connection.gatewayId ?? '');
-      setGatewayAlias(d.connection.alias);
       setAllowGateway(false);
       await reloadModels();
       if (current()) setGatewayNote(trimmed === '' ? 'Gateway disabled.' : 'Gateway connection saved.');
@@ -189,7 +196,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
           <textarea value={instructions} onChange={(e) => setInstructions(e.currentTarget.value)} rows={3} maxLength={10000} />
         </label>
         <ModelPicker label='Answer model' choices={modelChoices} value={useGlobal ? '' : answerModel} emptyLabel='Use global default'
-          loading={modelsLoading || gatewaySaving} error={modelsError}
+          loading={modelsLoading || gatewaySaving} error={modelsError} compact
           onChange={selectAnswerModel} />
         {catalogWarnings}
         <div className='er-models__actions'>
@@ -206,9 +213,18 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
           <h2 className='er-models__title'>Models</h2>
           <p className='er-status'><span>Defaults for answers and understanding.</span></p>
         </div>
-        <ModelPicker label='Answer model' choices={modelChoices} value={answerModel} onChange={selectAnswerModel}
-          loading={modelsLoading || gatewaySaving} error={modelsError} />
-        <ModelPicker label='Understanding model' choices={modelChoices} value={distillModel} onChange={selectDistillModel}
+        <fieldset className='er-models__target'>
+          <legend>Use model for</legend>
+          <label className='er-models__check'>
+            <input type='radio' name='er-models-target' value='answer' checked={editingTarget === 'answer'} onChange={() => setEditingTarget('answer')} />
+            <span className='er-models__checktext'>Answers{answerModel !== '' ? ' — ' + answerModel : ' — not chosen'}</span>
+          </label>
+          <label className='er-models__check'>
+            <input type='radio' name='er-models-target' value='distill' checked={editingTarget === 'distill'} onChange={() => setEditingTarget('distill')} />
+            <span className='er-models__checktext'>Understanding{distillModel !== '' ? ' — ' + distillModel : ' — not chosen'}</span>
+          </label>
+        </fieldset>
+        <ModelPicker label={editingTarget === 'answer' ? 'Answer model' : 'Understanding model'} choices={modelChoices} value={editingTarget === 'answer' ? answerModel : distillModel} onChange={(route) => { if (editingTarget === 'answer') selectAnswerModel(route); else selectDistillModel(route); }}
           loading={modelsLoading || gatewaySaving} error={modelsError} />
         {catalogWarnings}
         <label className='er-models__row'>
@@ -225,6 +241,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
         </div>
         {refreshNote !== '' ? <p className='er-status' role={refreshNote === 'Models refreshed.' ? 'status' : 'alert'}>{refreshNote}</p> : null}
       </section>
+      <ModelProviders quotas={providerQuotas} onSaved={() => void reloadModels()} />
       <section className='er-models__card' aria-label='AI Gateway connection'>
         <div className='er-models__head'>
           <h2 className='er-models__title'>AI Gateway</h2>
@@ -241,7 +258,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
             <input type='checkbox' checked={allowGateway} onChange={(e) => setAllowGateway(e.currentTarget.checked)} />
             <span className='er-models__checktext'>Allow external model requests from this workspace.</span>
           </label>
-          {gatewayId !== '' ? <p className='er-status'><span>Gateway {gatewayId} · credential alias {gatewayAlias} · saved configuration does not verify provider usability.</span></p> : null}
+          {gatewayId !== '' ? <p className='er-status'><span>Saved connection does not verify provider usability.</span></p> : null}
           <div className='er-models__actions'>
             <button className='er-button er-button--primary' type='button' disabled={gatewaySaving || (gatewayId.trim() !== '' && !allowGateway)} onClick={() => void saveGateway()}>{gatewaySaving ? 'Saving…' : 'Save connection'}</button>
           </div>
