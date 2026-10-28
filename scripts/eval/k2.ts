@@ -798,9 +798,22 @@ function dispatchUnavailable(status, body, turn) {
   const error = body?.error ?? body?.turn?.error ?? turn?.error ?? null;
   const code = String(error?.code ?? body?.code ?? '').toLowerCase();
   const message = String(error?.message ?? error ?? body?.message ?? '');
-  return [401, 402, 403, 408, 429, 500, 502, 503, 504].includes(status)
-    || ['auth', 'unauthorized', 'forbidden', 'budget', 'unavailable', 'busy', 'rate_limited'].includes(code)
-    || /credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|provider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|gateway.{0,24}(?:unavailable|error|failed)/i.test(message);
+  if ([401, 402, 403, 408, 429, 500, 502, 503, 504].includes(status)) return true;
+  if (['auth', 'unauthorized', 'forbidden', 'budget', 'unavailable', 'busy', 'rate_limited'].includes(code)) return true;
+  if (/credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|provider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|gateway.{0,24}(?:unavailable|error|failed)/i.test(message)) return true;
+  // Own 90 s deadline stays continuable: the next distinct question may dispatch.
+  if (/exceeded the 90 s time bound|Time bound exceeded before dispatch/i.test(message)) return false;
+  // Exact-turn timeout reconciliation stores provider failures as HTTP 200 with
+  // the failure embedded in turn.error (model-transport.ts modelFailure shapes).
+  // Stop on the same codes when embedded as HTTP; an explicit non-stop HTTP
+  // code (e.g. 400 validation) keeps the prior continue behavior.
+  if (/\bHTTP\s+(401|402|403|408|429|500|502|503|504)\b/i.test(message)) return true;
+  if (/\bHTTP\s+\d{3}\b/i.test(message)) return false;
+  // Validation-shaped stream failures stay per-question and do not stop the batch.
+  if (/Model stream failed\s*\((?:AI_Invalid|Zod)/i.test(message)) return false;
+  if (/External model request failed|Model stream failed/i.test(message)) return true;
+  if (/authentication_error|permission_error|rate_limit_error|server_error|overloaded_error/i.test(message)) return true;
+  return false;
 }
 if (!runModel && !storedOnly) {
   const h1 = await getChat('re-read');

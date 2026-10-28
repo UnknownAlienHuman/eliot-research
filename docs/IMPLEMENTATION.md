@@ -317,8 +317,11 @@ quotes from the same block. Keep derived claim statements and conditions in a se
 non-evidence; only original quoted passages provide evidence and citation labels. Source and orientation text both
 count toward the same context budget.
 
-Estimate text as UTF-8 bytes / 3. Include newest in-scope history up to 10% of context, stripped of labels except for
-the Command Code protocol path. For that path, replay the captured assistant wire message unchanged only when the prior
+Estimate text as UTF-8 bytes / 3. Include newest in-scope history up to 10% of context. Public assistant history retains
+a citation only when the prior full ordered scope is a prefix of the current scope and its stored source, revision,
+block and exact range match a currently supplied passage. Render that citation with its current compact alias;
+strip unverified, stale and unavailable references. Prior assistant prose remains conversation context, not evidence.
+For the Command Code protocol path, replay the captured assistant wire message unchanged only when the prior
 turn's full ordered source scope is a prefix of the current frozen scope. The complete serialized wire message,
 including private reasoning, counts toward both history and request bounds. Historical labels are not new evidence.
 A partial prior answer is identified as incomplete without changing its protocol data. Missing or mismatched private
@@ -347,9 +350,8 @@ as untrusted data. Project instructions remain caller-provided context; no fixed
 server citation resolver maps valid labels to exact source/revision and UTF-8 ranges. Bare `Page N` / `Страница N`
 page headings and empty headings are ineligible for labels; canonical bytes and the block map remain unchanged.
 
-A turn is partial when it contains missing/invalid citations, an uncovered source-derived factual statement or a
-numeric unit unsupported by its adjacent cited range. These deterministic checks do not prove semantic entailment.
-Owner semantic review remains required. The unchanged C1–C4/O1–O8 question set, citation-opening checks and owner review
+Citation and numeric diagnostics do not prove semantic entailment. A normally completed answer with advisory warnings
+can still fail acceptance. Owner semantic review remains required. The unchanged C1–C4/O1–O8 question set, citation-opening checks and owner review
 are the K2 boundary in MAP; K2 is not fully accepted or deployed.
 
 Broadcast the first nonempty rendered answer immediately and measure `firstTokenMs` from that text, not the first

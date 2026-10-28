@@ -187,7 +187,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
         return [{ role: "user" as const, content: item.question, revisionIds: item.revisionIds },
           { role: "assistant" as const, content: item.answer, turnId: item.turnId,
             ...(wire ? { wireTokens: Math.ceil(new TextEncoder().encode(JSON.stringify(wire)).byteLength / 3) } : {}),
-            revisionIds: [...new Set(item.citations.map((citation) => citation.revisionId))] }];
+            revisionIds: [...new Set(item.citations.map((citation) => citation.revisionId))],
+            citations: item.citations }];
       });
       const context = await buildContext(this.env, { type: "owner", id: "owner", authentication: "access" }, {
         projectId: input.projectId, scopeMode: input.scopeMode, model, history, question: input.question,
