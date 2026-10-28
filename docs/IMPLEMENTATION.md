@@ -196,7 +196,8 @@ States: `none|queued|running|paused|done|partial|failed`. Ingest leaves readable
 Understand request queues and admits its requested revision, subject to concurrency and the monthly budget;
 insufficient budget becomes visible `paused` until another explicit request. Cron only reconciles stale `running` rows
 against Workflow ID `distill-<revisionId>`; it never admits queued work. Migration `0007_manual_understanding.sql`
-removes the obsolete `settings.auto_distill` switch. Settings no longer accepts or exposes `autoDistill`.
+removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
+resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
 
 `DistillWorkflow` uses two bounded calls:
 
