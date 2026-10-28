@@ -520,8 +520,14 @@ if (nativeOnly) {
               await page.screenshot({ path: outDir + '/' + c.name + '-claim.png' });
             }
             if (c.name === 'reader-1440-light') {
-              const facts = await page.locator('.er-lib__facts-content').first().innerText().catch(() => '');
-              const det = await page.locator('.er-und__details-content').first().innerText().catch(() => '');
+              const factsPanel = page.locator('.er-lib__facts-content').first();
+              const detailsPanel = page.locator('.er-und__details-content').first();
+              await pwexpect(factsPanel).toBeVisible();
+              await pwexpect(detailsPanel).toBeVisible();
+              await pwexpect(factsPanel).toContainText(/\S/);
+              await pwexpect(detailsPanel).toContainText(/\S/);
+              const facts = await factsPanel.innerText();
+              const det = await detailsPanel.innerText();
               firstMeta = facts + ' ' + det;
               if (hasClaims) {
                 const cite = page.locator('.er-und__claims .er-und__cite').first();
