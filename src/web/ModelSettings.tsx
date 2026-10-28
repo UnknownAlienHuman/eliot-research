@@ -10,8 +10,9 @@ import { ModelPicker } from './ModelPicker';
 import { ModelProviders } from './ModelProviders';
 import type { ProviderQuota } from '../model-quota';
 import type { ModelRoute } from './ModelPicker';
+import type { NativeUsageMode } from '../shared/api';
 import './model-settings.css';
-interface GlobalSettings { readonly answerModel: string; readonly distillModel: string; readonly updatedAt: number; }
+interface GlobalSettings { readonly answerModel: string; readonly distillModel: string; readonly nativeUsageMode?: NativeUsageMode; readonly updatedAt: number; }
 interface ProjectSettings { readonly instructions: string; readonly answerModel: string | null; }
 interface GatewayConnection { readonly gatewayId: string | null; readonly provider: string; readonly alias: string; }
 interface ModelCatalog { readonly models: ModelRoute[]; readonly warnings: string[]; readonly defaultModel: string; readonly quotas?: ProviderQuota[]; }
@@ -41,6 +42,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   const [providerQuotas, setProviderQuotas] = useState<Record<string, string | null>>({});
   const [answerModel, setAnswerModel] = useState('');
   const [distillModel, setDistillModel] = useState('');
+  const [nativeUsageMode, setNativeUsageMode] = useState<NativeUsageMode>('included');
   const [useGlobal, setUseGlobal] = useState(true);
   const [instructions, setInstructions] = useState('');
   const [note, setNote] = useState('');
@@ -110,7 +112,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     const catalog = reloadModels();
     let settings: Promise<void>;
     if (projectId === undefined) {
-      settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
+      settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setNativeUsageMode(d.settings.nativeUsageMode ?? 'included'); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
       void apiJson<{ connection: GatewayConnection }>('/api/models/connection', { signal: reads.signal }).then((d) => { if (!live || gatewayGeneration.current !== generation) return; setGatewayId(d.connection.gatewayId ?? ''); setAllowGateway(false); }).catch((err: unknown) => { if (live && gatewayGeneration.current === generation) setGatewayNote(err instanceof Error ? err.message : 'Gateway connection status unavailable.'); });
     } else {
       const pid = projectId;
@@ -124,7 +126,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     try {
       if (projectId === undefined) {
         if (answerModel === '') { setNote('Choose an answer model.'); return; }
-        await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel, distillModel }) });
+        await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel, distillModel, nativeUsageMode }) });
       } else {
         await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instructions, answerModel: useGlobal ? null : answerModel }) });
       }
@@ -221,7 +223,17 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
         <ModelPicker label={editingTarget === 'answer' ? 'Answer model' : 'Understanding model'} choices={modelChoices} value={editingTarget === 'answer' ? answerModel : distillModel} onChange={(route) => { if (editingTarget === 'answer') selectAnswerModel(route); else selectDistillModel(route); }}
           loading={modelsLoading || gatewaySaving} error={modelsError} />
         {catalogWarnings}
-        <p className='er-status'><span>Workers AI includes 10,000 Neurons/day, resetting at 00:00 UTC. Paid plans bill extra usage. OpenRouter and Command Code use their own provider limits.</span></p>
+        <fieldset className='er-models__target'>
+          <legend>Workers AI usage</legend>
+          <label className='er-models__check'>
+            <input type='radio' name='er-native-usage' value='included' checked={nativeUsageMode === 'included'} onChange={() => setNativeUsageMode('included')} />
+            <span className='er-models__checktext'>Only included quota — 10,000 Neurons/day<span className='er-models__help'>Native requests stay paused until this cap can be enforced. OpenRouter uses its own limits.</span></span>
+          </label>
+          <label className='er-models__check'>
+            <input type='radio' name='er-native-usage' value='standard' checked={nativeUsageMode === 'standard'} onChange={() => setNativeUsageMode('standard')} />
+            <span className='er-models__checktext'>Standard Cloudflare billing<span className='er-models__help'>Overage beyond the included quota is billed to the Cloudflare account. Applies to new native requests only. Choosing and saving starts no inference.</span></span>
+          </label>
+        </fieldset>
         {gatewayOff ? (<p className='er-status'><span>Connect AI Gateway to use external models.</span></p>) : null}
         <div className='er-models__actions'>
           <button className='er-button er-button--text' type='button' disabled={modelsLoading || modelsRefreshing || gatewaySaving} onClick={() => void refreshModels()}>
