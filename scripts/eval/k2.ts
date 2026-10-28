@@ -616,7 +616,9 @@ if (process.argv.includes('--models-only')) {
   const after = await apiJson('/api/settings');
   assert.equal(after.body.settings.answerModel, before.body.settings.answerModel, 'Answer default must be unchanged.');
   assert.equal(after.body.settings.distillModel, before.body.settings.distillModel, 'Understanding default must be unchanged.');
-  assert.deepEqual(after.body.settings, before.body.settings, 'Answer/distill settings must be unchanged (Save carries only models).');
+  assert.deepEqual(Object.keys(after.body.settings).sort(), Object.keys(before.body.settings).sort(), 'Settings shape must be unchanged (answerModel/distillModel/updatedAt).');
+  assert(Number.isSafeInteger(after.body.settings.updatedAt) && after.body.settings.updatedAt > 0
+    && after.body.settings.updatedAt >= before.body.settings.updatedAt, 'Intentional provider saves/restores must record a valid nondecreasing update time.');
   assert.deepEqual(after.body.usage, before.body.usage, 'Daily token usage must be unchanged by storage-only checks.');
   assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
   const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, consentRejected: true, disconnectedTurnTokenLimit: turn.body.turn.tokenLimit ?? null,
