@@ -325,6 +325,8 @@ Command Code history is the protocol exception to label stripping: private repla
 frozen source scope to remain selected; a narrow public citation set cannot admit reasoning about excluded sources.
 Select those exchanges by scope and budget, then replay the captured assistant wire message unchanged. Its complete serialized size, including private reasoning,
 counts against both the history and final request bounds. Historical labels are not new source evidence.
+If a selected prior answer was partial, request instructions identify it as incomplete; the original protocol message
+is still replayed unchanged. The notice is reserved in the context budget and never upgrades that stored turn.
 
 Resolve one `ModelSpec` at turn start and keep it fixed for admission, context, request bounds and cost settlement;
 later catalogue refreshes do not reprice or resize that turn, and the snapshot contains no credential.
@@ -368,13 +370,21 @@ This deterministic coverage check does not establish semantic entailment or repl
 Eval reuse applies this same coverage function and requires completed whole-reading turns with explicit, exact
 frozen source/revision sets. A non-reusable same-question turn remains manual; resume never dispatches a replacement.
 Reports separate estimated/reserved micro-USD from known provider-reported USD, preserving unknown actual cost.
-The 2026-10-27 local correction passed lint, typecheck, 266 tests and build; nine ChatAgent regressions use the real
+The 2026-10-27 local correction passed lint, typecheck, 266 tests and build; its ChatAgent regressions use the real
 AI SDK and private SQLite with fixture SSE. One real Beam C1 attempt on the frozen local correction returned external
 HTTP 503 in 1,440 ms with unknown token counts and zero estimated cost at verified zero rates. It was not retried;
 the planned second call did not run. No private assistant-wire row was produced, so successful capture/replay remains
 NOT_EXERCISED. The failed public state survived an actual server restart with identical worker bytes; settings and
 monthly usage (449,781 micro-USD) were unchanged. This is not provider or answer-quality acceptance. Stored-only
 revalidation qualifies C1/C2 only, leaves the other ten questions NOT_REVALIDATED and changes no monthly estimate.
+On 2026-10-28, the SDK raw-chunk implementation passed a separate real two-turn Beam dialogue over the selected
+Transformer revision. C1 completed with 11,429 input / 171 output tokens and two exact citations; after a real server
+restart, C2 completed with 11,613 / 287 tokens and one exact citation. First-text/total times were 3,397/3,746 ms and
+2,501/3,227 ms. Exactly two calls were sent, both at verified zero catalogue rates; the monthly estimate stayed
+449,781 micro-USD. Actual provider USD remains unknown. The first private wire's SHA-256 was unchanged after restart,
+and both original protocol records stayed server-only. This tests selected-source dialogue and durable replay,
+not the complete twelve-question baseline, owner quality or deployment. Those calls used source HEAD `96999bcc`;
+the later partial-history notice is covered by the dedicated SDK/SQLite regression without another inference call.
 The real Workers AI GLM 5.3 Flash structured streaming call was exercised on 2026-10-26. Admission reserves the full
 model context at uncached input price plus maximum output, then settles to reported SDK usage; unknown usage retains
 the reservation. Saving rewrites aliases outside code fences and uses a page mutation UUID without model work.

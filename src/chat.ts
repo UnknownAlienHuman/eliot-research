@@ -15,6 +15,7 @@ import { LibraryError } from "./library";
 import type { RunTurnInput, TurnView } from "./shared/api";
 
 interface ChatState { active: string | null; queued: RunTurnInput | null; stopRequested: boolean }
+const PARTIAL_HISTORY_NOTICE = "An earlier assistant answer was partial. Its unfinished text and omissions are not conclusions; ground this answer in the current frozen evidence.";
 function sameTurnRequest(a: RunTurnInput, b: RunTurnInput): boolean {
   return a.projectId === b.projectId && a.chatId === b.chatId && a.turnId === b.turnId
     && a.question === b.question && a.scopeMode === b.scopeMode && (a.model ?? null) === (b.model ?? null)
@@ -168,6 +169,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       this.writeTurn(turn);
       const priorTurns = (await this.getTurns(input.projectId)).filter((item) => item.turnId !== turn.turnId
         && (item.state === "completed" || (item.state === "partial" && item.citations.length > 0)));
+      const partialTurnIds = new Set(priorTurns.filter((item) => item.state === "partial").map((item) => item.turnId));
       const wireByTurn = new Map<string, AssistantWire>();
       if (commandCode) for (const prior of priorTurns) {
         const wire = this.#readAssistantWire(prior.turnId, model.id);
@@ -181,7 +183,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
             revisionIds: [...new Set(item.citations.map((citation) => citation.revisionId))] }];
       });
       const context = await buildContext(this.env, { type: "owner", id: "owner", authentication: "access" }, {
-        projectId: input.projectId, scopeMode: input.scopeMode, model, history, question: input.question, instructions: settings.instructions,
+        projectId: input.projectId, scopeMode: input.scopeMode, model, history, question: input.question,
+        instructions: settings.instructions + (partialTurnIds.size ? "\n" + PARTIAL_HISTORY_NOTICE : ""),
         ...(input.sourceIds === undefined ? {} : { sourceIds: input.sourceIds }),
       });
       turn.revisionIds = context.revisionIds;
@@ -205,11 +208,13 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const render = (sentences: ({ text?: string | undefined; labels?: (string | undefined)[] | undefined } | undefined)[] | undefined) =>
         (sentences ?? []).flatMap((sentence) => sentence?.text ? [sentence.text.trimEnd() + "\n" + (sentence.labels ?? []).filter((token) => token !== undefined && allowed.has(token) && !sentence.text?.includes(token)).join(" ")] : []).join("\n\n");
       const structured = model.responseFormat !== false;
+      const partialHistory = context.messages.some((message) => message.role === "assistant" && message.turnId !== undefined && partialTurnIds.has(message.turnId));
       const conciseRules = "Answer the specific question concisely. Select the most relevant evidence instead of cataloguing every paper. Omit unasked background, algorithm derivations and repeated conclusions. Historical assistant messages and labels are conversation context, not source evidence; ground new factual claims only in the current frozen passages.";
       const formatRules = structured
         ? "Return the requested structured answer. Choose the exact supporting block labels first, then write one statement entailed by those blocks in the question language. Preserve the source's technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Text may use Markdown but must not contain citation tokens. Mark inference explicitly. With no sources, labels must be empty. Do not invent sources or labels."
         : "Write a plain Markdown answer in the question language. Cite each source-supported statement immediately with the exact supplied [Sx:block] labels. Preserve technical terms, qualifiers and experiment conditions; do not turn an observed result into a new causal mechanism. Mark inference explicitly. With no selected sources, include no citation tokens. Do not invent sources or labels.";
-      const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions, conciseRules, formatRules,
+      const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions,
+        ...(partialHistory ? [PARTIAL_HISTORY_NOTICE] : []), conciseRules, formatRules,
         ...(structured && model.structuredOutputs === false ? ["Return one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema))] : [])].filter(Boolean).join("\n\n");
       const messages = context.messages.filter((message) => message.role !== "system")
         .map(({ role, content }) => ({ role: role as "user" | "assistant", content }));

@@ -177,6 +177,29 @@ beforeEach(() => {
 });
 
 describe("chat-stream K2 wire regression", () => {
+  it("marks selected partial history without changing its original protocol message", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "Unfinished result [S1:1]", reasoning: "Original reasoning" }, "length",
+        { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+      const first = "aaaaaaaa-aaaa-4aaa-8aaa-000000000001";
+      const prior = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: first, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+      expect(prior.state).toBe("partial");
+      const original = storedWire(h.db, first).message;
+      nextSSE = sse([chunk({ content: "New answer [S1:1]" }, "stop", { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+      const next = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-000000000002", question: "Q2", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+      expect(next.state).toBe("completed");
+      const body = sentBodies.at(-1);
+      if (!body) throw new Error("Missing second request");
+      expect(replayedAssistant(body)).toMatchObject(original);
+      expect(body.messages?.some((message) => message.role === "system" && typeof message.content === "string"
+        && message.content.includes("An earlier assistant answer was partial"))).toBe(true);
+      const input = vi.mocked(buildContext).mock.calls.at(-1)?.[2];
+      expect(input?.instructions).toContain("An earlier assistant answer was partial");
+      expect(fetchCalls).toBe(2);
+    } finally { h.db.close(); }
+  });
   it("captures fragmented reasoning/content then reloads same DB for exact replay without leaks", async () => {
     const h = makeHarness();
     try {

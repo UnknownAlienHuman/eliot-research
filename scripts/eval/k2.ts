@@ -255,7 +255,7 @@ if (process.argv.includes('--models-only')) {
       await page.goto(origin + '/p/' + projectId + '/source/' + sourceId);
       assert.equal((await modelsRead).status(), 200, 'Understanding model catalogue must load.');
       const understanding = page.getByRole('region', { name: 'Understanding', exact: true });
-      const select = understanding.getByRole('combobox', { name: 'Model', exact: true });
+      const select = understanding.getByRole('combobox', { name: 'Understanding model', exact: true });
       await expect(select).toBeVisible();
       await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
         .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), external.route), { timeout: 30000 }).toEqual([true]);

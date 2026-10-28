@@ -197,7 +197,16 @@ uncited-answer regressions. A stored-only revalidation under the current coverag
 C3/C4 and O1–O8 remain NOT_REVALIDATED. It made no model calls and does not qualify live provider or owner acceptance.
 The separate real Beam C1 protocol attempt returned external HTTP 503 in 1,440 ms. One request was dispatched; no
 retry or second turn followed. Token usage is unknown, estimate zero; no private wire was captured. Failed-state
-persistence after an actual restart passed, but successful reasoning replay and full K2 quality remain open.
+persistence after an actual restart passed; that failed attempt did not exercise successful reasoning replay.
+Full K2 quality remains open.
+The later SDK raw-chunk slice replaces the custom SSE parser with the installed provider's original-JSON events.
+Private history also requires its full ordered source scope to remain a prefix of the current scope, preserving
+compact-label identity; selected partial history is explicitly marked incomplete without modifying protocol data.
+Its real two-turn Beam check over one selected Transformer source completed C1 and C2 with exact citations,
+including an actual restart between turns. Usage was 11,429/171 then 11,613/287 input/output tokens; estimates were
+zero, monthly usage remained 449,781 micro-USD, and the original private record hash stayed unchanged. This usable
+protocol slice does not close the twelve-question K2 gates or owner acceptance. The original failures remain retained.
+This slice adds 559 non-test `src/` lines and removes 35 against its published base; generated bindings are excluded.
 
 The shared-picker correction checked on 2026-10-27 passes lint/types, 225 tests and build. `pnpm eval k2
 --models-browser` passes at 1440/390 px against 559 live catalogue rows, plus intercepted metadata cases: catalogue
