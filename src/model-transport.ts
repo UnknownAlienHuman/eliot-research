@@ -333,7 +333,15 @@ export function modelFailure(error: unknown, model: ModelSpec): string {
   if (!model.route.startsWith("gateway:")) {
     const status = errorStatusCode(error);
     if (status !== undefined) return `Model stream failed (HTTP ${status}).`;
-    const name = knownErrorName(error) ?? (error instanceof Error ? knownErrorName(error.cause) : undefined);
+    // Preserve the safe per-question validation category in the existing text
+    // format: predispatch AI_Invalid* (allowlisted names above) and in-band
+    // invalid_request_error. No message/body/secrets are echoed.
+    const directValidationStream = streamProviderErrorNames(error)[0];
+    const causedValidationStream = streamProviderErrorNames(error instanceof Error ? error.cause : undefined)[0];
+    const validationStream = directValidationStream === "AI_StreamProviderError:invalid_request_error"
+      ? directValidationStream
+      : causedValidationStream === "AI_StreamProviderError:invalid_request_error" ? causedValidationStream : undefined;
+    const name = validationStream ?? knownErrorName(error) ?? (error instanceof Error ? knownErrorName(error.cause) : undefined);
     return name === undefined ? NATIVE_FAILURE : `Model stream failed (${name}).`;
   }
   const status = errorStatusCode(error);
@@ -361,7 +369,7 @@ function checkStatusCode(value: unknown): number | undefined {
 }
 
 const KNOWN_ERROR_NAMES = ["Error", "TypeError", "AbortError", "TimeoutError", "AI_APICallError",
-  "AI_StreamProviderError", "AI_NoObjectGeneratedError", "AI_NoOutputGeneratedError", "AI_InvalidResponseDataError",
+  "AI_StreamProviderError", "AI_InvalidPromptError", "AI_InvalidArgumentError", "AI_NoObjectGeneratedError", "AI_NoOutputGeneratedError", "AI_InvalidResponseDataError",
   "AI_TypeValidationError", "AiGatewayError", "AiError", "ZodError"] as const;
 
 function knownErrorName(error: unknown): string | undefined {
@@ -420,6 +428,9 @@ function errorCauseName(error: unknown): string | undefined {
   if (directStreamError) return directStreamError;
   const causedStreamError = streamProviderErrorNames(cause)[0];
   if (causedStreamError) return causedStreamError;
+  // Preserve predispatch validation in the existing cause format when the
+  // top-level error itself carries it; cause-only lookup would strip it.
+  if (error instanceof Error && (error.name === "AI_InvalidPromptError" || error.name === "AI_InvalidArgumentError")) return error.name;
   return knownErrorName(cause);
 }
 

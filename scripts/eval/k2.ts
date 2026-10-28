@@ -800,7 +800,7 @@ function dispatchUnavailable(status, body, turn) {
   const message = String(error?.message ?? error ?? body?.message ?? '');
   if ([401, 402, 403, 408, 429, 500, 502, 503, 504].includes(status)) return true;
   if (['auth', 'unauthorized', 'forbidden', 'budget', 'unavailable', 'busy', 'rate_limited'].includes(code)) return true;
-  if (/credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|provider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|gateway.{0,24}(?:unavailable|error|failed)/i.test(message)) return true;
+  if (/credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|\bprovider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|\bgateway.{0,24}(?:unavailable|error|failed)/i.test(message)) return true;
   // Own 90 s deadline stays continuable: the next distinct question may dispatch.
   if (/exceeded the 90 s time bound|Time bound exceeded before dispatch/i.test(message)) return false;
   // Exact-turn timeout reconciliation stores provider failures as HTTP 200 with
@@ -809,6 +809,11 @@ function dispatchUnavailable(status, body, turn) {
   // code (e.g. 400 validation) keeps the prior continue behavior.
   if (/\bHTTP\s+(401|402|403|408|429|500|502|503|504)\b/i.test(message)) return true;
   if (/\bHTTP\s+\d{3}\b/i.test(message)) return false;
+  // Per-question validation stays continuable in either existing failure
+  // format: predispatch AI_Invalid* and in-band invalid_request_error.
+  // Still stops 5xx/auth/rate/budget above and continues the own 90s deadline.
+  if (/AI_InvalidPromptError|AI_InvalidArgumentError/i.test(message)) return false;
+  if (/AI_StreamProviderError:invalid_request_error/i.test(message)) return false;
   // Validation-shaped stream failures stay per-question and do not stop the batch.
   if (/Model stream failed\s*\((?:AI_Invalid|Zod)/i.test(message)) return false;
   if (/External model request failed|Model stream failed/i.test(message)) return true;
