@@ -145,6 +145,7 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
             <span>{currentPage} / {pageCount}</span>
             <button className='er-button er-button--text' type='button' disabled={loading || currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>More models</button>
           </nav>
+          {onReload && error === '' ? <button className='er-button er-button--text' type='button' disabled={loading} onClick={onReload}>Reload catalog</button> : null}
         </details>
         {loading ? <p className='er-status' role='status'><span>Loading model catalog…</span></p> : null}
         {error !== '' ? <p className='er-status er-status--error' role='alert'><span>{error}</span>{onReload ? <button className='er-button er-button--text' type='button' onClick={onReload}>Reload catalog</button> : null}</p> : null}

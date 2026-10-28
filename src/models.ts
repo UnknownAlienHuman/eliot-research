@@ -92,7 +92,12 @@ export async function availableModels(env: ModelEnvironment, selected?: string,
 }
 export async function requireCatalogModel(env: ModelEnvironment, route: string): Promise<CatalogModel> {
   const fallback = MODELS.find((model) => model.route === route);
-  if (fallback) return fallback;
+  if (fallback) {
+    try {
+      const native = env.AI ? await discoverNativeModels(env.AI) : [];
+      return native.find((model) => model.route === route) ?? fallback;
+    } catch { return fallback; }
+  }
   const matches = (await availableModels(env)).filter((model) => model.route === route || model.aliases?.includes(route));
   if (matches.length > 1) throw new LibraryError("unavailable", "This model alias is ambiguous. Select its full catalogue ID.", 503);
   const model = matches[0];

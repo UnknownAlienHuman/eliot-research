@@ -15,10 +15,11 @@ import type { TurnView } from '../shared/api';
 import type { Citation } from '../citations';
 import type { Source } from '../shared/api';
 import { ModelSettings } from './ModelSettings';
+import { ModelPicker } from './ModelPicker';
+import type { ModelRoute } from './ModelPicker';
 import './chat.css';
 type ScopeMode = 'project_default' | 'explicit' | 'empty';
 interface ChatRow { readonly id: string; readonly title: string; readonly updatedAt: number; }
-interface ModelRoute { readonly route: string; readonly label: string; readonly enabled: boolean; }
 interface PageRow { readonly id: string; readonly title: string; readonly updatedAt: number; }
 interface QueuedTurn { readonly turnId: string; readonly question: string; }
 type SocketStatus = 'connecting' | 'open' | 'closed' | 'error';
@@ -61,8 +62,12 @@ export function ChatView() {
   const [sources, setSources] = useState<Source[]>([]);
   const [sourcesError, setSourcesError] = useState('');
   const [models, setModels] = useState<ModelRoute[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState('');
+  const [modelsWarnings, setModelsWarnings] = useState<string[]>([]);
   const [modelRoute, setModelRoute] = useState('');
-  const [defaultModel, setDefaultModel] = useState('');
+  const modelsSeq = useRef(0);
+  const modelsAbort = useRef<AbortController | null>(null);
   const [selected, setSelected] = useState<string[]>(() => prevScopes.get(pid)?.selected ?? []);
   const [touched, setTouched] = useState(() => prevScopes.get(pid)?.touched ?? false);
   const [scopeNote, setScopeNote] = useState('');
@@ -78,7 +83,6 @@ export function ChatView() {
   const retryRef = useRef(0);
   useEffect(() => { chatRef.current = chatId; }, [chatId]);
   const mode: ScopeMode = !touched ? 'project_default' : selected.length === 0 ? 'empty' : 'explicit';
-  const defaultLabel = models.find((m) => m.route === defaultModel)?.label ?? '';
   const pidRef = useRef(pid);
   if (pidRef.current !== pid) {
     pidRef.current = pid;
@@ -113,11 +117,22 @@ export function ChatView() {
     return () => { live = false; };
   }, [pid]);
   useEffect(() => { if (!touched && sources.length > 0) setSelected(sources.filter((s) => s.enabled !== false).map((s) => s.id)); }, [sources, touched]);
-  useEffect(() => {
-    let live = true;
-    void apiJson<{ models: ModelRoute[]; defaultModel?: string }>('/api/models').then((d) => { if (live) { setModels(d.models.filter((m) => m.enabled)); setDefaultModel(d.defaultModel ?? ''); } }).catch(() => { if (live) { setModels([]); setDefaultModel(''); } });
-    return () => { live = false; };
-  }, []);
+  async function loadModels(): Promise<void> {
+    const seq = modelsSeq.current + 1; modelsSeq.current = seq;
+    modelsAbort.current?.abort();
+    const controller = new AbortController(); modelsAbort.current = controller;
+    setModelsLoading(true); setModelsError(''); setModelsWarnings([]);
+    try {
+      const d = await apiJson<{ models: ModelRoute[]; warnings: string[] }>('/api/models', { signal: controller.signal });
+      if (modelsSeq.current !== seq || controller.signal.aborted) return;
+      setModels(d.models); setModelsWarnings(d.warnings); setModelsError('');
+    } catch (error) {
+      if (modelsSeq.current !== seq || controller.signal.aborted) return;
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setModelsError(error instanceof Error ? error.message : 'Could not load model catalog.');
+    } finally { if (modelsSeq.current === seq && !controller.signal.aborted) setModelsLoading(false); }
+  }
+  useEffect(() => { void loadModels(); return () => { modelsAbort.current?.abort(); }; }, []);
   useEffect(() => { void loadChat(); }, [pid, chatId]);
   useEffect(() => { if (chatId === undefined) setChatReady(sources.length > 0); }, [chatId, sources]);
   useEffect(() => {
@@ -252,8 +267,6 @@ export function ChatView() {
         <p className='er-chat__hint'>Default selects every enabled source. An explicit empty selection stays empty; the view never falls back to the whole project.</p>
         <span className='er-chat__actions'><button className='er-button er-button--tonal' type='button' onClick={() => void saveScopeDefault()}>Save selection as project default</button><button className='er-button er-button--text' type='button' onClick={() => useProjectDefault()}>Use project default</button></span>
         {scopeNote !== '' ? <p className='er-chat__hint' role='status'>{scopeNote}</p> : null}
-        {models.length > 0 ? (<label className='er-chat__model'>Model <select value={modelRoute} onChange={(e) => setModelRoute(e.currentTarget.value)}><option value=''>Project default{defaultLabel !== '' ? ' (' + defaultLabel + ')' : ''}</option>{models.map((m) => (<option key={m.route} value={m.route}>{m.label}</option>))}</select></label>) : null}
-        {models.length > 0 ? <p className='er-chat__hint'>Model list is read-only and prices are under audit. A rejected model surfaces an error and never silently falls back.</p> : null}
       </details>
       <details className='er-chat__scope'>
         <summary>Settings</summary>
@@ -274,6 +287,10 @@ export function ChatView() {
       </ol>
       {turns.length === 0 && chatId !== undefined && turnsError === '' ? <p className='er-chat__hint'>No turns yet. Ask below — sending is the only paid call here.</p> : null}
       {queued !== null ? <p className='er-chat__hint' role='status'>Queued: {queued.question} <button className='er-button er-button--text' type='button' onClick={() => void stopTurn(queued.turnId)}>Cancel queued</button></p> : null}
+      <div className='er-chat__model'>
+        <ModelPicker label='Model' choices={models} value={modelRoute} onChange={setModelRoute} loading={modelsLoading} error={modelsError} onReload={() => void loadModels()} emptyLabel='Project default' />
+        {modelsWarnings.length > 0 ? <p className='er-status' role='status'><span>Model catalog: {modelsWarnings.join(' ')}</span></p> : null}
+      </div>
       <form className='er-chat__composer' onSubmit={(e) => { e.preventDefault(); void send(); }}>
         <label className='er-chat__asklabel' htmlFor='er-chat-q'>Question</label>
         <textarea id='er-chat-q' value={question} onChange={(e) => setQuestion(e.currentTarget.value)} rows={3} maxLength={4000} placeholder='Ask in Russian or English…' />

@@ -173,7 +173,7 @@ stop/reconnect, reopen chat and save an answer as a page.
 4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.
 5. Use one `runTurn` for WebSocket and eval RPC; persist turn before the model call, stream, resolve labels, store
    citations/tokens/timings/cost and never auto-continue a paid failed stream.
-6. Add chat/page APIs, minimal model selector, saved answers and the moved chat/evidence UI.
+6. Add chat/page APIs, the shared legacy Material catalogue picker, saved answers and the moved chat/evidence UI.
 7. Add label/context/cost tests and `pnpm eval k2`.
 
 The model-choice slice uses Cloudflare, Command Code and OpenRouter discovery with independent provider warnings and
@@ -199,6 +199,15 @@ The separate real Beam C1 protocol attempt returned external HTTP 503 in 1,440 m
 retry or second turn followed. Token usage is unknown, estimate zero; no private wire was captured. Failed-state
 persistence after an actual restart passed, but successful reasoning replay and full K2 quality remain open.
 
+The shared-picker correction checked on 2026-10-27 passes lint/types, 225 tests and build. `pnpm eval k2
+--models-browser` passes at 1440/390 px against 559 live catalogue rows, plus intercepted metadata cases: catalogue
+search/provider changes and refresh preserve selection; a complete nested native ID reaches the intercepted Send
+payload; Enter in model search sends nothing. The source Understanding browser check also passes the delayed-response,
+unknown-price and switch-after-metadata-failure cases. These checks perform no inference or real chat POST; settings,
+Gateway and monthly usage (449,781 micro-USD) are unchanged. Native-default regressions verify live metadata takes
+precedence over the fallback. This slice adds 57 non-test `src/` lines and removes 20, reusing the registered Material
+picker and OpenCodex discovery; it does not close the answer-quality or owner-acceptance gates above.
+
 **Hard acceptance — `pnpm eval k2`**
 
 - Run C1–C4 and O1–O8 from `eval/arxiv-10/questions.md` in whole mode.
@@ -213,10 +222,11 @@ comparable runs rather than making one provider fluctuation invalidate the archi
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
-Local WIP on 2026-10-26 registers only three external generation choices through the owner's existing OpenRouter
-default BYOK credential: `dots-studio/dots-3-note-preview:free`, `thinkingmachines/inkling:free`, and
-`nvidia/nemotron-3.5-super-vl:free`, each under `gateway:openrouter/<exact-id>`. Native defaults stay unchanged.
-Their real provider capacities remain visible in advanced details; current chat/distill jobs retain the existing
+The retained OpenRouter smoke on 2026-10-26 tested three owner-selected models through the existing default BYOK
+credential: `dots-studio/dots-3-note-preview:free`, `thinkingmachines/inkling:free`, and
+`nvidia/nemotron-3.5-super-vl:free`, each under `gateway:openrouter/<exact-id>`. These are historical test choices;
+the selectable catalogue comes from provider APIs and has no model-name allowlist. Native defaults stay unchanged.
+Provider capacities remain visible in advanced details; current chat/distill jobs retain the existing
 8,192-token output bound. Zero catalog prices do not imply unlimited quota; unavailable models fail visibly with no
 paid fallback. Existing credential metadata grants no consent; the owner must connect explicitly, and saved connection
 configuration does not prove provider usability.
@@ -279,6 +289,9 @@ re-distilled automatically.
 - Every stored quote is an exact byte range; numeric result fields are cleared when not supported by their quote.
 - Transformer, ResNet and LoRA anchor expectations in `eval/arxiv-10/questions.md` are present with correct conditions;
   no unsupported number is stored. Claim count and drop rate are reported, not quality gates.
+- An anchor must be expressed by a stored claim statement and supported by that same claim's exact quote; a matching
+  phrase only inside a broad quote does not establish that the claim card contains the fact. Guides/digests are not
+  anchor evidence.
 - Claim mode keeps C1–C4 correct and citations valid; overview lists every readable source without a model call.
 - The automatic claims path is exercised in a separate real overflow project: reuse the ten baseline sources and
   attach the public papers in `eval/arxiv-10/overflow.json`. Measured source bytes must exceed the unchanged model
@@ -332,6 +345,10 @@ ten-source corpus initially had seven violations. After the explicit correction 
 gates. It adds no POST/model work and leaves 64,651 micro-USD unchanged.
 Anchors use only exact claim quotes from their actual source, never generated digest or unsupported conditions as
 evidence. Native-only smoke success and diagnostic-script exit codes are not K3 acceptance.
+The separate 2026-10-27 stored-only check of `Библиотека — PDF и точные ссылки` applies the same-card statement/quote
+gate and exits nonzero with six open items: three ResNet anchors, LoRA's frozen/low-rank mechanism and latency anchor,
+and claim-mode C1–C4 NOT_RUN. Its A1 and LoRA quantitative anchors pass. It changes no stored source, model usage or
+budget. The generic central/qualitative extraction request is corrected, but has not yet passed service acceptance.
 
 Budget evidence is from the same local Worker at `127.0.0.1:5173`, local D1 `DB` under `.wrangler/state/v3/d1`:
 Transformer admission at 07:34:09 UTC reserved 322,766 micro-USD over 828,757 chat usage (1,151,523 total); settlement

@@ -233,7 +233,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
       <div className='er-models er-models--compact'>
         <label className='er-models__row'>
           <span className='er-models__label'>Instructions<span className='er-models__help'>Guides answers in this project.</span></span>
-          <textarea value={instructions} onChange={(e) => setInstructions(e.currentTarget.value)} rows={3} maxLength={2000} />
+          <textarea value={instructions} onChange={(e) => setInstructions(e.currentTarget.value)} rows={3} maxLength={10000} />
         </label>
         <ModelPicker label='Answer model' choices={modelChoices} value={useGlobal ? '' : answerModel} emptyLabel='Use global default'
           loading={modelsLoading || gatewaySaving} error={modelsError} onReload={retryModels}

@@ -28,7 +28,7 @@
 .er-chat__cite { min-width: 0; overflow-wrap: anywhere; }
 .er-chat__cite a { color: var(--md-sys-color-primary); }
 .er-chat__actions { display: flex; flex-wrap: wrap; gap: var(--eliot-space-block-control); min-height: var(--eliot-size-control); }
-.er-chat__composer { display: grid; gap: var(--eliot-space-block-control); justify-items: start; position: sticky; bottom: 0; padding-block: var(--eliot-space-panel); background: color-mix(in srgb, var(--md-sys-color-surface) 92%, transparent); }
+.er-chat__composer { display: grid; gap: var(--eliot-space-block-control); justify-items: start; position: sticky; bottom: 0; padding-block: var(--eliot-space-panel); background: var(--md-sys-color-surface); }
 .er-chat__asklabel { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .er-chat__composer textarea { inline-size: 100%; max-width: var(--eliot-type-reading-measure); }
 .er-chat__pages { display: grid; gap: var(--eliot-space-tight); margin: 0; padding: 0; list-style: none; min-width: 0; }

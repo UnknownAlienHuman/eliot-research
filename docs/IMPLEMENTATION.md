@@ -225,6 +225,12 @@ Only its supported, code-checked output is committed to the claim reader. Result
 per task/dataset/metric/condition instead of a compound table row. Citation annotations are resolved separately from
 factual numbers; an unknown annotation rejects its item. Paid steps have no retry; only deterministic storage steps
 may use bounded native Workflow retries, with immutable R2 writes and natural `(revision, ordinal)` claim keys.
+Both existing calls request central mechanism and material qualitative claim statements when the paper states them.
+Guide text and a fact merely occurring inside a quoted block do not substitute for an owner-visible claim. When the
+unchanged 32-card bound binds, supported central explanatory/qualitative coverage takes priority over duplicate or
+secondary result rows; no per-kind quotas or paper-specific rules are introduced. Call two checks guide leads against
+the supplied original excerpts and can select a smaller supported subset to leave room for missing atomic facts.
+These request changes add no call, evidence binding, stored field or fallback claim and do not prove service quality.
 Store raw result/report in R2, compact verified claims in D1, and usage,
 cost and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
@@ -410,7 +416,9 @@ call; an in-flight call may finish.
 
 Routes are `workers-ai:<model>` or `gateway:<provider>/<native ID>`, preserving native slashes. Catalogue choices come
 from live Cloudflare, Command Code and OpenRouter APIs; the examples below are metadata snapshots, not a capability
-limit. `availableModels` merges discovery with the explicit native `DEFAULT_MODEL` fallback; Flash remains the default.
+limit. Discovery and admission prefer the live native row, including its unknown metadata and published capabilities;
+the explicit native `DEFAULT_MODEL` fallback is used only when that row is absent or discovery is unavailable.
+Flash remains the default.
 `CatalogModel` permits null context/prices/output cap. Selection remains valid, but paid dispatch requires a resolved
 `ModelSpec` with known usable context and input/output prices; unknown is not zero. An unknown cached-input rate remains `null`; only the cost estimate uses the full
 known input rate, without asserting a published provider cache price or guaranteeing the actual bill. Freeze the admitted metadata as specified in §6/§8, without a new registry/cache/backend.
@@ -420,6 +428,11 @@ limited to the selected model's official provider HTML pricing. Require an exact
 currency/unit match; ambiguity, mismatch or missing facts stay null
 with a warning, never a donor/cross-provider price fallback. Do not scrape every model's HTML on catalogue load.
 One provider's failure must not suppress other catalogues or the native default; metadata reads run no model job.
+Settings, the chat composer and explicit source Understanding use the same legacy Material `ModelPicker`, including
+provider filtering, search and paging over that catalogue. Filtering or refreshing metadata keeps the chosen route;
+missing prices remain visible in model details and do not remove a model from selection. Only explicit Send or
+Understand reaches job admission. The composer sends its chosen route verbatim, or omits it to use the project default.
+`pnpm eval k2 --models-browser` checks catalogue/selection behavior without inference; it does not close K2 answer-quality gates.
 The generic official-pricing parser was corrected; the actual selected Beam GET verified zero rates on 2026-10-27,
 without establishing rates for other unconfirmed models.
 
