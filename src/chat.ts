@@ -154,7 +154,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       turn.model = input.model ?? settings.model;
       const model = await requireAvailableModel(this.env, turn.model);
       selectedModel = model;
-      const commandCode = model.routing?.provider.baseUrl === "https://api.commandcode.ai/provider/v1";
+      const commandCode = model.routing?.provider.gatewaySlug === "custom-command-code";
       await this.env.DB.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at)
         VALUES(?,?,?,?,?,'none','started',?)`).bind(this.name, turn.turnId, turn.model, turn.scopeMode, "[]", started).run();
       rowInserted = true;

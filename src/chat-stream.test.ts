@@ -327,6 +327,45 @@ describe("chat-stream K2 wire regression", () => {
     } finally { h.db.close(); }
   });
 
+  it("command-code keeps no-history when catalogue base URL changes but frozen gateway slug stays", async () => {
+    const models = await import("./models");
+    const mocked = vi.mocked(models.requireAvailableModel);
+    const prevImpl = mocked.getMockImplementation();
+    if (!prevImpl) throw new Error("missing model mock");
+    mocked.mockImplementation(async (env, route) => {
+      const spec = await prevImpl(env, route);
+      if (!spec.routing) return spec;
+      return { ...spec, routing: { ...spec.routing, provider: { ...spec.routing.provider, baseUrl: "https://edited.example.invalid/custom" } } };
+    });
+    try {
+      const h = makeHarness();
+      try {
+        await h.agent.onStart();
+        nextSSE = sse([chunk({ content: "First [S1:1]" }, null), usageOnly({ prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+        const t1 = "cccccccc-cccc-4ccc-8ccc-000000000031";
+        const r1 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t1, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+        expect(r1.state).toBe("completed");
+        sentBodies.length = 0;
+        const callsBefore = fetchCalls;
+        nextSSE = sse([chunk({ content: "Second [S1:1]" }, null), usageOnly({ prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+        const t2 = "cccccccc-cccc-4ccc-8ccc-000000000032";
+        const r2 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t2, question: "Q2", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+        expect(r2.state).toBe("completed");
+        expect(fetchCalls).toBe(callsBefore + 1);
+        const body = sentBodies[0];
+        if (!body) throw new Error("expected an outgoing CC body");
+        const assistants = body.messages?.filter((m) => m.role === "assistant") ?? [];
+        expect(assistants).toHaveLength(0);
+        expect(JSON.stringify(body)).not.toContain("reasoning_content");
+        expect(JSON.stringify(body)).not.toContain("reasoning_details");
+        expect(JSON.stringify(body)).not.toContain("thought_signature");
+        expect(body.messages?.some((m) => m.role === "user" && m.content === "Q2")).toBe(true);
+      } finally { h.db.close(); }
+    } finally {
+      if (prevImpl) mocked.mockImplementation(prevImpl);
+    }
+  });
+
   it("explicit Stop settles cancelled with the owner-stop message and keeps the held reservation", async () => {
     const h = makeHarness();
     try {

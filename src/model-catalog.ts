@@ -81,8 +81,9 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
   const top = record(row.top_provider), architecture = record(row.architecture);
   const maxOutputTokens = positiveInteger(row.max_output_tokens)
     ?? positiveInteger(top?.max_completion_tokens);
-  // OpenAI-compatible /models has no standard pricing units; only the official OpenRouter shape is USD per token.
-  const officialUsd = typeof provider.baseUrl === "string" && provider.baseUrl.trim().replace(/\/+$/, "") === OFFICIAL_OPENROUTER_BASE_URL;
+  // OpenAI-compatible /models has no standard pricing units; only the native OpenRouter stock route publishes USD per token.
+  // Dispatch follows gatewaySlug/gatewayPath, not baseUrl, so require all three before quoting USD prices.
+  const officialUsd = typeof provider.baseUrl === "string" && provider.baseUrl.trim().replace(/\/+$/, "") === OFFICIAL_OPENROUTER_BASE_URL && provider.gatewaySlug === "openrouter" && provider.gatewayPath === "v1";
   const inputMicrousdPerMillion = officialUsd ? priceBound(pricing, "prompt") : null;
   const cachedMicrousdPerMillion = officialUsd ? priceBound(pricing, "input_cache_read") : null;
   const outputMicrousdPerMillion = officialUsd ? priceBound(pricing, "completion") : null;

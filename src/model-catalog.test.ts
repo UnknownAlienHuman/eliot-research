@@ -85,6 +85,32 @@ describe("provider model catalogue discovery", () => {
     expect(await discoverGatewayModels(defaultProviders())).toEqual([expect.objectContaining({ inputMicrousdPerMillion: 2000000, cachedMicrousdPerMillion: 100000, outputMicrousdPerMillion: 7500000, enabled: true, maxOutputTokens: null })]);
   });
 
+  it("quotes USD prices only for the native OpenRouter stock route", async () => {
+    const priced = [{ id: "vendor/priced-model", context_length: 64000, architecture: textChat, pricing: { prompt: "0.000001", completion: "0.000002" } }];
+    const officialBase = "https://openrouter.ai/api/v1";
+    const route = "gateway:openrouter/vendor/priced-model";
+    const mismatchedSlug: ModelProvider = { id: "openrouter", type: "openai-compatible", gatewaySlug: "custom-other", gatewayPath: "v1", baseUrl: officialBase, enabled: true };
+    const mismatchedPath: ModelProvider = { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v2", baseUrl: officialBase, enabled: true };
+    const native: ModelProvider = { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1", baseUrl: officialBase, enabled: true };
+    catalogues([], priced);
+    expect(await discoverGatewayModels([mismatchedSlug])).toEqual([expect.objectContaining({ route, enabled: true, inputMicrousdPerMillion: null, cachedMicrousdPerMillion: null, outputMicrousdPerMillion: null })]);
+    catalogues([], priced);
+    expect(await discoverGatewayModels([mismatchedPath])).toEqual([expect.objectContaining({ route, enabled: true, inputMicrousdPerMillion: null, cachedMicrousdPerMillion: null, outputMicrousdPerMillion: null })]);
+    catalogues([], priced);
+    expect(await discoverGatewayModels([native])).toEqual([expect.objectContaining({ route, enabled: true, inputMicrousdPerMillion: 1000000, cachedMicrousdPerMillion: null, outputMicrousdPerMillion: 2000000 })]);
+    const base = defaultProviders();
+    const bucket = fakeBucket();
+    const envMismatched = fixtureEnv(bucket.binding, { providers: base.map((p) => (p.id === "openrouter" ? mismatchedSlug : p)) });
+    catalogues([], priced);
+    await refreshModelCatalog(envMismatched);
+    await expect(requireAvailableModel(envMismatched, route)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    const bucketNative = fakeBucket();
+    const envNative = fixtureEnv(bucketNative.binding, { providers: base.map((p) => (p.id === "openrouter" ? native : p)) });
+    catalogues([], priced);
+    await refreshModelCatalog(envNative);
+    await expect(requireAvailableModel(envNative, route)).resolves.toMatchObject({ route });
+  });
+
   it("keeps malformed admission metadata selectable but unknown, and paid resolution rejects it", async () => {
     const base = { context_length: 100000, architecture: textChat, pricing: { prompt: "0", completion: "0" } };
     const fetcher = catalogues([], [
