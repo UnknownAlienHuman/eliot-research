@@ -1,5 +1,6 @@
 import type { Block } from "./blocks.js";
 import { numbersSupported } from "./numbers.ts";
+import type { AnswerWarning } from "./shared/api.js";
 
 /**
  * K2 label/citation resolver (IMPLEMENTATION 5, 8; root contract 2026-10-26).
@@ -476,6 +477,9 @@ function sentenceRanges(block: StatementBlock, analyzed: string): TextRange[] {
 interface FactualStatement {
   text: string;
   labels: string[];
+  /** UTF-16 answer offsets of the owning sentence/table unit. */
+  start: number;
+  end: number;
 }
 
 /** The same factual units and exact local labels back both completion gates. */
@@ -503,7 +507,7 @@ function factualStatements(text: string, citations: Citation[]): FactualStatemen
       const labels = [...new Set(resolved
         .filter((range) => range.start >= statement.start && range.end <= statement.end)
         .map((range) => range.label))];
-      units.push({ text: content, labels });
+      units.push({ text: content, labels, start: statement.start, end: statement.end });
     }
   }
   return units;
@@ -538,4 +542,34 @@ export function unsupportedNumericStatements(
     const selected = unit.labels.map((label) => quotes.get(label) ?? "").join("\n");
     return !numbersSupported(unit.text, selected);
   }).length;
+}
+
+/**
+ * Advisory UTF-16 answer ranges for the existing TurnView warnings field.
+ * Reuses the same factual units, scanners and numeric rule as the K2 gates:
+ * uncited units yield missing-citation, cited numeric units without same-unit
+ * quote support yield unsupported-number. Fenced code yields no units, so no
+ * fence range is ever returned. No answer/quote text is stored, no turn state
+ * changes, and no new word list or exemption is introduced.
+ */
+export function answerWarnings(
+  text: string,
+  citations: Citation[],
+  quotes: ReadonlyMap<string, string>,
+): AnswerWarning[] {
+  const warnings: AnswerWarning[] = [];
+  for (const unit of factualStatements(text, citations)) {
+    if (!Number.isSafeInteger(unit.start) || !Number.isSafeInteger(unit.end)) continue;
+    if (unit.start < 0 || unit.end > text.length || unit.end <= unit.start) continue;
+    if (unit.labels.length === 0) {
+      warnings.push({ start: unit.start, end: unit.end, kind: "missing-citation" });
+      continue;
+    }
+    if (numbersSupported(unit.text, "")) continue;
+    const selected = unit.labels.map((label) => quotes.get(label) ?? "").join("\n");
+    if (!numbersSupported(unit.text, selected)) {
+      warnings.push({ start: unit.start, end: unit.end, kind: "unsupported-number" });
+    }
+  }
+  return warnings;
 }

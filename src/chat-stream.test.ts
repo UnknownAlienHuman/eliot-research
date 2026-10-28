@@ -217,18 +217,30 @@ describe("chat-stream K2 wire regression", () => {
     } finally { h.db.close(); }
   });
 
-  it.each([{ quote: "by A.B.C", state: "partial" }, { quote: "score81.", state: "completed" }])(
-    "checks numeric facts against the exact cited bytes: $state",
-    async ({ quote, state }) => {
+  it.each([{ quote: "by A.B.C", warning: "unsupported-number" }, { quote: "score81.", warning: null }])(
+    "keeps numeric coverage advisory without changing completed state: $quote",
+    async ({ quote, warning }: { quote: string; warning: string | null }) => {
       const h = makeHarness(quote);
       try {
         await h.agent.onStart();
         nextSSE = sse([chunk({ content: "The result is 81 [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
         const turn = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: "bbbbbbbb-bbbb-4bbb-8bbb-000000000001", question: "Q", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
-        expect(turn.state).toBe(state);
-        if (state === "partial") expect(turn.error).toContain("numeric statements");
+        expect(turn.state).toBe("completed");
+        expect(turn.error).toBeNull();
         expect(turn.answer).toBe("The result is 81 [S1:1].");
         expect(turn.citations).toHaveLength(1);
+        expect(turn.invalidLabels).toBe(0);
+        if (warning) {
+          expect(turn.warnings?.map((item) => item.kind)).toContain(warning);
+          expect(turn.warnings?.length).toBeGreaterThan(0);
+          for (const item of turn.warnings ?? []) {
+            expect(item.start).toBeGreaterThanOrEqual(0);
+            expect(item.end).toBeLessThanOrEqual(turn.answer.length);
+            expect(item.end).toBeGreaterThan(item.start);
+          }
+        } else {
+          expect(turn.warnings ?? []).toEqual([]);
+        }
         expect(fetchCalls).toBe(1);
       } finally { h.db.close(); }
     },
@@ -372,18 +384,31 @@ describe("chat-stream K2 wire regression", () => {
     } finally { h.db.close(); }
   });
 
-  it("partially cited answer settles partial with invalidLabels 0", async () => {
+  it("uncited sentence settles completed with a missing-citation warning", async () => {
     const h = makeHarness();
     try {
       await h.agent.onStart();
       nextSSE = sse([chunk({ content: "Supported fact [S1:1]. Uncited factual sentence." }, null), usageOnly({ prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 })]);
       const t1 = "55555555-5555-4555-8555-000000000001";
       const r1 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t1, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
-      expect(r1.state).toBe("partial");
-      expect(r1.error ?? "").toContain("adjacent verified source reference");
+      expect(r1.state).toBe("completed");
+      expect(r1.error).toBeNull();
       expect(r1.citations.length).toBe(1);
       expect(r1.invalidLabels).toBe(0);
+      expect(r1.warnings?.map((item) => item.kind)).toContain("missing-citation");
+      expect(r1.warnings?.length).toBeGreaterThan(0);
+      for (const item of r1.warnings ?? []) {
+        expect(item.start).toBeGreaterThanOrEqual(0);
+        expect(item.end).toBeLessThanOrEqual(r1.answer.length);
+        expect(item.end).toBeGreaterThan(item.start);
+      }
+      expect(r1.answer.slice(r1.warnings?.[0]?.start ?? 0, r1.warnings?.[0]?.end ?? 0).length).toBeGreaterThan(0);
       expect(fetchCalls).toBe(1);
+      const saved = await h.agent.getStoredTurn(projectId, t1);
+      expect(saved.answer).toContain("Supported fact [R");
+      expect(saved.answer).toContain("Note:");
+      expect(saved.answer).toContain("lack a verified adjacent citation");
+      expect(saved.citations.length).toBe(1);
     } finally { h.db.close(); }
   });
 
@@ -513,6 +538,52 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.state).toBe("failed");
       expect(turn.error ?? "").toContain("time bound");
       expect(turn.error ?? "").not.toContain("Stopped.");
+      expect(turn.estimatedCostMicrousd).toBe(123);
+      expect(turn.inputTokens).toBeNull();
+    } finally { h.db.close(); vi.useRealTimers(); }
+  });
+  it("truncated answer with an uncited sentence stays partial and keeps warnings", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "Supported fact [S1:1]. Uncited factual sentence." }, "length", { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 })]);
+      const t1 = "66666666-6666-4666-8666-000000000011";
+      const r1 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t1, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+      expect(r1.state).toBe("partial");
+      expect(r1.error ?? "").toContain("stopped before a normal completion");
+      expect(r1.citations.length).toBe(1);
+      expect(r1.invalidLabels).toBe(0);
+      expect(r1.warnings?.map((item) => item.kind)).toContain("missing-citation");
+      expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); }
+  });
+  it("owner Stop just before the deadline keeps cancelled when the timer fires late", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      const callsBefore = fetchCalls;
+      (h.env.AI as unknown as { fetch: (url: unknown, init?: { signal?: AbortSignal }) => Promise<Response> }).fetch = (_url: unknown, init?: { signal?: AbortSignal }) => {
+        fetchCalls += 1;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            const err = new Error("This operation was aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        });
+      };
+      const turnId = "ffffffff-ffff-4fff-8fff-000000000001";
+      const pending = h.agent.submitTurn({ projectId, chatId, turnId, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true) as Promise<TurnView>;
+      for (let i = 0; i < 50 && fetchCalls === callsBefore; i += 1) await vi.advanceTimersByTimeAsync(10);
+      expect(fetchCalls).toBeGreaterThan(callsBefore);
+      await vi.advanceTimersByTimeAsync(89_000);
+      await h.agent.stopTurn(projectId, turnId);
+      await vi.advanceTimersByTimeAsync(5_000);
+      const turn = requireTurn(await pending);
+      expect(turn.state).toBe("cancelled");
+      expect(turn.error).toBe("Stopped. A new Send starts a new turn.");
+      expect(turn.error ?? "").not.toContain("time bound");
       expect(turn.estimatedCostMicrousd).toBe(123);
       expect(turn.inputTokens).toBeNull();
     } finally { h.db.close(); vi.useRealTimers(); }

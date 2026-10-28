@@ -3,7 +3,7 @@ import type { Connection, ConnectionContext } from "agents";
 import { streamText } from "ai";
 import type { LanguageModelUsage } from "ai";
 import { buildContext } from "./context";
-import { numericCitationLabels, persistentResolvedAnswer, resolveCitations, uncitedStatements, unsupportedNumericStatements } from "./citations";
+import { answerWarnings, numericCitationLabels, persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn, estimateCost } from "./cost";
 import { DEFAULT_MODEL, modelOutputLimit, requireAvailableModel } from "./models";
@@ -87,7 +87,11 @@ export class ChatAgent extends Agent<Env, ChatState> {
     const turn = this.readTurn(turnId);
     if (!turn || !["completed", "partial"].includes(turn.state) || !turn.answer.trim()) throw new LibraryError("conflict", "This answer is not ready to save.", 409);
     const saved = persistentResolvedAnswer(turn.answer, turn.citations);
-    return { answer: (turn.state === "partial" ? "Partial answer — the turn ended before completion.\n\n" : "") + saved.text,
+    const warnings = turn.warnings ?? [];
+    const warningNote = warnings.length > 0
+      ? `Note: ${warnings.length} statement(s) lack a verified adjacent citation or numeric support.\n\n`
+      : "";
+    return { answer: (turn.state === "partial" ? "Partial answer — the turn ended before completion.\n\n" : "") + warningNote + saved.text,
       citations: saved.citations, revisionIds: turn.revisionIds, state: turn.state };
   }
   private startTurn(input: RunTurnInput): Promise<TurnView> {
@@ -153,7 +157,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
     this.controller = controller;
     let timedOut = false;
     if (this.state.stopRequested) controller.abort();
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 90_000);
+    // First abort wins: an owner Stop that already aborted must not be overwritten by the deadline.
+    const timer = setTimeout(() => { if (controller.signal.aborted) return; timedOut = true; controller.abort(); }, 90_000);
     let dispatched = false, rowInserted = false, wireCaptured = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
     let labelSources: LabelSource[] = [], sourceMode = "none", streamError = "";
     try {
@@ -273,29 +278,38 @@ export class ChatAgent extends Agent<Env, ChatState> {
     if (turn.state === "completed" && selectedModel?.route.startsWith("gateway:command-code/") && !wireCaptured) {
       turn.state = "partial"; turn.error = "The original assistant protocol state could not be preserved. Start a new chat; no retry was started.";
     }
-    if (turn.state === "completed" && ((sourceMode !== "none" && !turn.citations.length) || turn.invalidLabels)) {
+    if (turn.state === "completed" && turn.invalidLabels > 0) {
       turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
     }
-    if (turn.state === "completed" && sourceMode !== "none" && uncitedStatements(turn.answer, turn.citations) > 0) {
-      turn.state = "partial"; turn.error = "Some factual statements have no adjacent verified source reference. This answer is incomplete.";
-    }
-    const numericLabels = turn.state === "completed" && sourceMode !== "none"
+    // Step1 advisory warnings: missing-citation and unsupported-number never change state.
+    // Real truncation, stream, provider and protocol failures above keep partial/failed.
+    // Reuse the existing numeric-label and R2 quote path; no extra source rereads.
+    const grounded = sourceMode !== "none" && turn.answer.trim().length > 0;
+    const numericLabels = grounded
       ? new Set(numericCitationLabels(turn.answer, turn.citations)) : new Set<string>();
+    const passages = new Map<string, string>();
     if (numericLabels.size > 0) {
-      try {
-        const passages = new Map<string, string>();
-        for (const citation of turn.citations) {
-          if (!numericLabels.has(citation.label)) continue;
+      for (const citation of turn.citations) {
+        if (!numericLabels.has(citation.label)) continue;
+        try {
           const response = await readText(this.env, { type: "owner", id: "owner", authentication: "access" },
             citation.revisionId, { start: citation.start, end: citation.end });
           passages.set(citation.label, new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await response.arrayBuffer()));
+        } catch {
+          continue;
         }
-        if (unsupportedNumericStatements(turn.answer, turn.citations, passages) > 0) {
-          turn.state = "partial"; turn.error = "Some numeric statements are not supported by their cited source passages. This answer is incomplete.";
-        }
-      } catch {
-        turn.state = "partial"; turn.error = "The cited source passages could not be checked. This answer is incomplete.";
       }
+    }
+    if (grounded) {
+      try {
+        const warnings = answerWarnings(turn.answer, turn.citations, passages);
+        if (warnings.length > 0) turn.warnings = warnings;
+        else delete turn.warnings;
+      } catch {
+        delete turn.warnings;
+      }
+    } else {
+      delete turn.warnings;
     }
     if (usage) {
       turn.providerUsage = reportedProviderUsage(usage, turn.model);

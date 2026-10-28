@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { Markdown, type MarkdownReference } from './Markdown';
+import type { AnswerWarning } from "../shared/api";
 
 const compact = '[S1:14]';
 const persistent = '[R11111111-1111-4111-8111-111111111111:14]';
@@ -10,6 +11,9 @@ const href = '/p/project/source/source?revisionId=11111111-1111-4111-8111-111111
 const references = [{ text: compact, href }, { text: persistent, href }];
 function render(text: string, refs: readonly MarkdownReference[] = references) {
   return renderToStaticMarkup(createElement(MemoryRouter, null, createElement(Markdown, { text, references: refs })));
+}
+function renderWithWarnings(text: string, warnings: readonly AnswerWarning[], refs: readonly MarkdownReference[] = references) {
+  return renderToStaticMarkup(createElement(MemoryRouter, null, createElement(Markdown, { text: text, references: refs, warnings: warnings })));
 }
 
 describe('Markdown citation rendering', () => {
@@ -51,5 +55,32 @@ describe('Markdown citation rendering', () => {
     expect(html).toContain(`<a href="https://example.com/read">Existing <strong>${compact}</strong></a>`);
     expect(html).not.toContain('javascript:');
     expect(html).not.toContain('<a href="https://example.com/read">Existing <a');
+  });
+});
+
+describe('Markdown answer warnings', () => {
+  it('flags the first paragraph only, keeps the citation link and leaves code unflagged', () => {
+    const bt = String.fromCharCode(96);
+    const text = 'First needs citation 42.\n\nSecond calm ' + compact + '.\n\n' + bt + compact + bt;
+    const firstEnd = text.indexOf('\n\n');
+    const warnings: AnswerWarning[] = [{ start: 0, end: firstEnd, kind: 'missing-citation' }];
+    const html = renderWithWarnings(text, warnings);
+    expect((html.match(/er-answer-warn/g) ?? []).length).toBe(1);
+    expect(html).toContain('<p class="er-answer-warn" title="Advisory: this passage may lack a citation">First needs citation 42.</p>');
+    expect(html).toContain('<p>Second calm ');
+    expect(html).toContain('class="er-citation"');
+    expect(html).not.toContain('<code class="er-answer-warn"');
+    expect(html).not.toContain('<pre class="er-answer-warn"');
+  });
+  it('ignores malformed and out-of-range spans without crashing', () => {
+    const text = 'Plain ' + compact + '.';
+    const warnings = [
+      { start: -5, end: 2, kind: 'missing-citation' },
+      { start: 3, end: 3, kind: 'missing-citation' },
+      { start: 9999, end: 10001, kind: 'unsupported-number' },
+    ] as unknown as AnswerWarning[];
+    const html = renderWithWarnings(text, warnings);
+    expect(html).not.toContain('er-answer-warn');
+    expect(html).toContain('class="er-citation"');
   });
 });

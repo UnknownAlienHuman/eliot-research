@@ -283,7 +283,7 @@ export function ChatView() {
       <ol className='er-chat__turns'>
         {turns.map((t) => (<li key={t.turnId} className='er-chat__turn' data-state={t.state}>
           <p className='er-chat__question'>{t.question}</p>
-          <div className='er-chat__answer'>{t.answer === '' ? (t.state === 'started' ? <p className='er-chat__hint' role='status'>Streaming…</p> : <p className='er-chat__hint'>No answer text recorded.</p>) : <Markdown text={t.answer} references={collectRefs(pid, t.citations)} />}</div>
+          <div className='er-chat__answer'>{t.answer === '' ? (t.state === 'started' ? <p className='er-chat__hint' role='status'>Streaming…</p> : <p className='er-chat__hint'>No answer text recorded.</p>) : <Markdown text={t.answer} references={collectRefs(pid, t.citations)} warnings={t.warnings ?? []} />}</div>
           <p className='er-chat__meta'><span>{stateLabel(t.state)}</span><span>{scopeLabel(t.scopeMode)}</span></p>
           <details className='er-chat__turn-details'>
             <summary>Details</summary>

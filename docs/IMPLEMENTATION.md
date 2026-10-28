@@ -335,6 +335,10 @@ The 90-second deadline settles as failed without text or partial with text; only
 cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
 Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the existing
 reservation and is never treated as zero cost.
+Missing-citation and unsupported-number diagnostics are advisory UTF-16 answer ranges stored in the existing
+ChatAgent turn JSON and exposed by snapshots/history. They mark affected rendered prose without rewriting the answer
+or changing a normally finished stream to partial. Truncation, stream/protocol failure and invalid resolved labels
+remain real failures. Saved output carries a concise review note when warnings exist. D1 schema and usage are unchanged.
 
 Chat always streams ordinary Markdown with inline compact `[Sx:N]` labels. There is no JSON sentence/label enum or
 parse-repair call. One generic `SYSTEM_PROMPT` applies across questions and corpora: answer in the user's language,

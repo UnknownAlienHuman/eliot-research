@@ -38,14 +38,18 @@ const notebookAnswersPath = (process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS ?? '').trim
 const order = ['C1', 'C2', 'C3', 'C4', 'O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8'];
 await mkdir(outDir, { recursive: true });
 async function apiJson(path, init) {
-  const r = await fetchEval(origin + path, { ...init, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } }, origin, configuredOrigin);
+  // Finite READ default (30s observer bound); explicit caller signal (e.g. 90s POST) is preserved verbatim.
+  const readSignal = init && init.signal ? init.signal : AbortSignal.timeout(30000);
+  const r = await fetchEval(origin + path, { ...init, signal: readSignal, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } }, origin, configuredOrigin);
   const t = await r.text();
   let b = null;
   try { b = t ? JSON.parse(t) : null; } catch { b = { raw: t.slice(0, 300) }; }
   return { status: r.status, body: b };
 }
-async function apiBytes(path) {
-  const r = await fetchEval(origin + path, { headers: { ...H } }, origin, configuredOrigin);
+async function apiBytes(path, init) {
+  // Same finite READ default for range/text GETs; explicit caller signal preserved verbatim.
+  const readSignal = init && init.signal ? init.signal : AbortSignal.timeout(30000);
+  const r = await fetchEval(origin + path, { ...init, signal: readSignal, headers: { ...H, ...((init && init.headers) || {}) } }, origin, configuredOrigin);
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
 }
 const pct = (a, p) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
@@ -634,8 +638,8 @@ if (!chatId) {
 }
 const chatPath = '/api/projects/' + encodeURIComponent(proj.id) + '/chats/' + encodeURIComponent(chatId);
 let configuredBudgetMicrousd = null;
-async function getChat(what) {
-  const h = await apiJson(chatPath);
+async function getChat(what, signal) {
+  const h = await apiJson(chatPath, signal ? { signal } : undefined);
   assert.equal(h.status, 200, 'GET chat must be 200 and storage-only (' + what + ').');
   assert(h.body && typeof h.body.chat === 'object', 'GET chat must return {chat, turns, monthlyUsedMicrousd, monthlyBudgetMicrousd}.');
   assert(Array.isArray(h.body.turns), 'GET chat must return turns array.');
@@ -865,14 +869,15 @@ function isTerminalReconciledTurn(stored) {
 async function observeDispatchedTurn(requestTurnId, qid) {
   // READ-ONLY reconciliation of an already-dispatched turn id after a POST
   // wait timed out. Bounded storage-only GET observation (at most two chat
-  // snapshots): never another POST, never the same question again. Returns
-  // the stored turn only when the submitted id is visible AND terminal
-  // (completed/partial/failed/cancelled); a visible pending turn
-  // (started/streaming/running/unknown) stays tracked as DISPATCH_UNKNOWN
-  // with reservation UNKNOWN, never adopted and never zeroed.
+  // snapshots, each GET with a finite AbortSignal deadline): never another
+  // POST, never the same question again. Returns the stored turn only when
+  // the submitted id is visible AND terminal (completed/partial/failed/
+  // cancelled); a visible pending turn (started/streaming/running/unknown)
+  // stays tracked as DISPATCH_UNKNOWN with reservation UNKNOWN, never
+  // adopted and never zeroed. Only the matching submitted turnId is adopted.
   for (let attempt = 1; attempt <= 2; attempt++) {
     let snap = null;
-    try { snap = await getChat('reconcile-' + qid + '-attempt-' + attempt); }
+    try { snap = await getChat('reconcile-' + qid + '-attempt-' + attempt, AbortSignal.timeout(30000)); }
     catch (readError) { snap = null; }
     const found = snap && Array.isArray(snap.turns)
       ? snap.turns.find((t) => t && t.turnId === requestTurnId) : null;
@@ -949,16 +954,23 @@ for (const qid of order) {
     if (requestError) {
       // The POST wait timed out, but the turn may already be stored server-side
       // under requestTurnId. Reconcile that exact id with bounded storage-only
-      // GET observation: never another POST, never the same question again.
-      // Later questions stay stopped either way.
+      // GET observation (each GET has a finite AbortSignal deadline): never
+      // another POST, never the same question again. A matching terminal turn
+      // (completed/partial/failed/cancelled, including its own 90s deadline or
+      // cancel) is recorded and the explicit 12-question batch continues with
+      // the next distinct question. Only an unknown outcome or provider/auth/
+      // budget unavailability stops the rest. Partial/quality warnings never
+      // stop the batch.
       let reconciled = null;
       try { reconciled = await observeDispatchedTurn(requestTurnId, qid); }
       catch (observeError) { reconciled = null; }
       if (reconciled) {
         turn = reconciled;
         await adoptReconciledTurn(qid, turn, wall, 'reconciled-timeout-read');
-        dispatchStopped = true;
-        stopReason = 'Turn dispatch wait timed out for ' + qid + '; the already-dispatched turn was reconciled by storage-only read. No retry was sent; no further questions were dispatched: ' + requestError;
+        if (dispatchUnavailable(200, null, turn)) {
+          dispatchStopped = true;
+          stopReason = 'Reconciled turn ' + qid + ' reports provider/auth/budget unavailability; no further questions were dispatched: ' + requestError;
+        }
         continue;
       }
       const reason = 'Turn dispatch outcome unknown after bounded read reconciliation; no retry: ' + requestError;

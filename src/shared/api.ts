@@ -68,6 +68,13 @@ export interface ProviderUsage {
   costUsd: number | null;
 }
 
+/** Advisory UTF-16 character ranges in the answer, never source byte ranges. */
+export interface AnswerWarning {
+  start: number;
+  end: number;
+  kind: "missing-citation" | "unsupported-number";
+}
+
 export interface TurnView {
   turnId: string;
   question: string;
@@ -80,6 +87,7 @@ export interface TurnView {
   sourceIds: string[];
   citations: Citation[];
   invalidLabels: number;
+  warnings?: AnswerWarning[];
   inputTokens: number | null;
   cachedTokens: number | null;
   outputTokens: number | null;

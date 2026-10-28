@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { persistentAnswer, persistentResolvedAnswer, resolveCitations, uncitedStatements,
+import { answerWarnings, persistentAnswer, persistentResolvedAnswer, resolveCitations, uncitedStatements,
   numericCitationLabels, unsupportedNumericStatements } from "./citations.js";
 import type { Citation, LabelSource } from "./citations.js";
 import { isCitableBlock, scanBlocks, sliceUtf8, type Block } from "./blocks.js";
@@ -485,5 +485,64 @@ describe("inline code literals", () => {
     expect(saved.text).toBe("see [R" + REV_A + ":1] plus `[S1:2]`");
     expect(saved.citations).toHaveLength(1);
     expect(saved.invalidLabels).toBe(0);
+  });
+});
+
+describe("answerWarnings", () => {
+  function resolvedWarnings(raw: string, quotes: ReadonlyMap<string, string> = new Map()) {
+    const resolved = resolveCitations(raw, makeSources());
+    return { text: resolved.text, citations: resolved.citations, warnings: answerWarnings(resolved.text, resolved.citations, quotes) };
+  }
+
+  function expectValidRanges(text: string, warnings: Array<{ start: number; end: number; kind: string }>): void {
+    for (const warning of warnings) {
+      expect(Number.isSafeInteger(warning.start)).toBe(true);
+      expect(Number.isSafeInteger(warning.end)).toBe(true);
+      expect(warning.start).toBeGreaterThanOrEqual(0);
+      expect(warning.end).toBeLessThanOrEqual(text.length);
+      expect(warning.end).toBeGreaterThan(warning.start);
+      expect(["missing-citation", "unsupported-number"]).toContain(warning.kind);
+    }
+  }
+
+  it("marks only the uncited sentence and keeps existing counts", () => {
+    const { text, citations, warnings } = resolvedWarnings("A [S1:1]. B.");
+    expect(uncitedStatements(text, citations)).toBe(1);
+    expect(unsupportedNumericStatements(text, citations, new Map())).toBe(0);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.kind).toBe("missing-citation");
+    expectValidRanges(text, warnings);
+    expect(text.slice(warnings[0]?.start ?? 0, warnings[0]?.end ?? 0)).toContain("B.");
+  });
+
+  it("marks numeric units unsupported by same-unit quotes", () => {
+    const quotes = new Map([["[S1:1]", "8 heads"]]);
+    const { text, citations, warnings } = resolvedWarnings("Width is 512 [S1:1].", quotes);
+    expect(uncitedStatements(text, citations)).toBe(0);
+    expect(unsupportedNumericStatements(text, citations, quotes)).toBe(1);
+    expect(warnings).toEqual([{ start: 0, end: text.length, kind: "unsupported-number" }]);
+    const supported = resolvedWarnings("Width is 512 [S1:1].", new Map([["[S1:1]", "512 dimensions"]]));
+    expect(supported.warnings).toEqual([]);
+  });
+
+  it("keeps unicode and multi-markdown unit ranges in bounds", () => {
+    const raw = "Факт 🌍 [S1:1]. Ещё факт 8 голов.\n\n- Cited fact [S1:2]\n- Uncited fact";
+    const { text, citations, warnings } = resolvedWarnings(raw);
+    expect(uncitedStatements(text, citations)).toBe(2);
+    expect(warnings.filter((warning) => warning.kind === "missing-citation")).toHaveLength(2);
+    expect(warnings.filter((warning) => warning.kind === "unsupported-number")).toHaveLength(0);
+    expectValidRanges(text, warnings);
+    const slices = warnings.map((warning) => text.slice(warning.start, warning.end));
+    expect(slices.some((slice) => slice.includes("Ещё факт"))).toBe(true);
+    expect(slices.some((slice) => slice.includes("Uncited fact"))).toBe(true);
+  });
+
+  it("emits no ranges for fenced examples and stays silent on fully cited prose", () => {
+    const cited = resolvedWarnings("Cited prose [S1:1].");
+    expect(cited.warnings).toEqual([]);
+    const fence = String.fromCharCode(96).repeat(3);
+    const fenced = resolvedWarnings("Cited prose [S1:1].\n" + fence + "\nvalue = 512;\n" + fence + "\n");
+    expect(fenced.warnings).toEqual([]);
+    expectValidRanges(fenced.text, fenced.warnings);
   });
 });
