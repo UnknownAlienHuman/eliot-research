@@ -61,6 +61,10 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     : null;
   const gatewayOff = gatewayId === '' && modelChoices.some((m) => !m.enabled && m.route.startsWith('gateway:'));
   const otherDisabled = modelChoices.filter((m) => !m.enabled && !(gatewayOff && m.route.startsWith('gateway:')));
+  const answerMatches = modelChoices.filter((m) => m.route === answerModel);
+  const answerLabel = answerModel === '' ? 'not chosen' : answerMatches.length === 1 ? answerMatches.at(0)?.label ?? answerModel : answerModel;
+  const distillMatches = modelChoices.filter((m) => m.route === distillModel);
+  const distillLabel = distillModel === '' ? 'not chosen' : distillMatches.length === 1 ? distillMatches.at(0)?.label ?? distillModel : distillModel;
   function invalidateModels(): number {
     catalogRequest.current.sequence++;
     catalogRequest.current.controller?.abort();
@@ -207,11 +211,11 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
           <legend>Use model for</legend>
           <label className='er-models__check'>
             <input type='radio' name='er-models-target' value='answer' checked={editingTarget === 'answer'} onChange={() => setEditingTarget('answer')} />
-            <span className='er-models__checktext'>Answers{answerModel !== '' ? ' — ' + answerModel : ' — not chosen'}</span>
+            <span className='er-models__checktext'>Answers — {answerLabel}</span>
           </label>
           <label className='er-models__check'>
             <input type='radio' name='er-models-target' value='distill' checked={editingTarget === 'distill'} onChange={() => setEditingTarget('distill')} />
-            <span className='er-models__checktext'>Understanding{distillModel !== '' ? ' — ' + distillModel : ' — not chosen'}</span>
+            <span className='er-models__checktext'>Understanding — {distillLabel}</span>
           </label>
         </fieldset>
         <ModelPicker label={editingTarget === 'answer' ? 'Answer model' : 'Understanding model'} choices={modelChoices} value={editingTarget === 'answer' ? answerModel : distillModel} onChange={(route) => { if (editingTarget === 'answer') selectAnswerModel(route); else selectDistillModel(route); }}
