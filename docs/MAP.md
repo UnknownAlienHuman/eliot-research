@@ -104,7 +104,8 @@ open any readable source with outline and exact passage links.
    `needs_conversion`. Write canonical `text.md`, exact `blocks.json`, state/warnings and current readable revision.
 6. Implement outline, whole text, exact UTF-8 range and original download. Reading must not call a model.
 7. Move the project/source/import/reader UI features and replace legacy adapters with `src/shared/api.ts` +
-   `src/web/api.ts`.
+   `src/web/api.ts`. Show filenames, readable states and human revision labels; keep immutable IDs and exact ranges in
+   links/API data, and conversion telemetry in eval output.
 8. Add block/range/URL-guard tests and `pnpm eval k1`.
 
 **Hard acceptance — `pnpm eval k1`**
@@ -209,7 +210,8 @@ re-distilled automatically.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
    an extra overview model call.
 6. Add claim context mode. The same answer prompt and citation resolver are used.
-7. Add reader guide/claims UI, quote cases and `pnpm eval k3`.
+7. Add reader guide/claims UI, quote cases and `pnpm eval k3`. Reader metadata shows availability and verification
+   caveats; quote links retain exact identities without displaying UUIDs or call/token/time/reservation counters.
 
 **Hard acceptance — `pnpm eval k3`**
 

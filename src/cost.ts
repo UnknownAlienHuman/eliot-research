@@ -41,7 +41,7 @@ export async function admitDistill(env: Env, revisionId: string, model: ModelSpe
       AND ?+(${monthlyEstimate})<=(SELECT monthly_model_budget_microusd FROM settings WHERE id=1)`)
     .bind(model.route, Date.now(), bound, model.checkedOn, revisionId, bound, monthStart, monthStart).run();
   if (admitted.meta.changes) return true;
-  await env.DB.prepare(`UPDATE source_revision SET distill_state='paused',distill_error='Monthly model budget cannot admit two bounded calls. Resume explicitly after changing the budget or month.'
+  await env.DB.prepare(`UPDATE source_revision SET distill_state='paused',distill_error='The monthly model budget is insufficient. Check Settings before starting source understanding again.'
     WHERE id=? AND distill_state='queued' AND ?+(${monthlyEstimate})>(SELECT monthly_model_budget_microusd FROM settings WHERE id=1)`)
     .bind(revisionId, bound, monthStart, monthStart).run();
   return false;

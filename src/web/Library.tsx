@@ -12,6 +12,17 @@ const FILE_LIMIT = 25 * 1024 * 1024;
 const POLL_MS = 3000;
 const tone = (s: string) => (s === "readable" ? "ok" : s === "readable_with_warnings" ? "warn" : s === "pending" ? "busy" : s === "needs_conversion" ? "paused" : "bad");
 const stateLabel = (s: string) => (s === "readable" ? "Readable" : s === "readable_with_warnings" ? "Readable with warnings" : s === "pending" ? "Converting" : s === "needs_conversion" ? "Needs readable text" : s === "failed" ? "Conversion failed" : s || "Unknown");
+function formatRevisionDate(createdAt: number): string {
+  if (!Number.isFinite(createdAt)) return "";
+  const d = new Date(createdAt);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+function revisionLabel(r: Revision, currentId: string): string {
+  const pos = r.id === currentId ? "Current" : "Saved";
+  const date = formatRevisionDate(r.createdAt);
+  return "Revision " + r.revisionNo + " \u00b7 " + pos + " \u00b7 " + stateLabel(r.readableState) + (date ? " \u00b7 " + date : "");
+}
 async function apiErrorMessage(res: Response): Promise<string> {
   try {
     const b = (await res.json()) as { error?: { message?: string } };
@@ -243,10 +254,8 @@ export function Library() {
           <li className="er-lib__row" key={s.id}>
             <span className="er-lib__row-main"><MaterialSymbol name={s.readableState === "failed" ? "error" : "info"} /><span><Link className="er-lib__row-title" to={"/p/" + encodeURIComponent(projectId ?? "") + "/source/" + encodeURIComponent(s.id) + "?revisionId=" + encodeURIComponent(s.currentRevisionId ?? s.revisionId)}>{s.title}</Link><span className="er-lib__row-meta">{s.kind} · <span className="er-lib__badge" data-tone={tone(s.readableState)}>{stateLabel(s.readableState)}</span></span>{s.warningSummary ? <span className="er-lib__row-meta">{s.warningSummary}</span> : null}{s.error ? <span className="er-lib__error">{s.error}</span> : null}</span></span>
             <details className="er-lib__facts"><summary>Details</summary><div className="er-lib__facts-content">
-              <p>Source ID: <span className="er-lib__mono">{s.id}</span></p>
-              <p>Current revision: <span className="er-lib__mono">{s.currentRevisionId ?? s.revisionId}</span></p>
-              <p>Current snapshot: {s.blockCount === null ? "block count unavailable" : s.blockCount + " blocks"}{s.readableSize === null ? " · readable size unavailable" : " · " + s.readableSize + " bytes of readable text"}</p>
-              <p>{s.originalFilename ? s.originalFilename + " · " : ""}{s.originalSize} bytes original</p>
+              {s.originalFilename ? <p>Original file: {s.originalFilename}</p> : <p>Saved {s.kind} source.</p>}
+              <p><a href={"/api/revisions/" + encodeURIComponent(s.currentRevisionId ?? s.revisionId) + "/original"}>Download original</a> · Opens the current revision in the Reader.</p>
             </div></details>
           </li>))}
         </ul>)}
@@ -272,7 +281,7 @@ export function Reader() {
   const preRef = useRef<HTMLPreElement | null>(null);
   const rev = revisions.find((r) => r.id === (revisionId || source?.currentRevisionId || source?.revisionId || revisions[0]?.id || ""));
   const activeRevision = rev?.id ?? "";
-  const activeRevisionNumber = rev?.revisionNo;
+  const currentId = source?.currentRevisionId ?? source?.revisionId ?? revisions[0]?.id ?? "";
   const activeState = revisionId ? (rev?.readableState ?? "") : (rev?.readableState ?? source?.readableState ?? "");
   const textReady = loadedRev !== "" && loadedRev === activeRevision;
   const hasRange = textReady && Number.isSafeInteger(rangeStart) && Number.isSafeInteger(rangeEnd) && rangeStart >= 0 && rangeEnd > rangeStart;
@@ -349,13 +358,11 @@ export function Reader() {
       {revisionId && !rev ? <p className="er-lib__error" role="alert">This revision is not part of this source. Clear the revision to open the newest readable text.</p> : null}
       {rev?.warningSummary ? <p className="er-lib__row-meta">{rev.warningSummary}</p> : null}
       <details className="er-lib__facts"><summary>Details</summary><div className="er-lib__facts-content">
-        <p>Source ID: <span className="er-lib__mono">{source.id}</span></p>
-        <p>Revision {activeRevisionNumber || "—"}: <span className="er-lib__mono">{activeRevision || "—"}</span></p>
-        {rev ? <p>{rev.converter ?? "workers_ai_markdown"} · {rev.conversionCalls} calls{rev.conversionTokens != null ? " · " + rev.conversionTokens + " tokens" : ""}{rev.conversionMs != null ? " · " + rev.conversionMs + " ms" : ""}</p> : null}
-        <p>Current source snapshot: {source.blockCount === null ? "block count unavailable" : source.blockCount + " blocks"}{source.readableSize === null ? " · readable size unavailable" : " · " + source.readableSize + " bytes of readable text"}{" · " + source.originalSize + " bytes original"}</p>
         {source.originalFilename ? <p>Original file: {source.originalFilename}</p> : null}
-        {hasRange ? <p>Selected byte range [{rangeStart}, {rangeEnd}) in revision {activeRevision}.</p> : null}
-        {revisions.length > 1 ? <div><p><strong>Revisions</strong></p><ul className="er-lib__revision-list">{revisions.map((r) => <li key={r.id}><Link to={"?revisionId=" + encodeURIComponent(r.id)}>{"Revision " + r.revisionNo + " · " + r.readableState}</Link><span className="er-lib__mono">{r.id}</span></li>)}</ul></div> : null}
+        {activeRevision ? <p><a href={"/api/revisions/" + encodeURIComponent(activeRevision) + "/original"}>Download original</a></p> : null}
+        {rev ? <p>{revisionLabel(rev, currentId)}.</p> : null}
+        {hasRange && rev ? <p>Selected passage in {revisionLabel(rev, currentId)}.</p> : null}
+        {revisions.length > 1 ? <div><p><label className="er-field__label" htmlFor="er-lib-revision">Revision</label></p><select id="er-lib-revision" value={activeRevision} onChange={(e) => { const id = e.currentTarget.value; if (id) setParams({ revisionId: id }); }}>{revisions.map((r) => <option key={r.id} value={r.id}>{revisionLabel(r, currentId)}</option>)}</select></div> : null}
       </div></details>
       {hasRange ? (<div className="er-lib__excerpt" role="note"><p>Selected passage from {source.title}.</p>{excerpt ? <pre>{excerpt}</pre> : <p className="er-lib__error">This passage could not be opened in the loaded text. Clear it and choose another passage.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(activeRevision)}>Clear passage</Link></div>) : null}
       <div className="er-lib__reader">

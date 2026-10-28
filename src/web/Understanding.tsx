@@ -93,8 +93,8 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     if (sourceId === '' || revisionId === '' || busy || modelRoutePending) return;
     const chosen = models.find((m) => m.route === modelChoice);
     if (modelChoice !== '' && (!chosen || !chosen.enabled)) { setNote(chosen && chosen.unavailableReason ? 'Selected model is unavailable: ' + chosen.unavailableReason : 'Selected model is unavailable.'); return; }
-    if (modelChoice === '' && configuredBound === null) { setNote('Model pricing is unavailable.'); return; }
-    if (modelChoice !== '' && chosen !== undefined && chosen.enabled && twoCallBound(chosen) === null) { setNote('Model pricing is unavailable for the selected model.'); return; }
+    if (modelChoice === '' && configuredBound === null) { setNote('The default model is currently unavailable, so Understand cannot start yet.'); return; }
+    if (modelChoice !== '' && chosen !== undefined && chosen.enabled && twoCallBound(chosen) === null) { setNote('The selected model is currently unavailable, so Understand cannot start yet.'); return; }
     setBusy(true);
     setNote('');
     try {
@@ -131,6 +131,8 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     );
   }
   const canRecover = view.canRecover === true;
+  const understandingError = view.error === 'Monthly model budget cannot admit two bounded calls. Resume explicitly after changing the budget or month.'
+    ? 'The monthly model budget is insufficient. Check Settings before starting source understanding again.' : view.error;
   const active = view.state === 'queued' || view.state === 'running';
   const canStart = !active && (view.state === 'none' || view.state === 'paused');
   const references = view.citations.map((c, index) => ({
@@ -149,6 +151,8 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const configuredSpec = typeof configuredRoute === "string" ? models.find((m) => m.route === configuredRoute) : undefined;
   const configuredLabel = configuredSpec?.label ?? configuredRoute ?? null;
   const revisionModel = view.progress.model;
+  const revisionSpec = typeof revisionModel === 'string' ? models.find((m) => m.route === revisionModel) : undefined;
+  const revisionLabel = revisionSpec?.label ?? revisionModel;
   const configuredBound = configuredSpec !== undefined ? (configuredSpec.enabled ? twoCallBound(configuredSpec) : null) : view.progress.maximumCostMicrousd;
   const pickerEmptyLabel = 'Use configured default' + (configuredLabel !== null ? ' (' + configuredLabel + ')' : '');
   const understandDisabled = busy || modelRoutePending || (modelChoice === '' ? configuredBound === null : chosenDisabled || chosenBound === null);
@@ -157,30 +161,26 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     <section className='er-und' aria-label='Understanding'>
       <h2 className='er-und__title'>Understanding</h2>
       <p className='er-und__hint' role='status'>{stateLabel(view.state)}{active ? ' — refreshes on its own.' : ''}</p>
-      {view.error !== null && view.error !== '' ? <p className='er-und__error' role='alert'>{view.error}</p> : null}
+      {understandingError !== null && understandingError !== '' ? <p className='er-und__error' role='alert'>{understandingError}</p> : null}
       {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : null}
       {canStart ? <div className='er-und__actions'><button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void understand()}>Understand source</button></div> : null}
       {note !== '' ? <p className='er-und__hint' role='status'>{note}</p> : null}
       <details className='er-und__details'><summary>Details</summary><div className='er-und__details-content'>
         {failure !== '' ? <button className='er-button er-button--text' type='button' onClick={() => setReadVersion((v) => v + 1)}>Reload understanding</button> : null}
-        <p className='er-und__meta'>Revision ID: <span className='er-und__mono'>{view.revisionId}</span></p>
         {view.authors || view.published ? <p className='er-und__meta'>{[view.authors, view.published].filter(Boolean).join(' · ')}</p> : null}
         {configuredLabel !== null ? <p className='er-und__meta'>Configured model: {configuredLabel}</p> : null}
-        {revisionModel !== null ? <p className='er-und__meta'>Historical revision model: {revisionModel}</p> : null}
-        <p className='er-und__meta'>Attempts {view.progress.attempts}/{view.progress.limit}; each call is bounded to 3 minutes. Automatic retry is off.</p>
+        {revisionLabel !== null ? <p className='er-und__meta'>Historical revision model: {revisionLabel}</p> : null}
         {canStart ? <div className='er-und__model-details'>
           <ModelPicker label='Understanding model' choices={models} value={modelChoice} onChange={setModelChoice}
             emptyLabel={pickerEmptyLabel} loading={!catalogueLoaded} error={catalogError} compact
             onRoutePendingChange={setModelRoutePending} />
           <button className='er-button er-button--text' type='button' disabled={!catalogueLoaded} onClick={reloadSnapshot}>Reload snapshot</button>
           {catalogWarnings.length > 0 ? <p className='er-und__hint' role='status'>Model catalog: {catalogWarnings.join(' ')}</p> : null}
-          {modelChoice === '' ? (<p className='er-und__hint'>{configuredBound === null ? 'Price is unknown; Understand is unavailable until a bounded price is available.' : 'At most $' + (configuredBound / 1000000).toFixed(4) + ' reserved for two bounded calls; settles to reported usage.'}</p>) : chosen !== undefined && chosen.enabled && chosenBound !== null ? (<p className='er-und__hint'>At most {'$' + (chosenBound / 1000000).toFixed(4)} reserved for two bounded {chosen.label} calls at current prices; settles to reported usage.</p>) : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'Price is unknown; Understand is unavailable until a bound is available.'}</p>)}
+          {modelChoice === '' ? (configuredBound === null ? (<p className='er-und__hint'>The default model is currently unavailable, so Understand cannot start yet.</p>) : null) : chosen !== undefined && chosen.enabled && chosenBound !== null ? null : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'The selected model is currently unavailable, so Understand cannot start yet.'}</p>)}
         </div> : null}
         {view.state === 'failed' ? <p className='er-und__hint'>This attempt is terminal and will not be re-queued automatically.</p> : null}
-        {view.report !== null ? (<p className='er-und__meta'><span>{view.report.usage.calls} calls</span><span>{view.report.usage.inputTokens === null ? 'unknown' : view.report.usage.inputTokens} in / {view.report.usage.outputTokens === null ? 'unknown' : view.report.usage.outputTokens} out</span><span>{'$' + (view.report.usage.estimatedCostMicrousd / 1000000).toFixed(4)}</span><span>{view.report.usage.wallMs} ms</span></p>) : null}
-        {view.report && view.report.dropped.length > 0 ? <p className='er-und__hint'>{view.report.dropped.length} unsupported candidates were omitted; {view.report.clearedNumbers} numeric fields cleared. No automatic paid retry.</p> : null}
+        {view.report && view.report.dropped.length > 0 ? <p className='er-und__hint'>{view.report.dropped.length} unsupported candidates were omitted and {view.report.clearedNumbers} numeric fields were cleared during verification.</p> : null}
         {!active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial') ? <div className='er-und__storage-action'><button className='er-button er-button--tonal' type='button' disabled={busy} onClick={() => void saveAvailable()}>{view.state === 'failed' ? 'Save available output' : 'Recheck saved output'}</button><p className='er-und__hint'>Storage-only; starts no model work and never re-queues the model.</p></div> : null}
-        {references.length > 0 ? <div className='er-und__range-details'><h3>Source passages</h3><ul>{references.map((reference) => <li key={reference.block}>{sourceTitle} · block {reference.block} · bytes [{reference.start}, {reference.end})</li>)}</ul></div> : null}
       </div></details>
       {(view.state === 'done' || view.state === 'partial') ? (<>
         {view.state === 'partial' ? <p className='er-und__hint'>Partial understanding — some material could not be verified.</p> : null}
