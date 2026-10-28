@@ -71,6 +71,10 @@ function stripLabels(content: string): string {
     .replace(/\[S\d+\]/g, "");
 }
 
+function sourceHeader(alias: string, title: string): string {
+  return "Source " + alias + " \u2014 " + title;
+}
+
 interface Frozen {
   sourceId: string;
   title: string;
@@ -188,7 +192,7 @@ async function loadSourceText(env: Env, frozen: Frozen, index: number): Promise<
   if (!textObject) throw new LibraryError("unavailable", UNAVAILABLE, 503);
   const bytes = new Uint8Array(await textObject.arrayBuffer());
   const blocks = await loadBlocks(env, frozen.revisionId);
-  const lines = ["[" + alias + "] " + frozen.title];
+  const lines = [sourceHeader(alias, frozen.title)];
   const citableBlocks: Block[] = [];
   for (const block of blocks) {
     if (!Number.isSafeInteger(block.id) || block.id < 1 || !Number.isSafeInteger(block.start)
@@ -309,8 +313,8 @@ async function buildClaims(
     if (supported.length === 0) throw new LibraryError("invalid", NEEDS_UNDERSTANDING, 400);
     const used = new Set<number>();
     const quoted = new Set<string>();
-    const lines = ["[" + alias + "] " + entry.title];
-    const claimsOrientation = ["[" + alias + "] " + entry.title];
+    const lines = [sourceHeader(alias, entry.title)];
+    const claimsOrientation = [sourceHeader(alias, entry.title)];
     for (const guide of await loadGuideBlocks(env, entry, byId)) {
       used.add(guide.id);
       quoted.add(JSON.stringify([guide.id, guide.passage]));
@@ -421,7 +425,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
         if (!entry || entry.distillState !== "done") continue;
         const summary = entry.guideSummary?.trim();
         if (!summary) continue;
-        guideLines.push("[S" + (i + 1) + "] " + stripLabels(summary));
+        guideLines.push(sourceHeader("S" + (i + 1), stripLabels(summary)));
       }
       if (guideLines.length > 0) {
         const guideText = "Derived orientation only; facts and citations must come from original labelled blocks.\n\n" + guideLines.join("\n");

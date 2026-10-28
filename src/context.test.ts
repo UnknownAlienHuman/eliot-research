@@ -923,3 +923,63 @@ describe("orientation from stored guides", () => {
     expect(body).not.toContain("Partial gist");
   });
 });
+
+describe("bare-label header regression", () => {
+  it("whole headers avoid bare labels while keeping exact passages and literals", async () => {
+    const literalText = "Alpha [S1] literal.";
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r1", createdAt: 1 }],
+      revisions: [{ id: "r1", readableState: "readable", readableSize: 20, distillState: "done", guideSummary: "Guide [S1] overview [S1:1] done.", deletedAt: null }],
+      texts: { r1: { text: literalText, blocks: [{ id: 1, type: "paragraph", start: 0, end: literalText.length, heading: null }] } },
+    });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
+    expect(res.mode).toBe("whole");
+    const sourceText = res.messages[1]?.content ?? "";
+    const orientText = res.messages[2]?.content ?? "";
+    expect(sourceText).toContain("[S1:1] Alpha [S1] literal.");
+    expect(sourceText).toContain("Source S1");
+    expect(sourceText).toContain("Paper A");
+    expect(sourceText).not.toMatch(/^\[S\d+\] /m);
+    expect(orientText).toContain("Derived orientation only");
+    expect(orientText).toContain("Source S1");
+    expect(orientText).toContain("overview");
+    expect(orientText).not.toMatch(/\[S\d+\]/);
+    expect(orientText).not.toMatch(/\[S\d+:\d+\]/);
+  });
+
+  it("claims headers and orientation avoid bare labels while keeping exact quotes and literals", async () => {
+    const passage = "Model Alpha uses [S1] literal.";
+    const passageEnd = new TextEncoder().encode(passage).byteLength;
+    const text = passage + NL + "Unselected source material. ".repeat(400);
+    const byteLength = new TextEncoder().encode(text).byteLength;
+    const { env } = makeEnv({
+      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: byteLength, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 }],
+      texts: {
+        r9: {
+          text,
+          guide: "No guide passages selected.",
+          blocks: [
+            { id: 2, type: "paragraph", start: 0, end: passageEnd, heading: null },
+            { id: 3, type: "paragraph", start: passageEnd + 1, end: byteLength, heading: null },
+          ],
+        },
+      },
+      claims: { r9: [{ ordinal: 1, statement: "Finding [S1] claim [S1:2] here", quote: passage, conditions: null, blockIndex: 2, ambiguous: 0 }] },
+    });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 2000, maxOutputTokens: 100 } });
+    expect(res.mode).toBe("claims");
+    const sourceText = res.messages[1]?.content ?? "";
+    const orientText = res.messages[2]?.content ?? "";
+    expect(sourceText).toContain("[S1:2] " + passage);
+    expect(sourceText).toContain("Source S1");
+    expect(sourceText).toContain("Paper A");
+    expect(sourceText).not.toMatch(/^\[S\d+\] /m);
+    expect(orientText).toContain("Source S1");
+    expect(orientText).toContain("Finding");
+    expect(orientText).not.toMatch(/\[S\d+\]/);
+    expect(orientText).not.toMatch(/\[S\d+:\d+\]/);
+  });
+});
