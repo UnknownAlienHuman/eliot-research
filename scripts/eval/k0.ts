@@ -123,6 +123,6 @@ try {
 latency.sort((a, b) => a - b);
 const p50 = latency[Math.floor(latency.length * 0.5)]?.toFixed(1);
 const p95 = latency[Math.ceil(latency.length * 0.95) - 1]?.toFixed(1);
-const report = `K0 actual Worker eval: PASS\nOrigin: ${origin}\nAPI p50/p95: ${p50}/${p95} ms (12 local samples)\nMaterial viewports/themes: 1440/390, light/dark\nScreenshots: ${screenshots.join(", ")}\nModel/search calls: 0; model/search cost: $0\nCloudflare browser login and deployed owner token: ${headers["CF-Access-Client-Id"] ? "owner-token route exercised; browser login NOT_RUN" : "NOT_RUN (local bypass only)"}\n`;
+const report = `K0 actual Worker eval: PASS\nOrigin: ${origin}\nAPI p50/p95: ${p50}/${p95} ms (12 local samples)\nMaterial viewports/themes: 1440/390, light/dark\nScreenshots: ${screenshots.join(", ")}\nModel/search calls: 0; model/search tokens: 0 (no paid calls; no USD gate)\nCloudflare browser login and deployed owner token: ${headers["CF-Access-Client-Id"] ? "owner-token route exercised; browser login NOT_RUN" : "NOT_RUN (local bypass only)"}\n`;
 await writeFile(new URL("result.txt", output), report);
 process.stdout.write(report);

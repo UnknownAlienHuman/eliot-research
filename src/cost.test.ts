@@ -1,137 +1,268 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { estimateCost, failUndispatchedDistill } from "./cost.js";
+import { admitDistill, admitTurn, failUndispatchedDistill, usageSummary } from "./cost.js";
+import { LibraryError } from "./library.js";
+import { assertProviderAllowance } from "./model-quota.js";
 import type { ModelSpec } from "./models.js";
 
-// Local price fixture: estimateCost is pure arithmetic over the spec it is
-// given, so tests pin their own rates instead of depending on registry audit state.
-const SPEC: ModelSpec = {
-  route: "test:local-fixture",
-  id: "@cf/zai-org/glm-5.3-flash",
-  label: "Local price fixture",
-  contextTokens: 1_048_576,
-  maxOutputTokens: 8192,
-  inputMicrousdPerMillion: 150000,
-  cachedMicrousdPerMillion: 30000,
-  outputMicrousdPerMillion: 500000,
-  checkedOn: "2026-10-26",
-  enabled: true,
-};
+// Provider allowance is mocked: the real model-quota module currently holds
+// a closed native placeholder, so admission tests pin allow/deny directly
+// instead of depending on registry or provider state.
+vi.mock("./model-quota", () => ({ assertProviderAllowance: vi.fn() }));
+const allowance = vi.mocked(assertProviderAllowance);
 
-describe("estimateCost", () => {
-  it("prices input, cached and output tokens at their own rates", () => {
-    // (500000 * 150000 + 500000 * 30000 + 100000 * 500000) / 1e6 = 140000.
-    expect(estimateCost(SPEC, 1_000_000, 500_000, 100_000)).toBe(140000);
+const FLASH_ROUTE = "workers-ai:@cf/zai-org/glm-5.3-flash";
+function flashModel(): ModelSpec {
+  return {
+    route: FLASH_ROUTE,
+    id: "@cf/zai-org/glm-5.3-flash",
+    label: "GLM 5.3 Flash",
+    contextTokens: 1048576,
+    maxOutputTokens: null,
+    outputReserveTokens: 8192,
+    checkedOn: "2026-10-27",
+    enabled: true,
+  };
+}
+const FLASH_BOUND = 1048576 + 8192;
+const ALLOWANCE_CLOSED = new LibraryError("budget", "Workers AI daily allowance is not configured. No model call was started.", 409);
+
+const CHAT_DDL = "CREATE TABLE chat_turn (" +
+  "chat_id TEXT NOT NULL, turn_id TEXT NOT NULL," +
+  " state TEXT NOT NULL DEFAULT 'started' CHECK (state IN ('started','completed','partial','failed','cancelled'))," +
+  " token_limit INTEGER CHECK (token_limit IS NULL OR token_limit >= 0)," +
+  " input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER," +
+  " created_at INTEGER NOT NULL, PRIMARY KEY (chat_id, turn_id))";
+const DISTILL_DDL = "CREATE TABLE source_revision (" +
+  "id TEXT PRIMARY KEY," +
+  " distill_state TEXT NOT NULL DEFAULT 'none' CHECK (distill_state IN ('none','queued','running','paused','done','partial','failed'))," +
+  " distill_model TEXT, distill_started_at INTEGER," +
+  " distill_token_limit INTEGER CHECK (distill_token_limit IS NULL OR distill_token_limit >= 0)," +
+  " distill_error TEXT," +
+  " distill_calls INTEGER NOT NULL DEFAULT 0 CHECK (distill_calls BETWEEN 0 AND 2)," +
+  " distill_input_tokens INTEGER, distill_cached_tokens INTEGER, distill_output_tokens INTEGER," +
+  " distill_estimated_cost_microusd INTEGER CHECK (distill_estimated_cost_microusd IS NULL OR distill_estimated_cost_microusd >= 0)," +
+  " distill_ms INTEGER)";
+
+// Minimal D1-shaped shim over real SQLite: the helpers under test only use
+// prepare/bind/run/first. The env deliberately exposes no BUCKET, so any R2
+// report write before the distill CAS would throw here.
+function testEnv() {
+  const db = new DatabaseSync(":memory:");
+  db.exec(CHAT_DDL);
+  db.exec(DISTILL_DDL);
+  const shim = {
+    prepare(sql: string) {
+      return {
+        bind(...params: Array<string | number | null>) {
+          return {
+            run() {
+              return { meta: { changes: Number(db.prepare(sql).run(...params).changes) } };
+            },
+            first() {
+              return (db.prepare(sql).get(...params) as Record<string, unknown> | undefined) ?? null;
+            },
+          };
+        },
+      };
+    },
+  };
+  return { db, env: { DB: shim } as unknown as Env };
+}
+function utcDayStart(now: number): number {
+  const current = new Date(now);
+  return Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate());
+}
+function chatRow(db: DatabaseSync, chatId: string, turnId: string) {
+  return db.prepare("SELECT state, token_limit AS tokenLimit FROM chat_turn WHERE chat_id = ? AND turn_id = ?").get(chatId, turnId) as { state: string; tokenLimit: number | null };
+}
+function distillRow(db: DatabaseSync, id: string) {
+  return db.prepare("SELECT distill_state AS state, distill_error AS error, distill_calls AS calls," +
+    " distill_model AS model, distill_started_at AS startedAt, distill_token_limit AS tokenLimit," +
+    " distill_input_tokens AS inputTokens, distill_cached_tokens AS cachedTokens," +
+    " distill_output_tokens AS outputTokens, distill_estimated_cost_microusd AS legacyCost," +
+    " distill_ms AS ms FROM source_revision WHERE id = ?").get(id) as Record<string, unknown>;
+}
+
+beforeEach(() => {
+  allowance.mockReset();
+  allowance.mockResolvedValue(undefined);
+});
+
+describe("usageSummary", () => {
+  it("sums known chat and distill tokens for the current UTC day only", async () => {
+    const fixed = testEnv();
+    const dayStart = utcDayStart(Date.now());
+    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, input_tokens, cached_tokens, output_tokens, created_at) VALUES (?, ?, 'completed', 100, 10, 50, ?)").run("c1", "t1", dayStart + 1000);
+    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, input_tokens, cached_tokens, output_tokens, created_at) VALUES (?, ?, 'completed', 200, 0, 30, ?)").run("c1", "t-old", dayStart - 1000);
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_started_at, distill_input_tokens, distill_cached_tokens, distill_output_tokens) VALUES (?, 'done', ?, 1000, 200, 500)").run("r1", dayStart + 2000);
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_started_at, distill_input_tokens, distill_cached_tokens, distill_output_tokens) VALUES (?, 'done', ?, 999, 999, 999)").run("r-old", dayStart - 2000);
+    const summary = await usageSummary(fixed.env);
+    expect(summary.dayEnd - summary.dayStart).toBe(86400000);
+    expect(summary.dayStart % 86400000).toBe(0);
+    expect(summary.inputTokens).toBe(1100);
+    expect(summary.cachedTokens).toBe(210);
+    expect(summary.outputTokens).toBe(550);
+    expect(summary.unknownUsages).toBe(0);
   });
-
-  it("ceils fractional micro-USD up to a whole integer", () => {
-    // One input token costs 0.15 micro-USD; the reservation must still cover it.
-    const cost = estimateCost(SPEC, 1, 0, 0);
-    expect(cost).toBe(1);
-    expect(Number.isInteger(cost)).toBe(true);
+  it("counts null-usage rows as unknown without zeroing them into the sums", async () => {
+    const fixed = testEnv();
+    const dayStart = utcDayStart(Date.now());
+    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, input_tokens, cached_tokens, output_tokens, created_at) VALUES (?, ?, 'started', NULL, NULL, NULL, ?)").run("c1", "pending", dayStart + 1000);
+    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, input_tokens, cached_tokens, output_tokens, created_at) VALUES (?, ?, 'completed', 200, NULL, 30, ?)").run("c1", "known", dayStart + 1000);
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_started_at) VALUES (?, 'running', ?)").run("r-running", dayStart + 1000);
+    const summary = await usageSummary(fixed.env);
+    expect(summary.inputTokens).toBe(200);
+    expect(summary.cachedTokens).toBe(0);
+    expect(summary.outputTokens).toBe(30);
+    expect(summary.unknownUsages).toBe(2);
   });
-
-  it("rejects negative usage", () => {
-    expect(() => estimateCost(SPEC, -1, 0, 0)).toThrow(RangeError);
-    expect(() => estimateCost(SPEC, 0, 0, -5)).toThrow(RangeError);
-  });
-
-  it("rejects fractional token counts", () => {
-    expect(() => estimateCost(SPEC, 1.5, 0, 0)).toThrow(RangeError);
-    expect(() => estimateCost(SPEC, 10, 0.5, 0)).toThrow(RangeError);
-  });
-
-  it("rejects a cached prefix larger than the input", () => {
-    expect(() => estimateCost(SPEC, 100, 101, 0)).toThrow(RangeError);
-  });
-
-  it("reserves full input price when the provider omits its cached-input rate", () => {
-    expect(estimateCost({ ...SPEC, cachedMicrousdPerMillion: null }, 1_000_000, 500_000, 0)).toBe(150000);
+  it("returns zeros with no unknown rows when the day has no usage", async () => {
+    const fixed = testEnv();
+    const summary = await usageSummary(fixed.env);
+    expect(summary.inputTokens).toBe(0);
+    expect(summary.cachedTokens).toBe(0);
+    expect(summary.outputTokens).toBe(0);
+    expect(summary.unknownUsages).toBe(0);
   });
 });
+
+describe("admitTurn", () => {
+  it("reserves the context+output bound on a started turn and returns it", async () => {
+    const fixed = testEnv();
+    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, created_at) VALUES (?, ?, 'started', ?)").run("c1", "t1", Date.now());
+    const bound = await admitTurn(fixed.env, "c1", "t1", flashModel());
+    expect(bound).toBe(FLASH_BOUND);
+    expect(allowance).toHaveBeenCalledOnce();
+    expect(chatRow(fixed.db, "c1", "t1")).toEqual({ state: "started", tokenLimit: FLASH_BOUND });
+  });
+  it("throws a safe error and writes nothing when provider allowance is closed", async () => {
+    const fixed = testEnv();
+    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, created_at) VALUES (?, ?, 'started', ?)").run("c1", "t1", Date.now());
+    allowance.mockRejectedValue(ALLOWANCE_CLOSED);
+    await expect(admitTurn(fixed.env, "c1", "t1", flashModel())).rejects.toMatchObject({ code: "budget", status: 409 });
+    expect(chatRow(fixed.db, "c1", "t1").tokenLimit).toBeNull();
+  });
+  it("throws without writing when the model has no usable limits", async () => {
+    const fixed = testEnv();
+    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, created_at) VALUES (?, ?, 'started', ?)").run("c1", "t1", Date.now());
+    const broken = { ...flashModel(), contextTokens: null } as unknown as ModelSpec;
+    await expect(admitTurn(fixed.env, "c1", "t1", broken)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    expect(allowance).not.toHaveBeenCalled();
+    expect(chatRow(fixed.db, "c1", "t1").tokenLimit).toBeNull();
+  });
+  it("admits a turn exactly once; a repeat or terminal row throws", async () => {
+    const fixed = testEnv();
+    const created = Date.now();
+    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, created_at) VALUES (?, ?, 'started', ?)").run("c1", "t1", created);
+    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, created_at) VALUES (?, ?, 'completed', ?)").run("c1", "t-done", created);
+    await admitTurn(fixed.env, "c1", "t1", flashModel());
+    await expect(admitTurn(fixed.env, "c1", "t1", flashModel())).rejects.toMatchObject({ code: "conflict" });
+    await expect(admitTurn(fixed.env, "c1", "t-done", flashModel())).rejects.toMatchObject({ code: "conflict" });
+    await expect(admitTurn(fixed.env, "c1", "missing", flashModel())).rejects.toMatchObject({ code: "conflict" });
+    expect(chatRow(fixed.db, "c1", "t1").tokenLimit).toBe(FLASH_BOUND);
+  });
+});
+
+describe("admitDistill", () => {
+  it("runs an explicitly queued revision with twice the bound", async () => {
+    const fixed = testEnv();
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES (?, 'queued')").run("r1");
+    const before = Date.now();
+    await expect(admitDistill(fixed.env, "r1", flashModel())).resolves.toBe(true);
+    const row = distillRow(fixed.db, "r1");
+    expect(row.state).toBe("running");
+    expect(row.model).toBe(FLASH_ROUTE);
+    expect(row.tokenLimit).toBe(2 * FLASH_BOUND);
+    expect(row.error).toBeNull();
+    expect(Number(row.startedAt)).toBeGreaterThanOrEqual(before);
+  });
+  it("holds a third revision queued while two are already running", async () => {
+    const fixed = testEnv();
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES (?, 'running')").run("r1");
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES (?, 'running')").run("r2");
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES (?, 'queued')").run("r3");
+    await expect(admitDistill(fixed.env, "r3", flashModel())).resolves.toBe(false);
+    const row = distillRow(fixed.db, "r3");
+    expect(row.state).toBe("queued");
+    expect(row.tokenLimit).toBeNull();
+  });
+  it("pauses with a safe error and no token limit when provider allowance is closed", async () => {
+    const fixed = testEnv();
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES (?, 'queued')").run("r1");
+    allowance.mockRejectedValue(ALLOWANCE_CLOSED);
+    await expect(admitDistill(fixed.env, "r1", flashModel())).resolves.toBe(false);
+    const row = distillRow(fixed.db, "r1");
+    expect(row.state).toBe("paused");
+    expect(row.error).toBe(ALLOWANCE_CLOSED.message);
+    expect(row.tokenLimit).toBeNull();
+  });
+  it("pauses with a safe error when the model has no usable limits", async () => {
+    const fixed = testEnv();
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES (?, 'queued')").run("r1");
+    const broken = { ...flashModel(), contextTokens: null } as unknown as ModelSpec;
+    await expect(admitDistill(fixed.env, "r1", broken)).resolves.toBe(false);
+    const row = distillRow(fixed.db, "r1");
+    expect(row.state).toBe("paused");
+    expect(row.tokenLimit).toBeNull();
+  });
+  it("leaves non-queued rows alone", async () => {
+    const fixed = testEnv();
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES (?, 'done')").run("r-done");
+    await expect(admitDistill(fixed.env, "r-done", flashModel())).resolves.toBe(false);
+    await expect(admitDistill(fixed.env, "missing", flashModel())).resolves.toBe(false);
+    expect(distillRow(fixed.db, "r-done").state).toBe("done");
+  });
+});
+
 describe("failUndispatchedDistill", () => {
-  const DDL = `CREATE TABLE source_revision (
-    id TEXT PRIMARY KEY,
-    distill_state TEXT NOT NULL DEFAULT 'none' CHECK (distill_state IN ('none','queued','running','paused','done','partial','failed')),
-    distill_error TEXT,
-    distill_calls INTEGER NOT NULL DEFAULT 0 CHECK (distill_calls BETWEEN 0 AND 2),
-    distill_started_at INTEGER,
-    distill_input_tokens INTEGER,
-    distill_cached_tokens INTEGER,
-    distill_output_tokens INTEGER,
-    distill_estimated_cost_microusd INTEGER CHECK (distill_estimated_cost_microusd IS NULL OR distill_estimated_cost_microusd >= 0),
-    distill_ms INTEGER
-  )`;
-  // Minimal D1-shaped shim over real SQLite: the helper under test only
-  // uses prepare/bind/run with meta.changes. The env deliberately exposes
-  // no BUCKET, so any R2 report write before the CAS would throw here.
-  // The helper is a single UPDATE (no SELECT round trip), so concurrent
-  // paid dispatch cannot interleave between a read and the write: either
-  // the WHERE clause matches an undispatched running row, or it releases
-  // nothing and preserves the winner.
-  function testEnv(db: DatabaseSync) {
-    const shim = {
-      prepare(sql: string) {
-        return {
-          bind(...params: Array<string | number | null>) {
-            return {
-              run() {
-                return { meta: { changes: Number(db.prepare(sql).run(...params).changes) } };
-              },
-            };
-          },
-        };
-      },
-    };
-    return { DB: shim } as unknown as Env;
-  }
-  function rowOf(db: DatabaseSync, id: string) {
-    return db.prepare("SELECT distill_state AS state, distill_error AS error, distill_calls AS calls, distill_estimated_cost_microusd AS cost, distill_input_tokens AS inputTokens, distill_cached_tokens AS cachedTokens, distill_output_tokens AS outputTokens, distill_ms AS ms FROM source_revision WHERE id=?").get(id) as Record<string, unknown>;
-  }
-  it("releases a stuck undispatched slot with zeroed usage in one atomic CAS", async () => {
-    const db = new DatabaseSync(":memory:");
-    db.exec(DDL);
+  it("releases a stuck undispatched slot with zeroed token usage and keeps legacy cost", async () => {
+    const fixed = testEnv();
     const started = Date.now() - 5000;
-    db.prepare("INSERT INTO source_revision (id, distill_state, distill_error, distill_calls, distill_started_at, distill_input_tokens, distill_cached_tokens, distill_output_tokens, distill_estimated_cost_microusd, distill_ms) VALUES (?, 'running', NULL, 0, ?, 100, 0, 8000, 322766, NULL)").run("r1", started);
-    const env = testEnv(db);
-    await expect(failUndispatchedDistill(env, "r1", "create failed")).resolves.toBe(true);
-    const row = rowOf(db, "r1");
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_calls, distill_started_at," +
+      " distill_input_tokens, distill_cached_tokens, distill_output_tokens," +
+      " distill_token_limit, distill_estimated_cost_microusd, distill_ms)" +
+      " VALUES (?, 'running', 0, ?, 100, 5, 8000, 2113536, 322766, NULL)").run("r1", started);
+    await expect(failUndispatchedDistill(fixed.env, "r1", "create failed")).resolves.toBe(true);
+    const row = distillRow(fixed.db, "r1");
     expect(row.state).toBe("failed");
     expect(row.error).toBe("create failed");
     expect(row.calls).toBe(0);
-    expect(row.cost).toBe(0);
+    expect(row.tokenLimit).toBe(0);
     expect(row.inputTokens).toBe(0);
     expect(row.cachedTokens).toBe(0);
     expect(row.outputTokens).toBe(0);
-    expect(row.ms).toBeGreaterThanOrEqual(0);
-    expect(row.ms).toBeLessThanOrEqual(Date.now() - started);
+    expect(row.legacyCost).toBe(322766);
+    expect(Number(row.ms)).toBeGreaterThanOrEqual(0);
+    expect(Number(row.ms)).toBeLessThanOrEqual(Date.now() - started);
   });
-  it("returns false and preserves the row when paid dispatch already won", async () => {
-    const db = new DatabaseSync(":memory:");
-    db.exec(DDL);
+  it("keeps the reservation when a paid call already dispatched", async () => {
+    const fixed = testEnv();
     const started = Date.now() - 9000;
-    db.prepare("INSERT INTO source_revision (id, distill_state, distill_error, distill_calls, distill_started_at, distill_input_tokens, distill_cached_tokens, distill_output_tokens, distill_estimated_cost_microusd, distill_ms) VALUES (?, 'running', 'queued note', 1, ?, 100, 0, 8000, 322766, 123)").run("r1", started);
-    const env = testEnv(db);
-    await expect(failUndispatchedDistill(env, "r1", "create failed")).resolves.toBe(false);
-    const row = rowOf(db, "r1");
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_error, distill_calls, distill_started_at," +
+      " distill_input_tokens, distill_cached_tokens, distill_output_tokens," +
+      " distill_token_limit, distill_estimated_cost_microusd, distill_ms)" +
+      " VALUES (?, 'running', 'queued note', 1, ?, 100, 5, 8000, 2113536, 322766, 123)").run("r1", started);
+    await expect(failUndispatchedDistill(fixed.env, "r1", "create failed")).resolves.toBe(false);
+    const row = distillRow(fixed.db, "r1");
     expect(row.state).toBe("running");
     expect(row.error).toBe("queued note");
     expect(row.calls).toBe(1);
-    expect(row.cost).toBe(322766);
+    expect(row.tokenLimit).toBe(2113536);
     expect(row.inputTokens).toBe(100);
     expect(row.outputTokens).toBe(8000);
+    expect(row.legacyCost).toBe(322766);
     expect(row.ms).toBe(123);
   });
   it("returns false for terminal or missing rows without touching them", async () => {
-    const db = new DatabaseSync(":memory:");
-    db.exec(DDL);
-    db.prepare("INSERT INTO source_revision (id, distill_state, distill_calls, distill_estimated_cost_microusd) VALUES (?, 'done', 2, 4444)").run("r9");
-    const env = testEnv(db);
-    await expect(failUndispatchedDistill(env, "r9", "create failed")).resolves.toBe(false);
-    await expect(failUndispatchedDistill(env, "no-such-row", "create failed")).resolves.toBe(false);
-    const row = rowOf(db, "r9");
+    const fixed = testEnv();
+    fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_calls, distill_token_limit, distill_estimated_cost_microusd) VALUES (?, 'done', 2, 2113536, 4444)").run("r9");
+    await expect(failUndispatchedDistill(fixed.env, "r9", "create failed")).resolves.toBe(false);
+    await expect(failUndispatchedDistill(fixed.env, "no-such-row", "create failed")).resolves.toBe(false);
+    const row = distillRow(fixed.db, "r9");
     expect(row.state).toBe("done");
     expect(row.calls).toBe(2);
-    expect(row.cost).toBe(4444);
+    expect(row.tokenLimit).toBe(2113536);
+    expect(row.legacyCost).toBe(4444);
   });
 });

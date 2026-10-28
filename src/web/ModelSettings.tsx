@@ -1,4 +1,4 @@
-// K2 model settings. Global defaults + budget in USD with explicit save, and
+// K2 model settings. Global answer/understanding defaults with explicit save, and
 // the per-project variant (instructions plus a nullable answerModel override).
 // Root mounts global settings; ChatView embeds project defaults collapsed.
 // Catalogue reads are storage-only; an explicit Settings action refreshes the
@@ -11,7 +11,7 @@ import { ModelProviders } from './ModelProviders';
 import type { ProviderQuota } from '../model-quota';
 import type { ModelRoute } from './ModelPicker';
 import './model-settings.css';
-interface GlobalSettings { readonly answerModel: string; readonly distillModel: string; readonly monthlyModelBudgetMicrousd: number; readonly updatedAt: number; }
+interface GlobalSettings { readonly answerModel: string; readonly distillModel: string; readonly updatedAt: number; }
 interface ProjectSettings { readonly instructions: string; readonly answerModel: string | null; }
 interface GatewayConnection { readonly gatewayId: string | null; readonly provider: string; readonly alias: string; }
 interface ModelCatalog { readonly models: ModelRoute[]; readonly warnings: string[]; readonly defaultModel: string; readonly quotas?: ProviderQuota[]; }
@@ -43,7 +43,6 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   const [distillModel, setDistillModel] = useState('');
   const [useGlobal, setUseGlobal] = useState(true);
   const [instructions, setInstructions] = useState('');
-  const [budgetUsd, setBudgetUsd] = useState('');
   const [note, setNote] = useState('');
   const [refreshNote, setRefreshNote] = useState('');
   const [modelsRefreshing, setModelsRefreshing] = useState(false);
@@ -107,7 +106,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     const catalog = reloadModels();
     let settings: Promise<void>;
     if (projectId === undefined) {
-      settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setBudgetUsd(String(d.settings.monthlyModelBudgetMicrousd / 1000000)); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
+      settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
       void apiJson<{ connection: GatewayConnection }>('/api/models/connection', { signal: reads.signal }).then((d) => { if (!live || gatewayGeneration.current !== generation) return; setGatewayId(d.connection.gatewayId ?? ''); setAllowGateway(false); }).catch((err: unknown) => { if (live && gatewayGeneration.current === generation) setGatewayNote(err instanceof Error ? err.message : 'Gateway connection status unavailable.'); });
     } else {
       const pid = projectId;
@@ -120,17 +119,8 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     setNote('');
     try {
       if (projectId === undefined) {
-        const trimmedBudget = budgetUsd.trim();
-        if (/^\d+\.\d{7,}$/.test(trimmedBudget)) { setNote('Use up to six decimal places for the monthly budget.'); return; }
-        const budgetMatch = /^(\d+)(?:\.(\d{1,6}))?$/.exec(trimmedBudget);
-        if (budgetMatch === null) { setNote('Enter a non-negative budget in USD.'); return; }
-        const whole = budgetMatch[1] ?? '';
-        if (whole === '') { setNote('Enter a non-negative budget in USD.'); return; }
-        const microBig = BigInt(whole) * 1000000n + BigInt((budgetMatch[2] ?? '').padEnd(6, '0'));
-        if (microBig > BigInt(Number.MAX_SAFE_INTEGER)) { setNote('Enter a non-negative budget in USD.'); return; }
-        const micro = Number(microBig);
         if (answerModel === '') { setNote('Choose an answer model.'); return; }
-        await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel, distillModel, monthlyModelBudgetMicrousd: micro }) });
+        await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel, distillModel }) });
       } else {
         await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instructions, answerModel: useGlobal ? null : answerModel }) });
       }
@@ -227,10 +217,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
         <ModelPicker label={editingTarget === 'answer' ? 'Answer model' : 'Understanding model'} choices={modelChoices} value={editingTarget === 'answer' ? answerModel : distillModel} onChange={(route) => { if (editingTarget === 'answer') selectAnswerModel(route); else selectDistillModel(route); }}
           loading={modelsLoading || gatewaySaving} error={modelsError} />
         {catalogWarnings}
-        <label className='er-models__row'>
-          <span className='er-models__label'>Monthly budget (USD)</span>
-          <input inputMode='decimal' value={budgetUsd} onChange={(e) => setBudgetUsd(e.currentTarget.value)} />
-        </label>
+        <p className='er-status'><span>Workers AI includes 10,000 Neurons/day, resetting at 00:00 UTC. Paid plans bill extra usage. OpenRouter and Command Code use their own provider limits.</span></p>
         {gatewayOff ? (<p className='er-status'><span>Connect AI Gateway to use external models.</span></p>) : null}
         <div className='er-models__actions'>
           <button className='er-button er-button--text' type='button' disabled={modelsLoading || modelsRefreshing || gatewaySaving} onClick={() => void refreshModels()}>

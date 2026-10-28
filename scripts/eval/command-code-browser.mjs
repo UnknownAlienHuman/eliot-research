@@ -181,8 +181,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
       const provider = index % 2 ? 'catalogue-fixture-b' : 'catalogue-fixture-a';
       const id = 'browser-row-' + String(index + 1).padStart(4, '0');
       return { route: 'gateway:' + provider + '/' + id, id, label: 'Catalogue fixture ' + String(index + 1).padStart(4, '0'),
-        enabled: true, contextTokens: null, maxOutputTokens: null, outputReserveTokens: 8192,
-        inputMicrousdPerMillion: null, cachedMicrousdPerMillion: null, outputMicrousdPerMillion: null, checkedOn: null };
+        enabled: true, contextTokens: null, maxOutputTokens: null, outputReserveTokens: 8192, checkedOn: null };
     });
     const target463 = fixtureModels[462];
     const fixtureSettings = (answerModel) => ({ ...before, settings: { ...before.settings, answerModel } });
@@ -197,8 +196,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
     const emptyContext = await contextFor({ width: 390, height: 844 }, async (route, endpoint, method) => {
       if (endpoint === '/api/settings' && method === 'PUT') {
         const body = route.request().postDataJSON();
-        assert.deepEqual(body, { answerModel: target463.route, distillModel: FLASH,
-          monthlyModelBudgetMicrousd: before.settings.monthlyModelBudgetMicrousd });
+        assert.deepEqual(body, { answerModel: target463.route, distillModel: FLASH });
         report.requests.interceptedSettingsPuts++; savedAnswer = body.answerModel;
         await json(route, fixtureSettings(savedAnswer)); return true;
       }
@@ -232,7 +230,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
       await expect(restored.model).toHaveValue(target463.route);
       await shot(page, 'metadata-saved-row463-reopened-390.png');
       report.metadataFixtures.row463 = { rows: 500, initialSelection: '', selectedIndex: 463, route: target463.route,
-        expandedNoPagination: true, unknownPricesSelectableWithoutInference: true, selectionPreserved: true,
+        expandedNoPagination: true, unknownBoundsSelectableWithoutInference: true, selectionPreserved: true,
         freeDisplayOnly: true, savedAndReopened: true, save: 'INTERCEPTED_STORAGE_METADATA_ONLY_NOT_SENT_TO_WORKER' };
     } finally { await emptyContext.close(); }
 
@@ -253,11 +251,10 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
 
 
     // Manual Refresh only: storage GET snapshot, then explicit POST /api/models/refresh.
-    // No GET ?selected= is expected. Fixture snapshot carries unknown prices first,
-    // refreshed snapshot carries known prices for the same row-463 identity.
+    // No GET ?selected= is expected. Fixture snapshot carries unknown token bounds first,
+    // refreshed snapshot carries known token bounds for the same row-463 identity.
     const refreshBase = fixtureModels;
-    const refreshedRow = { ...target463, inputMicrousdPerMillion: 125000, cachedMicrousdPerMillion: 2500,
-      outputMicrousdPerMillion: 375000, checkedOn: '2026-10-27' };
+    const refreshedRow = { ...target463, contextTokens: 128000, maxOutputTokens: 8192, outputReserveTokens: 8192, checkedOn: '2026-10-27' };
     const refreshedModels = fixtureModels.map((model) => model.route === target463.route ? refreshedRow : model);
     let refreshSeen = false;
     const savedRequestMark = { blocked: report.requests.blocked.length,
@@ -301,7 +298,8 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
       const page = activePage = await savedContext.newPage(); await page.goto(origin + '/settings');
       const ui = await findControls(page, 'answers'); await expect(ui.model).toBeEnabled();
       await expect(ui.model).toHaveValue('');
-      // Storage-only: select the synthetic row-463 identity with unknown prices (selectable).
+      // Storage-only: select the synthetic row-463 identity with unknown token bounds (selectable).
+      // Unknown bounds stay selectable; paid admission is separate and never runs here.
       await ui.provider.selectOption(providerOf(target463));
       await ui.search.fill(target463.id);
       await expect(ui.row).toContainText('1 matching models.');
@@ -430,7 +428,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
     assert(chatTail?.enabled, 'Use the dynamic catalogue row selected in the live browser.');
     const nestedId = 'nested/provider/' + 'long-native-id-'.repeat(12) + 'variant';
     const nested = { ...fixtureModels[0], id: nestedId, route: 'gateway:catalogue-fixture-a/' + nestedId,
-      label: 'Nested model with unknown pricing' };
+      label: 'Nested model with unknown bounds' };
     report.chat = { projectId: chatProjectId, metadata: 'LIVE_ID_AND_INTERCEPTED_FIXTURES', viewports: [] };
     for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
       const context = await contextFor(viewport);
@@ -479,7 +477,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
         await expect(chatPage.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
         await provider.selectOption(providerOf(chatFirst));
         await expect(model).toHaveValue(chatFirst.route);
-        // Unknown-priced nested identity stays selectable in compact picker.
+        // Unknown-bounds nested identity stays selectable in compact picker.
         await provider.selectOption(providerOf(nested));
         await expect(model.locator('option[value="' + nested.route + '"]')).toBeAttached();
         await model.selectOption(nested.route);
@@ -498,13 +496,14 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
         await expect(model).toHaveValue(nested.route);
         await fitted(chatPage); await model.scrollIntoViewIfNeeded(); await shot(chatPage, 'chat-picker-' + viewport.width + '.png');
         report.chat.viewports.push({ viewport, liveRoute: chatTail.route, sentRoute: nested.route,
-          compactProviderModel: true, providerChangePreserved: true, storageOnlyNoReload: true, unknownPriceSelectable: true,
+          compactProviderModel: true, providerChangePreserved: true, storageOnlyNoReload: true, unknownBoundsSelectable: true,
           sendPayloadExact: true, interceptedChatPosts: chatPosts, interceptedTurnPosts: sentBodies.length });
       } finally { await context.close(); }
     }
     const after = await get('/api/settings');
     assert.deepEqual(await get('/api/models/connection'), connectionBefore, 'Actual Gateway connection must be unchanged.');
-    assert.deepEqual(after, before, 'Actual defaults, monthly usage, budget and settings timestamp must be unchanged.');
+    assert.deepEqual(after.settings, before.settings, 'Actual answer/distill defaults must be unchanged.');
+    assert.deepEqual(after.usage, before.usage, 'Actual daily token usage must be unchanged by storage-only browser checks.');
     assert.deepEqual(report.requests.blocked, [], 'The browser must never attempt a real mutation/model request.');
     assert.equal(report.requests.interceptedConnectionPuts, 1);
     assert.equal(report.requests.interceptedSettingsPuts, 1);
@@ -512,7 +511,7 @@ export async function runCommandCodeBrowser({ origin: requestedOrigin = process.
     assert.equal(report.requests.selectedMetadataGets.length, 0, 'Storage-only: no selected-metadata GET in any scenario.');
     assert.equal(report.requests.refreshPosts.length, 1, 'Manual Refresh POST only, no automatic metadata fetch.');
     assert.deepEqual(browserErrors, [], 'Browser scenarios must not throw page errors.');
-    report.settingsUnchanged = true; report.monthlyUsedMicrousd = after.monthlyUsedMicrousd;
+    report.settingsUnchanged = true; report.dailyUsage = after.usage;
     report.status = 'PASS';
   } catch (error) {
     report.status = 'FAIL'; report.error = String(error instanceof Error ? error.message : error).slice(0, 1200);

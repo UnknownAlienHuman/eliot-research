@@ -54,45 +54,42 @@ export interface CatalogModel {
   responseFormat?: boolean;
   structuredOutputs?: boolean;
   nativeReasoningEffort?: "low";
-  inputMicrousdPerMillion: number | null;
-  cachedMicrousdPerMillion: number | null;
-  outputMicrousdPerMillion: number | null;
   checkedOn: string;
   enabled: boolean;
   unavailableReason?: string;
 }
 export interface ModelSpec extends CatalogModel {
   contextTokens: number;
-  inputMicrousdPerMillion: number;
-  outputMicrousdPerMillion: number;
   routing?: { provider: ModelProvider; gatewayId: string };
 }
 export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
 // Owner-selected native default metadata is a fallback, not a provider allowlist.
 export const MODELS: ModelSpec[] = [
   { route: DEFAULT_MODEL, id: "@cf/zai-org/glm-5.3-flash", label: "GLM 5.3 Flash", contextTokens: 1_048_576,
-    maxOutputTokens: null, outputReserveTokens: 8192, inputMicrousdPerMillion: 150000, cachedMicrousdPerMillion: 30000,
-    outputMicrousdPerMillion: 500000, checkedOn: "2026-10-27", enabled: true },
+    maxOutputTokens: null, outputReserveTokens: 8192, checkedOn: "2026-10-27", enabled: true },
 ];
 export const modelOutputLimit = (model: Pick<CatalogModel, "outputReserveTokens" | "maxOutputTokens">) => {
   const bound = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
   return Math.min(bound, model.maxOutputTokens ?? bound);
 };
+export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "outputReserveTokens" | "maxOutputTokens">): number {
+  const output = modelOutputLimit(model), total = (model.contextTokens ?? 0) + output;
+  if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
+    !Number.isSafeInteger(output) || output <= 0 || !Number.isSafeInteger(total))
+    throw new LibraryError("unavailable", "The model has no usable input/output limits.", 503);
+  return total;
+}
 function missingMetadata(model: CatalogModel): string | null {
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
     !Number.isSafeInteger(modelOutputLimit(model)) || modelOutputLimit(model) <= 0)
     return "The provider has not published usable context/output metadata.";
-  if (model.inputMicrousdPerMillion === null || model.outputMicrousdPerMillion === null ||
-    ![model.inputMicrousdPerMillion, model.outputMicrousdPerMillion].every((n) => Number.isFinite(n) && n >= 0))
-    return "The model's current price is unknown.";
   return null;
 }
 function resolved(model: CatalogModel | undefined, route: string): ModelSpec {
   const reason = model ? missingMetadata(model) : "This model is absent from the current provider catalogue.";
   if (!model || !model.enabled || reason) throw new LibraryError("unavailable", model?.unavailableReason ?? reason ?? "This model is unavailable.", 503);
-  return { ...model, route, contextTokens: model.contextTokens as number,
-    inputMicrousdPerMillion: model.inputMicrousdPerMillion as number,
-    outputMicrousdPerMillion: model.outputMicrousdPerMillion as number };
+  modelTokenLimit(model);
+  return { ...model, route, contextTokens: model.contextTokens as number };
 }
 export const validGatewayId = (id: string) => id !== "default" && /^[a-z0-9][a-z0-9-]{0,63}$/.test(id);
 export async function getModelConnection(env: Pick<Env, "DB">) {
@@ -133,9 +130,7 @@ function nullableFinite(value: unknown): boolean {
 function isCatalogModel(value: unknown): value is CatalogModel {
   if (!isRecord(value) || typeof value.route !== "string" || typeof value.id !== "string" ||
     typeof value.label !== "string" || typeof value.checkedOn !== "string" || typeof value.enabled !== "boolean" ||
-    !nullableFinite(value.contextTokens) || !nullableFinite(value.maxOutputTokens) ||
-    !nullableFinite(value.inputMicrousdPerMillion) || !nullableFinite(value.cachedMicrousdPerMillion) ||
-    !nullableFinite(value.outputMicrousdPerMillion)) return false;
+    !nullableFinite(value.contextTokens) || !nullableFinite(value.maxOutputTokens)) return false;
   if (value.outputReserveTokens !== undefined && (!Number.isSafeInteger(value.outputReserveTokens) || (value.outputReserveTokens as number) <= 0)) return false;
   if (value.responseFormat !== undefined && typeof value.responseFormat !== "boolean") return false;
   if (value.structuredOutputs !== undefined && typeof value.structuredOutputs !== "boolean") return false;
@@ -177,7 +172,10 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
   const models = new Map<string, CatalogModel>(MODELS.map((model) => [model.route, { ...model }]));
   for (const model of snapshot?.models ?? []) {
     const fallback = models.get(model.route);
-    models.set(model.route, { ...model, label: fallback?.label ?? model.label,
+    const visible = { ...model };
+    for (const field of ["inputMicrousdPerMillion", "cachedMicrousdPerMillion", "outputMicrousdPerMillion"])
+      Reflect.deleteProperty(visible, field);
+    models.set(model.route, { ...visible, label: fallback?.label ?? model.label,
       maxOutputTokens: model.maxOutputTokens ?? fallback?.maxOutputTokens ?? null });
   }
   for (const [route, model] of models) {

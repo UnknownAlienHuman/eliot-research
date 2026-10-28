@@ -153,7 +153,7 @@ stop/reconnect, reopen chat and save an answer as a page.
 2. Read provider catalogues from the R2 snapshot. The owner edits the provider configuration in Settings; owner-only
    `POST /api/models/refresh` discovers JSON models and available provider quota data; a partial provider failure preserves that provider's prior slice and
    returns a warning. If no snapshot exists, use the native Flash fallback. Paid admission remains separate and
-   requires known context and input/output prices; estimate unknown cached input at the full input rate.
+   requires usable context/output bounds and provider allowance, without per-model price prerequisites.
 3. Build whole-reading context from the frozen readable revisions. When it does not fit, return a clear narrow-scope
    response; claim/search modes arrive later.
 4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.
@@ -178,7 +178,8 @@ still fail the quality gate; diagnostics do not waive citation, expected-fact or
 - Every completed answer has at least one citation, `invalidLabels = 0`, and every cited range opens.
 - C1–C4 contain the expected values and conditions. O8 abstains where the corpus lacks the answer.
 - Owner judges O1, O2, O3 and O8 at least as useful and honest as the recorded NotebookLM baseline.
-- No turn exceeds the configured monthly model budget; eval reports input/cached/output tokens and estimated USD.
+- Each turn respects its recorded input/output, call and time bounds and provider limits; eval reports known token
+  usage separately from unknown usage. It does not convert tokens into Cloudflare Neurons or infer monetary prices.
 
 **Measured budget.** Record cold/warm p50/p95 first-token and total time. Initial target: warm p50 first token ≤ 10 s,
 p95 total ≤ 40 s. Catastrophic ceiling: a completed answer taking > 90 s fails K2. Promote tighter thresholds after three
@@ -203,8 +204,8 @@ re-distilled automatically.
 1. Apply `migrations/0003_distill.sql` and `0007_manual_understanding.sql`; add `DistillWorkflow` and quote/number verification.
 2. Ingest makes a revision readable without queueing understanding. Understand explicitly requests one revision;
    unchanged completed or partial output is returned without another model call.
-3. Admit only the explicitly requested revision while concurrency and the shared monthly dollar budget allow. Budget-
-   blocked work is visibly `paused` until another explicit request. Cron only reconciles stale `running` rows against
+3. Admit only the explicitly requested revision while concurrency and provider allowance permit. Blocked work is
+   visibly `paused` until another explicit request. Cron only reconciles stale `running` rows against
    deterministic Workflow IDs; it never admits queued revisions.
 4. Use at most two bounded calls: labelled canonical text produces guide and candidate claims; code verifies
    quotes/ranges/numbers; the second call receives only verified material and produces digest/glossary. Store raw
@@ -229,7 +230,7 @@ re-distilled automatically.
   attach the public papers in `eval/arxiv-10/overflow.json`. Measured source bytes must exceed the unchanged model
   whole-reading cap, and all four turns must report `contextMode=claims`. The baseline PDFs/questions remain unchanged;
   no forced mode, reduced model cap, repeated padding or K5 search infrastructure is used.
-- Eval prints per-revision calls, tokens, estimated cost, kept/dropped reasons and wall time.
+- Eval prints per-revision calls, known/unknown tokens, recorded token bounds, kept/dropped reasons and wall time.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 

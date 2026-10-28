@@ -44,49 +44,20 @@ async function readCatalogue(response: Response): Promise<RecordValue> {
   return body;
 }
 
-// Only the official OpenRouter catalogue publishes USD per token; admission uses micro-USD per million.
-const OFFICIAL_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-function price(value: unknown, scale = 1e12): number | null {
-  if (typeof value !== "string" && typeof value !== "number") return null;
-  const text = typeof value === "number" ? String(value) : value.trim();
-  const literal = /^(\d+(?:\.\d+)?)(?:e[+-]?\d+)?$/i.exec(text);
-  if (!literal) return null;
-  const amount = Number(text) * scale;
-  if (amount === 0 && /[1-9]/.test(literal[1] ?? "")) return null;
-  return Number.isFinite(amount) && amount >= 0 && Number.isSafeInteger(Math.ceil(amount)) ? Math.ceil(amount) : null;
-}
-
-function priceBound(pricing: RecordValue | null, field: string): number | null {
-  let bound = price(pricing?.[field]);
-  if (bound === null || !pricing) return null;
-  if (pricing.overrides === undefined) return bound;
-  if (!Array.isArray(pricing.overrides)) return null;
-  for (const raw of pricing.overrides) {
-    const tier = record(raw);
-    if (!tier || positiveInteger(tier.min_prompt_tokens) === null) return null;
-    if (!(field in tier)) continue;
-    const amount = price(tier[field]);
-    if (amount === null) return null;
-    bound = Math.max(bound, amount);
-  }
-  return bound;
-}
+// Catalogue carries identity, context/output capacity, structured capabilities,
+// date and availability only. No currency, price, rate or neuron conversion here;
+// admission and token bounds live in root models.ts (modelTokenLimit) and quota policy.
 
 function normalize(provider: ModelProvider, value: unknown, checkedOn: string): CatalogModel | null {
   const row = record(value), id = row?.id;
   if (!row || typeof id !== "string" || !id || id !== id.trim() || id.length > MAX_ID_LENGTH
     || [...id].some((char) => { const code = char.charCodeAt(0); return code < 32 || (code >= 127 && code <= 159) || code === 0x2028 || code === 0x2029; })) return null;
-  const pricing = record(row.pricing);
   const contextTokens = positiveInteger(row.context_length);
   const top = record(row.top_provider), architecture = record(row.architecture);
   const maxOutputTokens = positiveInteger(row.max_output_tokens)
     ?? positiveInteger(top?.max_completion_tokens);
-  // OpenAI-compatible /models has no standard pricing units; only the native OpenRouter stock route publishes USD per token.
-  // Dispatch follows gatewaySlug/gatewayPath, not baseUrl, so require all three before quoting USD prices.
-  const officialUsd = typeof provider.baseUrl === "string" && provider.baseUrl.trim().replace(/\/+$/, "") === OFFICIAL_OPENROUTER_BASE_URL && provider.gatewaySlug === "openrouter" && provider.gatewayPath === "v1";
-  const inputMicrousdPerMillion = officialUsd ? priceBound(pricing, "prompt") : null;
-  const cachedMicrousdPerMillion = officialUsd ? priceBound(pricing, "input_cache_read") : null;
-  const outputMicrousdPerMillion = officialUsd ? priceBound(pricing, "completion") : null;
+  // No currency parsing: provider catalogues may carry pricing/rate fields and
+  // old R2 snapshots may retain them, but this boundary ignores them entirely.
   const parameters = Array.isArray(row.supported_parameters) ? row.supported_parameters : [];
   // Chat support is explicit only: Command Code supported_endpoints when present,
   // otherwise OpenRouter architecture modalities when present. No endpoint guessing:
@@ -100,7 +71,7 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
     if (Array.isArray(inputModalities) && !inputModalities.includes("text")) chat = false;
     else if (Array.isArray(outputModalities) && !outputModalities.includes("text")) chat = false;
   }
-  // Selection is not admission: missing prices/context remain null and are
+  // Selection is not admission: missing context remains null and is
   // checked by requireAvailableModel before any paid effect, not by the picker.
   const unavailableReason = !chat ? "This model does not advertise text chat-completions support." : null;
   return {
@@ -109,7 +80,7 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
     contextTokens, maxOutputTokens, outputReserveTokens: 8192,
     responseFormat: parameters.includes("response_format"),
     structuredOutputs: parameters.includes("response_format") && parameters.includes("structured_outputs"),
-    inputMicrousdPerMillion, cachedMicrousdPerMillion, outputMicrousdPerMillion, checkedOn,
+    checkedOn,
     enabled: unavailableReason === null, ...(unavailableReason ? { unavailableReason } : {}),
   };
 }

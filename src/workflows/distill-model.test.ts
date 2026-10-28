@@ -41,17 +41,17 @@ const revisionId = "d9b7d198-0dd2-4d5f-8176-e824e25bb6d0";
 const sourceId = "fb3c275a-46c0-43f6-9d49-deea18581c44";
 const prefix = `source/${revisionId}/`;
 // Deliberately not a catalogue entry: the Workflow consumes the admitted payload.
+// Token-native snapshot: no currency fields; bounds come from context/output limits.
 const snapshot: ModelSpec = Object.freeze({
   route: "gateway:command-code/fixture/admitted", id: "fixture/admitted", label: "Admitted snapshot fixture",
   contextTokens: 262144, maxOutputTokens: null, outputReserveTokens: 8192,
-  inputMicrousdPerMillion: 123456, cachedMicrousdPerMillion: 2345, outputMicrousdPerMillion: 654321,
   responseFormat: false, structuredOutputs: false, reasoning: Object.freeze({ enabled: false as const }),
   checkedOn: "2026-10-27", enabled: true,
 });
 
 function fixture(storedRoute: string, document?: { text: string; blocks: Block[] }) {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0009_provider_usage.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
   const text = document?.text ?? "The method uses normalization. Its source passage is retained.";
   const blocks = document?.blocks ?? [{ id: 1, type: "paragraph", start: 0, end: new TextEncoder().encode(text).byteLength, heading: null }];
@@ -97,7 +97,7 @@ const otherQueuedSourceId = "c3fd7da4-b662-4aa5-a6fc-9c84b6299940";
 
 function callerFixture() {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0009_provider_usage.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
 
   const insertSource = (id: string, title: string, revision: string, state: "none" | "queued", createdAt: number) => {
@@ -268,15 +268,17 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
-  it("passes the exact admitted context, prices, reserve and pricing date to transport without rediscovery", async () => {
+  it("passes the exact admitted context, reserve and checked date to transport without rediscovery", async () => {
     const f = fixture(snapshot.route);
     const original = structuredClone(snapshot);
     vi.mocked(resolveModelTransport).mockImplementation(async (env, model, affinity) => {
       expect(env).toBe(f.env); expect(model).toBe(snapshot); expect(affinity).toBe(`distill-${revisionId}`);
       expect(model).toEqual(original);
       expect(model).toMatchObject({ contextTokens: 262144, maxOutputTokens: null, outputReserveTokens: 8192,
-        inputMicrousdPerMillion: 123456, cachedMicrousdPerMillion: 2345, outputMicrousdPerMillion: 654321,
         checkedOn: "2026-10-27" });
+      expect(model).not.toHaveProperty("inputMicrousdPerMillion");
+      expect(model).not.toHaveProperty("cachedMicrousdPerMillion");
+      expect(model).not.toHaveProperty("outputMicrousdPerMillion");
       expect(f.dispatchCAS).not.toHaveBeenCalled();
       throw new Error("Fixture transport stopped before dispatch.");
     });
@@ -357,5 +359,30 @@ describe("DistillWorkflow admitted model snapshot", () => {
 
     expect(generateText).not.toHaveBeenCalled();
     expect(resolveModelTransport).not.toHaveBeenCalled();
+  });
+
+  it("keeps known-zero token counts and historical cost for zero-call failure", async () => {
+    const f = fixture(snapshot.route);
+    vi.mocked(resolveModelTransport).mockRejectedValueOnce(new Error("Fixture transport stopped before dispatch."));
+    try {
+      const steps = await run(f);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
+      const body = f.bodies.get(prefix + "distill.json");
+      if (!body) throw new Error("Missing distill.json for zero-call failure.");
+      const report = JSON.parse(body) as DistillReport & { state: string };
+      expect(report.usage.calls).toBe(0);
+      expect(report.usage.inputTokens).toBe(0);
+      expect(report.usage.cachedTokens).toBe(0);
+      expect(report.usage.outputTokens).toBe(0);
+      expect(report.usage.tokenLimit).toBeNull();
+      expect(report.usage.estimatedCostMicrousd).toBe(322766);
+      const row = f.db.prepare("SELECT distill_input_tokens AS inputTokens, distill_cached_tokens AS cachedTokens, distill_output_tokens AS outputTokens, distill_token_limit AS tokenLimit, distill_estimated_cost_microusd AS cost FROM source_revision WHERE id=?").get(revisionId) as { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; cost: number | null };
+      expect(row.inputTokens).toBe(0);
+      expect(row.cachedTokens).toBe(0);
+      expect(row.outputTokens).toBe(0);
+      expect(row.tokenLimit).toBeNull();
+      expect(row.cost).toBe(322766);
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
   });
 });

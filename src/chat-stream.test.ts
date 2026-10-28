@@ -39,9 +39,6 @@ vi.mock("./models", async (importOriginal) => {
     label: "Beam",
     contextTokens: 1048576,
     maxOutputTokens: 8192,
-    inputMicrousdPerMillion: 150000,
-    cachedMicrousdPerMillion: 30000,
-    outputMicrousdPerMillion: 500000,
     checkedOn: "2026-10-26",
     enabled: true,
     responseFormat: false,
@@ -55,6 +52,7 @@ vi.mock("./models", async (importOriginal) => {
     requireAvailableModel: vi.fn(async (_env: unknown, route: string) => {
       if (route === "gateway:command-code/native-beam") return frozenRoute(base, route);
       if (route === "gateway:command-code/other-beam") return frozenRoute({ ...base, id: "other-beam" }, route);
+      if (route === "gateway:openrouter/test-model") return { ...base, route, id: "test-model", routing: { provider: { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1", baseUrl: "https://openrouter.ai/api/v1", enabled: true }, gatewayId: "test-gw" } };
       throw new Error("unexpected model " + route);
     }),
     getModelConnection: vi.fn(async () => ({ gatewayId: "test-gw", provider: "ai-gateway", alias: "default" })),
@@ -65,10 +63,16 @@ vi.mock("./cost", async (importOriginal) => {
   const actual = await importOriginal<typeof CostModule>();
   return {
     ...actual,
-    admitTurn: vi.fn(async () => 123),
-    estimateCost: vi.fn(() => 7),
+    admitTurn: vi.fn(async (_env: unknown, _chatId: string, _turnId: string, model: { contextTokens: number; maxOutputTokens: number | null; outputReserveTokens?: number }) => {
+      const output = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
+      return (model.contextTokens ?? 0) + output;
+    }),
   };
 });
+
+vi.mock("./model-quota", async () => ({
+  assertProviderAllowance: vi.fn(async () => {}),
+}));
 
 vi.mock("./context", async () => ({
   buildContext: vi.fn(async (_env: unknown, _actor: Actor, input: ContextInput) => {
@@ -92,6 +96,9 @@ vi.mock("./context", async () => ({
 
 import { ChatAgent } from "./chat";
 import { buildContext } from "./context";
+import { admitTurn } from "./cost";
+import { assertProviderAllowance } from "./model-quota";
+import { LibraryError } from "./library";
 
 type SubmitResult = Awaited<ReturnType<ChatAgent["submitTurn"]>>;
 
@@ -101,6 +108,8 @@ const chatId = "wire-chat";
 const sentBodies: WireSentBody[] = [];
 let fetchCalls = 0;
 let nextSSE: string | null = null;
+const executedSql: string[] = [];
+const TOKEN_BOUND = 1048576 + 8192;
 
 function sse(chunks: string[]) {
   return chunks.map((c) => "data: " + c + "\n\n").join("") + "data: [DONE]\n\n";
@@ -120,9 +129,34 @@ function makeHarness(quote = "A source", instructions = "") {
   const db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE chat(id TEXT PRIMARY KEY,project_id TEXT NOT NULL)");
   db.prepare("INSERT INTO chat VALUES ('wire-chat',?)").run(projectId);
+  const d1 = new DatabaseSync(":memory:");
+  d1.exec("CREATE TABLE chat(id TEXT PRIMARY KEY,project_id TEXT NOT NULL)");
+  d1.prepare("INSERT INTO chat VALUES ('wire-chat',?)").run(projectId);
+  d1.exec("CREATE TABLE chat_turn(chat_id TEXT, turn_id TEXT, model TEXT, scope_mode TEXT, scope_json TEXT, context_mode TEXT, state TEXT, input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER, token_limit INTEGER CHECK (token_limit IS NULL OR token_limit >= 0), estimated_cost_microusd INTEGER, citations INTEGER, invalid_labels INTEGER, first_token_ms INTEGER, total_ms INTEGER, error TEXT, created_at INTEGER, PRIMARY KEY(chat_id, turn_id))");
   const env = {
     DB: {
       prepare(sql: string) {
+        executedSql.push(sql);
+        if (sql.includes("chat_turn") || sql.includes("UPDATE chat SET")) {
+          return {
+            first: async (): Promise<unknown> => null,
+            bind: (...args: SQLInputValue[]) => ({
+              first: async (): Promise<unknown> => {
+                try {
+                  const stmt = d1.prepare(sql);
+                  return stmt.columns().length ? (stmt.get(...args) as unknown) : null;
+                } catch { return null; }
+              },
+              run: async () => {
+                try {
+                  const info = d1.prepare(sql).run(...args);
+                  return { meta: { changes: Number(info.changes) } };
+                } catch { return { meta: { changes: 1 } }; }
+              },
+              all: async () => ({ results: [] as unknown[] }),
+            }),
+          };
+        }
         return {
           first: async (): Promise<unknown> => {
             if (sql.includes("model_providers_json")) return { providers: JSON.stringify([{ id: "workers-ai", type: "workers-ai", gatewaySlug: null, gatewayPath: "", baseUrl: null, enabled: true }, { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1", baseUrl: "https://openrouter.ai/api/v1", enabled: true }, { id: "command-code", type: "openai-compatible", gatewaySlug: "custom-command-code", gatewayPath: "v1", baseUrl: "https://api.commandcode.ai/provider/v1", enabled: true }]) };
@@ -157,7 +191,7 @@ function makeHarness(quote = "A source", instructions = "") {
     BUCKET: { get: async () => ({ arrayBuffer: async () => quoteBytes.buffer }) },
   } as unknown as Env;
   const agent = new ChatAgent({ database: db } as unknown as ConstructorParameters<typeof ChatAgent>[0], env);
-  return { agent, db, env };
+  return { agent, db, d1, env, executedSql };
 }
 
 function requireTurn(value: SubmitResult): TurnView {
@@ -167,6 +201,7 @@ function requireTurn(value: SubmitResult): TurnView {
 
 beforeEach(() => {
   sentBodies.length = 0;
+  executedSql.length = 0;
   fetchCalls = 0;
   nextSSE = null;
   vi.clearAllMocks();
@@ -196,6 +231,17 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn).toMatchObject({ state: "completed", answer: markdown, invalidLabels: 0 });
       expect(turn.citations).toHaveLength(1);
       expect(fetchCalls).toBe(1);
+      expect(turn.tokenLimit).toBe(TOKEN_BOUND);
+      expect(turn.estimatedCostMicrousd).toBeUndefined();
+      expect(turn.inputTokens).toBe(20);
+      expect(turn.outputTokens).toBe(18);
+      expect(vi.mocked(assertProviderAllowance)).not.toHaveBeenCalled();
+      expect(vi.mocked(admitTurn)).toHaveBeenCalledTimes(1);
+      expect(executedSql.some((s) => s.includes("token_limit"))).toBe(true);
+      expect(executedSql.some((s) => s.includes("estimated_cost_microusd"))).toBe(false);
+      const d1row = h.d1.prepare("SELECT token_limit AS tokenLimit, estimated_cost_microusd AS usd FROM chat_turn WHERE chat_id=? AND turn_id=?").get(chatId, "aaaaaaaa-aaaa-4aaa-8aaa-000000000010") as unknown as { tokenLimit: number; usd: number | null };
+      expect(d1row.tokenLimit).toBe(TOKEN_BOUND);
+      expect(d1row.usd).toBeNull();
       const contextInput = vi.mocked(buildContext).mock.calls.at(-1)?.[2];
       expect(contextInput?.instructions).toBe(projectInstructions);
       const body = sentBodies[0];
@@ -277,7 +323,8 @@ describe("chat-stream K2 wire regression", () => {
       expect(r1.state).toBe("partial");
       expect(r1.answer).toBe("Held [S1:1] ");
       expect(r1.error).toBe("External model request failed (cause: AI_StreamProviderError:server_error). Check the Gateway connection and provider status; no retry was started.");
-      expect(r1.estimatedCostMicrousd).toBe(123);
+      expect(r1.tokenLimit).toBe(TOKEN_BOUND);
+      expect(r1.estimatedCostMicrousd).toBeUndefined();
       expect(r1.inputTokens).toBeNull();
       expect(r1.cachedTokens).toBeNull();
       expect(r1.outputTokens).toBeNull();
@@ -389,7 +436,8 @@ describe("chat-stream K2 wire regression", () => {
       const turn = requireTurn(await pending);
       expect(turn.state).toBe("cancelled");
       expect(turn.error).toBe("Stopped. A new Send starts a new turn.");
-      expect(turn.estimatedCostMicrousd).toBe(123);
+      expect(turn.tokenLimit).toBe(TOKEN_BOUND);
+      expect(turn.estimatedCostMicrousd).toBeUndefined();
       expect(turn.inputTokens).toBeNull();
     } finally { h.db.close(); }
   });
@@ -418,7 +466,8 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.state).toBe("failed");
       expect(turn.error ?? "").toContain("time bound");
       expect(turn.error ?? "").not.toContain("Stopped.");
-      expect(turn.estimatedCostMicrousd).toBe(123);
+      expect(turn.tokenLimit).toBe(TOKEN_BOUND);
+      expect(turn.estimatedCostMicrousd).toBeUndefined();
       expect(turn.inputTokens).toBeNull();
     } finally { h.db.close(); vi.useRealTimers(); }
   });
@@ -464,9 +513,111 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.state).toBe("cancelled");
       expect(turn.error).toBe("Stopped. A new Send starts a new turn.");
       expect(turn.error ?? "").not.toContain("time bound");
-      expect(turn.estimatedCostMicrousd).toBe(123);
+      expect(turn.tokenLimit).toBe(TOKEN_BOUND);
+      expect(turn.estimatedCostMicrousd).toBeUndefined();
       expect(turn.inputTokens).toBeNull();
     } finally { h.db.close(); vi.useRealTimers(); }
+  });
+  it("first dispatch is idempotent with one model call and recorded token limit", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "Held [S1:1]" }, "stop", { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+      const turnId = "aaaaaaaa-aaaa-4aaa-8aaa-000000000099";
+      const input = { projectId, chatId, turnId, question: "Q idem", scopeMode: "explicit" as const, sourceIds: ["s1"], model: "gateway:command-code/native-beam" };
+      const first = requireTurn(await h.agent.submitTurn(input, true));
+      expect(first.state).toBe("completed");
+      expect(first.tokenLimit).toBe(TOKEN_BOUND);
+      expect(first.estimatedCostMicrousd).toBeUndefined();
+      expect(fetchCalls).toBe(1);
+      nextSSE = sse([chunk({ content: "Second should not dispatch [S1:1]" }, "stop", { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+      const second = requireTurn(await h.agent.submitTurn(input, true));
+      expect(second.turnId).toBe(turnId);
+      expect(second.answer).toBe(first.answer);
+      expect(second.tokenLimit).toBe(TOKEN_BOUND);
+      expect(fetchCalls).toBe(1);
+      expect(executedSql.some((s) => s.includes("token_limit"))).toBe(true);
+      const row = h.d1.prepare("SELECT token_limit AS tokenLimit FROM chat_turn WHERE chat_id=? AND turn_id=?").get(chatId, turnId) as unknown as { tokenLimit: number };
+      expect(row.tokenLimit).toBe(TOKEN_BOUND);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("non-command-code history includes prior turns while command-code stays question-only", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "First [S1:1]" }, null), usageOnly({ prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+      const t1 = "bbbbbbbb-bbbb-4bbb-8bbb-000000000021";
+      const r1 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t1, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:openrouter/test-model" }, true));
+      expect(r1.state).toBe("completed");
+      expect(r1.tokenLimit).toBe(TOKEN_BOUND);
+      sentBodies.length = 0;
+      nextSSE = sse([chunk({ content: "Second [S1:1]" }, null), usageOnly({ prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+      const t2 = "bbbbbbbb-bbbb-4bbb-8bbb-000000000022";
+      const r2 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t2, question: "Q2", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:openrouter/test-model" }, true));
+      expect(r2.state).toBe("completed");
+      const body = sentBodies[0];
+      if (!body) throw new Error("expected outgoing openrouter body");
+      const texts = JSON.stringify(body);
+      expect(texts).toContain("Q1");
+      expect(texts).toContain("First [S1:1]");
+      expect(r2.tokenLimit).toBe(TOKEN_BOUND);
+      expect(fetchCalls).toBe(2);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("undispatched oversized scope settles tokenLimit 0 with zeroed counts and no model call", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      const huge = "x".repeat(1300000);
+      const t1 = "cccccccc-cccc-4ccc-8ccc-000000000099";
+      const r1 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t1, question: huge, scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+      expect(r1.state).toBe("failed");
+      expect(r1.tokenLimit).toBe(0);
+      expect(r1.inputTokens).toBe(0);
+      expect(r1.cachedTokens).toBe(0);
+      expect(r1.outputTokens).toBe(0);
+      expect(r1.estimatedCostMicrousd).toBeUndefined();
+      expect(fetchCalls).toBe(0);
+      const row = h.d1.prepare("SELECT token_limit AS tokenLimit FROM chat_turn WHERE chat_id=? AND turn_id=?").get(chatId, t1) as unknown as { tokenLimit: number };
+      expect(row.tokenLimit).toBe(0);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("admission failure settles tokenLimit 0 with known zero counts and no model call", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      vi.mocked(admitTurn).mockRejectedValueOnce(new LibraryError("budget", "Workers AI daily allowance is not configured. No model call was started.", 409));
+      const t1 = "eeeeeeee-eeee-4eee-8eee-000000000099";
+      const r1 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t1, question: "Q blocked", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+      expect(r1.state).toBe("failed");
+      expect(r1.tokenLimit).toBe(0);
+      expect(r1.inputTokens).toBe(0);
+      expect(r1.cachedTokens).toBe(0);
+      expect(r1.outputTokens).toBe(0);
+      expect(r1.estimatedCostMicrousd).toBeUndefined();
+      expect(r1.error ?? "").toMatch(/allowance|budget|configured/i);
+      expect(fetchCalls).toBe(0);
+      expect(vi.mocked(assertProviderAllowance)).not.toHaveBeenCalled();
+      const row = h.d1.prepare("SELECT token_limit AS tokenLimit, input_tokens AS inputTokens, output_tokens AS outputTokens FROM chat_turn WHERE chat_id=? AND turn_id=?").get(chatId, t1) as unknown as { tokenLimit: number | null; inputTokens: number | null; outputTokens: number | null };
+      expect(row.tokenLimit).toBe(0);
+      expect(row.inputTokens).toBe(0);
+      expect(row.outputTokens).toBe(0);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("legacy stored turn normalizes tokenLimit null without dropping historical USD", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      const legacyId = "dddddddd-dddd-4ddd-8ddd-000000000099";
+      const legacy = { turnId: legacyId, question: "Q legacy", answer: "Old [S1:1]", state: "completed", model: "gateway:command-code/native-beam", scopeMode: "explicit", revisionIds: [], sourceIds: ["s1"], citations: [], invalidLabels: 0, inputTokens: 10, cachedTokens: 0, outputTokens: 5, estimatedCostMicrousd: 123, firstTokenMs: 10, totalMs: 100, error: null };
+      h.db.prepare("INSERT INTO turns(id,payload,created_at) VALUES (?,?,?)").run(legacyId, JSON.stringify(legacy), Date.now());
+      const turns = await h.agent.getTurns(projectId);
+      const found = turns.find((t) => t.turnId === legacyId);
+      if (!found) throw new Error("legacy turn missing");
+      expect(found.tokenLimit).toBeNull();
+      expect((found as unknown as { estimatedCostMicrousd: number }).estimatedCostMicrousd).toBe(123);
+      expect(found.inputTokens).toBe(10);
+    } finally { h.db.close(); h.d1.close(); }
   });
 });
 

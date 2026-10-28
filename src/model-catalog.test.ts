@@ -67,71 +67,59 @@ describe("provider model catalogue discovery", () => {
     const warnings: string[] = [];
     const seen: string[] = [];
     const models = await discoverGatewayModels(defaultProviders(), (pid, message) => { seen.push(pid); warnings.push(message); });
-    expect(models).toEqual([expect.objectContaining({ id: id, label: "New public model", contextTokens: 256000, maxOutputTokens: null, outputReserveTokens: 8192, inputMicrousdPerMillion: null, cachedMicrousdPerMillion: null, outputMicrousdPerMillion: null, enabled: true })]);
+    expect(models).toEqual([expect.objectContaining({ id: id, label: "New public model", contextTokens: 256000, maxOutputTokens: null, outputReserveTokens: 8192, checkedOn: expect.any(String), enabled: true })]);
+    expect(models[0]).not.toHaveProperty("inputMicrousdPerMillion");
+    expect(models[0]).not.toHaveProperty("cachedMicrousdPerMillion");
+    expect(models[0]).not.toHaveProperty("outputMicrousdPerMillion");
     expect(warnings).toEqual([]);
     expect(seen).toEqual([]);
     expect(fetcher).toHaveBeenCalledTimes(2);
     for (const call of fetcher.mock.calls) expect(call).toHaveLength(2);
   });
 
-  it("admits newly discovered text models with explicit prices while cache price stays unknown", async () => {
+  it("reports text capabilities with context/output and no currency fields", async () => {
     const id = "new-provider/model-v123";
     catalogues([], [{ id: id, context_length: 100000, architecture: textChat, top_provider: { max_completion_tokens: 20000 }, supported_parameters: ["response_format", "structured_outputs"], pricing: { prompt: "0.000001", completion: 0.000002 } }]);
-    expect(await discoverGatewayModels(defaultProviders())).toEqual([expect.objectContaining({ route: "gateway:openrouter/" + id, id: id, contextTokens: 100000, maxOutputTokens: 20000, outputReserveTokens: 8192, inputMicrousdPerMillion: 1000000, cachedMicrousdPerMillion: null, outputMicrousdPerMillion: 2000000, enabled: true, responseFormat: true, structuredOutputs: true })]);
+    const models = await discoverGatewayModels(defaultProviders());
+    expect(models).toEqual([expect.objectContaining({ route: "gateway:openrouter/" + id, id: id, contextTokens: 100000, maxOutputTokens: 20000, outputReserveTokens: 8192, enabled: true, responseFormat: true, structuredOutputs: true })]);
+    expect(models[0]).not.toHaveProperty("inputMicrousdPerMillion");
+    expect(models[0]).not.toHaveProperty("cachedMicrousdPerMillion");
+    expect(models[0]).not.toHaveProperty("outputMicrousdPerMillion");
   });
 
-  it("uses published long-context prices for admission rather than the lower base tier", async () => {
+  it("ignores tiered pricing overrides and reports only context/output", async () => {
     catalogues([], [{ id: "provider/tiered", context_length: 1000000, architecture: textChat, pricing: { prompt: "0.000001", completion: "0.000005", input_cache_read: "0.00000005", overrides: [{ min_prompt_tokens: 272000, prompt: "0.000002", completion: "0.0000075", input_cache_read: "0.0000001" }] } }]);
-    expect(await discoverGatewayModels(defaultProviders())).toEqual([expect.objectContaining({ inputMicrousdPerMillion: 2000000, cachedMicrousdPerMillion: 100000, outputMicrousdPerMillion: 7500000, enabled: true, maxOutputTokens: null })]);
+    const models = await discoverGatewayModels(defaultProviders());
+    expect(models).toEqual([expect.objectContaining({ id: "provider/tiered", contextTokens: 1000000, enabled: true, maxOutputTokens: null })]);
+    expect(models[0]).not.toHaveProperty("inputMicrousdPerMillion");
+    expect(models[0]).not.toHaveProperty("cachedMicrousdPerMillion");
+    expect(models[0]).not.toHaveProperty("outputMicrousdPerMillion");
   });
 
-  it("quotes USD prices only for the native OpenRouter stock route", async () => {
-    const priced = [{ id: "vendor/priced-model", context_length: 64000, architecture: textChat, pricing: { prompt: "0.000001", completion: "0.000002" } }];
-    const officialBase = "https://openrouter.ai/api/v1";
-    const route = "gateway:openrouter/vendor/priced-model";
-    const mismatchedSlug: ModelProvider = { id: "openrouter", type: "openai-compatible", gatewaySlug: "custom-other", gatewayPath: "v1", baseUrl: officialBase, enabled: true };
-    const mismatchedPath: ModelProvider = { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v2", baseUrl: officialBase, enabled: true };
-    const native: ModelProvider = { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1", baseUrl: officialBase, enabled: true };
-    catalogues([], priced);
-    expect(await discoverGatewayModels([mismatchedSlug])).toEqual([expect.objectContaining({ route, enabled: true, inputMicrousdPerMillion: null, cachedMicrousdPerMillion: null, outputMicrousdPerMillion: null })]);
-    catalogues([], priced);
-    expect(await discoverGatewayModels([mismatchedPath])).toEqual([expect.objectContaining({ route, enabled: true, inputMicrousdPerMillion: null, cachedMicrousdPerMillion: null, outputMicrousdPerMillion: null })]);
-    catalogues([], priced);
-    expect(await discoverGatewayModels([native])).toEqual([expect.objectContaining({ route, enabled: true, inputMicrousdPerMillion: 1000000, cachedMicrousdPerMillion: null, outputMicrousdPerMillion: 2000000 })]);
-    const base = defaultProviders();
-    const bucket = fakeBucket();
-    const envMismatched = fixtureEnv(bucket.binding, { providers: base.map((p) => (p.id === "openrouter" ? mismatchedSlug : p)) });
-    catalogues([], priced);
-    await refreshModelCatalog(envMismatched);
-    await expect(requireAvailableModel(envMismatched, route)).rejects.toMatchObject({ code: "unavailable", status: 503 });
-    const bucketNative = fakeBucket();
-    const envNative = fixtureEnv(bucketNative.binding, { providers: base.map((p) => (p.id === "openrouter" ? native : p)) });
-    catalogues([], priced);
-    await refreshModelCatalog(envNative);
-    await expect(requireAvailableModel(envNative, route)).resolves.toMatchObject({ route });
-  });
-
-  it("keeps malformed admission metadata selectable but unknown, and paid resolution rejects it", async () => {
-    const base = { context_length: 100000, architecture: textChat, pricing: { prompt: "0", completion: "0" } };
+  it("keeps malformed context selectable but unknown, and paid resolution rejects only that row", async () => {
     const fetcher = catalogues([], [
       { id: "provider/zero", context_length: "100000", architecture: textChat, pricing: { prompt: "0", completion: "0" } },
-      { id: "provider/blank", context_length: 100000, architecture: textChat, pricing: { prompt: "", completion: "0" } },
-      { id: "provider/negative", context_length: 100000, architecture: textChat, pricing: { prompt: "-1", completion: "0" } },
-      { id: "provider/broken-tier", context_length: 100000, architecture: textChat, pricing: { prompt: "0", completion: "0", overrides: [{ min_prompt_tokens: 10, prompt: "unknown" }] } },
+      { id: "provider/valid-priced", context_length: 100000, architecture: textChat, pricing: { prompt: "0.000001", completion: "0.000002" } },
+      { id: "provider/valid-tiered", context_length: 100000, architecture: textChat, pricing: { prompt: "0.000001", completion: "0.000005", overrides: [{ min_prompt_tokens: 10, prompt: "unknown" }] } },
     ]);
-    void base;
     const bucket = fakeBucket();
     const env = fixtureEnv(bucket.binding);
     const refreshed = await refreshModelCatalog(env);
     const models = refreshed.models.filter((model) => model.route.indexOf("gateway:") === 0);
-    expect(models).toHaveLength(4);
+    expect(models).toHaveLength(3);
     expect(models.every((model) => model.enabled)).toBe(true);
-    expect(models[0] && models[0].contextTokens).toBeNull();
-    expect(models[1] && models[1].inputMicrousdPerMillion).toBeNull();
-    expect(models[2] && models[2].inputMicrousdPerMillion).toBeNull();
-    expect(models[3] && models[3].inputMicrousdPerMillion).toBeNull();
+    const first = models[0];
+    const second = models[1];
+    const third = models[2];
+    expect(first?.contextTokens).toBeNull();
+    expect(second?.contextTokens).toBe(100000);
+    expect(third?.contextTokens).toBe(100000);
+    expect(models.every((model) => !("inputMicrousdPerMillion" in model) && !("cachedMicrousdPerMillion" in model) && !("outputMicrousdPerMillion" in model))).toBe(true);
     fetcher.mockClear();
-    for (const model of models) await expect(requireAvailableModel(env, model.route)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    if (!first || !second || !third) throw new Error("expected three models");
+    await expect(requireAvailableModel(env, first.route)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    await expect(requireAvailableModel(env, second.route)).resolves.toMatchObject({ route: second.route });
+    await expect(requireAvailableModel(env, third.route)).resolves.toMatchObject({ route: third.route });
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -198,7 +186,7 @@ describe("provider model catalogue discovery", () => {
     ]);
     expect(models[0] && models[0].maxOutputTokens).toBe(12000);
     expect(models[1] && models[1].maxOutputTokens).toBeNull();
-    expect(models[0] && models[0].inputMicrousdPerMillion).toBeNull();
+    expect(models.every((model) => !("inputMicrousdPerMillion" in model) && !("cachedMicrousdPerMillion" in model) && !("outputMicrousdPerMillion" in model))).toBe(true);
     expect(row.id).toBe("new-vendor/model");
   });
 
@@ -371,16 +359,16 @@ describe("stored catalogue with provider snapshot", () => {
     const bucket = fakeBucket();
     const env = fixtureEnv(bucket.binding);
     catalogues(
-      [{ id: "stored/cc-model", context_length: 64000, supported_endpoints: ["/chat/completions"], pricing: { prompt: "0.000001", completion: "0.000002" } }],
+      [{ id: "stored/cc-model", supported_endpoints: ["/chat/completions"], pricing: { prompt: "0.000001", completion: "0.000002" } }],
       [{ id: "stored/or-model", context_length: 64000, architecture: textChat, pricing: { prompt: "0.000001", completion: "0.000002" } }],
     );
     const refreshed = await refreshModelCatalog(env);
     const unknownRoute = "gateway:command-code/stored/cc-model";
     const knownRoute = "gateway:openrouter/stored/or-model";
     expect(refreshed.models.some((m) => m.route === unknownRoute)).toBe(true);
-    expect(refreshed.models.find((m) => m.route === unknownRoute)?.inputMicrousdPerMillion).toBeNull();
-    expect(refreshed.models.find((m) => m.route === unknownRoute)?.outputMicrousdPerMillion).toBeNull();
-    expect(refreshed.models.find((m) => m.route === knownRoute)?.inputMicrousdPerMillion).toBe(1000000);
+    expect(refreshed.models.find((m) => m.route === unknownRoute)?.contextTokens).toBeNull();
+    expect(refreshed.models.find((m) => m.route === knownRoute)?.contextTokens).toBe(64000);
+    expect(refreshed.models.every((m) => !("inputMicrousdPerMillion" in m) && !("cachedMicrousdPerMillion" in m) && !("outputMicrousdPerMillion" in m))).toBe(true);
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("read must stay storage-only"); }));
     const read = await readModelCatalog(env);
     expect(read).toEqual(refreshed);

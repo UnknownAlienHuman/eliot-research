@@ -5,9 +5,9 @@ import { generateText, Output } from "ai";
 import type { JSONObject } from "@ai-sdk/provider";
 import { z } from "zod";
 import { isCitableBlock, type Block } from "../blocks";
-import { admitDistill, estimateCost, failUndispatchedDistill } from "../cost";
+import { admitDistill, failUndispatchedDistill } from "../cost";
 import { LibraryError } from "../library";
-import { modelOutputLimit, requireAvailableModel } from "../models";
+import { modelOutputLimit, modelTokenLimit, requireAvailableModel } from "../models";
 import type { ModelSpec } from "../models";
 import type { DistillInput } from "../shared/api";
 import { modelFailure, resolveModelTransport, safeErrorLogProjection } from "../model-transport";
@@ -33,7 +33,7 @@ function extractionSchema(labels: [string, ...string[]]) {
     authors: z.string().max(1000), published: z.string().max(100).nullable() });
 }
 type Extraction = z.infer<ReturnType<typeof extractionSchema>>;
-interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; estimatedCostMicrousd: number; providerUsage?: JSONObject | null }
+interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; estimatedCostMicrousd?: number | null; providerUsage?: JSONObject | null }
 interface Raw<T> { output: T; usage: Usage; validation?: { dropped: { index: number; reason: string }[] } }
 interface Evidence { label: string; block: number; quote: string }
 interface GuideItem { labels: string[]; text: string }
@@ -107,10 +107,9 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
     throw new LibraryError("unavailable", modelFailure(error, model), 503);
   }
   const usage = result.totalUsage;
-  const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
-  const estimatedCostMicrousd = inputTokens !== null && outputTokens !== null
-    ? estimateCost(model, inputTokens, cachedTokens ?? 0, outputTokens) : estimateCost(model, model.contextTokens, 0, modelOutputLimit(model));
-  return { output: result.output, usage: { inputTokens, cachedTokens, outputTokens, estimatedCostMicrousd, providerUsage: usage.raw ?? null } };
+  const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
+  const tokenLimit = modelTokenLimit(model);
+  return { output: result.output, usage: { inputTokens, cachedTokens, outputTokens, tokenLimit, providerUsage: usage.raw ?? null } };
 }
 
 function documentLanguage(text: string): "English" | "Russian" {
@@ -175,10 +174,10 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
   const owner = await env.DB.prepare("SELECT source_id,distill_model FROM source_revision WHERE id=?").bind(revisionId).first<{ source_id: string; distill_model: string }>();
   if (!owner) throw new Error("Source revision is missing.");
   if (owner.distill_model !== model.route) throw new LibraryError("conflict", "The admitted model snapshot no longer matches the stored model route.", 409);
+  const jobTokenLimit = 2 * modelTokenLimit(model);
   await env.DB.batch([
-    env.DB.prepare("UPDATE source_revision SET distill_input_tokens=?,distill_cached_tokens=?,distill_output_tokens=?,distill_estimated_cost_microusd=? WHERE id=?")
-      .bind(raw.usage.inputTokens, raw.usage.cachedTokens, raw.usage.outputTokens,
-        raw.usage.estimatedCostMicrousd + estimateCost(model, model.contextTokens, 0, modelOutputLimit(model)), revisionId),
+    env.DB.prepare("UPDATE source_revision SET distill_input_tokens=?,distill_cached_tokens=?,distill_output_tokens=?,distill_token_limit=? WHERE id=?")
+      .bind(raw.usage.inputTokens ?? null, raw.usage.cachedTokens ?? null, raw.usage.outputTokens ?? null, jobTokenLimit, revisionId),
     env.DB.prepare("UPDATE source SET authors=?,published=? WHERE id=? AND current_revision_id=?")
       .bind(text.includes(raw.output.authors) ? raw.output.authors : "", raw.output.published && text.includes(raw.output.published) ? raw.output.published : null, owner.source_id, revisionId)]);
   return { kept: verified.claims.length, dropped: verified.dropped.length };
@@ -306,8 +305,8 @@ async function commitSynthesis(env: Env, revisionId: string): Promise<Projection
   return { kept: prepared.kept, guideSentences: prepared.guideSentences, dropped: prepared.dropped, clearedNumbers: prepared.clearedNumbers };
 }
 async function finish(env: Env, revisionId: string, error?: unknown, projection?: Projection) {
-  const row = await env.DB.prepare("SELECT distill_state,distill_started_at,distill_calls,guide_summary,distill_estimated_cost_microusd FROM source_revision WHERE id=?")
-    .bind(revisionId).first<{ distill_state: string; distill_started_at: number; distill_calls: number; guide_summary: string | null; distill_estimated_cost_microusd: number }>();
+  const row = await env.DB.prepare("SELECT distill_state,distill_started_at,distill_calls,guide_summary,distill_token_limit,distill_estimated_cost_microusd FROM source_revision WHERE id=?")
+    .bind(revisionId).first<{ distill_state: string; distill_started_at: number; distill_calls: number; guide_summary: string | null; distill_token_limit: number | null; distill_estimated_cost_microusd: number | null }>();
   if (!row || row.distill_state !== "running") return;
   const saved = await env.BUCKET.get(key(revisionId, "distill.json"));
   let report = saved ? await saved.json<FinalReport>() : null;
@@ -316,9 +315,13 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
   const raws = await Promise.all([first?.json<Raw<unknown>>(), second?.json<Raw<unknown>>()]);
   const measured = raws.filter((item): item is Raw<unknown> => !!item);
   const completeUsage = measured.length === row.distill_calls;
-  const sum = (field: "inputTokens" | "cachedTokens" | "outputTokens") => measured.every((item) => item.usage[field] !== null)
+  const sumTokens = (field: "inputTokens" | "cachedTokens" | "outputTokens") => measured.every((item) => item.usage[field] !== null && item.usage[field] !== undefined)
     ? measured.reduce((n, item) => n + (item.usage[field] ?? 0), 0) : null;
-  const cost = completeUsage ? measured.reduce((n, item) => n + item.usage.estimatedCostMicrousd, 0) : row.distill_estimated_cost_microusd;
+  const firstBound = measured.length > 0 ? measured[0]?.usage.tokenLimit ?? null : null;
+  const tokenLimit = row.distill_token_limit ?? (firstBound !== null ? 2 * firstBound : null);
+  const hasLegacyCost = (item: Raw<unknown>) => item.usage.estimatedCostMicrousd !== null && item.usage.estimatedCostMicrousd !== undefined;
+  const legacyCost = completeUsage && measured.length > 0 && measured.every(hasLegacyCost)
+    ? measured.reduce((n, item) => n + (item.usage.estimatedCostMicrousd ?? 0), 0) : row.distill_estimated_cost_microusd;
   const verifiedObject = await env.BUCKET.get(key(revisionId, "distill-verified.json"));
   const verified = verifiedObject ? await verifiedObject.json<Verified>() : null;
   const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM claim c JOIN source_revision r ON r.id=c.source_revision_id WHERE r.id=? AND c.ordinal<r.claim_count").bind(revisionId).first<{ n: number }>();
@@ -328,17 +331,17 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
   const state = error && !row.guide_summary ? "failed" : partial ? "partial" : "done";
   const wallMs = Date.now() - row.distill_started_at;
   await put(env, revisionId, "distill.json", { state, questions: verified?.questions ?? [],
-    usage: { calls: row.distill_calls, inputTokens: completeUsage ? sum("inputTokens") : null, cachedTokens: completeUsage ? sum("cachedTokens") : null,
-      outputTokens: completeUsage ? sum("outputTokens") : null, estimatedCostMicrousd: cost, wallMs,
+    usage: { calls: row.distill_calls, inputTokens: completeUsage ? sumTokens("inputTokens") : null, cachedTokens: completeUsage ? sumTokens("cachedTokens") : null,
+      outputTokens: completeUsage ? sumTokens("outputTokens") : null, tokenLimit, estimatedCostMicrousd: legacyCost ?? null, wallMs,
       providerUsage: measured.map((item) => item.usage.providerUsage ?? null) },
     kept, dropped, clearedNumbers: projection?.clearedNumbers ?? verified?.clearedNumbers ?? 0,
     raw: { first: first ? key(revisionId, "distill-call1.json") : null, second: second ? key(revisionId, "distill-call2.json") : null }, error: error ? message(error) : null } satisfies FinalReport);
   report = await json<FinalReport>(env, revisionId, "distill.json");
   }
   await env.DB.prepare(`UPDATE source_revision SET distill_state=?,distill_error=?,distill_ms=?,distill_input_tokens=?,distill_cached_tokens=?,
-    distill_output_tokens=?,distill_estimated_cost_microusd=? WHERE id=? AND distill_state='running'`)
+    distill_output_tokens=?,distill_token_limit=? WHERE id=? AND distill_state='running'`)
     .bind(report.state, report.error, report.usage.wallMs, report.usage.inputTokens, report.usage.cachedTokens,
-      report.usage.outputTokens, report.usage.estimatedCostMicrousd, revisionId).run();
+      report.usage.outputTokens, report.usage.tokenLimit ?? row.distill_token_limit, revisionId).run();
 }
 export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillInput> {
   async run(event: Readonly<WorkflowEvent<DistillInput>>, step: WorkflowStep) {

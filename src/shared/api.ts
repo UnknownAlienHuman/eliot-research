@@ -92,7 +92,9 @@ export interface TurnView {
   cachedTokens: number | null;
   outputTokens: number | null;
   providerUsage?: ProviderUsage | null;
-  estimatedCostMicrousd: number | null;
+  tokenLimit: number | null;
+  /** Historical recorded estimate only; new jobs do not calculate currency. */
+  estimatedCostMicrousd?: number | null;
   firstTokenMs: number | null;
   totalMs: number | null;
   error: string | null;

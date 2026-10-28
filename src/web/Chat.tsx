@@ -292,7 +292,7 @@ export function ChatView() {
               {t.firstTokenMs != null ? <div><dt>First token</dt><dd>{t.firstTokenMs} ms</dd></div> : null}
               {t.totalMs != null ? <div><dt>Total time</dt><dd>{t.totalMs} ms</dd></div> : null}
               <div><dt>Tokens</dt><dd>{t.inputTokens == null ? 'Unknown' : t.inputTokens.toLocaleString('en-US')} in{t.cachedTokens != null && t.cachedTokens > 0 ? ' (' + t.cachedTokens.toLocaleString('en-US') + ' cached)' : ''} / {t.outputTokens == null ? 'Unknown' : t.outputTokens.toLocaleString('en-US')} out</dd></div>
-              <div><dt>Estimated cost</dt><dd>{t.estimatedCostMicrousd == null ? 'Unknown' : '$' + (t.estimatedCostMicrousd / 1000000).toFixed(4)}</dd></div>
+              <div><dt>Token limit</dt><dd>{t.tokenLimit == null ? 'Unknown' : t.tokenLimit.toLocaleString('en-US')}</dd></div>
               {t.invalidLabels > 0 ? <div><dt>Invalid labels</dt><dd>{t.invalidLabels}</dd></div> : null}
             </dl>
             <Cites projectId={pid} cites={t.citations} />

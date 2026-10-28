@@ -21,8 +21,9 @@ const CONFIG = process.env.ELIOT_FAULT_CONFIG || "eval/out/k3-final-20261026/wra
 const PERSIST = process.env.ELIOT_FAULT_PERSIST || ".wrangler/k3-final-20261026";
 const CRON_PATH = process.env.ELIOT_CRON_PATH || "/cdn-cgi/local/scheduled";
 const FLASH_ROUTE = "workers-ai:@cf/zai-org/glm-5.3-flash";
-const SLOT_COST = 322766;
-const EXPECT_USED = 79537;
+// Per-call token bound for Flash: ctx 1048576 + output 8192. Two-call distill bound is 2x.
+// No currency conversion; no neuron claim for non-native routes.
+const SLOT_TOKENS = 2113536;
 const EXPECT_CALLS_SUM = 22;
 const H = { Origin: ORIGIN };
 if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
@@ -54,8 +55,12 @@ function cleanId(id) { if (!/^[0-9a-fA-F-]{36}$/.test(id)) throw new Error("Refu
 const stamp = Date.now();
 const m0 = await apiJson("/api/settings");
 if (m0.status !== 200) fail("GET /api/settings unreachable: " + m0.status);
-note("monthly-pre", { used: m0.body.monthlyUsedMicrousd, budget: m0.body.monthlyBudgetMicrousd });
-if (m0.body.monthlyUsedMicrousd !== EXPECT_USED) fail("Pre monthly used is not the controlled 79537: " + m0.body.monthlyUsedMicrousd);
+const beforeUsage = m0.body && m0.body.usage ? m0.body.usage : null;
+if (!beforeUsage || typeof beforeUsage.dayStart !== "number" || typeof beforeUsage.dayEnd !== "number") fail("GET /api/settings must return usage {dayStart,dayEnd,inputTokens,outputTokens,cachedTokens,unknownUsages}.");
+for (const k of ["inputTokens", "outputTokens", "cachedTokens", "unknownUsages"]) {
+  if (!Number.isSafeInteger(beforeUsage[k]) || beforeUsage[k] < 0) fail("Invalid daily usage before inject: " + k);
+}
+note("usage-pre", { usage: beforeUsage });
 const held0 = firstValue(rowsOf(wrangler("SELECT COUNT(*) AS n FROM source_revision WHERE distill_state IN ('queued','running')"))[0]);
 const sum0 = firstValue(rowsOf(wrangler("SELECT COALESCE(SUM(distill_calls),0) AS c FROM source_revision"))[0]);
 note("d1-pre", { queuedOrRunning: held0, callsSum: sum0 });
@@ -82,9 +87,9 @@ if (fixtures.length !== 2) fail("Both text fixtures did not become readable.");
 const revIds = fixtures.map((f) => f.rev);
 note("fixtures-readable", { revIds: revIds.map((r) => String(r).slice(0, 8)) });
 const startedAt = Date.now() - 20 * 60 * 1000;
-wrangler("UPDATE source_revision SET distill_state='running',distill_error=NULL,distill_calls=0,distill_estimated_cost_microusd=" + SLOT_COST + ",distill_model='workers-ai:@cf/zai-org/glm-5.3-flash',distill_started_at=" + startedAt + " WHERE id IN ('" + cleanId(revIds[0]) + "','" + cleanId(revIds[1]) + "')");
-const injRows = rowsOf(wrangler("SELECT distill_state AS state,distill_calls AS calls,distill_estimated_cost_microusd AS cost,distill_model AS model,distill_started_at AS started FROM source_revision WHERE id IN ('" + cleanId(revIds[0]) + "','" + cleanId(revIds[1]) + "')"));
-if (injRows.length !== 2 || !injRows.every((row) => row.state === "running" && row.calls === 0 && row.cost === SLOT_COST && row.model === FLASH_ROUTE && row.started === startedAt)) fail("Inject did not hold exactly 2 slots: " + JSON.stringify(injRows).slice(0, 400));
+wrangler("UPDATE source_revision SET distill_state='running',distill_error=NULL,distill_calls=0,distill_token_limit=" + SLOT_TOKENS + ",distill_model='workers-ai:@cf/zai-org/glm-5.3-flash',distill_started_at=" + startedAt + " WHERE id IN ('" + cleanId(revIds[0]) + "','" + cleanId(revIds[1]) + "')");
+const injRows = rowsOf(wrangler("SELECT distill_state AS state,distill_calls AS calls,distill_token_limit AS tokenLimit,distill_model AS model,distill_started_at AS started FROM source_revision WHERE id IN ('" + cleanId(revIds[0]) + "','" + cleanId(revIds[1]) + "')"));
+if (injRows.length !== 2 || !injRows.every((row) => row.state === "running" && row.calls === 0 && row.tokenLimit === SLOT_TOKENS && row.model === FLASH_ROUTE && row.started === startedAt)) fail("Inject did not hold exactly 2 slots: " + JSON.stringify(injRows).slice(0, 400));
 const held = firstValue(rowsOf(wrangler("SELECT COUNT(*) AS n FROM source_revision WHERE distill_state='running'"))[0]);
 note("slots-held", { running: held });
 if (held !== 2) fail("Expected exactly 2 held running slots, got " + held);
@@ -102,11 +107,11 @@ for (let i = 0; i < 24; i++) {
   await sleep(5000);
 }
 if (!released) fail("Held slots did not release to 0 after one cron trigger.");
-const fin = rowsOf(wrangler("SELECT id,distill_state AS state,distill_error AS error,distill_calls AS calls,distill_input_tokens AS it,distill_cached_tokens AS ct,distill_output_tokens AS ot,distill_estimated_cost_microusd AS cost,distill_ms AS ms FROM source_revision WHERE id IN ('" + cleanId(revIds[0]) + "','" + cleanId(revIds[1]) + "')"));
+const fin = rowsOf(wrangler("SELECT id,distill_state AS state,distill_error AS error,distill_calls AS calls,distill_input_tokens AS it,distill_cached_tokens AS ct,distill_output_tokens AS ot,distill_token_limit AS tokenLimit,distill_ms AS ms FROM source_revision WHERE id IN ('" + cleanId(revIds[0]) + "','" + cleanId(revIds[1]) + "')"));
 for (const row of fin) {
   if (row.state !== "failed") fail("Fixture not failed: " + JSON.stringify(row));
   if (!row.error) fail("Fixture missing visible error: " + row.id);
-  if (row.calls !== 0 || row.it !== 0 || row.ct !== 0 || row.ot !== 0 || row.cost !== 0) fail("Fixture usage not zeroed: " + JSON.stringify(row));
+  if (row.calls !== 0 || row.it !== 0 || row.ct !== 0 || row.ot !== 0 || row.tokenLimit !== 0) fail("Fixture token usage not zeroed: " + JSON.stringify(row));
   if (typeof row.ms !== "number") fail("Fixture ms missing: " + row.id);
 }
 for (const f of fixtures) {
@@ -115,11 +120,13 @@ for (const f of fixtures) {
 }
 const sum1 = firstValue(rowsOf(wrangler("SELECT COALESCE(SUM(distill_calls),0) AS c FROM source_revision"))[0]);
 const m1 = await apiJson("/api/settings");
-note("d1-post", { callsSum: sum1, monthlyUsed: m1.body && m1.body.monthlyUsedMicrousd });
+const afterUsage = m1.body && m1.body.usage ? m1.body.usage : null;
+note("d1-post", { callsSum: sum1, usage: afterUsage });
 if (sum1 !== sum0) fail("Global distill_calls sum moved: " + sum0 + " -> " + sum1);
-if (!m1.body || m1.body.monthlyUsedMicrousd !== EXPECT_USED) fail("Monthly used not restored to 79537: " + (m1.body && m1.body.monthlyUsedMicrousd));
+if (!afterUsage) fail("GET /api/settings usage missing after drill.");
+if (afterUsage.inputTokens !== beforeUsage.inputTokens || afterUsage.outputTokens !== beforeUsage.outputTokens || afterUsage.cachedTokens !== beforeUsage.cachedTokens || afterUsage.unknownUsages !== beforeUsage.unknownUsages) fail("Daily token usage moved during storage-only fault drill: " + JSON.stringify({ beforeUsage, afterUsage }));
 record.ok = true;
-record.result = { projectId, revIds, callsSum: sum1, monthlyUsed: m1.body.monthlyUsedMicrousd };
+record.result = { projectId, revIds, callsSum: sum1, usage: afterUsage };
 mkdirSync("eval/out/k3", { recursive: true });
 writeFileSync("eval/out/k3/fault-dispatch.json", JSON.stringify(record, null, 2));
 console.log("FAULT-DRILL PASS");

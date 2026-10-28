@@ -143,9 +143,9 @@ function snapOf(t) {
   if (!t || (t.state !== 'done' && t.state !== 'partial')) return null;
   const rep = t.report && typeof t.report === 'object' ? t.report : null;
   const usage = (rep && rep.usage) || {};
-  if (typeof usage.calls !== 'number' || typeof usage.estimatedCostMicrousd !== 'number') return null;
+  if (typeof usage.calls !== 'number' || (typeof usage.tokenLimit !== 'number' && typeof usage.estimatedCostMicrousd !== 'number')) return null;
   if (!Array.isArray(t.claims)) return null;
-  return { calls: usage.calls, cost: usage.estimatedCostMicrousd, claims: t.claims.map((c) => c && c.id) };
+  return { calls: usage.calls, cost: usage.tokenLimit ?? usage.estimatedCostMicrousd ?? null, claims: t.claims.map((c) => c && c.id) };
 }
 async function assertStoredQuote(rev, c, tag) {
   await checkRange(rev, c.start, c.end);
@@ -182,7 +182,6 @@ function checkAnchors(byFile) {
   if (!paired(q07, (q) => /(?:\bno\b|without|does not|do not).{0,80}latency/.test(q) && q.includes('inference'))) missing.push('A3-no-additional-inference-latency');
   return missing;
 }
-const BUDGET_DEFAULT = 5000000;
 const TERMINAL = new Set(['done', 'partial', 'failed']);
 const POLL_MS = 5000;
 const REV_TIMEOUT_MS = 600000;
@@ -223,22 +222,25 @@ for (let i = 0; i < 10; i++) {
 const want = new Set(Array.from({ length: 10 }, (_, i) => 'arxiv-' + String(i + 1).padStart(2, '0') + '.pdf'));
 const scoped = sources.filter((s) => want.has(s.originalFilename) && s.currentRevisionId && (s.readableState === 'readable' || s.readableState === 'readable_with_warnings'));
 if (!nativeOnly && scoped.length < 10) { console.log('PREP_K1_NOT_READY: found ' + scoped.length + '/10 arxiv readable; prep K1 first, do not upload/convert again.'); process.exit(2); }
-async function monthlyUsage() {
+async function dailyUsage() {
   const s = await apiJson('/api/settings');
   assert.equal(s.status, 200, 'GET /api/settings must be 200.');
-  assert(typeof s.body.monthlyUsedMicrousd === 'number', 'GET /api/settings must return monthlyUsedMicrousd.');
-  assert(typeof s.body.monthlyBudgetMicrousd === 'number', 'GET /api/settings must return monthlyBudgetMicrousd.');
-  return { used: s.body.monthlyUsedMicrousd, budget: s.body.monthlyBudgetMicrousd };
+  const u = s.body.usage;
+  assert(u && typeof u.dayStart === 'number' && typeof u.dayEnd === 'number', 'GET /api/settings must return usage {dayStart,dayEnd,inputTokens,outputTokens,cachedTokens,unknownUsages}.');
+  for (const k of ['inputTokens', 'outputTokens', 'cachedTokens', 'unknownUsages']) assert(Number.isSafeInteger(u[k]) && u[k] >= 0, 'Invalid daily usage: ' + k);
+  return u;
 }
-const m0 = await monthlyUsage();
-assert(m0.budget >= 0 && m0.budget <= BUDGET_DEFAULT, 'The test allowance must not exceed the documented $5 budget; this script never raises it.');
+const m0 = await dailyUsage();
 const modelList = await apiJson('/api/models');
-assert.equal(modelList.status, 200, 'Read current dated prices before reporting the acceptance bound.');
-const price = (modelList.body.models || []).find((model) => model.route === FLASH_MODEL);
-assert(price && price.enabled, 'Flash metadata is required; no model substitution is allowed.');
-const callBound = Math.ceil((price.contextTokens * price.inputMicrousdPerMillion + price.maxOutputTokens * price.outputMicrousdPerMillion) / 1000000);
-const fullFreshBound = 28 * callBound;
-const boundReport = 'Fresh full K3 bound: baseline 10*2 + overflow 2*2 + answers 4*1 = 28 calls, ' + fullFreshBound + ' micro-USD plus PDF conversion (not included); remaining allowance ' + (m0.budget - m0.used) + '. Full bound fits: ' + (fullFreshBound <= m0.budget - m0.used) + '. Historical calls are not reset or silently counted as fresh.';
+assert.equal(modelList.status, 200, 'Read current catalogue before reporting the acceptance bound.');
+const flash = (modelList.body.models || []).find((model) => model.route === FLASH_MODEL);
+assert(flash && flash.enabled, 'Flash metadata is required; no model substitution is allowed.');
+assert(Number.isSafeInteger(flash.contextTokens) && flash.contextTokens > 0, 'Flash context must be known.');
+const outputBound = flash.outputReserveTokens ?? flash.maxOutputTokens;
+assert(Number.isSafeInteger(outputBound) && outputBound > 0, 'Flash output bound must be known.');
+const callTokenLimit = flash.contextTokens + outputBound;
+const fullFreshCalls = 28;
+const boundReport = 'Fresh full K3 bound: baseline 10*2 + overflow 2*2 + answers 4*1 = 28 calls, per-call token limit ' + callTokenLimit + ' (ctx+output), two-call distill ' + (2 * callTokenLimit) + '. No monthly budget; no neuron conversion. Historical calls are not reset or silently counted as fresh.';
 console.log(boundReport);
 const whole = new Map();
 async function checkRange(rev, st, en) {
@@ -263,8 +265,8 @@ if (overviewWired) assert(o0.body && Array.isArray(o0.body.sources), 'GET overvi
 if (nativeOnly) {
   assert(understandingWired && overviewWired, 'K3 native smoke requires the actual understanding and overview routes.');
   {
-  const m1 = await monthlyUsage();
-  assert.equal(m1.used, m0.used, 'Native-only probes must not change monthly usage.');
+  const m1 = await dailyUsage();
+  assert.deepEqual(m1, m0, 'Native-only probes must not change daily token usage.');
     const recLines = [];
     const recSource = process.env.ELIOT_K3_RECOVER_SOURCE;
     const recRevEnv = process.env.ELIOT_K3_RECOVER_REVISION;
@@ -293,7 +295,7 @@ if (nativeOnly) {
       }
       assert(u0.state === 'failed' || u0.state === 'done' || u0.state === 'partial', 'Recovery fixture must be terminal (failed/done/partial), got ' + u0.state + ' (no model distill here).');
       assert(u0.report && typeof u0.report === 'object', 'Terminal fixture must carry its terminal report (raw compat).');
-      assert(u0.report.usage && typeof u0.report.usage.calls === 'number' && typeof u0.report.usage.estimatedCostMicrousd === 'number', 'Terminal fixture must carry its usage (raw compat).');
+      assert(u0.report.usage && typeof u0.report.usage.calls === 'number' && (typeof u0.report.usage.tokenLimit === 'number' || typeof u0.report.usage.estimatedCostMicrousd === 'number'), 'Terminal fixture must carry its usage with tokenLimit (estimatedCostMicrousd is historical only).');
       assert(u0.report.raw && typeof u0.report.raw === 'object', 'Terminal fixture must carry current raw excerpts (raw compat).');
       const recStartState = u0.state;
       const alreadyChecked = !!(u0.report.artifacts && u0.report.artifacts.guide === 'source/' + rev + '/checked/guide.md');
@@ -306,10 +308,7 @@ if (nativeOnly) {
       const cur = await apiJson('/api/settings');
       assert.equal(cur.status, 200, 'GET /api/settings must be 200.');
       const s0 = cur.body.settings || {};
-      const wasBudget = cur.body.monthlyBudgetMicrousd;
-      const mu = await monthlyUsage();
-      const zb = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: s0.answerModel, monthlyModelBudgetMicrousd: mu.used }) });
-      assert.equal(zb.status, 200, 'PUT zero-headroom budget must be 200.');
+      const mu = await dailyUsage();
       try {
         const p = await apiJson('/api/sources/' + encodeURIComponent(recSource) + '/understanding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionId: rev, saveAvailable: true }) });
         if (p.status === 409) throw new Error('K3 recovery incompatible (409): ' + JSON.stringify(p.body && p.body.error) + ' - stopped, no retry.');
@@ -338,15 +337,15 @@ if (nativeOnly) {
         const u2 = await getUnderstanding(recSource, rev);
         assert.deepEqual((u2.claims || []).map((c) => c && c.id), (u1.claims || []).map((c) => c && c.id), 'Repeat save must keep identical claim IDs.');
         assert.deepEqual(u2.report && u2.report.usage, usageBefore, 'Repeat save must keep identical report usage.');
-        const m2 = await monthlyUsage();
-        assert.equal(m2.used, mu.used, 'Monthly usage must not move during storage-only recovery.');
+        const m2 = await dailyUsage();
+        assert.deepEqual(m2, mu, 'Daily token usage must not move during storage-only recovery.');
         recLines.push('- recovery source: ' + recSource + ' rev ' + String(rev).slice(0, 8) + ' (' + recStartState + ' -> ' + u1.state + ', terminal cached recheck)');
         recLines.push('- recovery usage unchanged: ' + JSON.stringify(usageBefore) + '; claims: ' + u1.claims.length);
         recLines.push('- recovery checked artifacts: report.artifacts at checked/guide.md, checked/digest.md, checked/glossary.json; canRecover false after save');
-        recLines.push('- recovery text/original bytes identical, repeat POST idempotent, monthly delta 0, budget restored');
+        recLines.push('- recovery text/original bytes identical, repeat POST idempotent, daily usage delta 0, settings untouched');
       } finally {
-        const rb = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: (await apiJson('/api/settings')).body.settings.answerModel, monthlyModelBudgetMicrousd: wasBudget }) });
-        assert.equal(rb.status, 200, 'PUT budget restore must be 200.');
+        const after = await apiJson('/api/settings');
+        assert.deepEqual(after.body.settings, cur.body.settings, 'Storage-only recovery must not change answer/distill settings.');
       }
     }
     const checkLines = [];
@@ -361,7 +360,8 @@ if (nativeOnly) {
       const crep = cu.report;
       assert(crep && typeof crep === 'object', 'Check report must be present.');
       const cusage = crep.usage || {};
-      for (const kk of ['calls', 'inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'wallMs']) assert(typeof cusage[kk] === 'number', 'Check report.usage.' + kk + ' must be numeric.');
+      for (const kk of ['calls', 'inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'wallMs']) assert(typeof cusage[kk] === 'number', 'Check report.usage.' + kk + ' must be numeric (tokenLimit, not currency).');
+      if (cusage.estimatedCostMicrousd !== undefined) assert(cusage.estimatedCostMicrousd === null || typeof cusage.estimatedCostMicrousd === 'number', 'Historical estimatedCostMicrousd must be honestly recorded, never gated.');
       assert(cusage.calls <= 2, 'Check calls bounded at most 2, got ' + cusage.calls + '.');
       const cclaims = Array.isArray(cu.claims) ? cu.claims : [];
       assert(cclaims.length <= 32, 'Check claims capped at 32.');
@@ -433,7 +433,7 @@ if (nativeOnly) {
         assert.equal(rbText.status, 200, 'Reader-browser stored text must open (GET revision text 200).');
         const rbStoredText = rbText.bytes.toString('utf8');
         assert(rbStoredText.length > 0, 'Reader-browser stored text must be non-empty.');
-        const rbUsageBefore = await monthlyUsage();
+        const rbUsageBefore = await dailyUsage();
         const rbReportBefore = rbU.report && rbU.report.usage ? JSON.stringify(rbU.report.usage) : 'no-report';
         const rbOv1 = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/overview');
         assert.equal(rbOv1.status, 200, 'Reader-browser overview must be 200.');
@@ -554,9 +554,8 @@ if (nativeOnly) {
             assert.equal(rng.status, 200, 'Open quote range must open (GET range 200).');
             assert.equal(rng.bytes.toString('utf8'), firstClaim.quote, 'Open quote GET bytes must equal the stored claim quote exactly.');
           }
-          const rbUsageAfter = await monthlyUsage();
-          assert.equal(rbUsageAfter.used, rbUsageBefore.used, 'Monthly usage must not move during GET-only browser check.');
-          assert.equal(rbUsageAfter.budget, rbUsageBefore.budget, 'Monthly budget must not move during GET-only browser check.');
+          const rbUsageAfter = await dailyUsage();
+          assert.deepEqual(rbUsageAfter, rbUsageBefore, 'Daily token usage must not move during GET-only browser check.');
           const rbU2 = await apiJson('/api/sources/' + encodeURIComponent(rbSrc.id) + '/understanding?revisionId=' + encodeURIComponent(rbRev));
           assert.equal(rbU2.status, 200, 'Understanding re-read must stay 200 after browser.');
           const rbRep2 = rbU2.body.report && rbU2.body.report.usage ? JSON.stringify(rbU2.body.report.usage) : 'no-report';
@@ -566,7 +565,7 @@ if (nativeOnly) {
           browserLines.push('- reader-browser: PASS 1440+390 light/dark screenshots in eval/out/k3/reader-*.png (GET-only, zero non-GET/HEAD, zero page errors)');
           browserLines.push('- reader-browser source: ' + (rbSrc.originalFilename || rbSrc.title) + ' rev ' + String(rbRev).slice(0, 8) + ' (' + rbU.state + ', stored done/partial, no new derivation)');
           browserLines.push('- reader-browser metadata: no UUID/telemetry in facts/details; source text/guide/claims kept; quote href keeps full revisionId/start/end with byte-exact GET');
-          browserLines.push('- reader-browser usage/jobs stable: monthly delta 0, report usage unchanged, overview deterministic');
+          browserLines.push('- reader-browser usage/jobs stable: daily usage delta 0, report usage unchanged, overview deterministic');
           if (rbU.state === 'partial') browserLines.push('- reader-browser partial display: PASS (stored partial shows partial hint)');
           else {
             let otherPartial = null;
@@ -585,7 +584,7 @@ if (nativeOnly) {
       }
     }
     for (const line of browserLines) recLines.push(line);
-    const md = ['# K3 native-only (storage, zero model calls)', '', '- project: ' + title, '- readable arxiv: ' + scoped.length + '/10 (no ingestion/conversion repeats)', '- reader range self-check: 1 exact range', '- understanding route: ' + (understandingWired ? (recSource ? 'wired (probes GET + explicit storage-only save POST when requested)' : 'wired (GET only, no POST)') : 'NOT_WIRED (404)'), '- overview route: ' + (overviewWired ? 'wired (GET only)' : 'NOT_WIRED (404)'), '- monthly usage stable: ' + m0.used + ' micro-USD', '- MODEL_NOT_RUN: set ELIOT_K3_MODEL=1 (root signal) for paid distillation; claim-mode C1-C4: NOT_RUN here.', ''].concat(recLines).concat(['']).join(EOL);
+    const md = ['# K3 native-only (storage, zero model calls)', '', '- project: ' + title, '- readable arxiv: ' + scoped.length + '/10 (no ingestion/conversion repeats)', '- reader range self-check: 1 exact range', '- understanding route: ' + (understandingWired ? (recSource ? 'wired (probes GET + explicit storage-only save POST when requested)' : 'wired (GET only, no POST)') : 'NOT_WIRED (404)'), '- overview route: ' + (overviewWired ? 'wired (GET only)' : 'NOT_WIRED (404)'), '- daily token usage stable: ' + JSON.stringify(m0), '- MODEL_NOT_RUN: set ELIOT_K3_MODEL=1 (root signal) for paid distillation; claim-mode C1-C4: NOT_RUN here.', ''].concat(recLines).concat(['']).join(EOL);
   await writeFile(outDir + '/k3-native-' + Date.now() + '.md', md);
   console.log(md);
   }
@@ -594,7 +593,7 @@ if (nativeOnly) {
 if (!runModel) {
   const violations = [];
   const sRows = [];
-  let sMicro = 0;
+  let sCalls = 0;
   const byFile = new Map();
   if (!understandingWired) violations.push('understanding route NOT_WIRED (404)');
   if (!overviewWired) violations.push('overview route NOT_WIRED (404)');
@@ -611,7 +610,7 @@ if (!runModel) {
     if (u.state !== 'done' && u.state !== 'partial') {
       violations.push(s.originalFilename + ': state=' + u.state + ' (not terminal-verified; no paid calls made here)');
       const rep0 = u.report && typeof u.report === 'object' ? u.report : null;
-      if (rep0 && rep0.usage && typeof rep0.usage.estimatedCostMicrousd === 'number') sMicro += rep0.usage.estimatedCostMicrousd;
+      if (rep0 && rep0.usage && typeof rep0.usage.calls === 'number') sCalls += rep0.usage.calls;
       sRows.push('| ' + s.originalFilename + ' | ' + u.state + ' | - | - |');
       continue;
     }
@@ -635,11 +634,12 @@ if (!runModel) {
     if (!rep || typeof rep !== 'object') {
       violations.push(s.originalFilename + ': terminal state without direct report');
     } else {
-      for (const kk of ['calls', 'inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'wallMs']) if (typeof rep.usage?.[kk] !== 'number') violations.push(s.originalFilename + ': usage not numeric');
+      for (const kk of ['calls', 'inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'wallMs']) if (typeof rep.usage?.[kk] !== 'number') violations.push(s.originalFilename + ': usage not numeric (tokenLimit, not currency)');
+      if (rep.usage?.estimatedCostMicrousd !== undefined && rep.usage?.estimatedCostMicrousd !== null && typeof rep.usage?.estimatedCostMicrousd !== 'number') violations.push(s.originalFilename + ': historical estimatedCost not numeric');
       if (typeof rep.kept !== 'number') violations.push(s.originalFilename + ': kept not a number');
       if (!Array.isArray(rep.dropped)) violations.push(s.originalFilename + ': dropped not an array');
       if (typeof rep.clearedNumbers !== 'number') violations.push(s.originalFilename + ': clearedNumbers not a number');
-      if (rep.usage && typeof rep.usage.estimatedCostMicrousd === 'number') sMicro += rep.usage.estimatedCostMicrousd;
+      if (rep.usage && typeof rep.usage.calls === 'number') sCalls += rep.usage.calls;
     }
     await writeFile(outDir + '/k3-stored-' + String(rev).slice(0, 8) + '.json', JSON.stringify({ revisionId: rev, source: s.originalFilename, state: u.state, claims: claims.length, error: u.error || null }, null, 2));
     sRows.push('| ' + s.originalFilename + ' | ' + u.state + ' | ' + claims.length + ' | stored-only |');
@@ -656,9 +656,8 @@ if (!runModel) {
   } catch (e) {
     violations.push('overview check failed');
   }
-  const m1 = await monthlyUsage();
-  if (m1.used !== m0.used) violations.push('monthly chat usage moved without paid calls');
-  assert.equal(m1.budget, m0.budget, 'Monthly budget must not move during a read-only stored run.');
+  const m1 = await dailyUsage();
+  if (JSON.stringify(m1) !== JSON.stringify(m0)) violations.push('daily token usage moved without paid calls');
   {
     const ct = process.env.ELIOT_K3_CLAIM_PROJECT;
     const cl = process.env.ELIOT_K3_CLAIM_CHAT;
@@ -703,7 +702,7 @@ if (!runModel) {
       }
     }
   }
-  const md = ['# K3 stored hard-gate validation (zero paid calls)', '', '- project: ' + title, '- stored distill total micro-USD: ' + sMicro, '- test allowance (monthly budget): ' + m0.budget + ' micro-USD (cap 5000000, never raised by this script)', '- monthly chat usage delta: ' + (m1.used - m0.used), '- violations: ' + violations.length, '', '| source | state | claims | mode |', '|---|---|---|---|'].concat(sRows).concat(['', '## Violations / open gates', '']).concat(violations.map((v) => '- ' + v)).concat(['']).join(EOL);
+  const md = ['# K3 stored hard-gate validation (zero paid calls)', '', '- project: ' + title, '- stored distill total calls: ' + sCalls + ' (tokenLimit, no currency; historical USD only legacy, never gated)', '- daily token usage delta: ' + JSON.stringify(m1) + ' vs ' + JSON.stringify(m0), '- violations: ' + violations.length, '', '| source | state | claims | mode |', '|---|---|---|---|'].concat(sRows).concat(['', '## Violations / open gates', '']).concat(violations.map((v) => '- ' + v)).concat(['']).join(EOL);
   await writeFile(outDir + '/k3-stored-' + Date.now() + '.md', md);
   console.log(md);
   assert.equal(violations.length, 0, 'K3 MAP hard gates OPEN: ' + violations.length);
@@ -721,12 +720,12 @@ async function getUnderstanding(sourceId, rev) {
 const rows = [];
 let posted = 0;
 const failedRevs = [], pausedRevs = [];
-let distillMicro = 0;
+let distillCalls = 0;
 const paidByFile = new Map();
 const postedRevisions = new Set();
 const firstPass = new Map();
 let admit = true;
-let newCost = 0;
+let newTokens = 0;
 {
   const blocked = [];
   for (const s of scoped) {
@@ -757,7 +756,7 @@ async function distillOne(s) {
     await sleep(POLL_MS);
     u = await getUnderstanding(s.id, rev);
   }
-  if (u.state === 'paused') { pausedRevs.push(s.originalFilename); rows.push('| ' + s.originalFilename + ' | paused | - | budget blocked, operator action, no retry |'); return; }
+  if (u.state === 'paused') { pausedRevs.push(s.originalFilename); rows.push('| ' + s.originalFilename + ' | paused | - | admission blocked, operator action, no retry |'); return; }
   if (u.state === 'failed') { failedRevs.push(s.originalFilename); rows.push('| ' + s.originalFilename + ' | failed | - | no auto retry |'); admit = false; return; }
   const claims = Array.isArray(u.claims) ? u.claims : [];
   assert(claims.length <= 32, 'Claims per revision capped at 32 (' + s.originalFilename + ').');
@@ -777,14 +776,15 @@ async function distillOne(s) {
   assert(u.report && typeof u.report === 'object', 'Terminal understanding must carry direct report (done/partial) (' + s.originalFilename + ').');
   const rep = u.report;
   const usage = rep.usage || {};
-  for (const kk of ['calls', 'inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'wallMs']) assert(typeof usage[kk] === 'number', 'report.usage.' + kk + ' must be a number (' + s.originalFilename + ').');
+  for (const kk of ['calls', 'inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'wallMs']) assert(typeof usage[kk] === 'number', 'report.usage.' + kk + ' must be a number (tokenLimit, not currency) (' + s.originalFilename + ').');
+  if (usage.estimatedCostMicrousd !== undefined) assert(usage.estimatedCostMicrousd === null || typeof usage.estimatedCostMicrousd === 'number', 'Historical estimatedCost must be honestly recorded, never gated (' + s.originalFilename + ').');
   assert(usage.calls >= 0 && usage.calls <= 2, 'report.usage.calls bounded 0-2 (' + s.originalFilename + ').');
   assert(Array.isArray(rep.questions) && rep.questions.length >= 3, 'report.questions (3-5 guide questions) required (' + s.originalFilename + ').');
   assert(typeof rep.kept === 'number', 'report.kept must be a number (' + s.originalFilename + ').');
   assert(Array.isArray(rep.dropped), 'report.dropped must be an array of {index,reason} (' + s.originalFilename + ').');
   assert(typeof rep.clearedNumbers === 'number', 'report.clearedNumbers must be a number (' + s.originalFilename + ').');
-  distillMicro += usage.estimatedCostMicrousd;
-  if (postedRevisions.has(rev)) newCost += usage.estimatedCostMicrousd;
+  distillCalls += usage.calls;
+  if (postedRevisions.has(rev)) newTokens += usage.inputTokens + usage.outputTokens;
   let stable = snapOf(u);
   let agreed = false;
   for (let i = 0; i < 2 && !agreed; i++) {
@@ -802,7 +802,7 @@ async function distillOne(s) {
   }
   firstPass.set(rev, stable);
   await writeFile(outDir + '/k3-' + String(rev).slice(0, 8) + '.json', JSON.stringify({ revisionId: rev, source: s.originalFilename, state: u.state, claims: claims.length, usage, kept: rep.kept, dropped: rep.dropped, clearedNumbers: rep.clearedNumbers }, null, 2));
-  rows.push('| ' + s.originalFilename + ' | ' + u.state + ' | ' + claims.length + ' | ' + usage.calls + ' | ' + usage.inputTokens + '/' + usage.cachedTokens + '/' + usage.outputTokens + ' | ' + usage.estimatedCostMicrousd + ' | ' + usage.wallMs + ' |');
+  rows.push('| ' + s.originalFilename + ' | ' + u.state + ' | ' + claims.length + ' | ' + usage.calls + ' | ' + usage.inputTokens + '/' + usage.cachedTokens + '/' + usage.outputTokens + ' | ' + usage.tokenLimit + ' | ' + usage.wallMs + ' |');
 }
 const pending = scoped.slice();
 async function pump() {
@@ -832,7 +832,7 @@ try {
     const rep = u.report && typeof u.report === 'object' ? u.report : null;
     const usage = (rep && rep.usage) || {};
     const ids = Array.isArray(u.claims) ? u.claims.map((c) => c && c.id) : [];
-    if (u.state === 'none' || u.state === 'queued' || usage.calls !== snap.calls || usage.estimatedCostMicrousd !== snap.cost || JSON.stringify(ids) !== JSON.stringify(snap.claims)) changed.push(s.originalFilename + ': calls/cost/claim identity moved without a new POST');
+    if (u.state === 'none' || u.state === 'queued' || usage.calls !== snap.calls || (usage.tokenLimit ?? usage.estimatedCostMicrousd) !== snap.cost || JSON.stringify(ids) !== JSON.stringify(snap.claims)) changed.push(s.originalFilename + ': calls/tokenLimit/claim identity moved without a new POST');
   }
 } catch (e) {
   tailV.push('Second storage pass read failed: ' + String((e && e.message) || e).split('\n')[0]);
@@ -840,7 +840,7 @@ try {
 if (changed.length > 0) tailV.push('Second storage pass changed (' + changed.length + '): ' + changed.join('; '));
 if (unbased.length > 0) tailV.push('Second storage pass missing baselines (' + unbased.length + '): ' + unbased.join('; '));
 if (failedRevs.length > 0) tailV.push('Failed revisions (no auto retry): ' + failedRevs.join(', '));
-if (pausedRevs.length > 0) tailV.push('Paused revisions need operator budget action: ' + pausedRevs.join(', '));
+if (pausedRevs.length > 0) tailV.push('Paused revisions need operator admission action: ' + pausedRevs.join(', '));
 const missing = checkAnchors(paidByFile);
 if (missing.length > 0) tailV.push('Missing anchors (reported, not weakened): ' + missing.join(', '));
 let m1 = null;
@@ -857,13 +857,12 @@ try {
   tailV.push('Overview read failed: ' + String((e && e.message) || e).split('\n')[0]);
 }
 try {
-  m1 = await monthlyUsage();
-  if (m1.used - m0.used !== newCost) tailV.push('Monthly usage delta must equal newly admitted distillation cost.');
-  if (!(m1.used <= m1.budget)) tailV.push('Monthly model budget exceeded.');
+  m1 = await dailyUsage();
+  if (JSON.stringify(m1) === JSON.stringify(m0) && newTokens !== 0) tailV.push('Daily usage did not move although new distill tokens were admitted.');
 } catch (e) {
-  tailV.push('Monthly usage read failed: ' + String((e && e.message) || e).split('\n')[0]);
+  tailV.push('Daily usage read failed: ' + String((e && e.message) || e).split('\n')[0]);
 }
-const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- POSTed revisions this run: ' + posted + ' (second scan needs 0)', '- stored distill total: ' + distillMicro + ' micro-USD; newly admitted: ' + newCost, '- monthly usage delta: ' + (m1 ? (m1.used - m0.used) : 'unread'), '- no model settings changed', '- claim-mode C1-C4: NOT_RUN (hard gate remains open)', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | state | claims | calls | in/cached/out | cost_uUSD | wall_ms |', '|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
+const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- POSTed revisions this run: ' + posted + ' (second scan needs 0)', '- stored distill total calls: ' + distillCalls + '; newly admitted tokens: ' + newTokens + ' (tokenLimit, no currency; historical USD only legacy, never gated)', '- daily usage delta: ' + (m1 ? JSON.stringify(m1) + ' vs ' + JSON.stringify(m0) : 'unread'), '- no model settings changed', '- claim-mode C1-C4: NOT_RUN (hard gate remains open)', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | state | claims | calls | in/cached/out | tokenLimit | wall_ms |', '|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
 console.log(md);
 await writeFile(outDir + '/k3-' + Date.now() + '.md', boundReport + EOL + EOL + md);
 const claimTitle = process.env.ELIOT_K3_CLAIM_PROJECT;

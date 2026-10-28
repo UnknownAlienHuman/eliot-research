@@ -1,17 +1,18 @@
 // Caller-only smoke, imported by k2 --command-code-smoke. No work runs on import.
-// Live product metadata owns discovery, native IDs, prices and bounds; this caller has no model allowlist.
+// Live product metadata owns discovery, native IDs and token bounds; this caller has no model allowlist.
+// No monthly token budget; no neuron conversion; no price gate. Token bounds only.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-type Model = { route: string; aliases?: string[]; id: string; enabled: boolean; checkedOn: string; contextTokens: number | null; maxOutputTokens: number | null; outputReserveTokens?: number;
-  inputMicrousdPerMillion: number | null; cachedMicrousdPerMillion: number | null; outputMicrousdPerMillion: number | null };
-type Settings = { settings: Record<string, unknown>; monthlyBudgetMicrousd: number; monthlyUsedMicrousd: number; monthStart: number };
+type Model = { route: string; aliases?: string[]; id: string; enabled: boolean; checkedOn: string; contextTokens: number | null; maxOutputTokens: number | null; outputReserveTokens?: number };
+type DailyUsage = { dayStart: number; dayEnd: number; inputTokens: number; outputTokens: number; cachedTokens: number; unknownUsages: number };
+type Settings = { settings: Record<string, unknown>; usage: DailyUsage };
 type Turn = { turnId: string; model: string; state: string; scopeMode: string; contextMode?: string; question: string; answer: string;
   revisionIds: string[]; sourceIds: string[]; citations: unknown[]; invalidLabels: number;
-  inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; estimatedCostMicrousd: number | null;
-  firstTokenMs: number | null; totalMs: number | null; providerUsage?: unknown; error: string | null };
+  inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null;
+  estimatedCostMicrousd?: number | null; firstTokenMs: number | null; totalMs: number | null; providerUsage?: unknown; error: string | null };
 type Fixture = { origin: string; route: string; id: string; projectId: string | null; chatId: string | null;
   turnId: string; dispatchStarted: boolean; createdAt: string };
 
@@ -30,7 +31,7 @@ export async function runCommandCodeSmoke(): Promise<void> {
     optIn, route, status: 'NOT_RUN', preflight: 'NOT_RUN', modelStatus: 'NOT_RUN', reason: 'ELIOT_CC_MODEL=1 was not supplied.',
     models: [] as (Model & { metadataIssues: string[] })[], connection: null as unknown,
     storage: null as unknown, before: null as Settings | null, after: null as Settings | null, fixture: null as Fixture | null,
-    bounds: null as { calls: number; outputTokens: number; timeMs: number; estimatedCostMicrousd: number } | null,
+    bounds: null as { calls: number; outputTokens: number; timeMs: number; tokenLimit: number } | null,
     turn: null as Turn | null, usageCompleteness: 'UNKNOWN', providerUsage: null as unknown, observationError: null as string | null,
     requests: { get: 0, projectPost: 0, chatPost: 0, turnPost: 0 }, violations: [] as string[] };
   async function api<T>(path: string, body?: object, timeoutMs = 15000): Promise<T> {
@@ -65,11 +66,6 @@ export async function runCommandCodeSmoke(): Promise<void> {
       const bound = model.outputReserveTokens ?? model.maxOutputTokens;
       if (typeof bound !== 'number' || !Number.isSafeInteger(bound) || bound <= 0) metadataIssues.push('UNKNOWN job output bound');
       if (model.maxOutputTokens !== null && (!Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens <= 0)) metadataIssues.push('Invalid provider output cap');
-      for (const field of ['inputMicrousdPerMillion', 'outputMicrousdPerMillion'] as const) {
-        const price = model[field];
-        if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) metadataIssues.push('UNKNOWN ' + field);
-      }
-      if (model.cachedMicrousdPerMillion !== null && (typeof model.cachedMicrousdPerMillion !== 'number' || !Number.isFinite(model.cachedMicrousdPerMillion) || model.cachedMicrousdPerMillion < 0)) metadataIssues.push('Invalid cached price');
       if (typeof model.checkedOn !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(model.checkedOn)) metadataIssues.push('UNKNOWN metadata date');
       report.models.push({ ...model, metadataIssues });
     }
@@ -94,19 +90,17 @@ export async function runCommandCodeSmoke(): Promise<void> {
     } else if (optIn) {
       assert(route, 'Set ELIOT_EVAL_MODEL to one selected Command Code route.');
       const model = resolve(route);
-      assert.deepEqual(model.metadataIssues, [], 'Selected model context/prices/job bound must be known before any POST.');
+      assert.deepEqual(model.metadataIssues, [], 'Selected model context/job bound must be known before any POST.');
       assert(model.enabled === true, 'Selected model is disabled; no fallback or connection write.');
       const outputBound = model.outputReserveTokens ?? model.maxOutputTokens;
       assert(typeof outputBound === 'number', 'A finite per-job output reserve is required when the provider cap is unknown.');
       const output = Math.min(outputBound, model.maxOutputTokens ?? outputBound);
-      const context = model.contextTokens, inputRate = model.inputMicrousdPerMillion, outputRate = model.outputMicrousdPerMillion;
+      const context = model.contextTokens;
       assert(typeof context === 'number' && Number.isSafeInteger(context) && context > 0 && Number.isSafeInteger(output) && output > 0, 'Model token bounds must be known.');
-      assert(typeof inputRate === 'number' && typeof outputRate === 'number' && [inputRate, outputRate].every((n) => Number.isFinite(n) && n >= 0), 'Unknown prices must not be treated as zero.');
-      // Match product admission: reserve all context at the uncached input rate; nullable cache pricing confers no discount.
-      const bound = Math.ceil((context * inputRate + output * outputRate) / 1000000);
-      assert(Number.isSafeInteger(bound), 'Model cost bound must be a safe integer.');
-      report.bounds = { calls: 1, outputTokens: output, timeMs: 90000, estimatedCostMicrousd: bound };
-      assert(report.before.monthlyUsedMicrousd + bound <= report.before.monthlyBudgetMicrousd, 'Preserved budget cannot admit this bound; no budget increase.');
+      // Per-call token bound: ctx + output. No currency conversion; no monthly budget.
+      const tokenLimit = context + output;
+      assert(Number.isSafeInteger(tokenLimit), 'Model token bound must be a safe integer.');
+      report.bounds = { calls: 1, outputTokens: output, timeMs: 90000, tokenLimit };
       fixture = { origin, route, id: model.id, projectId: null, chatId: null, turnId: randomUUID(), dispatchStarted: false, createdAt: new Date().toISOString() };
       report.fixture = fixture;
       await writeFile(idsPath, JSON.stringify(fixture, null, 2) + '\n', { flag: 'wx' });
@@ -153,14 +147,18 @@ export async function runCommandCodeSmoke(): Promise<void> {
       assert.equal(turn.contextMode, 'none');
       assert.deepEqual(turn.sourceIds, []); assert.deepEqual(turn.revisionIds, []); assert.deepEqual(turn.citations, []);
       assert.equal(turn.invalidLabels, 0);
-      for (const key of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs'] as const)
-        assert(turn[key] === null || (Number.isSafeInteger(turn[key]) && turn[key]! >= 0), 'Invalid stored metric: ' + key);
+      for (const key of ['inputTokens', 'cachedTokens', 'outputTokens', 'firstTokenMs', 'totalMs'] as const)
+        assert(turn[key] === null || (Number.isSafeInteger(turn[key]) && (turn[key] as number) >= 0), 'Invalid stored metric: ' + key);
+      assert(turn.tokenLimit === null || (Number.isSafeInteger(turn.tokenLimit) && turn.tokenLimit >= 0), 'Invalid stored tokenLimit.');
+      if (turn.estimatedCostMicrousd !== undefined)
+        assert(turn.estimatedCostMicrousd === null || (typeof turn.estimatedCostMicrousd === 'number' && Number.isFinite(turn.estimatedCostMicrousd) && turn.estimatedCostMicrousd >= 0), 'Historical estimatedCostMicrousd must be honestly recorded, never gated.');
       if (turn.cachedTokens !== null && turn.inputTokens !== null) assert(turn.cachedTokens <= turn.inputTokens, 'Cached tokens cannot exceed input.');
       report.usageCompleteness = [turn.inputTokens, turn.cachedTokens, turn.outputTokens].every((n) => n !== null) ? 'KNOWN' : 'PARTIAL';
       assert.equal(turn.state, 'completed', 'Observed ' + turn.state + ': ' + (turn.error ?? 'no terminal success; no retry'));
       assert(turn.answer.trim().length > 0, 'Completed turn must expose a nonempty answer.');
       assert(typeof turn.totalMs === 'number' && turn.totalMs <= 90000, 'Completed turn must remain within the product time bound.');
-      report.status = report.usageCompleteness === 'KNOWN' && turn.estimatedCostMicrousd !== null && report.observationError === null ? 'PASS' : 'LIMITED';
+      assert(typeof turn.tokenLimit === 'number' && turn.tokenLimit === report.bounds?.tokenLimit, 'Stored tokenLimit must equal the per-call ctx+output bound.');
+      report.status = report.usageCompleteness === 'KNOWN' && typeof turn.tokenLimit === 'number' && report.observationError === null ? 'PASS' : 'LIMITED';
       report.reason = 'One stored empty-scope caller result; no K2/K3 quality acceptance.';
     }
   } catch (error) {
@@ -171,12 +169,19 @@ export async function runCommandCodeSmoke(): Promise<void> {
     if (report.before) {
       try {
         report.after = await api<Settings>('/api/settings');
-        assert.deepEqual(report.after.settings, report.before.settings, 'Global defaults/budget/settings timestamp changed.');
-        assert.equal(report.after.monthlyBudgetMicrousd, report.before.monthlyBudgetMicrousd);
-        assert.equal(report.after.monthStart, report.before.monthStart);
-        const delta = report.after.monthlyUsedMicrousd - report.before.monthlyUsedMicrousd;
-        if (report.requests.turnPost === 0) assert.equal(delta, 0, 'Storage reads must not add model usage.');
-        else assert(delta >= 0 && delta <= report.bounds!.estimatedCostMicrousd, 'Spend exceeded the one-call bound.');
+        assert.deepEqual(report.after.settings, report.before.settings, 'Global defaults/settings changed.');
+        assert.deepEqual(report.after.usage.dayStart, report.before.usage.dayStart, 'Usage day window moved unexpectedly.');
+        const beforeU = report.before.usage, afterU = report.after.usage;
+        for (const k of ['inputTokens', 'outputTokens', 'cachedTokens', 'unknownUsages'] as const)
+          assert(Number.isSafeInteger((afterU as Record<string, unknown>)[k] as number) && ((afterU as Record<string, unknown>)[k] as number) >= 0, 'Invalid daily usage: ' + k);
+        const deltaIn = afterU.inputTokens - beforeU.inputTokens, deltaOut = afterU.outputTokens - beforeU.outputTokens;
+        if (report.requests.turnPost === 0) {
+          assert.equal(deltaIn, 0, 'Storage reads must not add model usage.');
+          assert.equal(deltaOut, 0, 'Storage reads must not add model usage.');
+        } else {
+          assert(deltaIn >= 0 && deltaOut >= 0, 'Usage must not go backwards.');
+          assert(deltaIn + deltaOut <= report.bounds!.tokenLimit, 'Usage exceeded the one-call token bound.');
+        }
       } catch (error) {
         report.status = 'FAIL'; report.violations.push(error instanceof Error ? error.message : String(error));
       }

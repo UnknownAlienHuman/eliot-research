@@ -1,5 +1,13 @@
 import type { ModelProvider } from "./models";
+import type { ModelSpec } from "./models";
+import { LibraryError } from "./library";
 import { readBoundedText } from "./model-catalog";
+
+/** Native allowance policy stays closed while its provider enforcement is being configured. */
+export async function assertProviderAllowance(_env: Env, model: ModelSpec): Promise<void> {
+  if (model.route.startsWith("workers-ai:"))
+    throw new LibraryError("budget", "Workers AI daily allowance is not configured. No model call was started.", 409);
+}
 
 // Provider quota readout. Owner-only POST refresh is the only caller; it pays 0 model calls.
 // GET/list/catalog paths never query quota. No registry, cache, polling, price parser, or monthly cap here.

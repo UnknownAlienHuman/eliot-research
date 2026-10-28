@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { estimateCost } from "./cost";
-import { availableModels, DEFAULT_MODEL, MODELS, modelOutputLimit, readModelCatalog, refreshModelCatalog, requireAvailableModel, requireCatalogModel } from "./models";
+import { availableModels, DEFAULT_MODEL, MODELS, modelOutputLimit, modelTokenLimit, readModelCatalog, refreshModelCatalog, requireAvailableModel, requireCatalogModel } from "./models";
 import type { CatalogModel, ModelProvider } from "./models";
 import type * as ModelCatalogModule from "./model-catalog";
 
@@ -62,8 +61,7 @@ beforeEach(() => {
   const id = "test-provider/model-" + crypto.randomUUID();
   model = { route: "gateway:command-code/" + id, id, label: "Discovered provider model", enabled: true,
     contextTokens: 1_048_576, maxOutputTokens: null, outputReserveTokens: 8192,
-    responseFormat: false, structuredOutputs: false, inputMicrousdPerMillion: 100000,
-    cachedMicrousdPerMillion: 2000, outputMicrousdPerMillion: 200000, checkedOn: "2026-10-27" };
+    responseFormat: false, structuredOutputs: false, checkedOn: "2026-10-27" };
   discover.mockResolvedValue([model]);
   discoverNative.mockResolvedValue([]);
   seededModels = [model];
@@ -102,8 +100,8 @@ describe("Command Code catalogue model admission", () => {
       updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       warnings: [],
       models: expect.arrayContaining([
-        expect.objectContaining({ route: model.route, inputMicrousdPerMillion: model.inputMicrousdPerMillion }),
-        expect.objectContaining({ route: other.route, inputMicrousdPerMillion: other.inputMicrousdPerMillion }),
+        expect.objectContaining({ route: model.route, contextTokens: model.contextTokens }),
+        expect.objectContaining({ route: other.route, contextTokens: other.contextTokens }),
       ]),
       providers: expect.arrayContaining([
         expect.objectContaining({ id: "command-code", type: "openai-compatible" }),
@@ -132,59 +130,27 @@ describe("Command Code catalogue model admission", () => {
     expect(await requireAvailableModel(local.env, DEFAULT_MODEL)).toMatchObject({
       route: "workers-ai:@cf/zai-org/glm-5.3-flash", enabled: true, contextTokens: 1_048_576,
       maxOutputTokens: null, outputReserveTokens: 8192,
-      inputMicrousdPerMillion: 150000, cachedMicrousdPerMillion: 30000, outputMicrousdPerMillion: 500000,
     });
     expect(local.prepare).toHaveBeenCalledTimes(2);
     expect(discover).not.toHaveBeenCalled();
     expect(discoverNative).not.toHaveBeenCalled();
   });
 
+  it("exposes the per-call token bound without currency conversion", async () => {
+    const resolved = await requireAvailableModel(localConnection("fixture-gateway").env, model.route);
+    expect(modelTokenLimit(resolved)).toBe(resolved.contextTokens + modelOutputLimit(resolved));
+    expect(modelTokenLimit(resolved)).toBe(1_048_576 + 8192);
+  });
+
   describe("native Flash fallback", () => {
-    it("uses live native context and rates for Flash without external catalogue discovery", async () => {
-      const live = flashCatalogueModel({
-        contextTokens: 64_000,
-        inputMicrousdPerMillion: 240_000,
-        cachedMicrousdPerMillion: 20_000,
-        outputMicrousdPerMillion: 900_000,
-      });
+    it("uses live native context for Flash without external catalogue discovery", async () => {
+      const live = flashCatalogueModel({ contextTokens: 64_000 });
       const local = nativeConnection(null, [live]);
       const admitted = await requireAvailableModel(local.env, DEFAULT_MODEL);
-
-      expect(admitted).toMatchObject({
-        route: DEFAULT_MODEL,
-        contextTokens: 64_000,
-        inputMicrousdPerMillion: 240_000,
-        cachedMicrousdPerMillion: 20_000,
-        outputMicrousdPerMillion: 900_000,
-      });
+      expect(admitted).toMatchObject({ route: DEFAULT_MODEL, contextTokens: 64_000 });
+      expect(modelTokenLimit(admitted)).toBe(64_000 + modelOutputLimit(admitted));
       expect(discoverNative).not.toHaveBeenCalled();
       expect(discover).not.toHaveBeenCalled();
-    });
-
-    it("keeps unknown live prices selectable but rejects paid admission", async () => {
-      const unknown = flashCatalogueModel({
-        inputMicrousdPerMillion: null,
-        outputMicrousdPerMillion: null,
-      });
-      const local = nativeConnection(null, [unknown]);
-      const listed = await availableModels(local.env);
-      expect(listed.find((entry) => entry.route === DEFAULT_MODEL)).toMatchObject({
-        enabled: true,
-        inputMicrousdPerMillion: null,
-        outputMicrousdPerMillion: null,
-      });
-
-      discover.mockClear();
-      await expect(requireCatalogModel(local.env, DEFAULT_MODEL)).resolves.toMatchObject({
-        inputMicrousdPerMillion: null,
-        outputMicrousdPerMillion: null,
-      });
-      await expect(requireAvailableModel(local.env, DEFAULT_MODEL)).rejects.toMatchObject({
-        code: "unavailable",
-        status: 503,
-      });
-      expect(discover).not.toHaveBeenCalled();
-      expect(discoverNative).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -193,9 +159,7 @@ describe("Command Code catalogue model admission", () => {
     ] as const)("uses low reasoning effort only when %s", async (_label, published) => {
       const live = flashCatalogueModel(published ? { nativeReasoningEffort: "low" } : {});
       const local = nativeConnection(null, [live]);
-
       const admitted = await requireAvailableModel(local.env, DEFAULT_MODEL);
-
       if (published) expect(admitted.nativeReasoningEffort).toBe("low");
       else expect(admitted).not.toHaveProperty("nativeReasoningEffort");
       expect(MODELS[0]).not.toHaveProperty("nativeReasoningEffort");
@@ -214,7 +178,7 @@ describe("Command Code catalogue model admission", () => {
       expect(discover).not.toHaveBeenCalled();
     });
   });
-  it("lists disconnected discovered models without inventing zero prices", async () => {
+  it("keeps disconnected models unavailable without a token bound", async () => {
     const local = localConnection(null);
     expect((await availableModels(local.env)).find((entry) => entry.route === model.route)).toMatchObject({
       ...model, enabled: false, unavailableReason: expect.any(String),
@@ -222,14 +186,13 @@ describe("Command Code catalogue model admission", () => {
     await expect(requireAvailableModel(local.env, model.route)).rejects.toMatchObject({ code: "unavailable", status: 503 });
   });
 
-  it.each(["contextTokens", "inputMicrousdPerMillion", "outputMicrousdPerMillion"] as const)(
-    "keeps unknown %s selectable for metadata saves but rejects effect admission", async (field) => {
-      const unknown = { ...model, [field]: null };
-      const local = localConnection("fixture-gateway", [unknown]);
-      expect((await availableModels(local.env)).find((entry) => entry.route === model.route)).toMatchObject({ [field]: null, enabled: true });
-      expect(await requireCatalogModel(local.env, model.route)).toEqual(unknown);
-      await expect(requireAvailableModel(local.env, model.route)).rejects.toMatchObject({ code: "unavailable", status: 503 });
-    });
+  it("keeps unknown context selectable for metadata saves but rejects effect admission", async () => {
+    const unknown = { ...model, contextTokens: null };
+    const local = localConnection("fixture-gateway", [unknown]);
+    expect((await availableModels(local.env)).find((entry) => entry.route === model.route)).toMatchObject({ contextTokens: null, enabled: true });
+    expect(await requireCatalogModel(local.env, model.route)).toEqual(unknown);
+    await expect(requireAvailableModel(local.env, model.route)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+  });
 
   it("rejects an unknown output bound rather than treating an unpublished cap as unlimited", async () => {
     const unknown = { ...model };
@@ -244,16 +207,6 @@ describe("Command Code catalogue model admission", () => {
     await expect(requireAvailableModel(local.env, "gateway:command-code/absent-" + crypto.randomUUID())).rejects.toMatchObject({ code: "unavailable", status: 503 });
     await expect(requireAvailableModel(localConnection("fixture-gateway", [{ ...model, enabled: false }]).env, model.route))
       .rejects.toMatchObject({ code: "unavailable", status: 503 });
-  });
-
-  it("uses discovered prices and conservatively handles an unknown cache discount", async () => {
-    const local = localConnection("fixture-gateway");
-    const priced = await requireAvailableModel(local.env, model.route);
-    expect(estimateCost(priced, priced.contextTokens, 0, modelOutputLimit(priced))).toBe(106496);
-    expect(estimateCost(priced, 1_000_000, 500_000, 8192)).toBe(52639);
-    const uncached = await requireAvailableModel(localConnection("fixture-gateway", [{ ...model, cachedMicrousdPerMillion: null }]).env, model.route);
-    expect(uncached.cachedMicrousdPerMillion).toBeNull();
-    expect(estimateCost(uncached, 1_000_000, 500_000, 8192)).toBe(101639);
   });
 
   it("uses the native fallback and requests explicit refresh when the snapshot is absent", async () => {
@@ -310,14 +263,12 @@ describe("registry-driven bounded catalogue", () => {
     expect(JSON.stringify(fetcher.mock.calls)).not.toContain("disabled.example");
     expect(JSON.stringify(fetcher.mock.calls)).not.toContain("workers-ai");
     const byRoute = new Map(models.map((m) => [m.route, m]));
-    expect(byRoute.get("gateway:generic/plain-model")).toMatchObject({ id: "plain-model", enabled: true, contextTokens: null,
-      inputMicrousdPerMillion: null, outputMicrousdPerMillion: null });
+    expect(byRoute.get("gateway:generic/plain-model")).toMatchObject({ id: "plain-model", enabled: true, contextTokens: null });
     expect(models.filter((m) => m.route === "gateway:generic/plain-model")).toHaveLength(1);
     expect(byRoute.get("gateway:generic/explicit-nontext")).toMatchObject({ enabled: false });
     expect(byRoute.get("gateway:cc/chat-model")).toMatchObject({ id: "chat-model", label: "Chat", contextTokens: 128000, enabled: true });
     expect(byRoute.get("gateway:cc/nonchat")).toMatchObject({ enabled: false });
     expect(byRoute.get("gateway:or/or-model")).toMatchObject({ contextTokens: 100000, maxOutputTokens: 20000,
-      inputMicrousdPerMillion: 1000000, outputMicrousdPerMillion: 2000000, cachedMicrousdPerMillion: null,
       responseFormat: true, structuredOutputs: true, enabled: true });
     expect(errors).toEqual([{ id: "failing", message: expect.stringContaining("failing model catalogue") }]);
     expect(JSON.stringify(errors)).not.toContain("private upstream body");

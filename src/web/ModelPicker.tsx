@@ -2,7 +2,8 @@
 // at 7c034569b908d3b03a8b821b7c537477a24b10f7. Copyright (c) 2026 ELIOT Project, MIT.
 // Pair-key codec also from apps/eliotr-web/src/query/modelCatalog.ts at the same pin.
 // Provider/search display-only filtering with controlled selection; no donor
-// runtime/qualification/key handling, no pricing/capacity output, no paging.
+// runtime/qualification/key handling, no pricing output, no paging.
+// Selection metadata is context/output tokens only.
 import { useEffect, useId, useRef, useState } from 'react';
 import { MaterialSymbol } from './ui/MaterialSymbol';
 import './model-picker.css';
@@ -17,9 +18,6 @@ export interface ModelRoute {
   readonly contextTokens: number | null;
   readonly maxOutputTokens: number | null;
   readonly outputReserveTokens?: number;
-  readonly inputMicrousdPerMillion: number | null;
-  readonly cachedMicrousdPerMillion: number | null;
-  readonly outputMicrousdPerMillion: number | null;
   readonly checkedOn: string | null;
 }
 

@@ -5,13 +5,18 @@ import type { LanguageModelUsage } from "ai";
 import { buildContext } from "./context";
 import { answerWarnings, numericCitationLabels, persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
-import { admitTurn, estimateCost } from "./cost";
+import { admitTurn } from "./cost";
 import { DEFAULT_MODEL, modelOutputLimit, requireAvailableModel } from "./models";
 import type { ModelSpec } from "./models";
 import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
 import { LibraryError } from "./library";
 import { readText } from "./read";
 import type { RunTurnInput, TurnView } from "./shared/api";
+
+function normalizeStoredTurn(value: TurnView & { tokenLimit?: number | null }): TurnView {
+  if (value.tokenLimit === undefined) value.tokenLimit = null;
+  return value as TurnView;
+}
 
 interface ChatState { active: string | null; queued: RunTurnInput | null; stopRequested: boolean }
 const PARTIAL_HISTORY_NOTICE = "An earlier assistant answer was partial. Its unfinished text and omissions are not conclusions; ground this answer in the current frozen evidence.";
@@ -49,7 +54,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
   }
   private readTurn(id: string): TurnView | undefined {
     const row = this.sql<{ payload: string }>`SELECT payload FROM turns WHERE id=${id}`[0];
-    return row ? JSON.parse(row.payload) as TurnView : undefined;
+    if (!row) return undefined;
+    const parsed = JSON.parse(row.payload) as TurnView & { tokenLimit?: number | null };
+    return normalizeStoredTurn(parsed);
   }
   private writeTurn(turn: TurnView) {
     void this.sql`INSERT INTO turns(id,payload,created_at) VALUES(${turn.turnId},${JSON.stringify(turn)},${Date.now()})
@@ -63,7 +70,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
   async getTurns(projectId: string): Promise<TurnView[]> {
     await this.ensureProject(projectId);
     return this.sql<{ payload: string }>`SELECT payload FROM turns ORDER BY created_at DESC,id DESC LIMIT 50`
-      .reverse().map((row) => JSON.parse(row.payload) as TurnView);
+      .reverse().map((row) => normalizeStoredTurn(JSON.parse(row.payload) as TurnView));
   }
   async getSnapshot(projectId: string) {
     return { turns: await this.getTurns(projectId), queued: this.state.queued ? { turnId: this.state.queued.turnId, question: this.state.queued.question } : null };
@@ -137,7 +144,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     const started = Date.now();
     const turn: TurnView = { turnId: input.turnId, question: input.question, answer: "", state: "started", model: input.model ?? DEFAULT_MODEL,
       scopeMode: input.scopeMode, revisionIds: [], sourceIds: input.sourceIds ?? [], citations: [], invalidLabels: 0, inputTokens: null, cachedTokens: null, outputTokens: null,
-      estimatedCostMicrousd: null, firstTokenMs: null, totalMs: null, error: null };
+      tokenLimit: null, firstTokenMs: null, totalMs: null, error: null };
     this.writeTurn(turn);
     const controller = new AbortController();
     this.controller = controller;
@@ -158,7 +165,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       await this.env.DB.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at)
         VALUES(?,?,?,?,?,'none','started',?)`).bind(this.name, turn.turnId, turn.model, turn.scopeMode, "[]", started).run();
       rowInserted = true;
-      turn.estimatedCostMicrousd = await admitTurn(this.env, this.name, turn.turnId, model);
+      turn.tokenLimit = await admitTurn(this.env, this.name, turn.turnId, model);
       this.writeTurn(turn);
       const priorTurns = (await this.getTurns(input.projectId)).filter((item) => item.turnId !== turn.turnId
         && (item.state === "completed" || (item.state === "partial" && item.citations.length > 0)));
@@ -270,18 +277,17 @@ export class ChatAgent extends Agent<Env, ChatState> {
     }
     if (usage) {
       turn.providerUsage = reportedProviderUsage(usage, selectedModel);
-      turn.inputTokens = usage.inputTokens ?? null; turn.cachedTokens = usage.inputTokenDetails.cacheReadTokens ?? null; turn.outputTokens = usage.outputTokens ?? null;
-      if (selectedModel && turn.inputTokens !== null && turn.outputTokens !== null) {
-        turn.estimatedCostMicrousd = estimateCost(selectedModel, turn.inputTokens, turn.cachedTokens ?? 0, turn.outputTokens);
-      }
+      turn.inputTokens = usage.inputTokens ?? null; turn.cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null; turn.outputTokens = usage.outputTokens ?? null;
     }
-    if (!dispatched) { turn.estimatedCostMicrousd = 0; turn.inputTokens = 0; turn.cachedTokens = 0; turn.outputTokens = 0; }
+    // Undispatched means no model call happened: actual counts are known zero and
+    // no usable reservation is retained, so unknown usage must not increase.
+    if (!dispatched) { turn.tokenLimit = 0; turn.inputTokens = 0; turn.cachedTokens = 0; turn.outputTokens = 0; }
     turn.totalMs = Date.now() - started;
     if (turn.totalMs > 90000 && turn.state === "completed") { turn.state = "partial"; turn.error = "The answer exceeded the time bound."; }
     this.writeTurn(turn);
-    if (rowInserted) await this.env.DB.prepare(`UPDATE chat_turn SET state=?,input_tokens=?,cached_tokens=?,output_tokens=?,estimated_cost_microusd=?,
+    if (rowInserted) await this.env.DB.prepare(`UPDATE chat_turn SET state=?,input_tokens=?,cached_tokens=?,output_tokens=?,token_limit=?,
       citations=?,invalid_labels=?,first_token_ms=?,total_ms=?,error=? WHERE chat_id=? AND turn_id=?`)
-      .bind(turn.state, turn.inputTokens, turn.cachedTokens, turn.outputTokens, turn.estimatedCostMicrousd, turn.citations.length, turn.invalidLabels,
+      .bind(turn.state, turn.inputTokens, turn.cachedTokens, turn.outputTokens, turn.tokenLimit, turn.citations.length, turn.invalidLabels,
         turn.firstTokenMs, turn.totalMs, turn.error, this.name, turn.turnId).run();
     await this.env.DB.prepare("UPDATE chat SET updated_at=? WHERE id=?").bind(Date.now(), this.name).run();
     return turn;

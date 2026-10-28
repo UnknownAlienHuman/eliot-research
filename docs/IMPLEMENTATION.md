@@ -26,7 +26,7 @@ WebSocket, MCP, Durable Object and Workflow classes. HTTP, chat, MCP and Workflo
 |---|---|
 | `src/index.ts` | routes, errors, DO/Workflow exports |
 | `src/auth.ts` | Access JWT and actors |
-| `src/cost.ts`, `src/models.ts` | dated model metadata, estimates, admission |
+| `src/cost.ts`, `src/models.ts` | usage, model bounds and provider admission |
 | `src/library.ts`, `src/ingest.ts`, `src/read.ts`, `src/blocks.ts` | Library and exact reading |
 | `src/context.ts`, `src/citations.ts`, `src/chat.ts` | cited answers |
 | `src/workflows/*.ts` | ingest, distill, project map, research |
@@ -40,9 +40,10 @@ Wrangler; never hand-write it.
 
 A paid effect is a model call, rendered Browser capture, billable AI Search use, or a Workflow that invokes one. Page
 load, list, read, citation open, reconnect and saving existing output must not start paid work. Before dispatch,
-`src/cost.ts` computes a conservative upper bound and rejects or pauses when current-month estimates plus that bound
-exceed `settings.monthly_model_budget_microusd` (default $5). Unknown input/output prices block job admission, not model selection, and are not treated as zero. Store
-actual input/cached/output tokens and estimated micro-USD on the row that owns the operation. Distillation runs once per
+`src/cost.ts` checks the job's token/call/time bounds and provider allowance. Model prices and a local
+monthly currency/token budget are not admission prerequisites. Store the token bound and actual input/cached/output
+counts on the owning row; unknown counts remain unknown. Historical currency estimates and reservations remain recorded
+without being reinterpreted as tokens or Neurons. Distillation runs once per
 immutable revision; ordinary whole/claim answers use one model call; search/tool loops and explicit jobs have hard caps.
 
 Understanding readers preserve the revision's stored model route even when it is absent from the live catalogue.
@@ -101,8 +102,11 @@ Migrations own schema names:
 | `0004_agents.sql` | future K4 trigram claim FTS and backfill; excluded from current selection |
 | `0005_model_gateway.sql` | nullable `settings.model_gateway_id`; existing-Gateway opt-in |
 | `0006_integrity.sql` | approved #420 guards for source/page ownership and terminal-turn/capture-identity immutability |
+| `0007_manual_understanding.sql` | explicit source understanding, removal of the automatic switch |
+| `0008_model_providers.sql` | editable provider configuration without credentials |
+| `0009_provider_usage.sql` | token bounds on the existing owning rows; historical currency data retained |
 
-Current `migrations/000[12356]_*.sql` selects `0001`–`0003`, `0005_model_gateway.sql` and `0006_integrity.sql`;
+Current `migrations/000[12356789]_*.sql` selects `0001`–`0003` and `0005`–`0009`;
 future K4 `0004_agents.sql` remains excluded.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:
@@ -193,8 +197,8 @@ range. K6 owns cross-source normalization; K3 must not pretend raw multilingual 
 ## 6. One-time distillation
 
 States: `none|queued|running|paused|done|partial|failed`. Ingest leaves readable revisions at `none`. Only an explicit
-Understand request queues and admits its requested revision, subject to concurrency and the monthly budget;
-insufficient budget becomes visible `paused` until another explicit request. Cron only reconciles stale `running` rows
+Understand request queues and admits its requested revision, subject to concurrency and provider allowance;
+unavailable allowance becomes visible `paused` until another explicit request. Cron only reconciles stale `running` rows
 against Workflow ID `distill-<revisionId>`; it never admits queued work. Migration `0007_manual_understanding.sql`
 removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
 resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
@@ -258,7 +262,7 @@ in guide/digest/glossary storage, including within sentence-level validation. Co
 annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.
 
 K3 records `distill_calls` (hard maximum two), `distill_started_at` and `distill_ms` on the owning revision. Admission
-reserves both full-context call bounds in the same monthly pool as chat, with at most two revisions running. Each
+records both full-context call bounds before dispatch, with at most two revisions running. Each
 new internal `DistillInput` is `{ revisionId, model: ModelSpec }`: after admission and before Workflow creation,
 snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
 Old terminal reports and cached Save retain their recorded usage and shape. Each
@@ -329,16 +333,16 @@ It does not capture or synthesize private reasoning fields. Existing private wir
 ordinary chat path uses public text and verified labels only. A partial prior answer is identified as incomplete.
 
 Resolve one `ModelSpec` for each turn and freeze it across admission, context limits, request bounds and settlement.
-The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, reserve against the monthly
-dollar budget, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
+The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, record the token bound after
+provider admission, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
 citation, token, timing, cost, invalid-label and terminal-state fields. WebSocket frames and reconnect expose
 read-only state snapshots; they never enqueue or dispatch paid work. GET, history, reconnect and Save never start model/search work. One active turn
 and one queued submission are allowed; the next returns `409/busy`. Stop stores partial text, closing a tab does not
 cancel, and failed streams are not automatically continued. Retry is a new owner submission.
 The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
 cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
-Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the existing
-reservation and is never treated as zero cost.
+Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the recorded
+token bound and is never treated as zero usage.
 Missing-citation and unsupported-number diagnostics are advisory UTF-16 answer ranges stored in the existing
 ChatAgent turn JSON and exposed by snapshots/history. They mark affected rendered prose without rewriting the answer
 or changing a normally finished stream to partial. Truncation, stream/protocol failure and invalid resolved labels
@@ -356,8 +360,8 @@ can still fail acceptance. Owner semantic review remains required. The unchanged
 are the K2 boundary in MAP; K2 is not fully accepted or deployed.
 
 Broadcast the first nonempty rendered answer immediately and measure `firstTokenMs` from that text, not the first
-network event. Keep estimated/reserved micro-USD distinct from known provider-reported USD; unknown actual cost remains
-unknown. Private turn telemetry exposes only the allowlisted `inputTokens`, `outputTokens`, `totalTokens`,
+network event. Keep recorded token bounds, actual token counts and any historical/provider-reported currency values
+distinct; missing usage remains unknown. Private turn telemetry exposes only the allowlisted `inputTokens`, `outputTokens`, `totalTokens`,
 `cachedTokens`, `reasoningTokens` and `costUsd`, each null when missing or invalid. Eval may reuse only completed turns
 with exact frozen source/revision sets; a non-reusable question stays manual and resume never dispatches a replacement.
 
@@ -398,9 +402,9 @@ call; an in-flight call may finish.
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
-selection. Paid admission is separate: require usable context and known input and output prices. An unknown cached-input
-price is estimated at the full input rate. Reserve against the monthly dollar budget in micro-USD before dispatch,
-freeze the admitted `ModelSpec` for the job, and preserve unknown actual provider cost as unknown. The 8,192-token job
+selection. Paid admission requires usable context/output bounds and provider allowance, without a price lookup or a
+locally invented monthly allowance. Record `modelTokenLimit = contextTokens + outputLimit` before dispatch (twice for
+two-call distillation), freeze the admitted `ModelSpec`, and retain unknown usage as unknown. The 8,192-token job
 output bound is separate from published model capacity. Provider errors/limits remain visible; there is no artificial
 quota, paid fallback or model-name allowlist/banlist.
 
@@ -429,11 +433,18 @@ Quota data is separate from Eliot's admission budget. The official endpoint is d
 [OpenRouter's key-limit documentation](https://openrouter.ai/docs/api_reference/limits.md) and
 [OpenAPI schema](https://openrouter.ai/openapi.json), retrieved 2026-10-28; no publication date was exposed.
 
+Workers AI's native free allocation is 10,000 Neurons per UTC day, shared across that account's Workers AI usage and
+reset at 00:00 UTC. On Workers Paid, usage beyond the free allocation is billed; the included allocation alone is not
+a paid-account spending cap ([pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), updated
+2026-10-20). Tokens, Neurons and provider credit balances are separate units. Eliot does not derive one from another or
+apply the Workers AI allocation to OpenRouter/Command Code. Native allowance enforcement must be verified separately
+before calls are enabled; a missing allowance is not treated as zero usage or unlimited access.
+
 During refresh, each enabled compatible provider supplies its bounded JSON `/models` catalogue; Workers AI uses its
 native binding. Partial failure preserves that provider's last good metadata and its original routing configuration.
 Changing a provider's base URL or Gateway route invalidates old external metadata until an explicit refresh succeeds.
-Prices still required by dollar admission come only from published API metadata; HTML pricing enrichment is removed.
-Missing required metadata blocks paid admission. The UI filters do not run discovery or change selection.
+Neither API nor HTML prices are required or parsed for new model selection/admission. Missing usable context/output
+metadata blocks dispatch. The UI filters do not run discovery or change selection.
 The admitted external `ModelSpec` carries the provider configuration and Gateway ID from that same catalogue read;
 transport uses this frozen routing instead of reading changed settings after admission.
 
@@ -452,8 +463,8 @@ OpenRouter embed/rerank IDs remain separate future K5 capabilities, not chat cho
 Settings uses one visible provider/search/free-name filter and catalogue, with Answers/Understanding choosing which
 default is being edited. Filters are display-only; the catalogue has no pagination or technical model-details panel.
 Chat and project settings use compact provider then model selection with the applicable default available. Refresh preserves the
-selected provider/native-ID pair. A route may remain selectable with unknown prices, but paid dispatch is blocked until
-required admission metadata is known.
+selected provider/native-ID pair. Unknown prices never block selection or dispatch; usable model bounds and provider
+allowance remain required.
 
 Migration `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; null disables external routes. Owner-only
 GET `/api/models/connection` and PUT read/save the exact existing named Gateway ID. Enabling requires

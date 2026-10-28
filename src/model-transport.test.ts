@@ -16,9 +16,6 @@ const createAIMock = vi.mocked(createAI);
 const BASE = {
   contextTokens: 1_048_576,
   maxOutputTokens: 8192,
-  inputMicrousdPerMillion: 150000,
-  cachedMicrousdPerMillion: 30000,
-  outputMicrousdPerMillion: 500000,
   checkedOn: "2026-10-26",
   enabled: true,
 } as const;

@@ -183,7 +183,7 @@ async function writeCompare(rows, metadata) {
     .filter((check) => check.name === 'numeric citation support').map((check) => check.detail || '');
   const unsupportedNumericCount = numericCheckDetails.reduce((total, detail) => total + (Number(/([0-9]+) unsupported/.exec(detail)?.[1]) || 0), 0);
   const inputs = sumKnown('inputTokens'), cached = sumKnown('cachedTokens'), outputs = sumKnown('outputTokens');
-  const estimates = sumKnown('estimatedCostMicrousd'), actualCosts = sumKnown('actualProviderCostUsd');
+  const limits = sumKnown('tokenLimit'), actualCosts = sumKnown('actualProviderCostUsd');
   const lines = [
     '# K2 — Eliot / NotebookLM comparison',
     '',
@@ -193,11 +193,11 @@ async function writeCompare(rows, metadata) {
     '- Configured global answer model: ' + mdCell(metadata.defaultModel ?? 'UNKNOWN') + '.',
     '- Project answer-model override: ' + mdCell(metadata.projectModelOverride ?? 'none') + '.',
     '- Chat: ' + mdCell(metadata.chatId ?? 'UNKNOWN') + '.',
-    '- Monthly usage before/after: ' + mdCell(metadata.monthlyBefore ?? 'NOT_RECORDED') + '/' + mdCell(metadata.monthlyAfter ?? 'NOT_RECORDED') + ' micro-USD.',
+    '- Daily token usage before/after: ' + mdCell(JSON.stringify(metadata.usageBefore ?? 'NOT_RECORDED')) + ' / ' + mdCell(JSON.stringify(metadata.usageAfter ?? 'NOT_RECORDED')) + ' (dayStart/dayEnd/inputTokens/outputTokens/cachedTokens/unknownUsages).',
     '- Turn count before/after: ' + mdCell(metadata.turnCountBefore ?? 'NOT_RECORDED') + '/' + mdCell(metadata.turnCountAfter ?? 'NOT_RECORDED') + '.',
     '- Diagnostic turn rows with stored usage: ' + turnRows.length + ' / 12.',
-    '- Usage totals (known values only): input ' + inputs.sum + ' (' + inputs.unknown + ' unknown), cached ' + cached.sum + ' (' + cached.unknown + ' unknown), output ' + outputs.sum + ' (' + outputs.unknown + ' unknown), estimated ' + estimates.sum + ' micro-USD (' + estimates.unknown + ' unknown).',
-    '- Provider-reported actual cost: ' + (actualCosts.unknown > 0 ? 'UNKNOWN (known subtotal ' + actualCosts.sum + ' USD; ' + actualCosts.unknown + ' turn(s) unknown, not zero).' : actualCosts.sum + ' USD across ' + actualCosts.count + ' turn(s).'),
+    '- Usage totals (known values only): input ' + inputs.sum + ' (' + inputs.unknown + ' unknown), cached ' + cached.sum + ' (' + cached.unknown + ' unknown), output ' + outputs.sum + ' (' + outputs.unknown + ' unknown), tokenLimit ' + limits.sum + ' (' + limits.unknown + ' unknown; no currency, no neuron conversion).',
+    '- Provider-reported actual cost (legacy historical only, never gated): ' + (actualCosts.unknown > 0 ? 'UNKNOWN (known subtotal ' + actualCosts.sum + ' USD; ' + actualCosts.unknown + ' turn(s) unknown, not zero).' : actualCosts.sum + ' USD across ' + actualCosts.count + ' turn(s).'),
     '- Latency sample n=' + turnRows.filter((row) => typeof row.timing?.firstTokenMs === 'number' && typeof row.timing?.totalMs === 'number').length + ' ms: first p50/p95 ' + percentile(firstTimes, 0.50) + '/' + percentile(firstTimes, 0.95) + '; total p50/p95 ' + percentile(totalTimes, 0.50) + '/' + percentile(totalTimes, 0.95) + '.',
     '- Exact citation ranges: ' + ranges.filter((range) => range.status === 'PASS').length + '/' + ranges.length + ' opened and matched; failed ' + ranges.filter((range) => range.status !== 'PASS').length + '.',
     '- Unsupported numeric statements: ' + unsupportedNumericCount + '.',
@@ -218,7 +218,7 @@ async function writeCompare(rows, metadata) {
       ? row.citationRanges.map((r) => r.label + ' ' + r.revisionId + ':' + r.block + '[' + r.start + ',' + r.end + ') ' + r.status + (r.reason ? ' (' + r.reason + ')' : '') + (r.quote ? ' quote=' + r.quote : '')).join('<br>')
       : row.citationSummary ?? 'NOT_RUN';
     const usage = row.usage ? [row.usage.inputTokens, row.usage.cachedTokens, row.usage.outputTokens].map((v) => v ?? 'UNKNOWN').join('/')
-      + ' tok; est ' + (row.usage.estimatedCostMicrousd ?? 'UNKNOWN') + ' uUSD; actual ' + (row.usage.actualProviderCostUsd ?? 'UNKNOWN') + ' USD'
+      + ' tok; limit ' + (row.usage.tokenLimit ?? 'UNKNOWN') + '; actual(legacy) ' + (row.usage.actualProviderCostUsd ?? 'UNKNOWN') + ' USD'
       : 'NOT_RUN';
     const time = row.timing ? 'first ' + (row.timing.firstTokenMs ?? 'UNKNOWN') + ' ms / total ' + (row.timing.totalMs ?? 'UNKNOWN') + ' ms'
       + (row.timing.wallMs === null || row.timing.wallMs === undefined ? '' : ' / wall ' + row.timing.wallMs + ' ms') : 'NOT_RUN';
@@ -286,9 +286,9 @@ if (process.argv.includes('--models-only')) {
   assert.equal(denied.status, 400, 'Saving a Gateway without explicit credential consent must fail before mutation.');
   const invalid = await apiJson('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gatewayId: 'default' }) });
   assert.equal(invalid.status, 400, 'The auto-created default Gateway is not an allowed connection.');
-  const changed = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: external.route, monthlyModelBudgetMicrousd: before.body.settings.monthlyModelBudgetMicrousd }) });
+  const changed = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: external.route }) });
   assert.equal(changed.status, 503, 'A disconnected external route cannot become the default.');
-  const emptyDistill = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: before.body.settings.answerModel, monthlyModelBudgetMicrousd: before.body.settings.monthlyModelBudgetMicrousd, distillModel: '' }) });
+  const emptyDistill = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: before.body.settings.answerModel, distillModel: '' }) });
   assert.equal(emptyDistill.status, 400, 'An empty distillModel must fail before mutation (no truthiness bypass).');
   const afterEmpty = await apiJson('/api/settings');
   assert.deepEqual(afterEmpty.body.settings, before.body.settings, 'Rejected empty distillModel must leave global settings unchanged.');
@@ -305,7 +305,8 @@ if (process.argv.includes('--models-only')) {
   const turn = await apiJson('/api/projects/' + projectId + '/chats/' + chatId + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnId: randomUUID(), question: 'Disconnected model check', scopeMode: 'empty', model: external.route }) });
   assert.equal(turn.status, 200);
   assert.equal(turn.body.turn.state, 'failed');
-  assert.equal(turn.body.turn.estimatedCostMicrousd, 0);
+  assert.strictEqual(turn.body.turn.tokenLimit, 0, 'Undispatched disconnected failure must carry tokenLimit 0 (no reservation, no paid call).');
+  if (turn.body.turn.estimatedCostMicrousd !== undefined) assert(turn.body.turn.estimatedCostMicrousd === null || typeof turn.body.turn.estimatedCostMicrousd === 'number', 'Historical estimatedCost must be honestly recorded, never gated.');
   assert.equal(turn.body.turn.inputTokens, 0);
   assert.equal(turn.body.turn.outputTokens, 0);
   assert.match(turn.body.turn.error, /disconnected|Gateway|credential/i);
@@ -392,7 +393,7 @@ if (process.argv.includes('--models-only')) {
       await expect(page.getByRole('combobox', { name: 'Understanding model: provider', exact: true })).toBeVisible();
       await expect(page.getByRole('searchbox', { name: 'Understanding model: search models', exact: true })).toBeVisible();
       await answersRadio.check();
-      await expect(page.getByRole('textbox', { name: 'Monthly budget (USD)', exact: true })).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
+      // No monthly USD budget input: Settings Save carries only answer/distill models. No price gate here.
       const gateway = page.getByRole('region', { name: 'AI Gateway connection', exact: true });
       await expect(gateway).toBeVisible();
       await setAdvancedGateway(page, true);
@@ -481,14 +482,9 @@ if (process.argv.includes('--models-only')) {
     await page.setViewportSize({ width: 389, height: 844 });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Settings must fit the 389px Material layout.');
     await page.setViewportSize({ width: 390, height: 844 });
-    const budget = page.getByRole('textbox', { name: 'Monthly budget (USD)', exact: true });
     const modelsSection = page.getByRole('region', { name: 'Models', exact: true });
-    await budget.fill('1.0000001');
-    await modelsSection.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(modelsSection.getByRole('status').filter({ hasText: 'Use up to six decimal places for the monthly budget.' })).toHaveText('Use up to six decimal places for the monthly budget.');
-    assert.strictEqual(settingsPuts, 0, 'Seven-decimal budget must be rejected before any PUT /api/settings.');
-    await budget.fill(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
-    await expect(budget).toHaveValue(String(before.body.settings.monthlyModelBudgetMicrousd / 1000000));
+    // No USD budget input or decimal-place gate: Settings Save carries only answer/distill models. Storage-only browser must not PUT.
+    assert.strictEqual(settingsPuts, 0, 'Storage-only browser must not PUT /api/settings.');
     await expect(consent).not.toBeChecked();
     await expect(gateway.getByRole('button', { name: 'Save connection', exact: true })).toBeDisabled();
     await gatewayId.fill('');
@@ -620,12 +616,12 @@ if (process.argv.includes('--models-only')) {
   const after = await apiJson('/api/settings');
   assert.equal(after.body.settings.answerModel, before.body.settings.answerModel, 'Answer default must be unchanged.');
   assert.equal(after.body.settings.distillModel, before.body.settings.distillModel, 'Understanding default must be unchanged.');
-  assert.equal(after.body.settings.monthlyModelBudgetMicrousd, before.body.settings.monthlyModelBudgetMicrousd, 'Monthly budget must be unchanged.');
-  assert.equal(after.body.monthlyUsedMicrousd, before.body.monthlyUsedMicrousd);
+  assert.deepEqual(after.body.settings, before.body.settings, 'Answer/distill settings must be unchanged (Save carries only models).');
+  assert.deepEqual(after.body.usage, before.body.usage, 'Daily token usage must be unchanged by storage-only checks.');
   assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
-  const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, consentRejected: true, disconnectedTurnCost: 0,
+  const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, consentRejected: true, disconnectedTurnTokenLimit: turn.body.turn.tokenLimit ?? null,
     catalogue: { externalModels: externals.length, providers: [...new Set(nativePairs.map((pair) => pair[0]))], discovery: warnings.length ? 'PARTIAL' : 'NO_WARNINGS', warnings },
-    monthlyUsedMicrousd: after.body.monthlyUsedMicrousd, provider: 'NOT_RUN', streaming: 'NOT_RUN', distill, browser390: 'LOCAL_PASS', credentialAccess: 'NOT_ENABLED' };
+    dailyUsage: after.body.usage, provider: 'NOT_RUN', streaming: 'NOT_RUN', distill, browser390: 'LOCAL_PASS', credentialAccess: 'NOT_ENABLED' };
   result.providerCrud = providerCrud;
   await writeFile(outDir + '/external-models-native.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
@@ -664,11 +660,11 @@ if (process.argv.includes('--openrouter-stored')) {
   for (const m of entries) {
     const tag = (m && m.route) || 'unknown-route';
     let chatStatus = 'NOT_RUN', distillStatus = 'NOT_RUN';
-    let usage = { inputTokens: null, cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, firstTokenMs: null, totalMs: null };
+    let usage = { inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: null, firstTokenMs: null, totalMs: null };
     let providerUsageRaw = null;
     let distillUsage = null;
     const providerCosts = { chatUsd: null, distillUsd: null };
-    let usageCompleteness = 'partial', nullFields = ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs'];
+    let usageCompleteness = 'partial', nullFields = ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs'];
     let aInfo = '---', dInfo = '---';
     if (!(m && typeof m.chatId === 'string' && typeof m.turnId === 'string' && typeof m.sourceId === 'string' && typeof m.revisionId === 'string')) {
       violations.push(tag + ': ids.json entry must carry chatId, turnId, sourceId and revisionId.');
@@ -682,8 +678,9 @@ if (process.argv.includes('--openrouter-stored')) {
       const turns = Array.isArray(h.body.turns) ? h.body.turns : [];
       const t = turns.find((x) => x && x.turnId === m.turnId) || null;
       if (!t) throw new Error('NOT_RUN: recorded turn missing (' + tag + ').');
-      for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) assert(t[kk] === null || typeof t[kk] === 'number', 'Turn usage must be known or honestly null (' + tag + ' ' + kk + ').');
-      usage = { inputTokens: t.inputTokens ?? null, cachedTokens: t.cachedTokens ?? null, outputTokens: t.outputTokens ?? null, estimatedCostMicrousd: t.estimatedCostMicrousd ?? null, firstTokenMs: t.firstTokenMs ?? null, totalMs: t.totalMs ?? null };
+      for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs']) assert(t[kk] === null || typeof t[kk] === 'number', 'Turn usage must be known or honestly null (' + tag + ' ' + kk + ').');
+      if (t.estimatedCostMicrousd !== undefined) assert(t.estimatedCostMicrousd === null || typeof t.estimatedCostMicrousd === 'number', 'Historical estimatedCost must be honestly recorded, never gated (' + tag + ').');
+      usage = { inputTokens: t.inputTokens ?? null, cachedTokens: t.cachedTokens ?? null, outputTokens: t.outputTokens ?? null, tokenLimit: t.tokenLimit ?? null, firstTokenMs: t.firstTokenMs ?? null, totalMs: t.totalMs ?? null };
       if (t.providerUsage && typeof t.providerUsage === 'object' && !Array.isArray(t.providerUsage)) {
         providerUsageRaw = Object.fromEntries(['inputTokens', 'outputTokens', 'totalTokens', 'cachedTokens', 'reasoningTokens', 'costUsd'].map((key) =>
           [key, typeof t.providerUsage[key] === 'number' && Number.isFinite(t.providerUsage[key]) && t.providerUsage[key] >= 0 ? t.providerUsage[key] : null]));
@@ -750,8 +747,8 @@ if (process.argv.includes('--openrouter-stored')) {
     perModel.push({ route: tag, status: modelStatus, chatStatus, distillStatus, usage, usageCompleteness, providerUsage: providerUsageRaw, providerCosts, distillUsage, answer: aInfo, distill: dInfo });
     rows.push('| ' + tag + ' | ' + modelStatus + ' | ' + usageCell + ' | ' + aInfo + ' | ' + dInfo + ' |');
   }
-  const costs = perModel.flatMap((p) => [p.providerCosts.chatUsd, p.providerCosts.distillUsd]);
-  const providerReportedCost = (costs.length > 0 && costs.every((c) => typeof c === 'number')) ? costs.reduce((n, c) => n + c, 0) : 'UNKNOWN';
+  const costsLegacy = perModel.flatMap((p) => [p.providerCosts.chatUsd, p.providerCosts.distillUsd]);
+  const providerReportedCost = (costsLegacy.length > 0 && costsLegacy.every((c) => typeof c === 'number')) ? costsLegacy.reduce((n, c) => n + c, 0) : 'UNKNOWN (legacy historical USD only, never gated)';
   const overall = violations.length > 0 ? 'FAIL' : 'LIMITED';
   const stamp = Date.now();
   const md = ['# OpenRouter stored revalidation (real provider jobs, zero new model calls)', '', '- project: ' + ids.projectId, '- handles: eval/out/openrouter-smoke/ids.json' + (ids.publicUrl ? ' / ' + ids.publicUrl : ''), '- probe: ' + (ids.text || '(recorded)'), '- overall: ' + overall, '- provider reported cost: ' + providerReportedCost].concat(['', '| model | status | usageCompleteness | answer | distill |', '|---|---|---|---|---|']).concat(rows).concat(['', '## Open gates / failures']).concat(violations.length > 0 ? violations.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
@@ -799,21 +796,21 @@ if (!chatId) {
   chatId = cj.body.chat.id;
 }
 const chatPath = '/api/projects/' + encodeURIComponent(proj.id) + '/chats/' + encodeURIComponent(chatId);
-let configuredBudgetMicrousd = null;
+let configuredUsageDayStart = null;
 async function getChat(what, signal) {
   const h = await apiJson(chatPath, signal ? { signal } : undefined);
   assert.equal(h.status, 200, 'GET chat must be 200 and storage-only (' + what + ').');
-  assert(h.body && typeof h.body.chat === 'object', 'GET chat must return {chat, turns, monthlyUsedMicrousd, monthlyBudgetMicrousd}.');
+  assert(h.body && typeof h.body.chat === 'object', 'GET chat must return {chat, turns, usage}.');
   assert(Array.isArray(h.body.turns), 'GET chat must return turns array.');
-  assert(typeof h.body.monthlyUsedMicrousd === 'number', 'GET chat must return monthlyUsedMicrousd.');
-  assert(Number.isSafeInteger(h.body.monthlyBudgetMicrousd) && h.body.monthlyBudgetMicrousd >= 0, 'GET chat must return a valid configured monthly budget.');
-  if (configuredBudgetMicrousd === null) configuredBudgetMicrousd = h.body.monthlyBudgetMicrousd;
-  assert.equal(h.body.monthlyBudgetMicrousd, configuredBudgetMicrousd, 'Monthly budget must stay at the first-observed configured snapshot; this script never writes or raises it.');
+  assert(h.body.usage && typeof h.body.usage.dayStart === 'number' && typeof h.body.usage.dayEnd === 'number', 'GET chat must return usage {dayStart,dayEnd,inputTokens,outputTokens,cachedTokens,unknownUsages}.');
+  for (const k of ['inputTokens', 'outputTokens', 'cachedTokens', 'unknownUsages']) assert(Number.isSafeInteger(h.body.usage[k]) && h.body.usage[k] >= 0, 'GET chat must return valid daily usage: ' + k);
+  if (configuredUsageDayStart === null) configuredUsageDayStart = h.body.usage.dayStart;
+  assert.equal(h.body.usage.dayStart, configuredUsageDayStart, 'Usage day window must stay stable; this script never writes it.');
   return h.body;
 }
 const h0 = await getChat(resumeChat ? 'resume' : 'before');
 if (resumeChat) assert.equal(h0.chat.id, resumeChat, 'Resumed chat id must match ELIOT_EVAL_CHAT.');
-const m0 = h0.monthlyUsedMicrousd;
+const m0 = h0.usage;
 const whole = new Map();
 async function checkRange(rev, st, en) {
   let w = whole.get(rev);
@@ -848,7 +845,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
       inputTokens: turn?.inputTokens ?? null,
       cachedTokens: turn?.cachedTokens ?? null,
       outputTokens: turn?.outputTokens ?? null,
-      estimatedCostMicrousd: turn?.estimatedCostMicrousd ?? null,
+      tokenLimit: turn?.tokenLimit ?? null,
       actualProviderCostUsd: actualProviderCostUsd(turn),
     },
     failures: [],
@@ -864,9 +861,10 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   }
   if (!Array.isArray(turn?.citations) || turn.citations.length === 0) failures.push('turn has no citations');
   if (typeof turn?.invalidLabels !== 'number' || turn.invalidLabels !== 0) failures.push('invalidLabels is not zero');
-  for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) {
+  for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs']) {
     if (typeof turn?.[field] !== 'number' || !Number.isFinite(turn[field])) failures.push('turn.' + field + ' is unknown');
   }
+  if (turn?.estimatedCostMicrousd !== undefined && turn?.estimatedCostMicrousd !== null && typeof turn?.estimatedCostMicrousd !== 'number') failures.push('historical estimatedCost must be numeric when present');
   if (typeof turn?.totalMs === 'number' && turn.totalMs > 90000) failures.push('completed turn exceeded the 90 second K2 ceiling');
 
   const citationQuotes = new Map();
@@ -923,7 +921,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   factChecks.push({ name: 'citation byte ranges', status: row.citationRanges.length > 0 && row.citationRanges.every((range) => range.status === 'PASS') ? 'PASS' : 'FAIL', detail: row.citationSummary });
   factChecks.push({ name: 'uncited factual statements', status: uncited === 0 ? 'PASS' : uncited === null ? 'NOT_RUN' : 'FAIL', detail: uncited === null ? 'Unavailable.' : String(uncited) + ' found.' });
   factChecks.push({ name: 'numeric citation support', status: unsupportedNumeric === 0 ? 'PASS' : unsupportedNumeric === null ? 'NOT_RUN' : 'FAIL', detail: unsupportedNumeric === null ? 'Unavailable.' : String(unsupportedNumeric) + ' unsupported.' });
-  for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'estimatedCostMicrousd', 'firstTokenMs', 'totalMs']) {
+  for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs']) {
     factChecks.push({ name: field, status: typeof turn?.[field] === 'number' && Number.isFinite(turn[field]) ? 'PASS' : 'FAIL', detail: String(turn?.[field] ?? 'UNKNOWN') });
   }
   row.factChecks = factChecks;
@@ -949,7 +947,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   await checkRange(s0.currentRevisionId, 0, end);
 }
 async function saveTurn(qid, turn, extra) {
-  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, actualProviderCostUsd: actualProviderCostUsd(turn), firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
+  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, tokenLimit: turn.tokenLimit ?? null, actualProviderCostUsd: actualProviderCostUsd(turn), firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
   await writeFile(outDir + '/k2-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
 }
 function actualProviderCostUsd(turn) {
@@ -985,8 +983,8 @@ function dispatchUnavailable(status, body, turn) {
 if (!runModel && !storedOnly) {
   const h1 = await getChat('re-read');
   assert.equal(h1.turns.length, h0.turns.length, 'History re-read must not add turns.');
-  assert.equal(h1.monthlyUsedMicrousd, m0, 'Pure history re-read must not change usage.');
-  const md = ['# K2 native-only (storage, zero model calls)', '', '- project: ' + title, '- chat: ' + chatId + (resumeChat ? ' (resumed)' : ''), '- history: ' + h0.turns.length + ' turns, monthlyUsedMicrousd stable across re-reads', '- reader range self-check: 1 exact range', '- MODEL_NOT_RUN: set ELIOT_K2_MODEL=1 (root signal) for C1-4/O1-8 paid turns.', '- Stop/reconnect/Save: NOT_RUN here (root browser journey).', ''].join(EOL);
+  assert.deepEqual(h1.usage, m0, 'Pure history re-read must not change usage.');
+  const md = ['# K2 native-only (storage, zero model calls)', '', '- project: ' + title, '- chat: ' + chatId + (resumeChat ? ' (resumed)' : ''), '- history: ' + h0.turns.length + ' turns, daily usage stable across re-reads', '- reader range self-check: 1 exact range', '- MODEL_NOT_RUN: set ELIOT_K2_MODEL=1 (root signal) for C1-4/O1-8 paid turns.', '- Stop/reconnect/Save: NOT_RUN here (root browser journey).', ''].join(EOL);
   await writeFile(outDir + '/k2-native-' + Date.now() + '.md', md);
   console.log(md);
   process.exit(0);
@@ -1012,7 +1010,7 @@ if (storedOnly) {
         status: 'QUALITY_FAIL', reason: error instanceof Error ? error.message : String(error), factChecks: [], hardFailures: [], citationRanges: [],
         citationSummary: 'CHECK_FAILED', timing: { firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: null },
         usage: { inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null,
-          estimatedCostMicrousd: turn.estimatedCostMicrousd ?? null, actualProviderCostUsd: actualProviderCostUsd(turn) } };
+          tokenLimit: turn.tokenLimit ?? null, actualProviderCostUsd: actualProviderCostUsd(turn) } };
     }
     compareRows.set(qid, row);
     if (row.status === 'OWNER_REVIEW_REQUIRED') ownerRequired = true;
@@ -1024,19 +1022,19 @@ if (storedOnly) {
   if (!finalChat) storedFailures++;
   else {
     if (finalChat.turns.length !== h0.turns.length) { storedFailures++; stopReason = 'Stored-only revalidation changed the chat turn count.'; }
-    if (finalChat.monthlyUsedMicrousd !== m0) { storedFailures++; stopReason = 'Stored-only revalidation changed monthly usage.'; }
+    if (JSON.stringify(finalChat.usage) !== JSON.stringify(m0)) { storedFailures++; stopReason = 'Stored-only revalidation changed daily token usage.'; }
   }
   const status = storedFailures > 0 ? 'FAIL' : ownerRequired ? 'OWNER_REQUIRED' : 'MECHANICAL_PASS';
   await writeCompare(compareRows, { mode: 'stored-only diagnostic; zero model calls/POSTs; recorded turn route shown per row',
     defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId, status, stopReason,
-    monthlyBefore: m0, monthlyAfter: finalChat?.monthlyUsedMicrousd ?? 'UNKNOWN',
+    usageBefore: m0, usageAfter: finalChat?.usage ?? 'UNKNOWN',
     turnCountBefore: h0.turns.length, turnCountAfter: finalChat?.turns.length ?? 'UNKNOWN' });
   if (storedFailures > 0) process.exit(1);
   if (ownerRequired) process.exit(2);
   process.exit(0);
 }
 const firstMs = [], totalMs = [];
-let newCostMicro = 0, reportedMicro = 0, unknownCosts = 0, unknownNewCosts = 0;
+let newTokenLimit = 0, reportedTokenLimit = 0, unknownTokenLimits = 0, unknownNewTokenLimits = 0;
 let actualKnownUsd = 0, actualKnownCount = 0, actualUnknown = 0, actualUnknownNew = 0;
 let newCount = 0, hardFailures = 0, ownerRequired = false, manual = 0;
 let dispatchStopped = false, stopReason = null;
@@ -1068,7 +1066,7 @@ async function observeDispatchedTurn(requestTurnId, qid) {
 }
 async function adoptReconciledTurn(qid, stored, wall, via) {
   // Inspect an already-accepted stored turn found by read reconciliation and
-  // fold its actual state/body/citations/reserved cost into the aggregates.
+  // fold its actual state/body/citations/reserved tokenLimit into the aggregates.
   // Unknown input/output stays UNKNOWN; nothing is re-dispatched.
   let persistenceError = null;
   try { await saveTurn(qid, stored, { src: via, wall, question: Q.get(qid) }); }
@@ -1082,7 +1080,7 @@ async function adoptReconciledTurn(qid, stored, wall, via) {
       status: 'QUALITY_FAIL', reason, factChecks: [], hardFailures: [reason], citationRanges: [], citationSummary: 'CHECK_FAILED',
       timing: { firstTokenMs: stored?.firstTokenMs ?? null, totalMs: stored?.totalMs ?? null, wallMs: wall },
       usage: { inputTokens: stored?.inputTokens ?? null, cachedTokens: stored?.cachedTokens ?? null, outputTokens: stored?.outputTokens ?? null,
-        estimatedCostMicrousd: stored?.estimatedCostMicrousd ?? null, actualProviderCostUsd: actualProviderCostUsd(stored) } };
+        tokenLimit: stored?.tokenLimit ?? null, actualProviderCostUsd: actualProviderCostUsd(stored) } };
   }
   row.hardFailures = [...(row.hardFailures ?? []), 'Dispatch wait timed out; this accepted turn was reconciled by bounded storage-only read of the submitted turn id (' + via + '). No retry was sent and the question was not repeated.'];
   if (persistenceError) row.hardFailures = [...row.hardFailures, 'Could not preserve the new raw turn artifact: ' + persistenceError];
@@ -1091,12 +1089,12 @@ async function adoptReconciledTurn(qid, stored, wall, via) {
   newCount++;
   if (row.status === 'OWNER_REVIEW_REQUIRED') ownerRequired = true;
   else if (row.status !== 'MECHANICAL_PASS') hardFailures++;
-  const reconciledCost = stored.estimatedCostMicrousd;
-  if (typeof reconciledCost === 'number' && Number.isSafeInteger(reconciledCost) && reconciledCost >= 0) {
-    reportedMicro += reconciledCost;
-    newCostMicro += reconciledCost;
+  const reconciledLimit = stored.tokenLimit;
+  if (typeof reconciledLimit === 'number' && Number.isSafeInteger(reconciledLimit) && reconciledLimit >= 0) {
+    reportedTokenLimit += reconciledLimit;
+    newTokenLimit += reconciledLimit;
   } else {
-    unknownNewCosts++;
+    unknownNewTokenLimits++;
   }
   const reconciledActual = actualProviderCostUsd(stored);
   if (reconciledActual === null) { actualUnknown++; }
@@ -1157,7 +1155,7 @@ for (const qid of order) {
       compareRows.set(qid, { qid, answer: null, model: benchmarkModel, turnState: 'DISPATCH_UNKNOWN', routeStatus: 'GLOBAL_DEFAULT',
         status: 'DISPATCH_UNAVAILABLE', reason, factChecks: [{ name: 'dispatch', status: 'FAIL', detail: reason }], hardFailures: [reason],
         citationRanges: [], citationSummary: 'NOT_RUN', timing: { firstTokenMs: null, totalMs: null, wallMs: wall },
-        usage: { inputTokens: null, cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, actualProviderCostUsd: null } });
+        usage: { inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: null, actualProviderCostUsd: null } });
       unknownDispatchIds.set(qid, requestTurnId);
       hardFailures++; dispatchStopped = true; stopReason = reason;
       continue;
@@ -1172,7 +1170,7 @@ for (const qid of order) {
       compareRows.set(qid, { qid, answer: null, model: benchmarkModel, turnState: 'DISPATCH_FAILED', routeStatus: 'GLOBAL_DEFAULT',
         status: stop ? 'DISPATCH_UNAVAILABLE' : 'DISPATCH_FAILED', reason, factChecks: [{ name: 'dispatch', status: 'FAIL', detail: reason }], hardFailures: [reason],
         citationRanges: [], citationSummary: 'NOT_RUN', timing: { firstTokenMs: null, totalMs: null, wallMs: wall },
-        usage: { inputTokens: null, cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, actualProviderCostUsd: null } });
+        usage: { inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: null, actualProviderCostUsd: null } });
       hardFailures++;
       if (stop) { dispatchStopped = true; stopReason = reason; }
       continue;
@@ -1194,7 +1192,7 @@ for (const qid of order) {
       status: 'QUALITY_FAIL', reason, factChecks: [], hardFailures: [reason], citationRanges: [], citationSummary: 'CHECK_FAILED',
       timing: { firstTokenMs: turn?.firstTokenMs ?? null, totalMs: turn?.totalMs ?? null, wallMs: wall },
       usage: { inputTokens: turn?.inputTokens ?? null, cachedTokens: turn?.cachedTokens ?? null, outputTokens: turn?.outputTokens ?? null,
-        estimatedCostMicrousd: turn?.estimatedCostMicrousd ?? null, actualProviderCostUsd: actualProviderCostUsd(turn) } };
+        tokenLimit: turn?.tokenLimit ?? null, actualProviderCostUsd: actualProviderCostUsd(turn) } };
   }
   if (src === 'new' && turn.turnId !== requestTurnId) {
     const reason = 'Returned turnId does not match the one submitted; no replacement request was sent.';
@@ -1210,13 +1208,13 @@ for (const qid of order) {
   compareRows.set(qid, row);
   if (row.status === 'OWNER_REVIEW_REQUIRED') ownerRequired = true;
   else if (row.status !== 'MECHANICAL_PASS') hardFailures++;
-  const cost = turn.estimatedCostMicrousd;
-  if (typeof cost === 'number' && Number.isSafeInteger(cost) && cost >= 0) {
-    reportedMicro += cost;
-    if (src === 'new') newCostMicro += cost;
+  const limit = turn.tokenLimit;
+  if (typeof limit === 'number' && Number.isSafeInteger(limit) && limit >= 0) {
+    reportedTokenLimit += limit;
+    if (src === 'new') newTokenLimit += limit;
   } else {
-    unknownCosts++;
-    if (src === 'new') unknownNewCosts++;
+    unknownTokenLimits++;
+    if (src === 'new') unknownNewTokenLimits++;
   }
   const actual = actualProviderCostUsd(turn);
   if (actual === null) { actualUnknown++; if (src === 'new') actualUnknownNew++; }
@@ -1236,8 +1234,8 @@ let finalChat = null, finalReadError = null;
 try {
   finalChat = await getChat('after turns');
   const reread = await getChat('final re-read');
-  if (reread.monthlyUsedMicrousd !== finalChat.monthlyUsedMicrousd) {
-    hardFailures++; finalReadError = 'Monthly usage changed between final storage reads.';
+  if (JSON.stringify(reread.usage) !== JSON.stringify(finalChat.usage)) {
+    hardFailures++; finalReadError = 'Daily token usage changed between final storage reads.';
   }
 } catch (error) { hardFailures++; finalReadError = error instanceof Error ? error.message : String(error); }
 if (!finalChat) stopReason = 'Final storage/usage re-read failed: ' + (finalReadError || 'unknown error');
@@ -1245,7 +1243,7 @@ else {
   // Final-read reconciliation: any still-unresolved dispatched id is looked up
   // once more in the final storage snapshot. Only an accepted matching terminal
   // turn (completed/partial/failed/cancelled) is adopted with its actual
-  // state/body/citations/reserved cost (unknown input/output preserved);
+  // state/body/citations/reserved tokenLimit (unknown input/output preserved);
   // a still-pending visible turn (started/streaming/running/unknown) or an
   // unresolvable id keeps DISPATCH_UNKNOWN with reservation UNKNOWN,
   // never zero. No POST anywhere.
@@ -1261,19 +1259,18 @@ else {
   }
   const finalErrors = [];
   if (finalChat.turns.length !== h0.turns.length + newCount) { hardFailures++; finalErrors.push('Chat turn count does not match the pre-existing turns plus exactly one request per new question.'); }
-  if (unknownNewCosts > 0) { hardFailures++; finalErrors.push('At least one new turn has unknown estimated cost; UNKNOWN is not treated as free.'); }
+  if (unknownNewTokenLimits > 0) { hardFailures++; finalErrors.push('At least one new turn has unknown tokenLimit; UNKNOWN is not treated as free.'); }
   const unresolvedCount = unknownDispatchIds.size;
   if (unresolvedCount > 0) { hardFailures++; finalErrors.push(unresolvedCount + ' dispatched turn(s) remain unresolved after bounded read reconciliation; any held reservation is UNKNOWN, not zero.'); }
-  else if (finalChat.monthlyUsedMicrousd - m0 !== newCostMicro && unknownNewCosts === 0) { hardFailures++; finalErrors.push('Monthly usage delta differs from the estimates for new turns.'); }
-  if (finalChat.monthlyUsedMicrousd > finalChat.monthlyBudgetMicrousd) { hardFailures++; finalErrors.push('Monthly model budget is exceeded.'); }
+  else if (unknownNewTokenLimits === 0) { const deltaIn = (finalChat.usage?.inputTokens ?? 0) - (m0?.inputTokens ?? 0); const deltaOut = (finalChat.usage?.outputTokens ?? 0) - (m0?.outputTokens ?? 0); if (deltaIn < 0 || deltaOut < 0 || deltaIn + deltaOut > newTokenLimit) { hardFailures++; finalErrors.push('Daily token usage delta exceeds the admitted tokenLimit sum for new turns.'); } }
   if (finalErrors.length) { finalReadError = finalErrors.join(' '); stopReason = [stopReason, finalReadError].filter(Boolean).join(' '); }
 }
 const status = hardFailures > 0 ? 'FAIL' : ownerRequired ? 'OWNER_REQUIRED' : 'MECHANICAL_PASS';
 await writeCompare(compareRows, { mode: 'default-model benchmark; frozen global route; one request per unanswered question; no retry',
   defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId, status, stopReason,
-  monthlyBefore: m0, monthlyAfter: finalChat?.monthlyUsedMicrousd ?? 'UNKNOWN',
+  usageBefore: m0, usageAfter: finalChat?.usage ?? 'UNKNOWN',
   turnCountBefore: h0.turns.length, turnCountAfter: finalChat?.turns.length ?? 'UNKNOWN',
-  estimatedNewMicroUsd: newCostMicro, reportedMicroUsd: reportedMicro,
+  newTokenLimit: newTokenLimit, reportedTokenLimit: reportedTokenLimit,
   actualProviderUsd: actualKnownCount ? actualKnownUsd : 'UNKNOWN', actualUnknownCount: actualUnknown,
   firstTokenP50P95: [pct(firstMs, 0.5), pct(firstMs, 0.95)], totalP50P95: [pct(totalMs, 0.5), pct(totalMs, 0.95)] });
 if (hardFailures > 0) process.exit(1);

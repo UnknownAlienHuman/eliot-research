@@ -9,7 +9,7 @@ const row = (properties: unknown[]): NativeRow => ({ id: "catalogue-uuid", name:
 
 describe("Workers AI catalogue metadata", () => {
   it("uses the callable name and token units from live properties, preserving an unknown output capacity", () => {
-    expect(nativeModel(row([
+    const model = nativeModel(row([
       { property_id: "context_window", value: "1048576" },
       { property_id: "price", value: [
         { unit: "per M input tokens", price: 0.15, currency: "USD" },
@@ -17,21 +17,29 @@ describe("Workers AI catalogue metadata", () => {
         { unit: "per M output tokens", price: 0.5, currency: "USD" },
       ] },
       { property_id: "reasoning_effort", value: { supported_efforts: ["max", "high", "low"] } },
-    ]), "2026-10-27")).toMatchObject({ id: "@cf/vendor/new-chat-model",
+    ]), "2026-10-27");
+    expect(model).toMatchObject({ id: "@cf/vendor/new-chat-model",
       route: "workers-ai:@cf/vendor/new-chat-model", contextTokens: 1048576,
       maxOutputTokens: null, outputReserveTokens: 8192, nativeReasoningEffort: "low",
-      inputMicrousdPerMillion: 150000, cachedMicrousdPerMillion: 30000, outputMicrousdPerMillion: 500000 });
+      checkedOn: "2026-10-27", enabled: true });
+    expect(model).not.toHaveProperty("inputMicrousdPerMillion");
+    expect(model).not.toHaveProperty("cachedMicrousdPerMillion");
+    expect(model).not.toHaveProperty("outputMicrousdPerMillion");
+    expect(JSON.stringify(model)).not.toContain("price");
   });
 
-  it("keeps unsupported units, currency and absent cache prices unknown", () => {
+  it("ignores price/currency properties and keeps unknown context visible", () => {
     const model = nativeModel(row([{ property_id: "price", value: [
       { unit: "per M input tokens", price: 0, currency: "USD" },
       { unit: "per M output tokens", price: 1, currency: "EUR" },
       { unit: "per neuron", price: 0.01, currency: "USD" },
     ] }]), "2026-10-27");
-    expect(model).toMatchObject({ contextTokens: null, inputMicrousdPerMillion: 0,
-      cachedMicrousdPerMillion: null, outputMicrousdPerMillion: null });
+    expect(model).toMatchObject({ contextTokens: null, maxOutputTokens: null,
+      outputReserveTokens: 8192, enabled: true });
     expect(model?.nativeReasoningEffort).toBeUndefined();
+    expect(model).not.toHaveProperty("inputMicrousdPerMillion");
+    expect(model).not.toHaveProperty("cachedMicrousdPerMillion");
+    expect(model).not.toHaveProperty("outputMicrousdPerMillion");
   });
 
   it("does not choose one of contradictory property entries", () => {
