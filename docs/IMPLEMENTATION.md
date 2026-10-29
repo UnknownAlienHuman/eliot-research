@@ -177,7 +177,9 @@ A comma-separated bracket group of fully specified labels, such as `[S1:14, S2:8
 only when every member resolves in the same frozen set of supplied citable blocks with original byte ranges. A bad member rejects the
 whole group. Code and inline literals remain literal. Missing aliases, implied aliases such as `[S1:14, 15]`, ranges,
 bare source markers and unknown blocks stay invalid; no neighboring block or missing identity is inferred. This
-normalization changes annotation punctuation only, adds no model call, and never regrades stored turn states.
+normalization preserves factual prose and citation targets. Repeated references to the same immutable block reuse
+their first emitted label so every occurrence can link through the returned citation metadata. No model call is
+added, and stored turn states are never regraded.
 
 For each candidate quote, search exact bytes in the stated block, then adjacent blocks; only then apply conservative
 whitespace/quote/dash/soft-hyphen normalization with a map back to original bytes. Prefer the stated block, mark

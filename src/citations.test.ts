@@ -12,6 +12,8 @@ const GROUP_SRC = "223e4567-e89b-12d3-a456-426614174009";
 const GROUP_SRC2 = "223e4567-e89b-12d3-a456-426614174010";
 const GROUP_REV = "123e4567-e89b-12d3-a456-426614174009";
 const GROUP_REV2 = "123e4567-e89b-12d3-a456-426614174010";
+const MIXED_SRC = "223e4567-e89b-12d3-a456-426614174020";
+const MIXED_REV = "12345678-1234-4234-8234-123456789abc";
 
 function makeBlocks(count: number): Block[] {
   const out: Block[] = [];
@@ -73,6 +75,24 @@ describe("resolveCitations", () => {
     expect(out.text).toBe("[S1:1] and [S1:1]");
     expect(out.citations).toHaveLength(1);
     expect(out.citations[0]).toMatchObject({ sourceId: SRC_A, label: "[S1:1]" });
+  });
+
+  it("keeps the first emitted notation for mixed references to the same passage", () => {
+    const sources: LabelSource[] = [{ sourceId: MIXED_SRC, revisionId: MIXED_REV, title: "Mixed paper", alias: "S1",
+      blocks: [{ id: 1, type: "paragraph", start: 0, end: 3, heading: null }] }];
+    const persistent = `[R${MIXED_REV}:1]`, compact = "[S1:1]";
+    const citation = { revisionId: MIXED_REV, sourceId: MIXED_SRC, block: 1, start: 0, end: 3,
+      sourceTitle: "Mixed paper", deleted: false };
+    for (const [input, text, label] of [
+      [`[R${MIXED_REV}:1, S1:1]`, persistent + persistent, persistent],
+      [`${persistent} text ${compact}`, `${persistent} text ${persistent}`, persistent],
+      [`[S1:1, R${MIXED_REV}:1]`, compact + compact, compact],
+      [`${compact} text ${persistent}`, `${compact} text ${compact}`, compact],
+    ] as const) {
+      expect(resolveCitations(input, sources)).toEqual({ text, citations: [{ ...citation, label }], invalidLabels: 0 });
+      expect(persistentAnswer(input, sources)).toEqual({ text: text.replaceAll(compact, persistent),
+        citations: [{ ...citation, label: persistent }], invalidLabels: 0 });
+    }
   });
 
   it("drops malformed, truncated and bare labels but keeps ordinary brackets", () => {

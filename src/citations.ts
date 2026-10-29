@@ -158,7 +158,7 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
   const inline = inlineCodeRanges(answer, fences);
   const code = [...fences, ...inline].sort((a, b) => a.start - b.start);
   const inside = (at: number): boolean => code.some((range) => at >= range.start && at < range.end);
-  const seen = new Set<string>();
+  const seen = new Map<string, string>();
   const citations: Citation[] = [];
   const parts: string[] = [];
   let last = 0;
@@ -192,10 +192,11 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
     }
     parts.push(answer.slice(last, at));
     for (const { parsed, source, atom } of resolved) {
-      const outToken = rewriteCompact && atom[1] === "S" ? `[R${source.revisionId}:${parsed.block}]` : atom;
       const key = `${source.revisionId}:${parsed.block}`;
+      const candidate = rewriteCompact && atom[1] === "S" ? `[R${source.revisionId}:${parsed.block}]` : atom;
+      const outToken = seen.get(key) ?? candidate;
       if (!seen.has(key)) {
-        seen.add(key);
+        seen.set(key, outToken);
         citations.push({
           revisionId: source.revisionId,
           sourceId: source.sourceId,
