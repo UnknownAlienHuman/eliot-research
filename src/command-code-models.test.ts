@@ -89,15 +89,23 @@ describe("Command Code catalogue model admission", () => {
     discover.mockResolvedValue([model, other]);
     discoverNative.mockResolvedValue([]);
 
+    const beforeRefresh = Date.now();
     const refreshed = await refreshModelCatalog(local.env);
+    const afterRefresh = Date.now();
 
     expect(discover).toHaveBeenCalledTimes(1);
     expect(discover).toHaveBeenCalledWith(fixtureProviders, expect.any(Function));
     expect(discoverNative).toHaveBeenCalledTimes(1);
     expect(local.bucket.put).toHaveBeenCalledTimes(1);
     expect(local.bucket.put.mock.calls[0]?.[0]).toBe("catalog/models.json");
+    const storedCatalog = local.bucket.stored() as { updatedAt: unknown };
+    expect(typeof storedCatalog.updatedAt).toBe("string");
+    const storedUpdatedAt = storedCatalog.updatedAt as string;
+    expect(new Date(storedUpdatedAt).toISOString()).toBe(storedUpdatedAt);
+    const storedParsedAt = Date.parse(storedUpdatedAt);
+    expect(storedParsedAt).toBeGreaterThanOrEqual(beforeRefresh);
+    expect(storedParsedAt).toBeLessThanOrEqual(afterRefresh);
     expect(local.bucket.stored()).toMatchObject({
-      updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       warnings: [],
       models: expect.arrayContaining([
         expect.objectContaining({ route: model.route, contextTokens: model.contextTokens }),
