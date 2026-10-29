@@ -39,6 +39,18 @@ function hrefFor(projectId: string, c: Citation): string {
 function citationDisplayLabel(c: Citation): string {
   return c.sourceTitle + ' · ' + c.block + (c.deleted ? ' (deleted)' : '');
 }
+function storedModelLabel(route: string, models: readonly ModelRoute[]): string {
+  const entry = models.find((model) => model.route === route);
+  if (entry !== undefined) return entry.label;
+  if (route.startsWith('gateway:')) return route.slice('gateway:'.length);
+  if (route.startsWith('workers-ai:')) return route.slice('workers-ai:'.length);
+  return route;
+}
+function turnModelSpan(turn: TurnView, models: readonly ModelRoute[]) {
+  if (turn.state === 'started' && turn.tokenLimit == null) return null;
+  if (turn.model === '') return null;
+  return <span>{storedModelLabel(turn.model, models)}</span>;
+}
 function collectRefs(projectId: string, cites: readonly Citation[]): MarkdownReference[] {
   const out: MarkdownReference[] = [];
   for (const c of cites) {
@@ -140,7 +152,6 @@ export function ChatView() {
   }
   useEffect(() => { void loadModels(); return () => { modelsAbort.current?.abort(); }; }, []);
   useEffect(() => { void loadChat(); }, [pid, chatId]);
-  useEffect(() => { if (chatId === undefined) setChatReady(sources.length > 0); }, [chatId, sources]);
   useEffect(() => {
     if (pid === '' || chatId === undefined) { setSocket('closed'); return; }
     const cid = chatId;
@@ -167,6 +178,7 @@ export function ChatView() {
         timer = window.setTimeout(connect, delay);
       };
       next.onmessage = (event: MessageEvent) => {
+        if (!live) return;
         try {
         const msg = JSON.parse(String(event.data)) as { type: string; turns?: TurnView[]; queued?: QueuedTurn | null; turn?: TurnView };
         if (msg.type === 'snapshot' && Array.isArray(msg.turns)) { setTurns(msg.turns); setQueued(msg.queued ?? null); }
@@ -179,7 +191,9 @@ export function ChatView() {
     return () => { live = false; if (timerSet) window.clearTimeout(timer); ws?.close(); };
   }, [pid, chatId]);
   async function loadChat(): Promise<void> {
-    if (pid === '' || chatId === undefined) { setTurns([]); return; }
+    // A new chat has no history to load: empty and project-default scopes are
+    // valid send scopes, so readiness never waits on the source list.
+    if (pid === '' || chatId === undefined) { setTurns([]); setQueued(null); setTurnsError(''); setChatReady(pid !== ''); return; }
     const cid = chatId;
     setChatReady(false);
     try {
@@ -284,7 +298,7 @@ export function ChatView() {
         {turns.map((t) => (<li key={t.turnId} className='er-chat__turn' data-state={t.state}>
           <p className='er-chat__question'>{t.question}</p>
           <div className='er-chat__answer'>{t.answer === '' ? (t.state === 'started' ? <p className='er-chat__hint' role='status'>Preparing your answer…</p> : <p className='er-chat__hint'>No answer available.</p>) : <Markdown text={t.answer} references={collectRefs(pid, t.citations)} warnings={t.warnings ?? []} />}</div>
-          <p className='er-chat__meta'><span>{stateLabel(t.state)}</span><span>{scopeLabel(t.scopeMode)}</span></p>
+          <p className='er-chat__meta'><span>{stateLabel(t.state)}</span><span>{scopeLabel(t.scopeMode)}</span>{turnModelSpan(t, models)}</p>
           <details className='er-chat__turn-details'>
             <summary>Sources</summary>
             <Cites projectId={pid} cites={t.citations} />

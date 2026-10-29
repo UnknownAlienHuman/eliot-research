@@ -634,7 +634,10 @@ with raw HTML disabled and resolved citation chips. Do not cache private text in
 
 The shared model picker reuses the approved legacy Material interaction and provider/native-ID identity. Settings
 provider, search and free-name filters only filter the displayed catalogue; they do not change saved routes or admission.
-Chat uses compact provider then model controls with project default available. Settings keeps provider addresses and
+Chat uses compact provider then model controls with project default available. A provider with no enabled,
+unambiguous catalogue choices is visibly unavailable. Model changes affect the next Send; each answer shows its stored
+model's name. New chats may Send with no sources, while existing chats wait for their history to load. Changing chats
+clears the previous queue view and ignores messages from the closed connection. Settings keeps provider addresses and
 Gateway routing in collapsed provider details. Unknown metadata stays visible, and model-job admission remains separate
 from selection.
 
