@@ -178,6 +178,8 @@ assert.deepEqual(numericsUnsupported('synthetic measurement 41.0; separate count
 assert.deepEqual(numericsUnsupported('synthetic measurement 41.0; separate count 8 units.', '41,8'), ['41.8'], 'Harness selftest: RU comma 41,8 is not supported by 41.0 plus a lone 8.');
 assert.deepEqual(numericsUnsupported('score 41.8 here', '41,8'), [], 'Harness selftest: RU comma 41,8 matches dotted source 41.8.');
 assert.deepEqual(numericsUnsupported('energy 41.8e2 joules', '41.8', 41.8), ['41.8'], 'Harness selftest: full tokens, 41.8 is not supported by 41.8e2.');
+const isTokenObservation = (v) => v === null || (Number.isSafeInteger(v) && v >= 0);
+assert(isTokenObservation(null) && isTokenObservation(0) && isTokenObservation(40978) && !isTokenObservation(undefined) && !isTokenObservation(-1) && !isTokenObservation(1.5) && !isTokenObservation('40978'), 'Harness selftest: token observations accept nonnegative safe integers or null unknown, nothing else.');
 function snapOf(t) {
   if (!t || (t.state !== 'done' && t.state !== 'partial')) return null;
   const rep = t.report && typeof t.report === 'object' ? t.report : null;
@@ -507,7 +509,8 @@ if (nativeOnly) {
       const crep = cu.report;
       assert(crep && typeof crep === 'object', 'Check report must be present.');
       const cusage = crep.usage || {};
-      for (const kk of ['calls', 'inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'wallMs']) assert(typeof cusage[kk] === 'number', 'Check report.usage.' + kk + ' must be numeric owning-revision usage.');
+      for (const kk of ['calls', 'tokenLimit', 'wallMs']) assert(typeof cusage[kk] === 'number', 'Check report.usage.' + kk + ' must be numeric owning-revision usage.');
+      for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) assert(isTokenObservation(cusage[kk]), 'Check report.usage.' + kk + ' must be a nonnegative safe integer or null unknown.');
       assert(cusage.calls <= 2, 'Check calls bounded at most 2, got ' + cusage.calls + '.');
       const cclaims = Array.isArray(cu.claims) ? cu.claims : [];
       assert(cclaims.length <= 32, 'Check claims capped at 32.');
@@ -821,7 +824,8 @@ if (!runModel) {
     if (!rep || typeof rep !== 'object') {
       violations.push(s.originalFilename + ': terminal state without direct report');
     } else {
-      for (const kk of ['calls', 'inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'wallMs']) if (typeof rep.usage?.[kk] !== 'number') violations.push(s.originalFilename + ': owning revision usage.' + kk + ' not numeric');
+      for (const kk of ['calls', 'tokenLimit', 'wallMs']) if (typeof rep.usage?.[kk] !== 'number') violations.push(s.originalFilename + ': owning revision usage.' + kk + ' not numeric');
+      for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) if (!isTokenObservation(rep.usage?.[kk])) violations.push(s.originalFilename + ': owning revision usage.' + kk + ' not a nonnegative safe integer or null unknown');
       if (typeof rep.kept !== 'number') violations.push(s.originalFilename + ': kept not a number');
       if (!Array.isArray(rep.dropped)) violations.push(s.originalFilename + ': dropped not an array');
       if (typeof rep.clearedNumbers !== 'number') violations.push(s.originalFilename + ': clearedNumbers not a number');
@@ -936,6 +940,7 @@ const postedRevisions = new Set();
 const firstPass = new Map();
 let admit = true;
 let newTokens = 0;
+let newTokensUnknown = 0;
 {
   const blocked = [];
   for (const s of scoped) {
@@ -995,14 +1000,22 @@ async function distillOne(s) {
     tokenLimit: storedUsage.tokenLimit,
     wallMs: storedUsage.wallMs,
   };
-  for (const kk of ['calls', 'inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'wallMs']) assert(typeof usage[kk] === 'number', 'report.usage.' + kk + ' must be numeric owning-revision usage (' + s.originalFilename + ').');
+  for (const kk of ['calls', 'tokenLimit', 'wallMs']) assert(typeof usage[kk] === 'number', 'report.usage.' + kk + ' must be numeric owning-revision usage (' + s.originalFilename + ').');
+  for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) assert(isTokenObservation(usage[kk]), 'report.usage.' + kk + ' must be a nonnegative safe integer or null unknown (' + s.originalFilename + ').');
   assert(usage.calls >= 0 && usage.calls <= 2, 'report.usage.calls bounded 0-2 (' + s.originalFilename + ').');
   assert(Array.isArray(rep.questions) && rep.questions.length >= 3, 'report.questions (3-5 guide questions) required (' + s.originalFilename + ').');
   assert(typeof rep.kept === 'number', 'report.kept must be a number (' + s.originalFilename + ').');
   assert(Array.isArray(rep.dropped), 'report.dropped must be an array of {index,reason} (' + s.originalFilename + ').');
   assert(typeof rep.clearedNumbers === 'number', 'report.clearedNumbers must be a number (' + s.originalFilename + ').');
   distillCalls += usage.calls;
-  if (postedRevisions.has(rev)) newTokens += usage.inputTokens + usage.outputTokens;
+  if (postedRevisions.has(rev)) {
+    let rowUnknown = false;
+    if (Number.isSafeInteger(usage.inputTokens)) newTokens += usage.inputTokens;
+    else rowUnknown = true;
+    if (Number.isSafeInteger(usage.outputTokens)) newTokens += usage.outputTokens;
+    else rowUnknown = true;
+    if (rowUnknown) newTokensUnknown++;
+  }
   let stable = snapOf(u);
   let agreed = false;
   for (let i = 0; i < 2 && !agreed; i++) {
@@ -1020,7 +1033,7 @@ async function distillOne(s) {
   }
   firstPass.set(rev, stable);
   await writeFile(outDir + '/k3-' + String(rev).slice(0, 8) + '.json', JSON.stringify({ revisionId: rev, source: s.originalFilename, state: u.state, claims: claims.length, usage, kept: rep.kept, dropped: rep.dropped, clearedNumbers: rep.clearedNumbers }, null, 2));
-  rows.push('| ' + s.originalFilename + ' | ' + u.state + ' | ' + claims.length + ' | ' + usage.calls + ' | ' + usage.inputTokens + '/' + usage.cachedTokens + '/' + usage.outputTokens + ' | ' + usage.tokenLimit + ' | ' + usage.wallMs + ' |');
+  rows.push('| ' + s.originalFilename + ' | ' + u.state + ' | ' + claims.length + ' | ' + usage.calls + ' | ' + (usage.inputTokens ?? 'unknown') + '/' + (usage.cachedTokens ?? 'unknown') + '/' + (usage.outputTokens ?? 'unknown') + ' | ' + usage.tokenLimit + ' | ' + usage.wallMs + ' |');
 }
 const pending = scoped.slice();
 async function pump() {
@@ -1095,7 +1108,7 @@ try {
 const settingsAfterRun = await apiJson('/api/settings');
 if (settingsAfterRun.status !== 200 || !settingsAfterRun.body || !settingsAfterRun.body.settings) tailV.push('Stored settings reread unavailable after K3 work.');
 else if (JSON.stringify(settingsAfterRun.body.settings) !== settingsBeforeRun) tailV.push('Stored settings changed during K3 work.');
-const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- POSTed revisions this run: ' + posted + ' (second scan needs 0)', '- owning revision rows before/after: ' + revisionRecordsBefore.size + '/' + revisionRowsReadAfter, '- owning revision claim rows before/after: ' + revisionClaimRowsBefore + '/' + revisionClaimRowsAfter, '- owning revision calls before/after (known subtotal): ' + revisionCallsBefore + '/' + revisionCallsAfter + '; unknown rows ' + revisionCallRowsUnknownBefore + '/' + revisionCallRowsUnknownAfter, '- exact owning revision records stable on reread: ' + terminalSnapshotsStable + '/' + revisionRowsReadAfter, '- calls this run: ' + distillCalls + '; input/output tokens on posted revision records: ' + newTokens, '- settings record preserved: ' + String(settingsAfterRun.status === 200 && JSON.stringify(settingsAfterRun.body?.settings) === settingsBeforeRun), '- claim-mode C1-C4: skipped (hard gate remains open)', '- fullK3Accepted: false', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | state | claims | calls | in/cached/out | tokenLimit | wall_ms |', '|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
+const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- POSTed revisions this run: ' + posted + ' (second scan needs 0)', '- owning revision rows before/after: ' + revisionRecordsBefore.size + '/' + revisionRowsReadAfter, '- owning revision claim rows before/after: ' + revisionClaimRowsBefore + '/' + revisionClaimRowsAfter, '- owning revision calls before/after (known subtotal): ' + revisionCallsBefore + '/' + revisionCallsAfter + '; unknown rows ' + revisionCallRowsUnknownBefore + '/' + revisionCallRowsUnknownAfter, '- exact owning revision records stable on reread: ' + terminalSnapshotsStable + '/' + revisionRowsReadAfter, '- calls this run: ' + distillCalls + '; input/output tokens on posted revision records (known subtotal): ' + newTokens + '; unknown token rows ' + newTokensUnknown, '- settings record preserved: ' + String(settingsAfterRun.status === 200 && JSON.stringify(settingsAfterRun.body?.settings) === settingsBeforeRun), '- claim-mode C1-C4: skipped (hard gate remains open)', '- fullK3Accepted: false', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | state | claims | calls | in/cached/out | tokenLimit | wall_ms |', '|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
 console.log(md);
 await writeFile(outDir + '/k3-' + Date.now() + '.md', boundReport + EOL + EOL + md);
 const claimTitle = process.env.ELIOT_K3_CLAIM_PROJECT;
