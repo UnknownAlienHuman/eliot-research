@@ -191,6 +191,7 @@ export function ChatView() {
     return () => { live = false; if (timerSet) window.clearTimeout(timer); ws?.close(); };
   }, [pid, chatId]);
   async function loadChat(): Promise<void> {
+    setQueued(null);
     // A new chat has no history to load: empty and project-default scopes are
     // valid send scopes, so readiness never waits on the source list.
     if (pid === '' || chatId === undefined) { setTurns([]); setQueued(null); setTurnsError(''); setChatReady(pid !== ''); return; }

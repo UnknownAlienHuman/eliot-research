@@ -97,6 +97,7 @@ async function runPickerOnlyProof() {
   assert.equal(before.status, 200); assert.deepEqual(before.body?.turns, [], 'New fixture chat must start with no turns.');
   const browserOrigin = assertEvalBrowserOrigin(origin, configuredOrigin), turnPath = chatPath + '/turns';
   const turnUrl = browserOrigin + turnPath, turnPayloads = [], browserPosts = [], forbiddenReads = [];
+  const first = eligible[0], second = eligible[1] ?? first;
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -139,7 +140,6 @@ async function runPickerOnlyProof() {
       assert.equal(count, 1, 'Selected route must be one enabled option from the actual catalogue.');
       await model.selectOption(entry.route); await expect(model).toHaveValue(entry.route);
     };
-    const first = eligible[0], second = eligible[1] ?? eligible[0];
     await choose(first);
     if (eligible.length > 1) await choose(second);
     await question.fill('Picker payload proof ' + randomUUID()); await send.click();
