@@ -172,7 +172,13 @@ function assertC2StaticSelftests() {
   assert.equal(c2('d_model⁻⁰·⁵ · min(step_num⁻⁰·⁵, step_num · warmup_steps⁻¹·⁵), warmup_steps 2000'), false, 'Wrong warmup value must fail for warmup_steps aliases.');
   assert(!normMath('2·3').includes('2.3'), 'An ordinary middle dot must not become a decimal point.');
 }
+function assertDispatchStopStaticSelftests() {
+  assert.equal(dispatchUnavailable(404, { error: { code: 'not_found', message: 'External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.' } }, null), true, 'HTTP 404 response status must stop the batch.');
+  assert.equal(dispatchUnavailable(200, { turn: { error: 'External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.' } }, null), true, 'Embedded HTTP 404 turn error must stop the batch.');
+  assert.equal(dispatchUnavailable(200, null, { error: 'Partial answer stored; 2 unsupported numeric statements remain' }), false, 'Ordinary quality partial must not stop the batch.');
+}
 assertC2StaticSelftests();
+assertDispatchStopStaticSelftests();
 if (staticSelftest) {
   console.log('K2 evaluator static selftests passed.');
   process.exit(0);
@@ -1085,7 +1091,7 @@ function dispatchUnavailable(status, body, turn) {
   const error = body?.error ?? body?.turn?.error ?? turn?.error ?? null;
   const code = String(error?.code ?? body?.code ?? '').toLowerCase();
   const message = String(error?.message ?? error ?? body?.message ?? '');
-  if ([401, 402, 403, 408, 429, 500, 502, 503, 504].includes(status)) return true;
+  if ([401, 402, 403, 404, 408, 429, 500, 502, 503, 504].includes(status)) return true;
   if (['auth', 'unauthorized', 'forbidden', 'budget', 'unavailable', 'busy', 'rate_limited'].includes(code)) return true;
   if (/credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|\bprovider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|\bgateway.{0,24}(?:unavailable|error|failed)/i.test(message)) return true;
   // Own 90 s deadline stays continuable: the next distinct question may dispatch.
@@ -1094,7 +1100,7 @@ function dispatchUnavailable(status, body, turn) {
   // the failure embedded in turn.error (model-transport.ts modelFailure shapes).
   // Stop on the same codes when embedded as HTTP; an explicit non-stop HTTP
   // code (e.g. 400 validation) keeps the prior continue behavior.
-  if (/\bHTTP\s+(401|402|403|408|429|500|502|503|504)\b/i.test(message)) return true;
+  if (/\bHTTP\s+(401|402|403|404|408|429|500|502|503|504)\b/i.test(message)) return true;
   if (/\bHTTP\s+\d{3}\b/i.test(message)) return false;
   // Per-question validation stays continuable in either existing failure
   // format: predispatch AI_Invalid* and in-band invalid_request_error.
