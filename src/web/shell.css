@@ -315,9 +315,7 @@ html, body { background: var(--eliot-color-canvas); }
 .er-shell-settings-row {
   display: grid;
   gap: var(--eliot-space-tight);
-  padding: var(--eliot-space-group);
   border-radius: var(--eliot-shape-extra-large);
-  background: var(--eliot-color-group);
 }
 .er-shell-settings-row h2 {
   font-size: var(--eliot-type-title-medium-size);
@@ -325,19 +323,6 @@ html, body { background: var(--eliot-color-canvas); }
   font-weight: var(--eliot-type-font-weight-medium);
 }
 .er-shell-settings-row p { color: var(--md-sys-color-on-surface-variant); }
-.er-shell-settings-row--preferences { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--eliot-space-group); }
-.er-shell-settings-row--preferences > div { display: grid; gap: var(--eliot-space-tight); }
-@media (max-width: 600px) {
-  .er-shell-settings-row--preferences { grid-template-columns: minmax(0, 1fr); }
-}
-.er-shell-settings-row label {
-  display: grid;
-  gap: var(--eliot-space-tight);
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-large-size);
-  line-height: var(--eliot-type-label-large-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-}
 .er-shell-skip {
   position: fixed;
   inset-block-start: var(--eliot-space-block-control);
@@ -356,11 +341,9 @@ html, body { background: var(--eliot-color-canvas); }
 
 /* ---- Adaptive layout: rail on medium/expanded windows, bottom bar on compact ---- */
 
-@media (max-width: 64rem) {
+@media (max-width: 48rem) {
   .er-shell-preferences > summary > span:last-child { display: none; }
   .er-shell-preferences > summary { padding-inline: var(--eliot-space-block-control); }
-}
-@media (max-width: 48rem) {
   .er-shell {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: var(--eliot-layout-topbar-size) minmax(0, 1fr);

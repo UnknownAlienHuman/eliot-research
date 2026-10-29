@@ -216,7 +216,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   if (projectId !== undefined) {
     return (
       <div className='er-models er-models--compact'>
-        <label className='er-models__row'>
+        <label className='er-field er-models__row'>
           <span className='er-models__label'>Instructions<span className='er-models__help'>Guides answers in this project.</span></span>
           <textarea value={instructions} onChange={(e) => setInstructions(e.currentTarget.value)} rows={3} maxLength={10000} />
         </label>
@@ -233,7 +233,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   }
   return (
     <div className='er-models'>
-      <section className='er-models__card' aria-label='Models'>
+      <section className='er-card er-models__card' aria-label='Models'>
         <div className='er-models__head'>
           <h2 className='er-models__title'>Models</h2>
           <p className='er-status'><span>Defaults for answers and understanding.</span></p>
@@ -279,7 +279,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
         {gatewayHelpHref !== null ? <a className='er-button er-button--text' href={gatewayHelpHref} target='_blank' rel='noopener noreferrer'>Open Gateway integrations</a> : null}
         <details className='er-models__details'>
           <summary>Advanced provider settings</summary>
-          <label className='er-models__row'>
+          <label className='er-field er-models__row'>
             <span className='er-models__label'>Gateway ID<span className='er-models__help'>Blank disables external routing.</span></span>
             <input value={gatewayId} onChange={(e) => setGatewayId(e.currentTarget.value)} autoComplete='off' />
           </label>

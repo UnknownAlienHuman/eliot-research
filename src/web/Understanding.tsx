@@ -123,10 +123,10 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
       <section className='er-und' aria-label='Understanding'>
         <h2 className='er-und__title'>Understanding</h2>
         {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : <p className='er-und__hint' role='status'>Loading understanding…</p>}
-        {note !== '' ? <p className='er-und__hint' role='status'>{note}</p> : null}
-        {failure !== '' ? <details className='er-und__details'><summary>Details</summary><div className='er-und__details-content'>
+        {note !== '' ? <p className='er-und__error' role='alert'>{note}</p> : null}
+        {failure !== '' ? <div className='er-und__actions'>
           <button className='er-button er-button--tonal' type='button' onClick={() => setReadVersion((v) => v + 1)}>Reload understanding</button>
-        </div></details> : null}
+        </div> : null}
       </section>
     );
   }
@@ -134,6 +134,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const understandingError = view.error;
   const active = view.state === 'queued' || view.state === 'running';
   const canStart = !active && (view.state === 'none' || view.state === 'paused');
+  const canSaveAvailable = !active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial');
   const references = view.citations.map((c, index) => ({
     text: '[R' + view.revisionId + ':' + c.block + ']',
     label: 'Open quote · ' + sourceTitle + ' · ' + (index + 1),
@@ -148,10 +149,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const chosenBound = chosen !== undefined && chosen.enabled ? twoCallBound(chosen) : null;
   const configuredRoute: string | null | undefined = view.progress.configuredModel;
   const configuredSpec = typeof configuredRoute === "string" ? models.find((m) => m.route === configuredRoute) : undefined;
-  const configuredLabel = configuredSpec?.label ?? configuredRoute ?? null;
-  const revisionModel = view.progress.model;
-  const revisionSpec = typeof revisionModel === 'string' ? models.find((m) => m.route === revisionModel) : undefined;
-  const revisionLabel = revisionSpec?.label ?? revisionModel;
+  const configuredLabel = configuredSpec?.label ?? null;
   const progressTokens = view.progress.maximumTokens ?? null;
   const configuredBound = configuredSpec !== undefined ? (configuredSpec.enabled ? twoCallBound(configuredSpec) : null) : progressTokens;
   const pickerEmptyLabel = 'Use configured default' + (configuredLabel !== null ? ' (' + configuredLabel + ')' : '');
@@ -160,36 +158,32 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   return (
     <section className='er-und' aria-label='Understanding'>
       <h2 className='er-und__title'>Understanding</h2>
-      <p className='er-und__hint' role='status'>{stateLabel(view.state)}{active ? ' — refreshes on its own.' : ''}</p>
+      <p className='er-und__hint' role='status'>{stateLabel(view.state)}</p>
+      {view.authors || view.published ? <p className='er-und__meta'>{[view.authors, view.published].filter(Boolean).join(' · ')}</p> : null}
       {understandingError !== null && understandingError !== '' ? <p className='er-und__error' role='alert'>{understandingError}</p> : null}
       {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : null}
-      {canStart ? <div className='er-und__actions'><button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void understand()}>Understand source</button></div> : null}
-      {note !== '' ? <p className='er-und__hint' role='status'>{note}</p> : null}
-      <details className='er-und__details'><summary>Details</summary><div className='er-und__details-content'>
+      {canStart ? <div className='er-field er-und__model-details'>
+        <ModelPicker label='Understanding model' choices={models} value={modelChoice} onChange={setModelChoice}
+          emptyLabel={pickerEmptyLabel} loading={!catalogueLoaded} error={catalogError} compact
+          onRoutePendingChange={setModelRoutePending} />
+        <button className='er-button er-button--text' type='button' disabled={!catalogueLoaded} onClick={reloadSnapshot}>Reload model list</button>
+        {catalogWarnings.length > 0 ? <p className='er-und__hint' role='status'>Model catalog: {catalogWarnings.join(' ')}</p> : null}
+        {modelChoice === '' ? (configuredBound === null ? (<p className='er-und__error' role='alert'>The default model is currently unavailable, so Understand cannot start yet.</p>) : null) : chosen !== undefined && chosen.enabled && chosenBound !== null ? null : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'The selected model is currently unavailable, so Understand cannot start yet.'}</p>)}
+      </div> : null}
+      {canStart || failure !== '' || canSaveAvailable ? <div className='er-und__actions'>
+        {canStart ? <button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void understand()}>Understand source</button> : null}
         {failure !== '' ? <button className='er-button er-button--text' type='button' onClick={() => setReadVersion((v) => v + 1)}>Reload understanding</button> : null}
-        {view.authors || view.published ? <p className='er-und__meta'>{[view.authors, view.published].filter(Boolean).join(' · ')}</p> : null}
-        {configuredLabel !== null ? <p className='er-und__meta'>Configured model: {configuredLabel}</p> : null}
-        {revisionLabel !== null ? <p className='er-und__meta'>Historical revision model: {revisionLabel}</p> : null}
-        {canStart ? <div className='er-und__model-details'>
-          <ModelPicker label='Understanding model' choices={models} value={modelChoice} onChange={setModelChoice}
-            emptyLabel={pickerEmptyLabel} loading={!catalogueLoaded} error={catalogError} compact
-            onRoutePendingChange={setModelRoutePending} />
-          <button className='er-button er-button--text' type='button' disabled={!catalogueLoaded} onClick={reloadSnapshot}>Reload snapshot</button>
-          {catalogWarnings.length > 0 ? <p className='er-und__hint' role='status'>Model catalog: {catalogWarnings.join(' ')}</p> : null}
-          {modelChoice === '' ? (configuredBound === null ? (<p className='er-und__hint'>The default model is currently unavailable, so Understand cannot start yet.</p>) : null) : chosen !== undefined && chosen.enabled && chosenBound !== null ? null : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'The selected model is currently unavailable, so Understand cannot start yet.'}</p>)}
-        </div> : null}
-        {view.state === 'failed' ? <p className='er-und__hint'>This attempt is terminal and will not be re-queued automatically.</p> : null}
-        {view.report && view.report.dropped.length > 0 ? <p className='er-und__hint'>{view.report.dropped.length} unsupported candidates were omitted and {view.report.clearedNumbers} numeric fields were cleared during verification.</p> : null}
-        {!active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial') ? <div className='er-und__storage-action'><button className='er-button er-button--tonal' type='button' disabled={busy} onClick={() => void saveAvailable()}>{view.state === 'failed' ? 'Save available output' : 'Recheck saved output'}</button><p className='er-und__hint'>Storage-only; starts no model work and never re-queues the model.</p></div> : null}
-      </div></details>
+        {canSaveAvailable ? <button className='er-button er-button--tonal' type='button' disabled={busy} onClick={() => void saveAvailable()}>{view.state === 'failed' ? 'Save available output' : 'Recheck saved output'}</button> : null}
+      </div> : null}
+      {note !== '' ? <p className='er-und__error' role='alert'>{note}</p> : null}
       {(view.state === 'done' || view.state === 'partial') ? (<>
-        {view.state === 'partial' ? <p className='er-und__hint'>Partial understanding — some material could not be verified.</p> : null}
+        {view.state === 'partial' ? <p className='er-und__hint'>Partial understanding — some material could not be verified.</p> : view.report && (view.report.dropped.length > 0 || view.report.clearedNumbers > 0) ? <p className='er-und__hint'>Some claims or numeric details could not be verified.</p> : null}
         {view.guide !== null && view.guide !== '' ? (<div className='er-und__guide'><h3>Guide</h3><div className='er-und__answer'><Markdown text={view.guide} references={references} /></div></div>) : null}
         {view.digest !== null && view.digest !== '' ? (<div className='er-und__guide'><h3>Digest</h3><div className='er-und__answer'><Markdown text={view.digest} references={references} /></div></div>) : null}
-        {view.glossary.length > 0 ? (<div className='er-und__guide'><h3>Glossary</h3><dl className='er-und__glossary'>{view.glossary.map((g, i) => (<div key={g.en + ':' + g.ru + ':' + i}><dt>{g.en} — {g.ru}</dt><dd><Markdown text={g.definition + '\n\n' + g.labels.join(' ')} references={references} /></dd></div>))}</dl></div>) : null}
-        <div className='er-und__guide'><h3>Verified claims ({view.claims.length})</h3>{view.claims.length === 0 ? <p className='er-und__hint'>No verified claims stored for this revision.</p> : (<ul className='er-und__claims'>{view.claims.map((c) => (
-          <li key={c.id} className='er-und__claim'>
-            <p className='er-und__meta'><span>{c.kind}</span>{c.ambiguous ? <span className='er-und__badge'>ambiguous match</span> : null}</p>
+        {view.glossary.length > 0 ? (<div className='er-und__guide'><h3>Glossary</h3><dl className='er-card er-und__glossary'>{view.glossary.map((g, i) => (<div key={g.en + ':' + g.ru + ':' + i}><dt>{g.en} — {g.ru}</dt><dd><Markdown text={g.definition + '\n\n' + g.labels.join(' ')} references={references} /></dd></div>))}</dl></div>) : null}
+        <div className='er-und__guide'><h3>Verified claims</h3>{view.claims.length === 0 ? <p className='er-und__hint'>No verified claims stored for this revision.</p> : (<ul className='er-und__claims'>{view.claims.map((c) => (
+          <li key={c.id} className='er-card er-und__claim'>
+            <p className='er-und__meta'><span>{c.kind}</span>{c.ambiguous ? <span className='er-chip er-und__badge'>ambiguous match</span> : null}</p>
             <p className='er-und__statement'>{c.statement}</p>
             {c.valueText !== null && c.valueText !== '' ? <p className='er-und__meta'><span>{c.valueText}{c.unit !== null && c.unit !== '' ? ' ' + c.unit : ''}</span>{c.conditions !== null && c.conditions !== '' ? <span>{c.conditions}</span> : null}</p> : null}
             {(c.task ?? '') !== '' || (c.metric ?? '') !== '' || (c.dataset ?? '') !== '' ? <p className='er-und__meta'><span>{[c.task, c.metric, c.dataset].filter((x) => x !== null && x !== '').join(' · ')}</span></p> : null}
@@ -218,7 +212,7 @@ export function ProjectOverview({ projectId }: { readonly projectId?: string }) 
     <section className='er-und' aria-label='Project overview'>
       <h2 className='er-und__title'>Project overview</h2>
       <ul className='er-und__rows'>{rows.map((r) => (
-        <li key={r.sourceId} className='er-und__row'>
+        <li key={r.sourceId} className='er-card er-und__row'>
           <Link className='er-und__rowtitle' to={'/p/' + encodeURIComponent(pid) + '/source/' + encodeURIComponent(r.sourceId)}>{r.title}</Link>
           <span className='er-und__meta'>{stateLabel(r.state)}</span>
           {r.summary !== null && r.summary !== '' ? <div className='er-und__answer'><Markdown text={r.summary} /></div> : null}

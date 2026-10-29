@@ -51,6 +51,11 @@ placeholder `src/client/` were removed from the replacement. These imports are c
 by the auth/contrast suite plus the real K0 browser eval. Eliot code retains MIT; fonts retain their OFL notices and
 Google SVG paths retain Apache-2.0 in `THIRD_PARTY_NOTICES.md` and `public/licenses/Apache-2.0.txt`.
 
+The owner UI consolidates existing card, chip and labelled-field presentation in `src/web/ui/controls.css`, using the
+same pinned Material primitives and semantic tokens. Native markup in Library, chat, understanding and model settings
+calls these classes directly; duplicate feature declarations and the second Appearance selector are removed. No new
+component family, donor runtime or data adapter is imported.
+
 ### K1 adoption — 2026-10-25
 
 At the same legacy pin, `structural-projector.ts` supplied the UTF-8 line/heading mechanism as an idea for the small
