@@ -210,6 +210,8 @@ re-distilled automatically.
 4. Use at most two bounded calls: labelled canonical text produces guide and candidate claims; code verifies
    quotes/ranges/numbers; the second call receives only verified material and produces digest/glossary. Store raw
    output/report in R2 and compact claims in D1. Paid calls do not retry.
+   Reserve candidate capacity for core facts separately from result rows; missing evidence remains missing rather than
+   being filled from guide prose or a required minimum number of claims.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
    an extra overview model call.
 6. Add claim context mode. The same answer prompt and citation resolver are used.

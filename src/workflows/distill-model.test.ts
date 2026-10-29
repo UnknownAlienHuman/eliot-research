@@ -33,7 +33,7 @@ vi.mock("../models", async () => ({
   requireAvailableModel: vi.fn(), requireCatalogModel: vi.fn(), availableModels: vi.fn(),
 }));
 
-import { NoObjectGeneratedError, generateText } from "ai";
+import { NoObjectGeneratedError, Output, generateText } from "ai";
 import { resolveModelTransport } from "../model-transport";
 import { availableModels, requireAvailableModel, requireCatalogModel } from "../models";
 import { discoverGatewayModels } from "../model-catalog";
@@ -144,6 +144,7 @@ const forbiddenLookups = [requireAvailableModel, requireCatalogModel, availableM
   discoverGatewayModels, discoverNativeModels];
 beforeEach(() => {
   vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation"));
+  vi.mocked(Output.object).mockReset();
   vi.mocked(resolveModelTransport).mockReset().mockRejectedValue(new Error("Fixture transport stopped before dispatch."));
   for (const lookup of forbiddenLookups) vi.mocked(lookup).mockReset().mockRejectedValue(new Error("Unexpected catalogue lookup"));
 });
@@ -295,6 +296,91 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(f.bodies.get(prefix + "text.md")).toBe(document.text);
       expect(f.bodies.get(prefix + "blocks.json")).toBe(JSON.stringify(document.blocks));
       expect(f.bodies.has(prefix + "distill-call1.json")).toBe(false);
+    } finally { f.db.close(); }
+  });
+
+  it("reserves independent call-one slots for core facts and results and keeps cached synthesis recovery on frozen artifacts", async () => {
+    const document = documentWithBlocks([
+      { type: "paragraph", text: "Ada Lovelace describes a method that normalizes inputs.\n" },
+      { type: "paragraph", text: "The method applies only to the test set.\n" },
+      { type: "paragraph", text: "Accuracy reached 92% on the test set.\n" },
+    ]);
+    const f = fixture(snapshot.route, document);
+    const batch = async (statements: Parameters<typeof f.env.DB.batch>[0]) => {
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      return results;
+    };
+    f.env.DB.batch = batch as typeof f.env.DB.batch;
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+
+    const coreMethod = { quoteBlock: "[S1:1]", kind: "method" as const, task: null, metric: null, dataset: null,
+      valueText: null, unit: null, conditions: null, statement: "The method normalizes inputs." };
+    const coreLimitation = { quoteBlock: "[S1:2]", kind: "limitation" as const, task: null, metric: null, dataset: null,
+      valueText: null, unit: null, conditions: null, statement: "The method applies only to the test set." };
+    const resultClaim = { quoteBlock: "[S1:3]", kind: "result" as const, task: null, metric: "accuracy", dataset: "test set",
+      valueText: "92%", unit: "%", conditions: "test set", statement: "Accuracy reached 92% on the test set." };
+    const guide = [
+      { labels: ["[S1:1]"], text: "The method normalizes inputs." },
+      { labels: ["[S1:2]"], text: "It applies only to the test set." },
+      { labels: ["[S1:3]"], text: "Accuracy reached 92% on the test set." },
+    ];
+    const extraction = { guide, coreFacts: [coreMethod, coreLimitation], results: [resultClaim],
+      questions: ["What is normalized?", "Where is the method applied?", "What accuracy is reported?"],
+      authors: "Ada Lovelace", published: null };
+    const synthesis = { supportedClaims: ["C0", "C1", "C2"], additionalClaims: [], guide,
+      digest: [{ labels: ["[S1:3]"], text: "The source reports 92% accuracy on the test set." }], glossary: [] };
+    const usage = { inputTokens: 100, inputTokenDetails: { cacheReadTokens: 0 }, outputTokens: 100, raw: null };
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ output: extraction, totalUsage: usage } as never)
+      .mockResolvedValueOnce({ output: synthesis, totalUsage: usage } as never);
+
+    try {
+      const steps = await run(f);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual([
+        "extract source", "verify source excerpts", "review and synthesize", "store understanding", "finish understanding",
+      ]);
+
+      const extractionOutputSchema = vi.mocked(Output.object).mock.calls[0]?.[0]?.schema as
+        { safeParse(value: unknown): { success: boolean } } | undefined;
+      if (!extractionOutputSchema) throw new Error("The first-call structured schema was not captured.");
+      const emptyExtraction = { ...extraction, coreFacts: [], results: [] };
+      expect(extractionOutputSchema.safeParse(emptyExtraction).success).toBe(true);
+      expect(extractionOutputSchema.safeParse({ ...emptyExtraction,
+        coreFacts: Array(8).fill(coreMethod), results: Array(24).fill(resultClaim) }).success).toBe(true);
+      expect(extractionOutputSchema.safeParse({ ...emptyExtraction, coreFacts: Array(9).fill(coreMethod) }).success).toBe(false);
+      expect(extractionOutputSchema.safeParse({ ...emptyExtraction, results: Array(25).fill(resultClaim) }).success).toBe(false);
+      expect(extractionOutputSchema.safeParse({ ...emptyExtraction, coreFacts: [resultClaim] }).success).toBe(false);
+      expect(extractionOutputSchema.safeParse({ ...emptyExtraction,
+        results: [{ ...coreMethod, kind: "method" }] }).success).toBe(false);
+
+      const verifiedBody = f.bodies.get(prefix + "distill-verified.json");
+      if (!verifiedBody) throw new Error("The verified candidate artifact is missing.");
+      const verified = JSON.parse(verifiedBody) as { claims: { kind: string; statement: string }[]; guide: unknown[]; questions: string[] };
+      expect(verified.claims.map(({ kind, statement }) => [kind, statement])).toEqual([
+        ["method", "The method normalizes inputs."],
+        ["limitation", "The method applies only to the test set."],
+        ["result", "Accuracy reached 92% on the test set."],
+      ]);
+      expect(verified.guide).toHaveLength(3);
+      expect(verified.questions).toEqual(extraction.questions);
+      expect(f.db.prepare("SELECT authors FROM source WHERE id=?").get(sourceId)).toEqual({ authors: "Ada Lovelace" });
+
+      const secondCallContent = vi.mocked(generateText).mock.calls[1]?.[0].messages?.[0]?.content;
+      if (typeof secondCallContent !== "string") throw new Error("The frozen second-call input was not captured.");
+      const secondCallInput = JSON.parse(secondCallContent) as { candidates: { id: string; kind: string }[] };
+      expect(secondCallInput.candidates.map(({ id, kind }) => [id, kind])).toEqual([
+        ["C0", "method"], ["C1", "limitation"], ["C2", "result"],
+      ]);
+
+      // Save/recheck consumes the frozen verified artifact plus call2, not call1's private extraction shape.
+      f.bodies.delete(prefix + "distill-call1.json");
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(true);
+      const callsBeforeRecovery = vi.mocked(generateText).mock.calls.length;
+      await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true });
+      expect(vi.mocked(generateText)).toHaveBeenCalledTimes(callsBeforeRecovery);
+      expect(f.bodies.has(prefix + "checked/guide.md")).toBe(true);
+      expect(f.bodies.has(prefix + "checked/digest.md")).toBe(true);
     } finally { f.db.close(); }
   });
 

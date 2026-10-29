@@ -210,6 +210,12 @@ resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
 1. labelled canonical text → metadata, draft guide, 3–5 questions and candidate claims;
 2. verified original excerpts → supported claim selection, final 3–5 sentence guide, digest and EN/RU glossary.
 
+New extraction output reserves separate bounded collections: up to eight `coreFacts` using the existing non-result
+kinds and up to 24 `results`. Either may be empty when unsupported by the source. Code combines core facts first,
+then results, and applies the same quote/number verifier; the total remains at most 32. This prevents result rows from
+consuming all candidate capacity without manufacturing missing facts. The frozen `Verified` representation and call-two
+selection IDs retain their existing shape, so historical cached synthesis is rechecked without regenerating call one.
+
 Each input block is a separate JSON record containing its exact `quoteBlock` and text, so a label does not implicitly
 name following blocks or an entire section. The first output requests the source guide before detailed claims.
 Each claim still selects one `quoteBlock` from the closed compact label set for that immutable revision. Code resolves
