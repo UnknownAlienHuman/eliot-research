@@ -28,9 +28,9 @@ understanding requires an explicit request. Page loads, reconnects and saves nev
    functions: list, outline, read, find claims, search, get page and propose page.
 5. **Code controls risk.** Scope, permissions, byte ranges, citation resolution, quote verification, call limits and
    spend admission are deterministic code. Models decide prose and semantic classification, not authority.
-6. **Paid effects are explicit and bounded.** Every model/search job has a caller, an upper bound, recorded usage and a
-   visible failure state. When a budget is exhausted, the system pauses before the call rather than completing it and
-   reporting the bill later.
+6. **Paid effects are explicit and bounded.** Every model/search job has a caller, hard call/token/time bounds,
+   recorded usage and a visible failure state. Provider allowances and billing remain provider-owned. A failed or
+   rejected call stops the job; continuation requires another explicit owner action.
 7. **Cloudflare-native first; optional services behind gates.** Use one Worker, D1, R2, Durable Objects, Workflows and
    Workers AI directly. AI Search and Browser Run arrive only after their contour proves a need and a cost/quality win.
    Do not add KV, Queues, Vectorize, a graph database or another backend without a measured requirement.
@@ -63,7 +63,7 @@ revision's `text.md`. Generated pages are derived material and never silently re
 | Project map | Topics, comparable result tables, disagreement candidates, gaps and reading routes built from verified claims. |
 | Deep research | Explicit bounded job over the Library with optional web capture; progress, partial result, cost and Stop. Web material must enter the Library before citation. |
 | Agents | External agents connect through MCP, read through the shared tools and write proposals rather than accepted owner pages. |
-| Models | Owner selects from provider API catalogues; unknown required metadata blocks paid admission, not selection. Credentials remain in Cloudflare; provider output capacity is separate from job bounds, and the native Flash default is explicit. |
+| Models | Owner selects from provider API catalogues; usable context/output limits and provider allowance govern calls. Credentials remain in Cloudflare; output capacity is separate from job bounds, and the native Flash default is explicit. |
 | Data ownership | Export originals, texts, claims and pages; delete with impact preview; missing/deleted evidence stays visibly missing. |
 
 ## Owner guarantees
@@ -103,7 +103,7 @@ and the MCP endpoint. Product functions are shared by HTTP, chat, MCP and Workfl
 | R2 | originals, `text.md`, block maps, artifacts and page bodies | K1 | Immutable keys; delete orphaned objects later. |
 | Workflows | conversion, distillation, project knowledge and research | K1+ | Few coarse steps; large bodies in R2, not Workflow state. |
 | Durable Objects / Agents SDK | one resumable chat per chat ID | K2 | Created only for active chats; no background loops. |
-| Workers AI | `toMarkdown` and default models | K1/K2 | Cheap default model; usage recorded; monthly model budget checked before calls. |
+| Workers AI | `toMarkdown` and default models | K1/K2 | Provider allowance and bounded explicit calls; actual usage recorded. |
 | AI Gateway | provider routing, analytics, caching/rate limits and optional BYOK | K2 | No external provider by default. |
 | AI Search | disposable large-library projection | K5 only | Must pass offset, quality and monthly-usage gates first. |
 | Browser Run | rendered web capture | K7 only | Use static fetch first; render only when necessary. |

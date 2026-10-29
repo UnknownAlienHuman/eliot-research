@@ -1,15 +1,10 @@
 import { createAI } from "agents/models/ai-sdk";
-import type { LanguageModel, LanguageModelUsage } from "ai";
+import { wrapLanguageModel, type LanguageModel, type LanguageModelMiddleware, type LanguageModelUsage } from "ai";
 import type { JSONObject } from "@ai-sdk/provider";
 import { createOpenAICompatible, type OpenAICompatibleProviderSettings } from "@ai-sdk/openai-compatible";
 import { LibraryError } from "./library";
-import { getModelConnection, type ModelSpec } from "./models";
+import { isProviderApiBase, type ModelProvider, type ModelSpec } from "./models";
 import type { ProviderUsage } from "./shared/api";
-
-const OPENROUTER_PREFIX = "gateway:openrouter/";
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const COMMAND_CODE_PREFIX = "gateway:command-code/";
-const COMMAND_CODE_BASE_URL = "https://api.commandcode.ai/provider/v1";
 
 const EXTERNAL_FAILURE =
   "External model request failed. Check the Gateway connection and provider status; no retry was started.";
@@ -21,23 +16,19 @@ function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
-export function reportedProviderUsage(usage: LanguageModelUsage, route?: string): ProviderUsage | null {
+const OFFICIAL_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+function isNativeOpenRouterRoute(model?: Pick<ModelSpec, "route" | "routing">): boolean {
+  const provider = model?.routing?.provider;
+  return provider?.gatewaySlug === "openrouter" && provider?.gatewayPath === "v1" && typeof provider?.baseUrl === "string" && provider.baseUrl.trim().replace(/\/+$/, "") === OFFICIAL_OPENROUTER_BASE_URL;
+}
+export function reportedProviderUsage(usage: LanguageModelUsage): ProviderUsage | null {
   const raw = usage.raw;
   if (!raw) return null;
   const input = raw.prompt_tokens_details, output = raw.completion_tokens_details;
   const cached = input && typeof input === "object" && "cached_tokens" in input ? input.cached_tokens : undefined;
   const reasoning = output && typeof output === "object" && "reasoning_tokens" in output ? output.reasoning_tokens : undefined;
   return { inputTokens: count(raw.prompt_tokens) ?? null, outputTokens: count(raw.completion_tokens) ?? null,
-    totalTokens: count(raw.total_tokens) ?? null, cachedTokens: count(cached) ?? null, reasoningTokens: count(reasoning) ?? null,
-    // Command Code's cost currency is undocumented; keep raw private without naming it USD.
-    costUsd: !route?.startsWith(COMMAND_CODE_PREFIX) && typeof raw.cost === "number" && Number.isFinite(raw.cost) && raw.cost >= 0 ? raw.cost : null };
-}
-
-export interface AssistantWire {
-  content: string;
-  reasoning_content?: string;
-  reasoning?: string;
-  reasoning_details?: JSONObject[];
+    totalTokens: count(raw.total_tokens) ?? null, cachedTokens: count(cached) ?? null, reasoningTokens: count(reasoning) ?? null };
 }
 
 // Narrow compatible-usage fix (pinned @ai-sdk/openai-compatible 3.0.79): the bundled
@@ -47,7 +38,7 @@ export interface AssistantWire {
 // completion totals already include it). Contradictory detail counts reset to unknown,
 // and a total below prompt or reasoning above the computed output keeps output unknown
 // so the reservation is retained instead of billing an inconsistent number.
-const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
+export const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
   const prompt = count(usage?.prompt_tokens);
   let cacheRead = count(usage?.prompt_tokens_details?.cached_tokens);
   if (cacheRead !== undefined && prompt !== undefined && cacheRead > prompt) cacheRead = undefined;
@@ -86,228 +77,193 @@ const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
 // provider contract forbids it. The caller adds the explicit schema instruction
 // when model.responseFormat is false; Output.object parses locally either way
 // and failures stay local with no repair calls.
-function openRouterBody(responseFormatAllowed: boolean, reasoning?: ModelSpec["reasoning"]) {
+// Temperature 0 is app strategy for determinism within the published 0-2 range
+// (official OpenRouter ChatRequest), sent only when the catalogue advertises
+// "temperature"; otherwise omitted so provider defaults apply (no fake defaults).
+// Structured-output reasoning off is bounded-output recovery: when the Workflow
+// passes structuredOutput:true and the catalogue publishes optionalReasoning
+// (reasoning.mandatory === false plus advertised "reasoning"), the official
+// OpenRouter body sends reasoning:{enabled:false} (documented ReasoningConfig).
+// Never for chat (structuredOutput false), natively mandatory, or unknown; never
+// on the generic compatible body (standard temperature may forward there).
+// Generic compatible body for the native gateway fetch: no provider routing hint;
+// strip response_format unless the catalog explicitly advertises it. Structured
+// output is enabled only when the catalog sets structuredOutputs; otherwise the
+// caller codec handles plain JSON locally.
+function compatibleBody(responseFormatAllowed: boolean, supportsTemperature: boolean) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
-    const provider = { ...(args.provider as Record<string, unknown> | undefined), allow_fallbacks: false, require_parameters: true };
-    const out: Record<string, unknown> = { ...args, provider, ...(reasoning ? { reasoning } : {}) };
+    const out: Record<string, unknown> = { ...args };
+    delete out.provider;
     if (!responseFormatAllowed) delete out.response_format;
+    if (supportsTemperature) out.temperature = 0;
+    return out;
+  };
+}
+function openRouterBody(responseFormatAllowed: boolean, options: { supportsTemperature: boolean; optionalReasoning: boolean; structuredOutput: boolean }) {
+  return (args: Record<string, unknown>): Record<string, unknown> => {
+    const provider = { ...(args.provider as Record<string, unknown> | undefined), allow_fallbacks: false, require_parameters: true, data_collection: "deny" };
+    const out: Record<string, unknown> = { ...args, provider };
+    if (!responseFormatAllowed) delete out.response_format;
+    if (options.supportsTemperature) out.temperature = 0;
+    if (options.structuredOutput && options.optionalReasoning) out.reasoning = { enabled: false };
     return out;
   };
 }
 
-const MAX_ASSISTANT_JSON_BYTES = 1024 * 1024;
+type GatewayProtocolFetchOptions = {
+  rootBase: string;
+  ownerBase: string;
+  gatewayBase: string;
+  sessionAffinity: string;
+  preserveAnthropicHeaders: boolean;
+};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+const STRIPPED_QUERY_NAMES = new Set(["key", "apikey", "api_key", "x-goog-api-key", "x-goog-api_key"]);
+
+function normalizedBase(value: string): string {
+  return value.replace(/\/+$/, "");
 }
 
-// Consumes the pinned AI SDK's raw JSON chunks. The SDK owns SSE framing and
-// decoding; the caller persists message() only after a successful SDK stream.
-export class AssistantWireCapture {
-  private byteCount = 0;
-  private valid = true;
-  private sawFinish = false;
-  private content = "";
-  private reasoningContent = "";
-  private reasoning = "";
-  private readonly reasoningDetails: JSONObject[] = [];
-  private readonly detailsById = new Map<string, JSONObject>();
-  private readonly detailsByIndex = new Map<number, JSONObject>();
+// Frozen Gateway custom route without the vendor protocol path. The per-request
+// vendor path relative to the published owner API base is appended, so one
+// custom slug serves every protocol beneath the approved root.
+function gatewayBaseFor(provider: Pick<ModelProvider, "gatewaySlug" | "gatewayPath">, gatewayId: string): string {
+  const path = provider.gatewayPath ? `/${provider.gatewayPath}` : "";
+  return `https://workers-binding.ai/ai-gateway/gateways/${encodeURIComponent(gatewayId)}/${provider.gatewaySlug}${path}`;
+}
 
-  push(rawValue: unknown): void {
-    if (!this.valid) return;
-    if (!isRecord(rawValue)) { this.invalidate(); return; }
-    let bytes: number;
+// Provider-native SDK fetch through the pinned Agents AI.fetch adapter. The SDK
+// builds the vendor URL, method, raw body and signal; this wrapper only moves
+// the vendor-relative path onto the frozen Gateway custom route, keeps
+// protocol-safe headers (Anthropic version/beta, Google alt=sse query) and
+// drops vendor credentials before the Gateway. Gateway default BYOK supplies
+// credentials; the wrapper starts no retry and keeps raw native IDs untouched.
+function createProtocolFetch(env: Pick<Env, "AI">, opts: GatewayProtocolFetchOptions) {
+  const root = new URL(normalizedBase(opts.rootBase));
+  const rootPath = root.pathname.replace(/\/+$/, "") || "/";
+  const owner = new URL(normalizedBase(opts.ownerBase));
+  const ownerPath = owner.pathname.replace(/\/+$/, "") || "/";
+  const gatewayBase = normalizedBase(opts.gatewayBase);
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const vendorRaw = input instanceof Request ? input.url : String(input);
+    let vendor: URL;
     try {
-      const json = JSON.stringify(rawValue);
-      if (json === undefined) { this.invalidate(); return; }
-      bytes = new TextEncoder().encode(json).byteLength;
-    } catch { this.invalidate(); return; }
-    if (bytes > MAX_ASSISTANT_JSON_BYTES - this.byteCount) { this.invalidate(); return; }
-    this.byteCount += bytes;
-    if ("error" in rawValue && rawValue.error !== null && rawValue.error !== undefined) {
-      this.invalidate(); return;
+      vendor = new URL(vendorRaw);
+    } catch {
+      throw new LibraryError("unavailable", "This provider endpoint is not supported.", 503);
     }
-    if (!Array.isArray(rawValue.choices)) {
-      if (!isRecord(rawValue.usage)) this.invalidate();
-      return;
+    if (vendor.protocol !== "https:" || vendor.origin !== owner.origin) {
+      throw new LibraryError("unavailable", "This provider endpoint is not supported.", 503);
     }
-    if (rawValue.choices.length === 0) return;
-    if (rawValue.choices.length !== 1 || !isRecord(rawValue.choices[0])) { this.invalidate(); return; }
-    const choice = rawValue.choices[0];
-    if (choice.finish_reason === "error" || (choice.error !== undefined && choice.error !== null)
-      || (choice.index !== undefined && choice.index !== 0)) { this.invalidate(); return; }
-    if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
-      if (typeof choice.finish_reason !== "string" || choice.finish_reason.length === 0) { this.invalidate(); return; }
-      this.sawFinish = true;
+    const under = ownerPath === "/" || vendor.pathname === ownerPath || vendor.pathname.startsWith(ownerPath + "/");
+    if (!under) {
+      throw new LibraryError("unavailable", "This provider endpoint is not supported.", 503);
     }
-    if (choice.delta === undefined || choice.delta === null) return;
-    if (!isRecord(choice.delta)) { this.invalidate(); return; }
-    const delta = choice.delta;
-    if (delta.role !== undefined && delta.role !== "assistant") { this.invalidate(); return; }
-    if (!this.appendDelta(delta, "content", "content")
-      || !this.appendDelta(delta, "reasoning_content", "reasoningContent")
-      || !this.appendDelta(delta, "reasoning", "reasoning")) return;
-    if (delta.reasoning_details === undefined || delta.reasoning_details === null) return;
-    if (!Array.isArray(delta.reasoning_details)) { this.invalidate(); return; }
-    for (const detail of delta.reasoning_details) {
-      if (!isRecord(detail) || !this.appendReasoningDetail(detail)) { this.invalidate(); return; }
+    if (init?.method !== "POST" || typeof init.body !== "string") {
+      throw new LibraryError("unavailable", "This provider endpoint is not supported.", 503);
     }
-  }
-
-  message(): AssistantWire | undefined {
-    if (!this.valid || !this.sawFinish || !this.content.trim()) return undefined;
-    return { content: this.content,
-      ...(this.reasoningContent.length ? { reasoning_content: this.reasoningContent } : {}),
-      ...(this.reasoning.length ? { reasoning: this.reasoning } : {}),
-      ...(this.reasoningDetails.length ? { reasoning_details: this.reasoningDetails.map((detail) => ({ ...detail })) } : {}) };
-  }
-
-  private appendDelta(delta: Record<string, unknown>, field: string, target: "content" | "reasoningContent" | "reasoning"): boolean {
-    const value = delta[field];
-    if (value === undefined || value === null) return true;
-    if (typeof value !== "string") {
-      this.invalidate();
-      return false;
+    init.signal?.throwIfAborted();
+    // Gateway custom routes mirror the vendor path beneath the approved provider
+    // root (legacy Command Code precedent: root /provider/v1 plus gatewayPath
+    // v1 yields slug/v1/chat/completions). The owner protocol base only bounds
+    // validation; the Gateway keeps the full protocol subpath.
+    const underRoot = rootPath === "/" || vendor.pathname === rootPath || vendor.pathname.startsWith(rootPath + "/");
+    if (!underRoot) {
+      throw new LibraryError("unavailable", "This provider endpoint is not supported.", 503);
     }
-    if (target === "content") this.content += value;
-    else if (target === "reasoningContent") this.reasoningContent += value;
-    else this.reasoning += value;
-    return true;
-  }
-
-  private appendReasoningDetail(input: Record<string, unknown>): boolean {
-    const hasId = input.id !== undefined;
-    const hasIndex = input.index !== undefined;
-    if ((hasId && typeof input.id !== "string")
-      || (hasIndex && (typeof input.index !== "number" || !Number.isSafeInteger(input.index) || input.index < 0))) return false;
-    const id = typeof input.id === "string" && input.id.length > 0 ? input.id : undefined;
-    const index = typeof input.index === "number" ? input.index : undefined;
-    if (id === undefined && index === undefined) return false;
-    const byId = id === undefined ? undefined : this.detailsById.get(id);
-    const byIndex = index === undefined ? undefined : this.detailsByIndex.get(index);
-    if (byId && byIndex && byId !== byIndex) return false;
-    let target = byId ?? byIndex;
-    if (!target) {
-      target = Object.create(null) as JSONObject;
-      this.reasoningDetails.push(target);
+    const relative = rootPath === "/" ? vendor.pathname : vendor.pathname.slice(rootPath.length) || "/";
+    const params = new URLSearchParams(vendor.search);
+    for (const name of [...params.keys()]) {
+      if (STRIPPED_QUERY_NAMES.has(name.toLowerCase())) params.delete(name);
     }
-    if (id !== undefined) {
-      const conflict = this.detailsById.get(id);
-      if (conflict && conflict !== target) return false;
-      this.detailsById.set(id, target);
-    }
-    if (index !== undefined) {
-      const conflict = this.detailsByIndex.get(index);
-      if (conflict && conflict !== target) return false;
-      this.detailsByIndex.set(index, target);
-    }
-
-    const record = target as Record<string, unknown>;
-    for (const [field, value] of Object.entries(input)) {
-      const previous = record[field];
-      if (field === "id" || field === "index" || field === "type" || field === "format") {
-        if (previous !== undefined && previous !== value) return false;
-        record[field] = value;
-      } else if (typeof value === "string") {
-        if (previous === undefined) record[field] = value;
-        else if (field === "text" || field === "summary") {
-          if (typeof previous !== "string") return false;
-          if (value.startsWith(previous)) record[field] = value;
-          // A non-extending piece is incremental, even when it is a shorter
-          // prefix of the previous snapshot (OpenCodex response-events.ts).
-          else record[field] = previous + value;
-        } else if (previous !== value) return false;
-      } else {
-        if (previous === undefined) record[field] = value;
-        else if (JSON.stringify(previous) !== JSON.stringify(value)) return false;
+    const query = params.toString();
+    const gatewayUrl = gatewayBase + relative + (query ? `?${query}` : "");
+    const incoming = new Headers(init?.headers);
+    const headers: Record<string, string> = {
+      "Content-Type": incoming.get("content-type") ?? "application/json",
+      "x-session-affinity": opts.sessionAffinity,
+      "cf-aig-no-wholesale": "true",
+      "cf-aig-max-attempts": "1",
+      "cf-aig-skip-cache": "true",
+      "cf-aig-collect-log": "false",
+    };
+    if (opts.preserveAnthropicHeaders) {
+      for (const name of ["anthropic-version", "anthropic-beta"] as const) {
+        const value = incoming.get(name);
+        if (value !== null) headers[name] = value;
       }
     }
-    return true;
-  }
-
-  private invalidate() {
-    this.valid = false;
-    this.content = "";
-    this.reasoningContent = "";
-    this.reasoning = "";
-    this.reasoningDetails.length = 0;
-    this.detailsById.clear();
-    this.detailsByIndex.clear();
-  }
+    // Native binding mechanism: Agents 0.30.1, packages/agents/src/models/core/transport.ts.
+    // Ai.fetch is not declared in the pinned types; preserve its receiver with this narrow cast.
+    return (env.AI as unknown as Pick<Fetcher, "fetch">).fetch(gatewayUrl, {
+      method: "POST",
+      body: init.body,
+      headers,
+      ...(init.signal ? { signal: init.signal } : {}),
+    });
+  };
 }
+
+// Responses entries never persist server state through this transport: every
+// call stores nothing and carries no prior response or conversation binding.
+const responsesStatelessMiddleware: LanguageModelMiddleware = {
+  transformParams: async ({ params }) => ({
+    ...params,
+    providerOptions: {
+      ...params.providerOptions,
+      openai: {
+        ...params.providerOptions?.openai,
+        store: false,
+        previousResponseId: undefined,
+        conversation: undefined,
+      },
+    },
+  }),
+};
 
 export async function resolveModelTransport(
   env: Pick<Env, "AI" | "DB">,
   model: ModelSpec,
   sessionAffinity: string,
-  assistantHistory?: AssistantWire[],
+  options: { structuredOutput?: boolean } = {},
 ): Promise<LanguageModel> {
-  const commandCode = model.route.startsWith(COMMAND_CODE_PREFIX);
-  if (commandCode || model.route.startsWith(OPENROUTER_PREFIX)) {
-    if (commandCode
-      ? model.route === COMMAND_CODE_PREFIX || !model.id.trim() || model.responseFormat !== false || model.structuredOutputs === true
-      : model.route !== OPENROUTER_PREFIX + model.id) {
-      throw new LibraryError("unavailable", "This model route is not supported.", 503);
-    }
-    const connection = await getModelConnection(env);
-    if (!connection.gatewayId) {
-      throw new LibraryError("unavailable",
-        "External models are disconnected. Allow access to the existing Gateway credential in Settings first.", 503);
-    }
-    if (commandCode) {
-      const gatewayId = connection.gatewayId;
-      return createOpenAICompatible({
-        name: "command-code", baseURL: COMMAND_CODE_BASE_URL, includeUsage: true,
-        supportsStructuredOutputs: false, convertUsage: convertCompatibleUsage,
-        transformRequestBody: (args) => {
-          const out = { ...args };
-          delete out.provider;
-          delete out.response_format;
-          const messages = Array.isArray(out.messages) ? out.messages : null;
-          if (assistantHistory) {
-            const count = messages?.filter((entry) => isRecord(entry) && entry.role === "assistant").length ?? 0;
-            if (count !== assistantHistory.length) {
-              throw new LibraryError("conflict",
-                "This history has no complete original protocol state for the selected model. Start a new chat; no model call was made.", 409);
-            }
-            if (messages) {
-              let index = 0;
-              out.messages = messages.map((entry) => {
-                if (!isRecord(entry) || entry.role !== "assistant") return entry;
-                const base = { ...entry };
-                delete base.reasoning_content;
-                delete base.reasoning;
-                delete base.reasoning_details;
-                return { ...base, ...assistantHistory[index++] };
-              });
-            }
-          }
-          return out;
-        },
-        fetch: async (input, init) => {
-          const url = input instanceof Request ? input.url : String(input);
-          if (url !== COMMAND_CODE_BASE_URL + "/chat/completions" || init?.method !== "POST" || typeof init.body !== "string")
-            throw new LibraryError("unavailable", "This Command Code endpoint is not supported.", 503);
-          init.signal?.throwIfAborted();
-          const headers = { "Content-Type": "application/json", "x-session-affinity": sessionAffinity,
-            "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" };
-          // Native binding mechanism: Agents 0.30.1, packages/agents/src/models/core/transport.ts.
-          // Ai.fetch is not declared in the pinned types; preserve its receiver with this narrow cast.
-          return (env.AI as unknown as Pick<Fetcher, "fetch">).fetch(
-            'https://workers-binding.ai/ai-gateway/gateways/' + encodeURIComponent(gatewayId) + '/custom-command-code/v1/chat/completions',
-            { method: "POST", body: init.body, headers, ...(init.signal ? { signal: init.signal } : {}) });
-        },
-      }).languageModel(model.id);
-    }
+  if (model.route.startsWith("workers-ai:")) {
+    return createAI({ binding: env.AI }).languageModel(model.id, { ...(model.nativeReasoningEffort ? { reasoningEffort: model.nativeReasoningEffort } : {}), sessionAffinity });
+  }
+  if (!model.route.startsWith("gateway:")) {
+    throw new LibraryError("unavailable", "This model route is not supported.", 503);
+  }
+  const routing = model.routing;
+  if (!routing || !routing.provider || typeof routing.gatewayId !== "string" || !routing.gatewayId
+    || routing.gatewayId === "default" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(routing.gatewayId)) {
+    throw new LibraryError("unavailable", "This model route is not supported.", 503);
+  }
+  const provider = routing.provider;
+  const gatewayId = routing.gatewayId;
+  if (provider.type !== "openai-compatible" || !provider.enabled) {
+    throw new LibraryError("unavailable", "This model route is not supported.", 503);
+  }
+  // Frozen route: exact gateway:<provider.id>/<model.id> for every compatible provider.
+  if (!model.id.trim() || model.route !== `gateway:${provider.id}/${model.id}`) {
+    throw new LibraryError("unavailable", "This model route is not supported.", 503);
+  }
+  if (!provider.baseUrl || !provider.gatewaySlug) {
+    throw new LibraryError("unavailable", "This model route is not supported.", 503);
+  }
+  if (isNativeOpenRouterRoute(model)) {
     const structured = model.structuredOutputs === true;
     const responseFormatAllowed = model.responseFormat === true;
+    const transportOptions = {
+      supportsTemperature: model.supportsTemperature === true,
+      optionalReasoning: model.optionalReasoning === true,
+      structuredOutput: options.structuredOutput === true,
+    };
     const openrouter = createOpenAICompatible<string, string, string, string>({
       name: "openrouter",
-      baseURL: OPENROUTER_BASE_URL,
+      baseURL: provider.baseUrl,
       includeUsage: true,
       supportsStructuredOutputs: structured,
-      transformRequestBody: openRouterBody(responseFormatAllowed, model.reasoning),
+      transformRequestBody: openRouterBody(responseFormatAllowed, transportOptions),
       convertUsage: convertCompatibleUsage,
     });
     const vendor = openrouter.languageModel(model.id);
@@ -319,41 +275,151 @@ export async function resolveModelTransport(
         "cf-aig-skip-cache": "true",
         "cf-aig-collect-log": "false",
       },
-      gateway: { id: connection.gatewayId, skipCache: true, collectLog: false, retries: { maxAttempts: 1 } },
+      gateway: { id: gatewayId, skipCache: true, collectLog: false, retries: { maxAttempts: 1 } },
       vendorKey: "gateway",
     });
   }
-  if (model.route.startsWith("workers-ai:")) {
-    return createAI({ binding: env.AI }).languageModel(model.id, { ...(model.nativeReasoningEffort ? { reasoningEffort: model.nativeReasoningEffort } : {}), sessionAffinity });
+  // Published protocol selection from catalogue metadata. The branch is the
+  // catalogue's apiProtocol only; no model-name allowlist or registry here.
+  // Undefined keeps the legacy provider-base Chat path below untouched.
+  const apiProtocol = model.apiProtocol;
+  if (apiProtocol !== undefined) {
+    if (model.apiBaseUrl === undefined || !isProviderApiBase(provider, model.apiBaseUrl)) {
+      throw new LibraryError("unavailable", "This model route is not supported.", 503);
+    }
+    const ownerBase = normalizedBase(model.apiBaseUrl);
+    const protocolGatewayBase = gatewayBaseFor(provider, gatewayId);
+    if (apiProtocol === "openai-chat") {
+      const responseFormatAllowed = model.responseFormat === true;
+      const supportsTemperature = model.supportsTemperature === true;
+      return createOpenAICompatible({
+        name: provider.id,
+        baseURL: ownerBase,
+        includeUsage: true,
+        supportsStructuredOutputs: model.structuredOutputs === true,
+        convertUsage: convertCompatibleUsage,
+        transformRequestBody:
+          ownerBase === OFFICIAL_OPENROUTER_BASE_URL
+            ? openRouterBody(responseFormatAllowed, { supportsTemperature, optionalReasoning: model.optionalReasoning === true, structuredOutput: options.structuredOutput === true })
+            : compatibleBody(responseFormatAllowed, supportsTemperature),
+        fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: false }),
+      }).languageModel(model.id);
+    }
+    if (apiProtocol === "openai-responses") {
+      const { createOpenAI } = await import("@ai-sdk/openai");
+      const inner = createOpenAI({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: false }), name: provider.id }).responses(model.id);
+      return wrapLanguageModel({ model: inner, middleware: responsesStatelessMiddleware });
+    }
+    if (apiProtocol === "anthropic") {
+      const { createAnthropic } = await import("@ai-sdk/anthropic");
+      return createAnthropic({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: true }), name: provider.id }).languageModel(model.id);
+    }
+    const { createGoogle } = await import("@ai-sdk/google");
+    return createGoogle({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: false }), name: provider.id }).languageModel(model.id);
   }
-  throw new LibraryError("unavailable", "This model route is not supported.", 503);
+  const baseURL = provider.baseUrl.replace(/\/+$/, "");
+  const gatewayPath = provider.gatewayPath ? `/${provider.gatewayPath}` : "";
+  const gatewayUrl =
+    "https://workers-binding.ai/ai-gateway/gateways/" + encodeURIComponent(gatewayId) + `/${provider.gatewaySlug}` + gatewayPath + "/chat/completions";
+  const responseFormatAllowed = model.responseFormat === true;
+  const structured = model.structuredOutputs === true;
+  const supportsTemperature = model.supportsTemperature === true;
+  const transportOptions = {
+    supportsTemperature,
+    optionalReasoning: model.optionalReasoning === true,
+    structuredOutput: options.structuredOutput === true,
+  };
+  return createOpenAICompatible({
+    name: provider.id, baseURL, includeUsage: true,
+    supportsStructuredOutputs: structured, convertUsage: convertCompatibleUsage,
+    transformRequestBody: baseURL === OFFICIAL_OPENROUTER_BASE_URL ? openRouterBody(responseFormatAllowed, transportOptions) : compatibleBody(responseFormatAllowed, supportsTemperature),
+    fetch: async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url !== baseURL + "/chat/completions" || init?.method !== "POST" || typeof init.body !== "string")
+        throw new LibraryError("unavailable", "This provider endpoint is not supported.", 503);
+      init.signal?.throwIfAborted();
+      const headers = { "Content-Type": "application/json", "x-session-affinity": sessionAffinity,
+        "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" };
+      // Native binding mechanism: Agents 0.30.1, packages/agents/src/models/core/transport.ts.
+      // Ai.fetch is not declared in the pinned types; preserve its receiver with this narrow cast.
+      return (env.AI as unknown as Pick<Fetcher, "fetch">).fetch(
+        gatewayUrl,
+        { method: "POST", body: init.body, headers, ...(init.signal ? { signal: init.signal } : {}) });
+    },
+  }).languageModel(model.id);
+}
+
+// Bounded limit signals only. Native Workers AI code 3036 means the daily free
+// allocation is exhausted and resets at the next 00:00 UTC. Gateway HTTP 429
+// uses only validated retry timing from the typed response headers, otherwise
+// reset unknown; no provider-wide reset is invented and no other code or
+// status gains limit wording. Raw bodies, headers and secrets are never echoed.
+function isNativeDailyLimit(error: unknown): boolean {
+  const codes = [
+    (error as { code?: unknown } | null | undefined)?.code,
+    error instanceof Error ? (error.cause as { code?: unknown } | null | undefined)?.code : undefined,
+  ];
+  return codes.some((code) => code === 3036);
+}
+
+function typedResponseHeaders(error: unknown): Record<string, string> | undefined {
+  const candidates = [
+    (error as { responseHeaders?: unknown } | null | undefined)?.responseHeaders,
+    error instanceof Error ? (error.cause as { responseHeaders?: unknown } | null | undefined)?.responseHeaders : undefined,
+  ];
+  for (const headers of candidates) {
+    if (headers !== null && typeof headers === "object" && !Array.isArray(headers)) return headers as Record<string, string>;
+  }
+  return undefined;
+}
+
+function gatewayRetryAfterSeconds(error: unknown): number | undefined {
+  const headers = typedResponseHeaders(error);
+  if (!headers) return undefined;
+  const lowered: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (typeof value === "string") lowered[key.toLowerCase()] = value;
+  }
+  const ms = lowered["retry-after-ms"];
+  if (ms !== undefined) {
+    const parsed = Number(ms);
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 86_400_000) return Math.ceil(parsed / 1000);
+    return undefined;
+  }
+  const raw = lowered["retry-after"];
+  if (raw === undefined) return undefined;
+  const text = raw.trim();
+  if (/^\d+$/.test(text)) {
+    const seconds = Number(text);
+    if (Number.isSafeInteger(seconds) && seconds >= 0 && seconds <= 86400) return seconds;
+    return undefined;
+  }
+  const at = Date.parse(text);
+  if (!Number.isFinite(at)) return undefined;
+  const seconds = Math.ceil((at - Date.now()) / 1000);
+  return seconds >= 0 && seconds <= 86400 ? seconds : undefined;
 }
 
 export function modelFailure(error: unknown, model: ModelSpec): string {
-  if (!model.route.startsWith("gateway:")) {
-    const status = errorStatusCode(error);
-    if (status !== undefined) return `Model stream failed (HTTP ${status}).`;
-    // Preserve the safe per-question validation category in the existing text
-    // format: predispatch AI_Invalid* (allowlisted names above) and in-band
-    // invalid_request_error. No message/body/secrets are echoed.
-    const directValidationStream = streamProviderErrorNames(error)[0];
-    const causedValidationStream = streamProviderErrorNames(error instanceof Error ? error.cause : undefined)[0];
-    const validationStream = directValidationStream === "AI_StreamProviderError:invalid_request_error"
-      ? directValidationStream
-      : causedValidationStream === "AI_StreamProviderError:invalid_request_error" ? causedValidationStream : undefined;
-    const name = validationStream ?? knownErrorName(error) ?? (error instanceof Error ? knownErrorName(error.cause) : undefined);
-    return name === undefined ? NATIVE_FAILURE : `Model stream failed (${name}).`;
-  }
   const status = errorStatusCode(error);
+  if (model.route.startsWith("gateway:")) {
+    if (status === 429) {
+      const wait = gatewayRetryAfterSeconds(error);
+      const reset = wait === undefined ? "reset unknown" : "retry after " + wait + "s";
+      return "External model request failed (HTTP 429). Limit exhausted, " + reset + ". No retry was started.";
+    }
+    if (status !== undefined) {
+      return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started.";
+    }
+    return EXTERNAL_FAILURE;
+  }
+  if (isNativeDailyLimit(error)) {
+    return "Model stream failed. Daily limit exhausted, resets at 00:00 UTC. No retry was started.";
+  }
   if (status !== undefined) {
-    const hint = status === 400 ? validationFieldHint(error) : "";
-    return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started." + hint;
+    return "Model stream failed (HTTP " + status + ").";
   }
-  const cause = errorCauseName(error);
-  if (cause !== undefined) {
-    return "External model request failed (cause: " + cause + "). Check the Gateway connection and provider status; no retry was started.";
-  }
-  return EXTERNAL_FAILURE;
+  return NATIVE_FAILURE;
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -368,87 +434,10 @@ function checkStatusCode(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 100 && value <= 599 ? value : undefined;
 }
 
-const KNOWN_ERROR_NAMES = ["Error", "TypeError", "AbortError", "TimeoutError", "AI_APICallError",
-  "AI_StreamProviderError", "AI_InvalidPromptError", "AI_InvalidArgumentError", "AI_NoObjectGeneratedError", "AI_NoOutputGeneratedError", "AI_InvalidResponseDataError",
-  "AI_TypeValidationError", "AiGatewayError", "AiError", "ZodError"] as const;
-
-function knownErrorName(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  return (KNOWN_ERROR_NAMES as readonly string[]).includes(error.name) ? error.name : undefined;
-}
-
-// The shared projection for operator logs. Keep only allowlisted names and a
-// validated HTTP status; provider messages, bodies, codes and request data stay private.
+// Shared projection for operator logs. Keeps only a validated HTTP status;
+// provider messages, bodies, codes and request data stay private. No retry is
+// started from this projection; callers surface the stored message as-is.
 export function safeErrorLogProjection(error: unknown): { name: string; status?: number } {
-  const name = knownErrorName(error) ?? (error instanceof Error ? knownErrorName(error.cause) : undefined);
   const status = errorStatusCode(error);
-  return { name: name ?? "unknown", ...(status === undefined ? {} : { status }) };
-}
-
-// Minimal 400-only validation hint: report only fixed OpenAI request field
-// names that literally appear in the provider error's param/message. Never
-// include raw message/body text, codes, types, keys, headers, data or prompt.
-const VALIDATION_FIELDS = ["messages", "role", "content", "reasoning_content",
-  "reasoning_details", "thought_signature", "max_tokens", "response_format", "stream_options"] as const;
-
-function validationFieldHint(error: unknown): string {
-  const seen: string[] = [];
-  const haystacks: string[] = [];
-  const pushText = (value: unknown) => {
-    if (typeof value === "string" && value.length > 0) haystacks.push(value.slice(0, 8192));
-  };
-  const err = error as { data?: unknown; responseBody?: unknown } | null | undefined;
-  pushText(err?.responseBody);
-  const data = err?.data;
-  if (typeof data === "string") pushText(data);
-  else if (data !== null && typeof data === "object") {
-    const record = data as Record<string, unknown>;
-    pushText(record.param);
-    pushText(record.message);
-    const nested = record.error;
-    if (nested !== null && typeof nested === "object") {
-      const inner = nested as Record<string, unknown>;
-      pushText(inner.param);
-      pushText(inner.message);
-    }
-  }
-  if (error instanceof Error) pushText(error.message);
-  for (const field of VALIDATION_FIELDS) {
-    const token = '"' + field + '"';
-    const bare = new RegExp("(^|[^a-zA-Z0-9_])" + field + "([^a-zA-Z0-9_]|$)");
-    if (haystacks.some((text) => text.includes(token) || bare.test(text))) seen.push(field);
-  }
-  return seen.length > 0 ? " Validation mentions fields: " + seen.join(", ") + "." : "";
-}
-
-function errorCauseName(error: unknown): string | undefined {
-  const cause = error instanceof Error ? error.cause : undefined;
-  if (error instanceof Error && error.name === "AI_NoObjectGeneratedError" && cause instanceof Error && cause.name === "AI_JSONParseError") return "AI_JSONParseError";
-  const directStreamError = streamProviderErrorNames(error)[0];
-  if (directStreamError) return directStreamError;
-  const causedStreamError = streamProviderErrorNames(cause)[0];
-  if (causedStreamError) return causedStreamError;
-  // Preserve predispatch validation in the existing cause format when the
-  // top-level error itself carries it; cause-only lookup would strip it.
-  if (error instanceof Error && (error.name === "AI_InvalidPromptError" || error.name === "AI_InvalidArgumentError")) return error.name;
-  return knownErrorName(cause);
-}
-
-// Pinned @ai-sdk/openai-compatible 3.0.79 streams a mid-stream provider error
-// as the raw `{ error: { message, type?, code? } }` chunk payload with no HTTP
-// status attached. Surface only the standard SDK error name plus a fixed
-// OpenAI error-type allowlist; never echo raw message/body, keys or codes.
-const STREAM_ERROR_TYPES = ["invalid_request_error", "authentication_error",
-  "permission_error", "not_found_error", "rate_limit_error", "server_error",
-  "overloaded_error", "timeout_error", "invalid_response_error"] as const;
-
-function streamProviderErrorNames(error: unknown): string[] {
-  if (!(error instanceof Error) || error.name !== "AI_StreamProviderError") return [];
-  const data = (error as { data?: unknown }).data;
-  const nested = isRecord(data) && isRecord(data.error) ? data.error : data;
-  if (!isRecord(nested)) return ["AI_StreamProviderError"];
-  const record = nested;
-  const type = typeof record.type === "string" ? record.type : undefined;
-  if (type !== undefined && (STREAM_ERROR_TYPES as readonly string[]).includes(type)) return ["AI_StreamProviderError:" + type];
-  return ["AI_StreamProviderError"];
+  return { name: error instanceof Error ? "Error" : "unknown", ...(status === undefined ? {} : { status }) };
 }

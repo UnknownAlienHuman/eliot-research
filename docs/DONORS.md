@@ -51,6 +51,11 @@ placeholder `src/client/` were removed from the replacement. These imports are c
 by the auth/contrast suite plus the real K0 browser eval. Eliot code retains MIT; fonts retain their OFL notices and
 Google SVG paths retain Apache-2.0 in `THIRD_PARTY_NOTICES.md` and `public/licenses/Apache-2.0.txt`.
 
+The owner UI consolidates existing card, chip and labelled-field presentation in `src/web/ui/controls.css`, using the
+same pinned Material primitives and semantic tokens. Native markup in Library, chat, understanding and model settings
+calls these classes directly; duplicate feature declarations and the second Appearance selector are removed. No new
+component family, donor runtime or data adapter is imported.
+
 ### K1 adoption — 2026-10-25
 
 At the same legacy pin, `structural-projector.ts` supplied the UTF-8 line/heading mechanism as an idea for the small
@@ -87,27 +92,40 @@ styles and disabling raw HTML/images; only server-resolved source references bec
 
 The model-choice discovery baseline is [`lidge-jun/opencodex@9f0d40a25f8b842c33ab233d466d0bd991d86052`](https://github.com/lidge-jun/opencodex/tree/9f0d40a25f8b842c33ab233d466d0bd991d86052),
 `@bitkyc08/opencodex@2.92.0`, MIT: narrow bounded JSON catalogue reading/validation, deduplication and raw-ID preservation
-from `src/providers/model-discovery.ts`, adapted through the model-catalogue boundary. Discovery/selection and the
-selected official-pricing read have the limited evidence in IMPLEMENTATION §11. Command Code narrowly adapts
+from `src/providers/model-discovery.ts`, adapted through the model-catalogue boundary. The editable provider array
+feeds that same discovery mechanism; HTML pricing and private assistant-wire machinery are removed. Compatible routing narrowly adapts
 `packages/agents/src/models/core/transport.ts` from the registered Agents pin below (MIT): receiver-bound `AI.fetch`,
-provider-native path, raw body, headers, method and signal. No SDK retry/resume framework is copied. The retained
-universal attempt failed; the separate native-path caller smoke passed, without model-quality acceptance.
-The same OpenCodex pin's `src/adapters/openai-chat.ts`, `src/adapters/openai-chat/response-events.ts` and
-`src/adapters/openai-chat/messages.ts` supply the narrow provider-field parsing and typed assistant serialization
-mechanisms for CC history. Eliot persists actual wire state privately in its existing ChatAgent SQLite storage and
-replays it unchanged after reload. The installed AI SDK supplies raw JSON chunks and SSE parsing; Eliot assembles
-only the provider fields needed by the next request. OpenCodex does not supply a complete durable Beam replay implementation.
-Its DeepSeek-only replay policy, fabricated blank marker, process-memory cache/TTL, tool-call-ID capture and
-CLI `/alpha/generate` protocol are discarded. Missing original protocol state requires visible recovery without a
-model call; no model-family list, proxy platform or replay framework is imported.
+provider-native path, raw body, headers, method and signal. No SDK retry/resume framework is copied.
+The installed AI SDK supplies SSE parsing and usage handling. Command Code uses the current question and frozen source
+context without previous assistant protocol data. OpenCodex private replay, fabricated markers, process-memory caches,
+tool-call capture and CLI protocols are discarded; no model-family list, proxy platform or replay framework is imported.
 No local proxy/backend, cache/registry, model-selection policy/default seed or vendored/cross-provider pricing is
-imported; missing prices stay null. Picker interaction/layout retains the approved legacy MIT pin and paths above,
+imported. Picker interaction/layout retains the approved legacy MIT pin and paths above,
 with provider/native-ID pair identity and dynamic API data instead of legacy qualification/admin layers.
 The same `src/web/ModelPicker.tsx` now serves Settings, the chat composer and source Understanding; the latter two
 discard their separate plain-select implementations. No model-name policy or additional picker family is introduced.
-`src/native-model-catalog.ts` separately consumes the installed AI binding's `models()` metadata API, not a static
-native model set; page1/per100 returned 73 rows / 39 text-generation rows on 2026-10-27
-(`eval/out/catalogue-native/page1.json`), with zero inference. No other donor architecture is adopted.
+`src/native-model-catalog.ts` consumes the installed AI binding's `models()` metadata API, keeping discovery separate
+from inference and native metadata separate from per-job output bounds. No other donor architecture is adopted.
+
+The additional providers retain that same bounded discovery mechanism. Command Code, Kilo and Nous publish compatible
+JSON catalogues. OpenCode Go's ID-only list joins the provider's published `models.dev/api.json` data, as documented by
+OpenCode. [models.dev](https://github.com/anomalyco/models.dev) is MIT-licensed, copyright 2025 models.dev
+(`LICENSE` blob `9ef000844a07a1a97ff56b74e4cd9af12776a7a6`); no source code or static model table is vendored.
+Only that provider's live IDs, limits, capabilities and native API metadata are retained. The donor's
+`src/providers/registry/entries-{core,extended}.ts` and `src/types/opencode-go.ts` were inspected at the same pin for
+transport boundaries, but their model seeds, hardcoded wire maps, OAuth/CLI stores and protocol repair machinery are
+discarded. No donor registry, pricing data or second backend is imported.
+The directly installed maintained packages `@ai-sdk/openai@4.0.104`, `@ai-sdk/anthropic@4.0.91` and
+`@ai-sdk/google@4.0.107` (Apache-2.0) supply native protocol encoding and stream handling through the existing Gateway
+transport, loaded lazily for the selected enabled protocol. Their installed public declarations and generated SDK requests are the validation boundary; no manual SSE
+parser or private reasoning replay is added. Callers remain explicit catalogue Refresh and the existing chat/distill
+functions. Verification covers actual public catalogues, native SDK request routing, preserved migration data and the
+existing Material provider editor; catalogue availability alone does not establish provider credentials or quality.
+
+Workers AI usage reuses only the UTC window, bounded GraphQL query and Neurons-response parsing from legacy Eliot
+`7c034569b908d3b03a8b821b7c537477a24b10f7`, `apps/eliotr-core/src/ai-usage-http.ts:23–133` (MIT). It discards the legacy
+pricing DTO and contract package. The caller is explicit model Refresh, the reader is the Settings usage line, and
+unavailable analytics remains unknown. No admission ledger, token conversion or background polling is introduced.
 
 ### Agents SDK and examples
 

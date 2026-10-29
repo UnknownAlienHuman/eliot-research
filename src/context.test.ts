@@ -222,8 +222,8 @@ describe("buildContext K2 whole scope", () => {
     expect(res.estimatedInputTokens).toBeGreaterThan(0);
   });
 
-  it("keeps PDF page markers as unlabelled whole-reading orientation", async () => {
-    const text = "### Page 1\n\n## Методы 🌿\n\nLes mesures sont exactes.\n\n### Страница 2\n";
+  it("omits noncitable standalone page markers but keeps mentions in citable passages", async () => {
+    const text = "### Page 1\n\n## Методы 🌿\n\nLes mesures de la Page 1 sont exactes.\n\n### Страница 2\n\nPage 3\n";
     const blocks = scanBlocks(text);
     const byteLength = new TextEncoder().encode(text).byteLength;
     const { env } = makeEnv({
@@ -236,18 +236,20 @@ describe("buildContext K2 whole scope", () => {
     expect(res.mode).toBe("whole");
     expect(res.sources[0]?.blocks).toEqual([blocks[1], blocks[2]]);
     expect(res.sources[0]?.blocks.map((block) => sliceUtf8(text, block.start, block.end))).toEqual([
-      "## Методы 🌿\n", "Les mesures sont exactes.\n",
+      "## Методы 🌿\n", "Les mesures de la Page 1 sont exactes.\n",
     ]);
     const source = res.messages[1]?.content ?? "";
-    expect(source).toContain("### Page 1\n");
-    expect(source).toContain("### Страница 2\n");
+    expect(source).not.toContain("### Page 1\n");
+    expect(source).not.toContain("### Страница 2\n");
+    expect(source).not.toContain("Page 3\n");
     expect(source).not.toContain("[S1:1]");
     expect(source).not.toContain("[S1:4]");
+    expect(source).not.toContain("[S1:5]");
     expect(source).toContain("[S1:2] ## Методы 🌿");
-    expect(source).toContain("[S1:3] Les mesures sont exactes.");
-    const resolved = resolveCitations("The marker [S1:1] and heading [S1:2].", res.sources);
+    expect(source).toContain("[S1:3] Les mesures de la Page 1 sont exactes.");
+    const resolved = resolveCitations("The page markers [S1:1], [S1:4] and [S1:5]; heading [S1:2].", res.sources);
     expect(resolved.citations).toMatchObject([{ block: 2, start: blocks[1]?.start, end: blocks[1]?.end }]);
-    expect(resolved.invalidLabels).toBe(1);
+    expect(resolved.invalidLabels).toBe(3);
   });
 
   it("narrowed scope keeps answers citing only A and drops answers citing B", async () => {
@@ -306,7 +308,7 @@ describe("buildContext K2 whole scope", () => {
       projectId: "p1", scopeMode: "empty", model: { contextTokens, maxOutputTokens },
       history: [
         { role: "user", content: "q".repeat(60), revisionIds: [] },
-        { role: "assistant", content: "a".repeat(60), turnId: "prior", wireTokens: 20 },
+        { role: "assistant", content: "a".repeat(60), turnId: "prior" },
       ],
     });
     expect(res.mode).toBe("none");
@@ -406,91 +408,6 @@ describe("buildContext K2 whole scope", () => {
     expect(body).not.toContain("MARK1");
   });
 
-  it("retains private replay identity only on the selected assistant exchange", async () => {
-    const { env } = twoSourceEnv();
-    const res = await buildContext(env, actor, {
-      projectId: "p1", scopeMode: "explicit", sourceIds: ["s1"], model: MODEL,
-      history: [
-        { role: "user", content: "Kept question", revisionIds: ["r1"] },
-        { role: "assistant", content: "Kept answer [S1:1]", revisionIds: ["r1"], turnId: "kept", wireTokens: 50 },
-        { role: "user", content: "Excluded question", revisionIds: ["r2"] },
-        { role: "assistant", content: "Excluded answer", revisionIds: ["r2"], turnId: "excluded", wireTokens: 50 },
-      ],
-    });
-    expect(res.messages.filter((message) => message.role === "assistant")).toEqual([
-      { role: "assistant", content: "Kept answer", turnId: "kept" },
-    ]);
-    expect(res.messages.some((message) => message.content.includes("Excluded question"))).toBe(false);
-  });
-
-  it("counts private protocol data against the history budget without putting it in context", async () => {
-    const { env } = twoSourceEnv();
-    const res = await buildContext(env, actor, {
-      projectId: "p1", scopeMode: "empty", model: { contextTokens: 20000, maxOutputTokens: 100 },
-      history: [
-        { role: "user", content: "Small visible question", revisionIds: [] },
-        { role: "assistant", content: "Small visible answer", turnId: "large-wire", wireTokens: 2001 },
-      ],
-    });
-    expect(res.messages.some((message) => message.role === "assistant")).toBe(false);
-    expect(res.messages.some((message) => message.content.includes("Small visible question"))).toBe(false);
-  });
-
-  it.each([
-    { name: "excludes private wire after narrowing its full scope", fullScope: ["r1", "r2"], wire: true, keep: false },
-    { name: "reuses public text whose actual citations remain in scope", fullScope: ["r1", "r2"], wire: false, keep: true },
-    { name: "excludes private wire without declared prior full scope", fullScope: undefined, wire: true, keep: false },
-  ])("$name", async ({ fullScope, wire, keep }) => {
-    const { env } = twoSourceEnv();
-    const res = await buildContext(env, actor, {
-      projectId: "p1", scopeMode: "explicit", sourceIds: ["s1"], model: MODEL,
-      history: [
-        { role: "user", content: "Prior multi-source question", ...(fullScope === undefined ? {} : { revisionIds: fullScope }) },
-        { role: "assistant", content: "Answer citing only the retained source [S1:1]", revisionIds: ["r1"], turnId: "prior",
-          ...(wire ? { wireTokens: 50 } : {}) },
-      ],
-    });
-    expect(res.mode).toBe("whole");
-    expect(res.revisionIds).toEqual(["r1"]);
-    expect(res.sources.map((source) => source.sourceId)).toEqual(["s1"]);
-    expect(res.messages.some((message) => message.content === "Prior multi-source question")).toBe(keep);
-    expect(res.messages.filter((message) => message.role === "assistant")).toEqual(keep
-      ? [{ role: "assistant", content: "Answer citing only the retained source", turnId: "prior" }]
-      : []);
-  });
-
-  it("replays private compact labels only when their prior scope is an unchanged prefix", async () => {
-    const ids = ["1", "2", "3"];
-    const { env } = makeEnv({
-      memberships: ids.map((id) => ({ projectId: "p1", sourceId: "s" + id, enabled: 1 })),
-      sources: ids.map((id) => ({ id: "s" + id, title: "Source " + id, state: "active", currentRevisionId: "r" + id, createdAt: Number(id) })),
-      revisions: ids.map((id) => ({ id: "r" + id, readableState: "readable", readableSize: 7, distillState: "done", guideSummary: null, deletedAt: null })),
-      texts: Object.fromEntries(ids.map((id) => ["r" + id, { text: "Text " + id + ".", blocks: [wholeBlock("Text " + id + ".", 1)] }])),
-    });
-    const user = { role: "user" as const, content: "Earlier two-source question", revisionIds: ["r1", "r2"] };
-    const assistant = { role: "assistant" as const, content: "Earlier result [S1:1] [S2:1]", revisionIds: ["r1", "r2"], turnId: "prior" };
-    for (const { sourceIds, keep } of [
-      { sourceIds: ["s2", "s1"], keep: false },
-      { sourceIds: ["s3", "s1", "s2"], keep: false },
-      { sourceIds: ["s1", "s2", "s3"], keep: true },
-    ]) {
-      const res = await buildContext(env, actor, {
-        projectId: "p1", scopeMode: "explicit", sourceIds, model: MODEL,
-        history: [user, { ...assistant, wireTokens: 50 }],
-      });
-      expect(res.sources.map((source) => source.revisionId)).toEqual(sourceIds.map((id) => id.replace("s", "r")));
-      expect(res.messages.some((message) => message.content === user.content)).toBe(keep);
-      expect(res.messages.filter((message) => message.role === "assistant")).toEqual(keep
-        ? [{ role: "assistant", content: "Earlier result", turnId: "prior" }]
-        : []);
-    }
-    const publicHistory = await buildContext(env, actor, {
-      projectId: "p1", scopeMode: "explicit", sourceIds: ["s2", "s1"], model: MODEL, history: [user, assistant],
-    });
-    expect(publicHistory.messages.filter((message) => message.role === "assistant")).toEqual([
-      { role: "assistant", content: "Earlier result", turnId: "prior" },
-    ]);
-  });
 
   it("admits empty and small scopes on a high-output model via outputReserveTokens", async () => {
     const dots = { contextTokens: 512000, maxOutputTokens: 460800, outputReserveTokens: 8192 };

@@ -51,8 +51,8 @@ function collectRefs(projectId: string, cites: readonly Citation[]): MarkdownRef
   return out;
 }
 function Cites({ projectId, cites }: { readonly projectId: string; readonly cites: readonly Citation[] }) {
-  if (cites.length === 0) return <p className='er-chat__hint'>No citations recorded for this turn.</p>;
-  return (<ul className='er-chat__cites'>{cites.map((c) => (<li key={c.revisionId + ':' + c.block + ':' + c.start + ':' + c.end} className='er-chat__cite'><Link to={hrefFor(projectId, c)} title={'Open the cited passage in ' + c.sourceTitle}>{citationDisplayLabel(c)}</Link></li>))}</ul>);
+  if (cites.length === 0) return <p className='er-chat__hint'>No sources cited for this answer.</p>;
+  return (<ul className='er-card er-chat__cites'>{cites.map((c) => (<li key={c.revisionId + ':' + c.block + ':' + c.start + ':' + c.end} className='er-chat__cite'><Link className='er-chip' to={hrefFor(projectId, c)} title={'Open the cited passage in ' + c.sourceTitle}>{citationDisplayLabel(c)}</Link></li>))}</ul>);
 }
 export function ChatView() {
   const { projectId, chatId } = useParams();
@@ -215,7 +215,7 @@ export function ChatView() {
     setScopeNote('');
     try {
       await apiJson('/api/projects/' + encodeURIComponent(pid) + '/scope', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceIds: selected }) });
-      setScopeNote('Project default scope saved.');
+      setScopeNote('Default sources saved.');
     } catch (err) { setScopeNote(err instanceof Error ? err.message : 'Could not save the default scope.'); }
   }
   async function send(): Promise<void> {
@@ -251,31 +251,31 @@ export function ChatView() {
     } catch (err) { setSaveNote(err instanceof Error ? err.message : 'Could not save the answer.'); }
     setSavingId('');
   }
-  if (pid === '') return <p className='er-chat__error' role='alert'>Open this view inside a project route.</p>;
+  if (pid === '') return <p className='er-chat__error' role='alert'>Open a project to use chat.</p>;
   return (
     <section className='er-chat' aria-label='Chat'>
       <header className='er-chat__head'>
         <h1 className='er-chat__title'>Chat</h1>
         {chatId !== undefined && (socket === 'closed' || socket === 'error')
-          ? <p className='er-chat__connection' role='status'>Reconnecting to chat. Messages are not resubmitted.</p> : null}
+          ? <p className='er-chat__connection' role='status'>Reconnecting to chat…</p> : null}
       </header>
       {chatsError !== '' ? <p className='er-chat__error' role='alert'>{chatsError}</p> : null}
       {chats !== undefined && chats.length > 0 ? (<nav className='er-chat__chats' aria-label='Chats'>
-        {chats.map((c) => (<Link key={c.id} className='er-chat__chatlink' to={'/p/' + encodeURIComponent(pid) + '/chat/' + encodeURIComponent(c.id)} aria-current={c.id === chatId ? 'page' : undefined}>{c.title === '' ? 'Untitled chat' : c.title}</Link>))}
+        {chats.map((c) => (<Link key={c.id} className='er-chip er-chat__chatlink' to={'/p/' + encodeURIComponent(pid) + '/chat/' + encodeURIComponent(c.id)} aria-current={c.id === chatId ? 'page' : undefined}>{c.title === '' ? 'Untitled chat' : c.title}</Link>))}
         {chatsCursor ? <button className='er-button er-button--text' type='button' disabled={chatsBusy} onClick={() => void moreChats()}>Load more chats</button> : null}
-        <Link className='er-chat__chatlink' to={'/p/' + encodeURIComponent(pid) + '/chat'}>New chat</Link>
+        <Link className='er-chip er-chat__chatlink' to={'/p/' + encodeURIComponent(pid) + '/chat'}>New chat</Link>
       </nav>) : null}
-      <details className='er-chat__scope' open={chatId === undefined}>
+      <details className='er-card er-chat__scope' open={chatId === undefined}>
         <summary>Sources ({mode === 'project_default' ? 'project default' : mode === 'empty' ? 'empty — no sources' : selected.length + ' selected'})</summary>
         {sourcesError !== '' ? <p className='er-chat__error' role='alert'>{sourcesError}</p> : null}
         {sources.length === 0 ? <p className='er-chat__hint'>No sources yet. Add them under Sources first.</p> : (<ul className='er-chat__sources'>
           {sources.map((s) => (<li key={s.id}><label><input type='checkbox' checked={selected.includes(s.id)} onChange={() => toggle(s.id)} />{s.title}</label></li>))}
         </ul>)}
-        <p className='er-chat__hint'>Default selects every enabled source. An explicit empty selection stays empty; the view never falls back to the whole project.</p>
+        <p className='er-chat__hint'>Choose sources for your next question, or clear the selection to ask without sources.</p>
         <span className='er-chat__actions'><button className='er-button er-button--tonal' type='button' onClick={() => void saveScopeDefault()}>Save selection as project default</button><button className='er-button er-button--text' type='button' onClick={() => useProjectDefault()}>Use project default</button></span>
         {scopeNote !== '' ? <p className='er-chat__hint' role='status'>{scopeNote}</p> : null}
       </details>
-      <details className='er-chat__scope'>
+      <details className='er-card er-chat__scope'>
         <summary>Project defaults</summary>
         <ModelSettings projectId={pid} />
       </details>
@@ -283,18 +283,10 @@ export function ChatView() {
       <ol className='er-chat__turns'>
         {turns.map((t) => (<li key={t.turnId} className='er-chat__turn' data-state={t.state}>
           <p className='er-chat__question'>{t.question}</p>
-          <div className='er-chat__answer'>{t.answer === '' ? (t.state === 'started' ? <p className='er-chat__hint' role='status'>Streaming…</p> : <p className='er-chat__hint'>No answer text recorded.</p>) : <Markdown text={t.answer} references={collectRefs(pid, t.citations)} warnings={t.warnings ?? []} />}</div>
+          <div className='er-chat__answer'>{t.answer === '' ? (t.state === 'started' ? <p className='er-chat__hint' role='status'>Preparing your answer…</p> : <p className='er-chat__hint'>No answer available.</p>) : <Markdown text={t.answer} references={collectRefs(pid, t.citations)} warnings={t.warnings ?? []} />}</div>
           <p className='er-chat__meta'><span>{stateLabel(t.state)}</span><span>{scopeLabel(t.scopeMode)}</span></p>
           <details className='er-chat__turn-details'>
-            <summary>Details</summary>
-            <dl>
-              {t.contextMode != null ? <div><dt>Context</dt><dd>{t.contextMode}</dd></div> : null}
-              {t.firstTokenMs != null ? <div><dt>First token</dt><dd>{t.firstTokenMs} ms</dd></div> : null}
-              {t.totalMs != null ? <div><dt>Total time</dt><dd>{t.totalMs} ms</dd></div> : null}
-              <div><dt>Tokens</dt><dd>{t.inputTokens == null ? 'Unknown' : t.inputTokens.toLocaleString('en-US')} in{t.cachedTokens != null && t.cachedTokens > 0 ? ' (' + t.cachedTokens.toLocaleString('en-US') + ' cached)' : ''} / {t.outputTokens == null ? 'Unknown' : t.outputTokens.toLocaleString('en-US')} out</dd></div>
-              <div><dt>Estimated cost</dt><dd>{t.estimatedCostMicrousd == null ? 'Unknown' : '$' + (t.estimatedCostMicrousd / 1000000).toFixed(4)}</dd></div>
-              {t.invalidLabels > 0 ? <div><dt>Invalid labels</dt><dd>{t.invalidLabels}</dd></div> : null}
-            </dl>
+            <summary>Sources</summary>
             <Cites projectId={pid} cites={t.citations} />
           </details>
           <span className='er-chat__actions'>
@@ -303,20 +295,22 @@ export function ChatView() {
           </span>
         </li>))}
       </ol>
-      {turns.length === 0 && chatId !== undefined && turnsError === '' ? <p className='er-chat__hint'>No turns yet. Ask below — sending is the only paid call here.</p> : null}
-      {queued !== null ? <p className='er-chat__hint' role='status'>Queued: {queued.question} <button className='er-button er-button--text' type='button' onClick={() => void stopTurn(queued.turnId)}>Cancel queued</button></p> : null}
+      {turns.length === 0 && chatId !== undefined && turnsError === '' ? <p className='er-chat__hint'>Ask a question to start this conversation.</p> : null}
       <form className='er-chat__composer' onSubmit={(e) => { e.preventDefault(); void send(); }}>
         <div className='er-chat__model'>
           <ModelPicker label='Model' choices={models} value={modelRoute} onChange={setModelRoute}
             loading={modelsLoading} error={modelsError} emptyLabel='Project default' compact warnings={modelsWarnings}
             onRoutePendingChange={setModelSelectionPending} />
         </div>
-        <label className='er-chat__asklabel' htmlFor='er-chat-q'>Question</label>
-        <textarea id='er-chat-q' value={question} onChange={(e) => setQuestion(e.currentTarget.value)} rows={3} maxLength={4000} placeholder='Ask in Russian or English…' />
+        <label className='er-field er-chat__question-field' htmlFor='er-chat-q'>
+          <span className='er-chat__asklabel'>Question</span>
+          <textarea id='er-chat-q' value={question} onChange={(e) => setQuestion(e.currentTarget.value)} rows={3} maxLength={4000} placeholder='Ask in Russian or English…' />
+        </label>
         <button className='er-button er-button--primary' type='submit' disabled={busy || question.trim() === '' || !chatReady || queued !== null || modelSelectionPending}>{busy ? 'Sending…' : 'Send'}</button>
+        {queued !== null ? <p className='er-chat__hint' role='status'>Next question: {queued.question} <button className='er-button er-button--text' type='button' onClick={() => void stopTurn(queued.turnId)}>Cancel question</button></p> : null}
+        {sendError !== '' ? <p className='er-chat__error' role='alert'>{sendError}</p> : null}
+        {saveNote !== '' ? <p className='er-chat__hint' role='status'>{saveNote}</p> : null}
       </form>
-      {sendError !== '' ? <p className='er-chat__error' role='alert'>{sendError}</p> : null}
-      {saveNote !== '' ? <p className='er-chat__hint' role='status'>{saveNote}</p> : null}
     </section>
   );
 }
@@ -340,18 +334,18 @@ export function StudioView() {
     void apiJson<{ page: { body: string; citations: Citation[] } }>('/api/projects/' + encodeURIComponent(pid) + '/pages/' + encodeURIComponent(openId)).then((d) => { if (live) { setBody(d.page.body); setCites(d.page.citations); } }).catch((err: unknown) => { if (live) setFailure(err instanceof Error ? err.message : 'Could not open the page.'); });
     return () => { live = false; };
   }, [pid, openId]);
-  if (pid === '') return <p className='er-chat__error' role='alert'>Open this view inside a project route.</p>;
+  if (pid === '') return <p className='er-chat__error' role='alert'>Open a project to view saved pages.</p>;
   return (
     <section className='er-chat' aria-label='Studio'>
       <header className='er-chat__head'><h1 className='er-chat__title'>Studio</h1>
-      <p className='er-chat__hint'>Saved answers. Opening a page is storage-only.</p></header>
+      <p className='er-chat__hint'>Answers you saved from chat.</p></header>
       {failure !== '' ? <p className='er-chat__error' role='alert'>{failure}</p> : null}
       {pages === undefined ? <p className='er-chat__hint' role='status'>Loading pages…</p> : pages.length === 0 ? <p className='er-chat__hint'>Nothing saved yet. Save an answer from chat.</p> : (<ul className='er-chat__pages'>
         {pages.map((p) => (<li key={p.id}><button className='er-button er-button--text' type='button' onClick={() => setOpenId(p.id)} aria-current={p.id === openId ? 'page' : undefined}>{p.title}</button></li>))}
       </ul>)}
-      {openId !== '' && body !== '' ? (<article className='er-chat__page'>
+      {openId !== '' && body !== '' ? (<article className='er-card er-chat__page'>
         <div className='er-chat__answer'><Markdown text={body} references={collectRefs(pid, cites)} /></div>
-        {cites.length > 0 ? <details className='er-chat__turn-details'><summary>Details</summary><Cites projectId={pid} cites={cites} /></details> : null}
+        {cites.length > 0 ? <details className='er-chat__turn-details'><summary>Sources</summary><Cites projectId={pid} cites={cites} /></details> : null}
       </article>) : null}
     </section>
   );

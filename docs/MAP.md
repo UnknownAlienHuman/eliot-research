@@ -35,6 +35,7 @@ quotas.
 - K0 keeps the accepted Material shell with hostname Access auth: `/api/me`, Projects/Settings navigation and System/Light/Dark appearance verified locally on 1440/390 px with Cyrillic fonts, and all assets pass through auth. Live Access and deployed acceptance are not claimed.
 - K1 implements projects, the shared Library with immutable revisions, and exact UTF-8 reading (outline, whole text, ranges, original download). Exact text/URL duplicates return 409 with explicit Attach existing, reusing the stored revision with no silent merge. Conversion stays on the current path: native text locally, Workers AI `toMarkdown` where a document format requires it. AI Search and later-contour bindings remain absent.
 - K2 has a local Markdown chat path with frozen source scope, server-resolved citations, Stop/reconnect and storage-only Save, plus the R2 model snapshot with the owner-only refresh route. K2 and K3 are not fully accepted; their remaining quality and claim-mode gates stay open in their contour sections below.
+- K4 and K6 remain isolated, unaccepted work. K6 is frozen until K2/K3 acceptance.
 - The existing `eliotr-core.kleymor-metal.workers.dev` address is retained per owner decision; the replacement is not deployed over it.
 - Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
 - PR #417 is the authoritative replacement-documentation history and supersedes the stacked plan in PR #416.
@@ -121,18 +122,10 @@ open any readable source with outline and exact passage links.
 `pnpm eval k1` includes the real phone journey, immutable old-revision checks and recovery from an offline upload.
 The browser journeys also exercise duplicate pasted text and duplicate static URLs through explicit Attach existing.
 `ELIOT_EVAL_NET=1 pnpm eval k1 --native-only` includes the real public static-URL case; without that opt-in its network
-journey is explicitly NOT_RUN. The 2026-10-26 run passed both duplicate journeys with the same stored revision and
-zero new conversion/model usage. The URL guard was unchanged.
+journey is explicitly not run. Both duplicate journeys must retain the same stored revision and perform no new
+conversion/model work; the URL guard remains in force.
 `ELIOT_EVAL_LIMIT=1` adds the actual 25 MiB file and 25 MiB + 1 byte rejection cases. CI runs
 `pnpm eval k1 --native-only` with remote AI bindings disabled; it does not claim PDF-service acceptance.
-
-Local run on 2026-10-25: 13 readable sources, the scan negative, 52 exact ranges and the phone journey passed. The
-25 MiB native file was readable with zero conversion calls; 25 MiB + 1 byte returned 413. Readable PDF conversion
-p50/p95 was 1,697/4,604 ms from the recorded latest attempts. Those 14 corpus sources retain 13 conversion calls and
-189,269 reported conversion tokens; the native source used zero. Across deliberate diagnostics and corrected reruns,
-the local revision rows record 29 conversion attempts in total, with no automatic retry. Model/search calls were zero.
-The sampled local workerd-process RSS peak was 653,914,112 bytes across two processes; isolate peak heap was not
-available and production memory/deployment qualification is not claimed.
 
 **Measured budget.** Peak Worker memory is inspected during the 25 MiB case; no exceeded-memory event. Conversion count
 must equal the number of files that actually require conversion.
@@ -149,34 +142,45 @@ stop/reconnect, reopen chat and save an answer as a page.
 **Build**
 
 1. Apply `migrations/0002_ask.sql`; add one `ChatAgent` Durable Object per chat and `/agents/*` routing.
-2. Read provider catalogues from the R2 snapshot. Owner-only `POST /api/models/refresh` performs provider discovery
-   and pricing, with optional `selectedRoutes`; a partial provider failure preserves that provider's prior slice and
+2. Read provider catalogues from the R2 snapshot. The owner edits the provider configuration in Settings; owner-only
+   `POST /api/models/refresh` discovers JSON models and available provider quota data; a partial provider failure preserves that provider's prior slice and
    returns a warning. If no snapshot exists, use the native Flash fallback. Paid admission remains separate and
-   requires known context and input/output prices; estimate unknown cached input at the full input rate.
+   requires usable context/output bounds and provider allowance, without per-model price prerequisites.
+   Keep Command Code and add Kilo, Nous Portal and OpenCode Go through that same configuration. Go's live IDs join its
+   published metadata for limits and API protocol; no model-name mapping or private donor login is copied. New provider
+   rows start disabled, and saving them does not refresh catalogues or start inference.
 3. Build whole-reading context from the frozen readable revisions. When it does not fit, return a clear narrow-scope
    response; claim/search modes arrive later.
 4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.
 5. Use one `runTurn` for WebSocket and eval RPC; persist the turn before the model call, stream once, resolve labels,
    store citations/usage/timing/cost and never auto-continue a paid failed stream.
-6. Add chat/page APIs, the shared legacy Material catalogue picker, saved answers and the moved chat/evidence UI.
+6. Add chat/page APIs, one visible Material catalogue with answer/understanding defaults, compact chat/project pickers,
+   saved answers and the moved chat/evidence UI. Provider configuration is separate from credentials kept in Cloudflare.
+   Persist the native usage choice (included quota or standard Cloudflare billing) without starting a job or changing
+   models. An unverified included-only cap pauses native requests; it must never silently enable paid overage.
 7. Add label/context/cost cases and `pnpm eval k2`.
 
 **Behavioral contract.** Only Send starts answer inference. Each turn freezes its source revisions and admitted model
 metadata. Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
 across corpora, with no fixed-paper coaching or JSON sentence/label enum. The server resolves labels and byte ranges.
-Page-only `Page N` / `Страница N` headings and empty headings are not labelable; canonical text and block maps are
-unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
+Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
+canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
 never retried automatically.
 Missing citation/numeric-support spans are advisory marks, not stream-state transitions. A completed generation can
 still fail the quality gate; diagnostics do not waive citation, expected-fact or owner-review requirements.
+The composer remains visible while reading long answers. Citation details retain exact passage links; runtime counters
+and internal processing terminology stay in API/eval output rather than the owner reading interface.
 
 **Hard acceptance — `pnpm eval k2`**
 
 - Run C1–C4 and O1–O8 from `eval/arxiv-10/questions.md` in whole mode.
+  Freeze the configured global answer model for the complete run. The owner's temporary OpenRouter selection changes
+  the provider, not the questions, source bytes, citation rules or quality gates.
 - Every completed answer has at least one citation, `invalidLabels = 0`, and every cited range opens.
 - C1–C4 contain the expected values and conditions. O8 abstains where the corpus lacks the answer.
 - Owner judges O1, O2, O3 and O8 at least as useful and honest as the recorded NotebookLM baseline.
-- No turn exceeds the configured monthly model budget; eval reports input/cached/output tokens and estimated USD.
+- Each turn respects its recorded input/output, call and time bounds and provider limits; eval reports known token
+  usage separately from unknown usage. It does not convert tokens into Cloudflare Neurons or infer monetary prices.
 
 **Measured budget.** Record cold/warm p50/p95 first-token and total time. Initial target: warm p50 first token ≤ 10 s,
 p95 total ≤ 40 s. Catastrophic ceiling: a completed answer taking > 90 s fails K2. Promote tighter thresholds after three
@@ -184,11 +188,9 @@ comparable runs rather than making one provider fluctuation invalidate the archi
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
-K2 is not fully accepted or deployed. The unchanged twelve-question NotebookLM comparison remains the quality baseline
-at eval/out/notebooklm-20261026/answers.md. Its recorded semantic review flags O1 terminology and overstatement, O2
-unsupported inference and a language defect, and O3 training/fine-tuning confusion and coverage gaps. Owner semantic
-review remains open. The provider, browser and answer evidence artifacts remain under eval/out/; they do not replace
-the full contour gates. Neither K2 nor K3 is deployed.
+K2 is not fully accepted or deployed: citation validity, latency and owner quality review remain open. The unchanged
+twelve-question NotebookLM baseline is retained at `eval/out/notebooklm-20261026/answers.md`; comparison results belong
+in the PR, and do not replace these gates. Neither K2 nor K3 is deployed.
 
 ## K3 — Distill
 
@@ -201,8 +203,8 @@ re-distilled automatically.
 1. Apply `migrations/0003_distill.sql` and `0007_manual_understanding.sql`; add `DistillWorkflow` and quote/number verification.
 2. Ingest makes a revision readable without queueing understanding. Understand explicitly requests one revision;
    unchanged completed or partial output is returned without another model call.
-3. Admit only the explicitly requested revision while concurrency and the shared monthly dollar budget allow. Budget-
-   blocked work is visibly `paused` until another explicit request. Cron only reconciles stale `running` rows against
+3. Admit only the explicitly requested revision while concurrency and provider allowance permit. Blocked work is
+   visibly `paused` until another explicit request. Cron only reconciles stale `running` rows against
    deterministic Workflow IDs; it never admits queued revisions.
 4. Use at most two bounded calls: labelled canonical text produces guide and candidate claims; code verifies
    quotes/ranges/numbers; the second call receives only verified material and produces digest/glossary. Store raw
@@ -216,6 +218,8 @@ re-distilled automatically.
 **Hard acceptance — `pnpm eval k3`**
 
 - All ten papers reach `done` or a documented `partial` state; a second eval run performs no re-distillation of unchanged revisions.
+  `pnpm eval k3 --unchanged-only` preflights all ten terminal revisions, submits each exact revision ID once and compares
+  the stored reports, claims, call counts and usage. This reuse check does not waive the semantic or claim-mode gates.
 - Every stored quote is an exact byte range; numeric result fields are cleared when not supported by their quote.
 - Percentage statements and conditions must match a whole percentage quantity in that same quote, rather than
   borrowing digits from a decimal axis tick, another number or another excerpt.
@@ -233,7 +237,7 @@ re-distilled automatically.
   attach the public papers in `eval/arxiv-10/overflow.json`. Measured source bytes must exceed the unchanged model
   whole-reading cap, and all four turns must report `contextMode=claims`. The baseline PDFs/questions remain unchanged;
   no forced mode, reduced model cap, repeated padding or K5 search infrastructure is used.
-- Eval prints per-revision calls, tokens, estimated cost, kept/dropped reasons and wall time.
+- Eval prints per-revision calls, known/unknown tokens, recorded token bounds, kept/dropped reasons and wall time.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 

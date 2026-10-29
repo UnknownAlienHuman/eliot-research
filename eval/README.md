@@ -41,11 +41,11 @@ The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `
 | `pnpm eval k1` | full K1 corpus and browser checks; document conversion may use the live service |
 | `pnpm eval k2 --native-only` | limited reader/history smoke, zero model calls |
 | `pnpm eval k2 --models-only` | disconnected Gateway consent/admission and 390px Settings/understanding; no credential enable or provider call, not external-model acceptance |
-| `pnpm eval k2 --openrouter-stored` | revalidate recorded real OpenRouter chat/distill handles from `eval/out/openrouter-smoke/ids.json`; GET only, reports unknown usage/partial results and fails on open provider gates |
 | `pnpm eval k2 --stored-only` | existing chat hard-gate revalidation; requires `ELIOT_EVAL_CHAT`, no new chat or turn |
 | `pnpm eval k2` without model opt-in | limited storage smoke, not full K2 acceptance |
 | `pnpm eval k3 --native-only` | explicitly limited storage smoke, zero model calls; optional cached-output checks are separate fixtures |
 | `pnpm eval k3` without model opt-in | stored hard-gate validation; nonzero on missing/failed work, unsupported quotes/numbers, missing anchors or unverified claim-mode C1–C4 |
+| `pnpm eval k3 --unchanged-only` | preflight ten terminal revisions, submit each exact revision once and verify unchanged reports, claims, call counts and usage; no inference |
 
 The model opt-ins `ELIOT_K2_MODEL=1` and `ELIOT_K3_MODEL=1` enable paid paths only when the root explicitly releases
 that run. K2/K3 reuse existing readable corpus revisions; they do not repeat ingestion/conversion to fill missing
@@ -64,19 +64,20 @@ Environment:
 - `ELIOT_EVAL_LIMIT=1` — include K1 25 MiB boundary checks.
 
 Start the app with its matching local bindings/state before running eval. K2/K3 need K1 material already present.
-For native CI, [fast-ci](../.github/workflows/fast-ci.yml) disables remote bindings and auto-distill before starting
-the app, then runs K0 followed by native K1/K2/K3. Native fixtures mutate local storage; K3 native mode also disables
-auto-distill through the settings API and restores it afterward. Serialize these runs against other fixture/settings
-work. Stored K3 mode performs reads only against the app.
+For native CI, [fast-ci](../.github/workflows/fast-ci.yml) disables remote bindings before starting the app, then runs
+K0 followed by native K1/K2/K3. Native fixtures mutate local storage; serialize these runs against other fixture/settings
+work. Ingest does not start understanding. Stored K3 mode performs reads only against the app; the explicit
+`--unchanged-only` mode also submits existing terminal revisions to verify reuse.
 
 K1 uploads **one file per request**, at most two concurrently, and caches PDF downloads by SHA-256. K2/K3 select the
 existing source/revision identities. Results are written beneath `eval/out/k0/`, `eval/out/k1/`, `eval/out/k2/` and
 `eval/out/k3/` (git-ignored); filenames vary by mode. Nonzero means a check failed or required preparation/evidence is
 missing. No eval success implies deployment or future-contour acceptance.
 
-K2 model rows report tokens, estimated micro-USD, first-token/total time, citations/invalid labels and terminal state.
-K3 reports persisted per-revision calls, tokens, cost, wall time and kept/dropped reasons; a second unchanged pass must
-show no dispatch. Cost already stored on a revision is not additional spend by a read-only run.
+K2 model rows report known/unknown tokens, recorded bounds, first-token/total time, citations/invalid labels and terminal
+state. K3 reports persisted per-revision calls, tokens, provider usage when available, wall time and kept/dropped reasons;
+a second unchanged pass must show no dispatch. Historical cost is retained without inferring a price or treating it as
+additional spend by a read-only run.
 
 ## Contour-specific rules
 

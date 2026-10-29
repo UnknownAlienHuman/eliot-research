@@ -16,6 +16,7 @@ minimumReleaseAgeExclude:
   - hono@4.13.14
   - '@ai-sdk/openai-compatible@3.0.79'
   - '@ai-sdk/provider-utils@5.0.69'
+  - '@ai-sdk/anthropic@4.0.91'
 
 overrides:
   '@modelcontextprotocol/client': 2.3.1

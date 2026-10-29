@@ -201,14 +201,6 @@
 
 /* ---- Field ---- */
 
-.er-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--eliot-space-tight);
-  font-family: var(--eliot-type-font-family);
-  text-align: start;
-}
-
 .er-field__label {
   font-size: var(--eliot-type-label-large-size);
   line-height: var(--eliot-type-label-large-line-height);

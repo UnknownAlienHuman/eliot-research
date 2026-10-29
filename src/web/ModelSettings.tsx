@@ -1,4 +1,4 @@
-// K2 model settings. Global defaults + budget in USD with explicit save, and
+// K2 model settings. Global answer/understanding defaults with explicit save, and
 // the per-project variant (instructions plus a nullable answerModel override).
 // Root mounts global settings; ChatView embeds project defaults collapsed.
 // Catalogue reads are storage-only; an explicit Settings action refreshes the
@@ -7,12 +7,21 @@
 // (GET/PUT /api/models/connection, gatewayId only, no secrets).
 import { useEffect, useRef, useState } from 'react';
 import { ModelPicker } from './ModelPicker';
+import { ModelProviders, toDraft, validateDrafts, type Draft as ProviderDraft } from './ModelProviders';
+import type { ModelProvider } from '../models';
+import type { NativeUsage, ProviderQuota } from '../model-quota';
 import type { ModelRoute } from './ModelPicker';
+import type { NativeUsageMode } from '../shared/api';
 import './model-settings.css';
-interface GlobalSettings { readonly answerModel: string; readonly distillModel: string; readonly monthlyModelBudgetMicrousd: number; readonly updatedAt: number; }
+interface GlobalSettings { readonly answerModel: string; readonly distillModel: string; readonly nativeUsageMode?: NativeUsageMode; readonly updatedAt: number; }
 interface ProjectSettings { readonly instructions: string; readonly answerModel: string | null; }
 interface GatewayConnection { readonly gatewayId: string | null; readonly provider: string; readonly alias: string; }
-interface ModelCatalog { readonly models: ModelRoute[]; readonly warnings: string[]; readonly defaultModel: string; }
+interface ModelCatalog { readonly models: ModelRoute[]; readonly warnings: string[]; readonly defaultModel: string; readonly quotas?: ProviderQuota[]; readonly nativeUsage?: NativeUsage | null; }
+function quotaLabels(quotas: ProviderQuota[]): Record<string, string | null> {
+  return Object.fromEntries(quotas.map((quota) => [quota.providerId,
+    quota.usage === null && quota.limit === null ? quota.error === 'quota-unavailable' ? 'Quota unavailable' : null :
+      `Last refresh: usage ${quota.usage?.toLocaleString('en-US') ?? 'unknown'} / ${quota.limit?.toLocaleString('en-US') ?? 'unknown'}`]));
+}
 async function apiErrorMessage(res: Response): Promise<string> {
   try { const b = (await res.json()) as { error?: { message?: string } }; if (b.error && b.error.message) return b.error.message; } catch { /* status text */ }
   return 'Request failed with status ' + res.status + '.';
@@ -31,20 +40,30 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState('');
   const [modelsWarnings, setModelsWarnings] = useState<string[]>([]);
+  const [providerQuotas, setProviderQuotas] = useState<Record<string, string | null>>({});
   const [answerModel, setAnswerModel] = useState('');
   const [distillModel, setDistillModel] = useState('');
+  const [nativeUsageMode, setNativeUsageMode] = useState<NativeUsageMode>('included');
   const [useGlobal, setUseGlobal] = useState(true);
   const [instructions, setInstructions] = useState('');
-  const [budgetUsd, setBudgetUsd] = useState('');
   const [note, setNote] = useState('');
   const [refreshNote, setRefreshNote] = useState('');
   const [modelsRefreshing, setModelsRefreshing] = useState(false);
   const [ready, setReady] = useState(false);
   const [gatewayId, setGatewayId] = useState('');
-  const [gatewayAlias, setGatewayAlias] = useState('default');
   const [allowGateway, setAllowGateway] = useState(false);
+  const [editingTarget, setEditingTarget] = useState<'answer' | 'distill'>('answer');
   const [gatewayNote, setGatewayNote] = useState('');
-  const [gatewaySaving, setGatewaySaving] = useState(false);
+  const [initialGatewayId, setInitialGatewayId] = useState('');
+  const [providerDrafts, setProviderDrafts] = useState<ProviderDraft[] | null>(null);
+  const [providersBaseline, setProvidersBaseline] = useState<readonly ModelProvider[]>([]);
+  const [providersError, setProvidersError] = useState('');
+  const [providerFieldErrors, setProviderFieldErrors] = useState<Record<number, string>>({});
+  const [nativeUsage, setNativeUsage] = useState<NativeUsage | null>(null);
+  const [initialAnswer, setInitialAnswer] = useState('');
+  const [initialDistill, setInitialDistill] = useState('');
+  const [initialNativeUsageMode, setInitialNativeUsageMode] = useState<NativeUsageMode>('included');
+  const [savingAll, setSavingAll] = useState(false);
   const catalogRequest = useRef({ sequence: 0, controller: null as AbortController | null });
   const gatewayGeneration = useRef(0);
   const modelChoices = models;
@@ -54,6 +73,10 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     : null;
   const gatewayOff = gatewayId === '' && modelChoices.some((m) => !m.enabled && m.route.startsWith('gateway:'));
   const otherDisabled = modelChoices.filter((m) => !m.enabled && !(gatewayOff && m.route.startsWith('gateway:')));
+  const answerMatches = modelChoices.filter((m) => m.route === answerModel);
+  const answerLabel = answerModel === '' ? 'not chosen' : answerMatches.length === 1 ? answerMatches.at(0)?.label ?? answerModel : answerModel;
+  const distillMatches = modelChoices.filter((m) => m.route === distillModel);
+  const distillLabel = distillModel === '' ? 'not chosen' : distillMatches.length === 1 ? distillMatches.at(0)?.label ?? distillModel : distillModel;
   function invalidateModels(): number {
     catalogRequest.current.sequence++;
     catalogRequest.current.controller?.abort();
@@ -73,6 +96,8 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
       const d = await apiJson<ModelCatalog>('/api/models', { signal: controller.signal });
       if (!current()) return;
       setModelsWarnings(d.warnings);
+      setProviderQuotas(quotaLabels(d.quotas ?? []));
+      setNativeUsage(d.nativeUsage ?? null);
       setModels((previous) => current() ? d.models : previous);
       return d.models;
     } catch (err) {
@@ -94,12 +119,12 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     let live = true;
     const generation = ++gatewayGeneration.current;
     const reads = new AbortController();
-    setGatewaySaving(false);
     const catalog = reloadModels();
     let settings: Promise<void>;
     if (projectId === undefined) {
-      settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setBudgetUsd(String(d.settings.monthlyModelBudgetMicrousd / 1000000)); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
-      void apiJson<{ connection: GatewayConnection }>('/api/models/connection', { signal: reads.signal }).then((d) => { if (!live || gatewayGeneration.current !== generation) return; setGatewayId(d.connection.gatewayId ?? ''); setGatewayAlias(d.connection.alias); setAllowGateway(false); }).catch((err: unknown) => { if (live && gatewayGeneration.current === generation) setGatewayNote(err instanceof Error ? err.message : 'Gateway connection status unavailable.'); });
+      settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setNativeUsageMode(d.settings.nativeUsageMode ?? 'included'); setInitialAnswer(d.settings.answerModel); setInitialDistill(d.settings.distillModel); setInitialNativeUsageMode(d.settings.nativeUsageMode ?? 'included'); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
+      if (projectId === undefined) void apiJson<{ providers: ModelProvider[] }>('/api/models/providers', { signal: reads.signal }).then((d) => { if (!live) return; setProviderDrafts(d.providers.map(toDraft)); setProvidersBaseline(d.providers); }).catch(() => { if (live) setProvidersError('Providers are unavailable.'); });
+    void apiJson<{ connection: GatewayConnection }>('/api/models/connection', { signal: reads.signal }).then((d) => { if (!live || gatewayGeneration.current !== generation) return; setGatewayId(d.connection.gatewayId ?? ''); setInitialGatewayId(d.connection.gatewayId ?? ''); setAllowGateway(false); }).catch((err: unknown) => { if (live && gatewayGeneration.current === generation) setGatewayNote(err instanceof Error ? err.message : 'Gateway connection status unavailable.'); });
     } else {
       const pid = projectId;
       settings = apiJson<{ project: ProjectSettings }>('/api/projects/' + encodeURIComponent(pid), { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.project.answerModel ?? ''); setUseGlobal(d.project.answerModel === null); setInstructions(d.project.instructions); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
@@ -109,35 +134,68 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   }, [projectId]);
   async function save(): Promise<void> {
     setNote('');
-    try {
-      if (projectId === undefined) {
-        const trimmedBudget = budgetUsd.trim();
-        if (/^\d+\.\d{7,}$/.test(trimmedBudget)) { setNote('Use up to six decimal places for the monthly budget.'); return; }
-        const budgetMatch = /^(\d+)(?:\.(\d{1,6}))?$/.exec(trimmedBudget);
-        if (budgetMatch === null) { setNote('Enter a non-negative budget in USD.'); return; }
-        const whole = budgetMatch[1] ?? '';
-        if (whole === '') { setNote('Enter a non-negative budget in USD.'); return; }
-        const microBig = BigInt(whole) * 1000000n + BigInt((budgetMatch[2] ?? '').padEnd(6, '0'));
-        if (microBig > BigInt(Number.MAX_SAFE_INTEGER)) { setNote('Enter a non-negative budget in USD.'); return; }
-        const micro = Number(microBig);
-        if (answerModel === '') { setNote('Choose an answer model.'); return; }
-        await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel, distillModel, monthlyModelBudgetMicrousd: micro }) });
-      } else {
+    if (projectId !== undefined) {
+      try {
         await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instructions, answerModel: useGlobal ? null : answerModel }) });
-      }
-      setNote('Saved.');
-    } catch (err) { setNote(err instanceof Error ? err.message : 'Could not save settings.'); }
+        setNote('Saved.');
+      } catch (err) { setNote(err instanceof Error ? err.message : 'Could not save settings.'); }
+      return;
+    }
+    if (answerModel === '') { setNote('Choose an answer model.'); return; }
+    const checked = providerDrafts === null ? null : validateDrafts(providerDrafts);
+    if (checked !== null) setProviderFieldErrors(checked.errors);
+    if (checked !== null && checked.providers === null) { setNote('Check the highlighted provider fields.'); return; }
+    const nextProviders = checked?.providers ?? null;
+    const providerChanged = nextProviders !== null && JSON.stringify(providerDrafts) !== JSON.stringify(providersBaseline.map(toDraft));
+    const settingsChanged = answerModel !== initialAnswer || distillModel !== initialDistill || nativeUsageMode !== initialNativeUsageMode;
+    const gatewayTrimmed = gatewayId.trim();
+    const gatewayChanged = gatewayTrimmed !== initialGatewayId;
+    if (gatewayChanged && gatewayTrimmed !== '' && !allowGateway) { setNote('gateway: check the box to connect a Gateway, or clear the field to disable'); return; }
+    if (providerDrafts !== null && !providerChanged && !settingsChanged && !gatewayChanged) { setNote('No changes.'); return; }
+    setSavingAll(true);
+    const problems: string[] = [];
+    let gatewayReload = false;
+    if (providerChanged && nextProviders !== null) {
+      try {
+        const d = await apiJson<{ providers: ModelProvider[] }>('/api/models/providers', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ providers: nextProviders }) });
+        setProviderDrafts(d.providers.map(toDraft));
+        setProvidersBaseline(d.providers);
+        setProviderFieldErrors({});
+        gatewayReload = true;
+      } catch (err) { problems.push('providers: ' + (err instanceof Error ? err.message : 'could not save providers')); }
+    } else if (providerDrafts === null) {
+      problems.push('providers unavailable: provider changes not saved');
+    }
+    if (settingsChanged) {
+      try {
+        await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel, distillModel, nativeUsageMode }) });
+        setInitialAnswer(answerModel);
+        setInitialDistill(distillModel);
+        setInitialNativeUsageMode(nativeUsageMode);
+      } catch (err) { problems.push('settings: ' + (err instanceof Error ? err.message : 'could not save settings')); }
+    }
+    if (gatewayChanged) {
+      try {
+          const gd = await apiJson<{ connection: GatewayConnection }>('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(gatewayTrimmed === '' ? { gatewayId: null } : { gatewayId: gatewayTrimmed, confirmCredentialAccess: true }) });
+          setGatewayId(gd.connection.gatewayId ?? '');
+          setInitialGatewayId(gd.connection.gatewayId ?? '');
+          setAllowGateway(false);
+          gatewayReload = true;
+        } catch (err) { problems.push('gateway connection: ' + (err instanceof Error ? err.message : 'could not save Gateway connection')); }
+    }
+    if (gatewayReload) void reloadModels();
+    setSavingAll(false);
+    setNote(problems.length === 0 ? 'Saved.' : 'Partially saved: ' + problems.join('; '));
   }
   async function refreshModels(): Promise<void> {
     if (modelsRefreshing || modelsLoading) return;
     setModelsRefreshing(true);
     setRefreshNote('');
-    const selectedRoutes = [...new Set([answerModel, distillModel].filter((route) => route !== ''))];
     try {
       await apiRequest('/api/models/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(selectedRoutes.length > 0 ? { selectedRoutes } : {}),
+        body: '{}',
       });
       await reloadModels();
       setRefreshNote('Models refreshed.');
@@ -147,33 +205,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
       setModelsRefreshing(false);
     }
   }
-  async function saveGateway(): Promise<void> {
-    setGatewayNote('');
-    const trimmed = gatewayId.trim();
-    if (trimmed !== '' && !allowGateway) { setGatewayNote('Check the BYOK consent box to connect a Gateway, or clear the field to disable.'); return; }
-    const generation = ++gatewayGeneration.current;
-    const current = () => gatewayGeneration.current === generation;
-    invalidateModels();
-    setModelsLoading(true);
-    setModelsError('');
-    setGatewaySaving(true);
-    try {
-      const body = trimmed === '' ? { gatewayId: null } : { gatewayId: trimmed, confirmCredentialAccess: true };
-      const d = await apiJson<{ connection: GatewayConnection }>('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (!current()) return;
-      setGatewayId(d.connection.gatewayId ?? '');
-      setGatewayAlias(d.connection.alias);
-      setAllowGateway(false);
-      await reloadModels();
-      if (current()) setGatewayNote(trimmed === '' ? 'Gateway disabled.' : 'Gateway connection saved.');
-    } catch (err) {
-      if (!current()) return;
-      invalidateModels();
-      setModelsLoading(false);
-      setModelsError('Reload the model catalog to confirm current Gateway availability.');
-      setGatewayNote(err instanceof Error ? err.message : 'Could not save Gateway connection.');
-    } finally { if (current()) setGatewaySaving(false); }
-  }
+
   const catalogWarnings = modelsWarnings.length > 0 || otherDisabled.length > 0
     ? <details className='er-models__details'>
       <summary>Provider availability</summary>
@@ -184,16 +216,16 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   if (projectId !== undefined) {
     return (
       <div className='er-models er-models--compact'>
-        <label className='er-models__row'>
+        <label className='er-field er-models__row'>
           <span className='er-models__label'>Instructions<span className='er-models__help'>Guides answers in this project.</span></span>
           <textarea value={instructions} onChange={(e) => setInstructions(e.currentTarget.value)} rows={3} maxLength={10000} />
         </label>
         <ModelPicker label='Answer model' choices={modelChoices} value={useGlobal ? '' : answerModel} emptyLabel='Use global default'
-          loading={modelsLoading || gatewaySaving} error={modelsError}
+          loading={modelsLoading || savingAll} error={modelsError} compact
           onChange={selectAnswerModel} />
         {catalogWarnings}
         <div className='er-models__actions'>
-          <button className='er-button er-button--primary' type='button' onClick={() => void save()}>Save</button>
+          <button className='er-button er-button--primary' type='button' disabled={savingAll} onClick={() => void save()}>{savingAll ? 'Saving…' : 'Save'}</button>
           {note !== '' ? <p className='er-status' role='status'><span>{note}</span></p> : null}
         </div>
       </div>
@@ -201,39 +233,53 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   }
   return (
     <div className='er-models'>
-      <section className='er-models__card' aria-label='Models'>
+      <section className='er-card er-models__card' aria-label='Models'>
         <div className='er-models__head'>
           <h2 className='er-models__title'>Models</h2>
           <p className='er-status'><span>Defaults for answers and understanding.</span></p>
         </div>
-        <ModelPicker label='Answer model' choices={modelChoices} value={answerModel} onChange={selectAnswerModel}
-          loading={modelsLoading || gatewaySaving} error={modelsError} />
-        <ModelPicker label='Understanding model' choices={modelChoices} value={distillModel} onChange={selectDistillModel}
-          loading={modelsLoading || gatewaySaving} error={modelsError} />
+        <fieldset className='er-models__target'>
+          <legend>Use model for</legend>
+          <label className='er-models__check'>
+            <input type='radio' name='er-models-target' value='answer' checked={editingTarget === 'answer'} onChange={() => setEditingTarget('answer')} />
+            <span className='er-models__checktext'>Answers — {answerLabel}</span>
+          </label>
+          <label className='er-models__check'>
+            <input type='radio' name='er-models-target' value='distill' checked={editingTarget === 'distill'} onChange={() => setEditingTarget('distill')} />
+            <span className='er-models__checktext'>Understanding — {distillLabel}</span>
+          </label>
+        </fieldset>
+        <ModelPicker label={editingTarget === 'answer' ? 'Answer model' : 'Understanding model'} choices={modelChoices} value={editingTarget === 'answer' ? answerModel : distillModel} onChange={(route) => { if (editingTarget === 'answer') selectAnswerModel(route); else selectDistillModel(route); }}
+          loading={modelsLoading || savingAll} error={modelsError} />
         {catalogWarnings}
-        <label className='er-models__row'>
-          <span className='er-models__label'>Monthly budget (USD)</span>
-          <input inputMode='decimal' value={budgetUsd} onChange={(e) => setBudgetUsd(e.currentTarget.value)} />
-        </label>
+        <fieldset className='er-models__target'>
+          <legend>Workers AI usage</legend>
+          <label className='er-models__check'>
+            <input type='radio' name='er-native-usage' value='included' checked={nativeUsageMode === 'included'} onChange={() => setNativeUsageMode('included')} />
+            <span className='er-models__checktext'>Only included quota — 10,000 Neurons/day<span className='er-models__help'>Native requests stay paused until this cap can be enforced. OpenRouter uses its own limits.</span></span>
+          </label>
+          <label className='er-models__check'>
+            <input type='radio' name='er-native-usage' value='standard' checked={nativeUsageMode === 'standard'} onChange={() => setNativeUsageMode('standard')} />
+            <span className='er-models__checktext'>Standard Cloudflare billing<span className='er-models__help'>Overage beyond the included quota is billed to the Cloudflare account. Applies to new native requests only. Choosing and saving starts no inference.</span></span>
+          </label>
+        </fieldset>
+        {nativeUsage === null || nativeUsage.error !== null || nativeUsage.neurons === null ? <p className='er-status'><span>Workers AI usage unavailable, resets 00:00 UTC.</span></p> : <p className='er-status'><span>{'Workers AI: used ' + nativeUsage.neurons.toLocaleString('en-US') + ' of ' + nativeUsage.allowanceNeurons.toLocaleString('en-US') + ' neurons today, resets ' + (nativeUsage.resetAt.slice(11, 16) || '00:00') + ' UTC.'}</span></p>}
         {gatewayOff ? (<p className='er-status'><span>Connect AI Gateway to use external models.</span></p>) : null}
         <div className='er-models__actions'>
-          <button className='er-button er-button--text' type='button' disabled={modelsLoading || modelsRefreshing || gatewaySaving} onClick={() => void refreshModels()}>
+          <button className='er-button er-button--text' type='button' disabled={modelsLoading || modelsRefreshing || savingAll} onClick={() => void refreshModels()}>
             {modelsRefreshing ? 'Refreshing models…' : 'Refresh models'}
           </button>
           <button className='er-button er-button--primary' type='button' onClick={() => void save()}>Save</button>
           {note !== '' ? <p className='er-status' role='status'><span>{note}</span></p> : null}
         </div>
         {refreshNote !== '' ? <p className='er-status' role={refreshNote === 'Models refreshed.' ? 'status' : 'alert'}>{refreshNote}</p> : null}
-      </section>
-      <section className='er-models__card' aria-label='AI Gateway connection'>
-        <div className='er-models__head'>
-          <h2 className='er-models__title'>AI Gateway</h2>
-          <p className='er-status'><span>External model routing is {gatewayId === '' ? 'not configured' : 'configured'}.</span></p>
-        </div>
+        <ModelProviders drafts={providerDrafts} onChange={(d) => { setProviderDrafts(d); setProviderFieldErrors({}); }} quotas={providerQuotas} fieldErrors={providerFieldErrors} disabled={savingAll} />
+        {providersError !== '' ? <p className='er-status er-status--error' role='alert'><span>{providersError}</span></p> : null}
+
         {gatewayHelpHref !== null ? <a className='er-button er-button--text' href={gatewayHelpHref} target='_blank' rel='noopener noreferrer'>Open Gateway integrations</a> : null}
         <details className='er-models__details'>
           <summary>Advanced provider settings</summary>
-          <label className='er-models__row'>
+          <label className='er-field er-models__row'>
             <span className='er-models__label'>Gateway ID<span className='er-models__help'>Blank disables external routing.</span></span>
             <input value={gatewayId} onChange={(e) => setGatewayId(e.currentTarget.value)} autoComplete='off' />
           </label>
@@ -241,10 +287,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
             <input type='checkbox' checked={allowGateway} onChange={(e) => setAllowGateway(e.currentTarget.checked)} />
             <span className='er-models__checktext'>Allow external model requests from this workspace.</span>
           </label>
-          {gatewayId !== '' ? <p className='er-status'><span>Gateway {gatewayId} · credential alias {gatewayAlias} · saved configuration does not verify provider usability.</span></p> : null}
-          <div className='er-models__actions'>
-            <button className='er-button er-button--primary' type='button' disabled={gatewaySaving || (gatewayId.trim() !== '' && !allowGateway)} onClick={() => void saveGateway()}>{gatewaySaving ? 'Saving…' : 'Save connection'}</button>
-          </div>
+          {gatewayId !== '' ? <p className='er-status'><span>Saved connection does not verify provider usability.</span></p> : null}
         </details>
         {gatewayNote !== '' ? <p className='er-status' role='status'><span>{gatewayNote}</span></p> : null}
       </section>

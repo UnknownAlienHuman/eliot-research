@@ -11,7 +11,22 @@ export interface OutlineItem { label: string; start: number; end: number; }
 const FILE_LIMIT = 25 * 1024 * 1024;
 const POLL_MS = 3000;
 const tone = (s: string) => (s === "readable" ? "ok" : s === "readable_with_warnings" ? "warn" : s === "pending" ? "busy" : s === "needs_conversion" ? "paused" : "bad");
-const stateLabel = (s: string) => (s === "readable" ? "Readable" : s === "readable_with_warnings" ? "Readable with warnings" : s === "pending" ? "Converting" : s === "needs_conversion" ? "Needs readable text" : s === "failed" ? "Conversion failed" : s || "Unknown");
+function stateLabel(s: string): string {
+  switch (s) {
+    case "readable": return "Readable";
+    case "readable_with_warnings": return "Readable with warnings";
+    case "pending": return "Converting";
+    case "needs_conversion": return "Needs readable text";
+    case "failed": return "Conversion failed";
+    case "queued": return "Waiting to upload";
+    case "uploading": return "Uploading";
+    case "done": return "Uploaded";
+    case "error": return "Upload failed";
+    case "duplicate": return "Already in Library";
+    default: return "Unknown";
+  }
+}
+const sourceKindLabels: Record<Source["kind"], string> = { file: "File", url: "Web page", text: "Pasted text" };
 function formatRevisionDate(createdAt: number): string {
   if (!Number.isFinite(createdAt)) return "";
   const d = new Date(createdAt);
@@ -116,14 +131,14 @@ export function Projects() {
     <section className="er-lib" aria-labelledby="er-lib-projects">
       <header className="er-lib__head"><h1 className="er-lib__title" id="er-lib-projects">Projects</h1><p className="er-lib__hint">Create a project, then open its sources.</p></header>
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
-      <form className="er-lib__form" onSubmit={(e) => { e.preventDefault(); void create(); }}>
+      <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void create(); }}>
         <label className="er-field__label" htmlFor="er-lib-new-title">New project</label><input id="er-lib-new-title" value={title} onChange={(e) => setTitle(e.currentTarget.value)} placeholder="Paper trail" maxLength={200} />
         <button className="er-button er-button--primary" type="submit" disabled={busy || !title.trim()}>Create</button>
       </form>
-      {projects.length === 0 ? <p className="er-lib__empty">No projects yet. Create the first one above.</p> : (
+      {projects.length === 0 ? <p className="er-card er-lib__empty">No projects yet. Create the first one above.</p> : (
         <ul className="er-lib__list">{projects.map((p) => (
           <li className="er-lib__row" key={p.id}>
-            <span className="er-lib__row-main"><MaterialSymbol name="home" /><span><Link className="er-lib__row-title" to={"/p/" + encodeURIComponent(p.id) + "/sources"}>{p.title}</Link>{p.archivedAt !== null ? <span className="er-lib__badge">archived</span> : null}{p.description ? <span className="er-lib__row-meta">{p.description}</span> : null}</span></span>
+            <span className="er-lib__row-main"><MaterialSymbol name="home" /><span><Link className="er-lib__row-title" to={"/p/" + encodeURIComponent(p.id) + "/sources"}>{p.title}</Link>{p.archivedAt !== null ? <span className="er-chip er-lib__badge">Archived</span> : null}{p.description ? <span className="er-lib__row-meta">{p.description}</span> : null}</span></span>
             <span className="er-lib__actions">{editing?.id === p.id ? (<>
               <input aria-label="Project title" value={editing.title} maxLength={200} onChange={(e) => setEditing({ id: p.id, title: e.currentTarget.value })} />
               <button className="er-button er-button--tonal" type="button" disabled={!editing.title.trim()} onClick={() => void patch(p.id, { title: editing.title.trim() })}>Save</button>
@@ -168,7 +183,7 @@ export function Library() {
   async function uploadOne(file: File, index: number): Promise<void> {
     const mark = (p: Partial<UploadRow>) => setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...p } : r)));
     mark({ state: "uploading" });
-    if (file.size > FILE_LIMIT) { mark({ state: "error", detail: "Larger than the 25 MiB file cap." }); return; }
+    if (file.size > FILE_LIMIT) { mark({ state: "error", detail: "This file is too large. Choose a smaller file." }); return; }
     const form = new FormData();
     form.append("file", file, file.name);
     let res: Response;
@@ -183,7 +198,7 @@ export function Library() {
       mark({ state: "duplicate", detail: "Exact duplicate of " + (dupTitle || file.name) + ".", duplicateId: dupId, duplicateTitle: dupTitle });
       return;
     }
-    mark(res.ok ? { state: "done", detail: "Uploaded; conversion runs on the server." } : { state: "error", detail: await apiErrorMessage(res) });
+    mark(res.ok ? { state: "done" } : { state: "error", detail: await apiErrorMessage(res) });
   }
   async function uploadMany(files: readonly File[]) {
     if (!projectId || uploading || files.length === 0) return;
@@ -233,29 +248,30 @@ export function Library() {
   if (sources === undefined) return <LoadGate text="Loading sources…" failure={failure} onRetry={() => void load()} />;
   return (
     <section className="er-lib" aria-labelledby="er-lib-sources">
-      <header className="er-lib__head"><div className="er-lib__actions"><Link className="er-button er-button--text" to="/">Projects</Link><Link className="er-button er-button--text" to={'/p/' + encodeURIComponent(projectId ?? '') + '/overview'}>Project overview</Link></div><h1 className="er-lib__title" id="er-lib-sources">Library</h1><p className="er-lib__hint">Pick many files at once: each uploads alone, two at a time. Lists and reads never start paid work.</p></header>
+      <header className="er-lib__head"><div className="er-lib__actions"><Link className="er-button er-button--text" to="/">Projects</Link><Link className="er-button er-button--text" to={'/p/' + encodeURIComponent(projectId ?? '') + '/overview'}>Project overview</Link></div><h1 className="er-lib__title" id="er-lib-sources">Library</h1><p className="er-lib__hint">Add files, text or a web page to this project.</p></header>
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
-      <div className="er-lib__drop"><label htmlFor="er-lib-files">Choose files (25 MiB cap each, one request per file)</label><input id="er-lib-files" type="file" multiple disabled={uploading} onChange={(e) => { void uploadMany(Array.from(e.currentTarget.files ?? [])); e.currentTarget.value = ""; }} /></div>
-      {rows.length > 0 ? (<ul className="er-lib__progress" aria-live="polite">{rows.map((r, i) => (
-        <li key={r.name + i}><span>{r.name} — {r.state}{r.detail ? ": " + r.detail : ""}</span>{r.state === "duplicate" && r.duplicateId ? <button className="er-button er-button--tonal" type="button" onClick={() => void attach(r.duplicateId ?? "")}>Attach existing{r.duplicateTitle ? " (" + r.duplicateTitle + ")" : ""}</button> : null}</li>))}
+      <div className="er-card er-field er-lib__drop"><label htmlFor="er-lib-files">Choose files</label><input id="er-lib-files" type="file" multiple disabled={uploading} onChange={(e) => { void uploadMany(Array.from(e.currentTarget.files ?? [])); e.currentTarget.value = ""; }} /></div>
+      {rows.length > 0 ? (<ul className="er-card er-lib__progress" aria-live="polite">{rows.map((r, i) => (
+        <li key={r.name + i}><span>{r.name} — {stateLabel(r.state)}{r.detail ? ": " + r.detail : ""}</span>{r.state === "duplicate" && r.duplicateId ? <button className="er-button er-button--tonal" type="button" onClick={() => void attach(r.duplicateId ?? "")}>Attach existing{r.duplicateTitle ? " (" + r.duplicateTitle + ")" : ""}</button> : null}</li>))}
       </ul>) : null}
-      <form className="er-lib__form" onSubmit={(e) => { e.preventDefault(); void submitText(); }}>
+      <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void submitText(); }}>
         <label className="er-field__label" htmlFor="er-lib-text-title">Pasted text title</label><input id="er-lib-text-title" value={textTitle} maxLength={200} onChange={(e) => setTextTitle(e.currentTarget.value)} placeholder="Meeting notes" />
         <label className="er-field__label" htmlFor="er-lib-text-body">Text</label><textarea id="er-lib-text-body" value={textBody} onChange={(e) => setTextBody(e.currentTarget.value)} placeholder="Paste source text here" />
         <button className="er-button er-button--tonal" type="submit" disabled={!textTitle.trim() || !textBody.trim()}>Save text</button>
       </form>
-      <form className="er-lib__form" onSubmit={(e) => { e.preventDefault(); void submitUrl(); }}>
+      <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void submitUrl(); }}>
         <label className="er-field__label" htmlFor="er-lib-url">Page URL (https only)</label><input id="er-lib-url" inputMode="url" value={url} onChange={(e) => setUrl(e.currentTarget.value)} placeholder="https://example.com/report" />
         <label className="er-field__label" htmlFor="er-lib-url-title">Title (optional)</label><input id="er-lib-url-title" value={urlTitle} maxLength={200} onChange={(e) => setUrlTitle(e.currentTarget.value)} />
         <button className="er-button er-button--tonal" type="submit" disabled={!url.trim()}>Add URL</button>
       </form>
-      {sources.length === 0 ? <p className="er-lib__empty">No sources in this project yet.</p> : (
+      {sources.length === 0 ? <p className="er-card er-lib__empty">No sources in this project yet.</p> : (
         <ul className="er-lib__list">{sources.map((s) => (
           <li className="er-lib__row" key={s.id}>
-            <span className="er-lib__row-main"><MaterialSymbol name={s.readableState === "failed" ? "error" : "info"} /><span><Link className="er-lib__row-title" to={"/p/" + encodeURIComponent(projectId ?? "") + "/source/" + encodeURIComponent(s.id) + "?revisionId=" + encodeURIComponent(s.currentRevisionId ?? s.revisionId)}>{s.title}</Link><span className="er-lib__row-meta">{s.kind} · <span className="er-lib__badge" data-tone={tone(s.readableState)}>{stateLabel(s.readableState)}</span></span>{s.warningSummary ? <span className="er-lib__row-meta">{s.warningSummary}</span> : null}{s.error ? <span className="er-lib__error">{s.error}</span> : null}</span></span>
+            <span className="er-lib__row-main"><MaterialSymbol name={s.readableState === "failed" ? "error" : "info"} /><span><Link className="er-lib__row-title" to={"/p/" + encodeURIComponent(projectId ?? "") + "/source/" + encodeURIComponent(s.id) + "?revisionId=" + encodeURIComponent(s.currentRevisionId ?? s.revisionId)}>{s.title}</Link><span className="er-lib__row-meta"><span className="er-chip er-lib__badge" data-tone={tone(s.readableState)}>{stateLabel(s.readableState)}</span></span>{s.warningSummary ? <span className="er-lib__row-meta">{s.warningSummary}</span> : null}{s.error ? <span className="er-lib__error">{s.error}</span> : null}</span></span>
             <details className="er-lib__facts"><summary>Details</summary><div className="er-lib__facts-content">
-              {s.originalFilename ? <p>Original file: {s.originalFilename}</p> : <p>Saved {s.kind} source.</p>}
-              <p><a href={"/api/revisions/" + encodeURIComponent(s.currentRevisionId ?? s.revisionId) + "/original"}>Download original</a> · Opens the current revision in the Reader.</p>
+              <p>{sourceKindLabels[s.kind]}</p>
+              {s.originalFilename ? <p>Original file: {s.originalFilename}</p> : null}
+              <p><a href={"/api/revisions/" + encodeURIComponent(s.currentRevisionId ?? s.revisionId) + "/original"}>Download original</a></p>
             </div></details>
           </li>))}
         </ul>)}
@@ -353,32 +369,32 @@ export function Reader() {
   if (!source) return <LoadGate text="Opening the source…" failure={failure} onRetry={() => void reloadMeta()} />;
   return (
     <section className="er-lib" aria-labelledby="er-lib-reader">
-      <header className="er-lib__head"><Link className="er-button er-button--text" to={"/p/" + encodeURIComponent(projectId ?? "") + "/sources"}>Sources</Link><h1 className="er-lib__title" id="er-lib-reader">{source.title}</h1><p className="er-lib__hint"><span className="er-lib__badge" data-tone={tone(activeState)}>{stateLabel(activeState)}</span> · Passage links stay on their selected revision.</p></header>
+      <header className="er-lib__head"><Link className="er-button er-button--text" to={"/p/" + encodeURIComponent(projectId ?? "") + "/sources"}>Sources</Link><h1 className="er-lib__title" id="er-lib-reader">{source.title}</h1><p className="er-lib__hint"><span className="er-chip er-lib__badge" data-tone={tone(activeState)}>{stateLabel(activeState)}</span></p></header>
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
-      {revisionId && !rev ? <p className="er-lib__error" role="alert">This revision is not part of this source. Clear the revision to open the newest readable text.</p> : null}
+      {revisionId && !rev ? <p className="er-lib__error" role="alert">This revision is not available for this source. Open its current revision from the Library.</p> : null}
       {rev?.warningSummary ? <p className="er-lib__row-meta">{rev.warningSummary}</p> : null}
       <details className="er-lib__facts"><summary>Details</summary><div className="er-lib__facts-content">
+        <p>{sourceKindLabels[source.kind]}</p>
         {source.originalFilename ? <p>Original file: {source.originalFilename}</p> : null}
         {activeRevision ? <p><a href={"/api/revisions/" + encodeURIComponent(activeRevision) + "/original"}>Download original</a></p> : null}
         {rev ? <p>{revisionLabel(rev, currentId)}.</p> : null}
-        {hasRange && rev ? <p>Selected passage in {revisionLabel(rev, currentId)}.</p> : null}
-        {revisions.length > 1 ? <div><p><label className="er-field__label" htmlFor="er-lib-revision">Revision</label></p><select id="er-lib-revision" value={activeRevision} onChange={(e) => { const id = e.currentTarget.value; if (id) setParams({ revisionId: id }); }}>{revisions.map((r) => <option key={r.id} value={r.id}>{revisionLabel(r, currentId)}</option>)}</select></div> : null}
+        {revisions.length > 1 ? <div className="er-field"><label className="er-field__label" htmlFor="er-lib-revision">Revision</label><select id="er-lib-revision" value={activeRevision} onChange={(e) => { const id = e.currentTarget.value; if (id) setParams({ revisionId: id }); }}>{revisions.map((r) => <option key={r.id} value={r.id}>{revisionLabel(r, currentId)}</option>)}</select></div> : null}
       </div></details>
-      {hasRange ? (<div className="er-lib__excerpt" role="note"><p>Selected passage from {source.title}.</p>{excerpt ? <pre>{excerpt}</pre> : <p className="er-lib__error">This passage could not be opened in the loaded text. Clear it and choose another passage.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(activeRevision)}>Clear passage</Link></div>) : null}
+      {hasRange ? (<div className="er-card er-field er-lib__excerpt" role="note"><p>Selected passage from {source.title}.</p>{excerpt ? <pre>{excerpt}</pre> : <p className="er-lib__error">This passage could not be opened in the loaded text. Clear it and choose another passage.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(activeRevision)}>Clear passage</Link></div>) : null}
       <div className="er-lib__reader">
         <nav className="er-lib__outline" aria-label="Outline"><h2>Outline</h2>
-          {!textReady || outline.length === 0 ? <p className="er-lib__hint">No outline for this revision.</p> : (<ul className="er-lib__outline-list">{outline.map((b, i) => (<li key={b.start + ":" + b.end + ":" + i}><Link to={"?revisionId=" + encodeURIComponent(activeRevision) + "&start=" + b.start + "&end=" + b.end}>{b.label}</Link></li>))}</ul>)}
+          {!textReady || outline.length === 0 ? <p className="er-lib__hint">No outline available.</p> : (<ul className="er-lib__outline-list">{outline.map((b, i) => (<li key={b.start + ":" + b.end + ":" + i}><Link to={"?revisionId=" + encodeURIComponent(activeRevision) + "&start=" + b.start + "&end=" + b.end}>{b.label}</Link></li>))}</ul>)}
         </nav>
         <div>
-          <div className="er-lib__actions"><button className="er-button er-button--tonal" type="button" onClick={copySelectionLink}>Copy link to selection</button>{activeRevision ? <a className="er-button er-button--text" href={"/api/revisions/" + encodeURIComponent(activeRevision) + "/original"}>Original</a> : null}{copied ? <span className="er-lib__hint" role="status">Link copied; revision is pinned.</span> : null}</div>
-          <form className="er-lib__form" onSubmit={(e) => { e.preventDefault(); void replaceFile(); }}>
-            <label className="er-field__label" htmlFor="er-lib-replace">Replace with file (new revision of this source)</label><input id="er-lib-replace" type="file" onChange={(e) => setReplace(e.currentTarget.files?.[0] ?? null)} />
+          <div className="er-lib__actions"><button className="er-button er-button--tonal" type="button" onClick={copySelectionLink}>Copy link to selection</button>{activeRevision ? <a className="er-button er-button--text" href={"/api/revisions/" + encodeURIComponent(activeRevision) + "/original"}>Original</a> : null}{copied ? <span className="er-lib__hint" role="status">Link copied.</span> : null}</div>
+          <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void replaceFile(); }}>
+            <label className="er-field__label" htmlFor="er-lib-replace">Replace source file</label><input id="er-lib-replace" type="file" onChange={(e) => setReplace(e.currentTarget.files?.[0] ?? null)} />
             <button className="er-button er-button--tonal" type="submit" disabled={!replace}>Upload new revision</button>
           </form>
-          {activeState === "pending" ? <p className="er-lib__hint" role="status">Converting… this view refreshes on its own.</p> : null}
+          {activeState === "pending" ? <p className="er-lib__hint" role="status">Converting…</p> : null}
           {activeState === "needs_conversion" ? <p className="er-lib__hint" role="note">The original is saved. Upload a readable Markdown file to read this source.</p> : null}
           {activeState === "failed" ? <p className="er-lib__error" role="alert">{rev?.error ?? source.error ?? "Conversion failed."}</p> : null}
-          <pre className="er-lib__text" ref={preRef}>{textReady ? text : ""}</pre>
+          <pre className="er-card er-lib__text" ref={preRef}>{textReady ? text : ""}</pre>
         </div>
       </div>
       {(activeState === "readable" || activeState === "readable_with_warnings") && activeRevision ? <SourceUnderstanding key={(sourceId ?? "") + activeRevision} projectId={projectId ?? ""} sourceId={sourceId ?? ""} revisionId={activeRevision} sourceTitle={source.title} /> : null}
