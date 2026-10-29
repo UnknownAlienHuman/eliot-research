@@ -8,6 +8,9 @@ import type { AnswerWarning } from "./shared/api.js";
  * and persistent `[R<full-revision-uuid>:<block>]` labels outside fenced and inline
  * code resolve against the frozen source scope. Unknown, out-of-scope,
  * malformed, ambiguous, out-of-range and bare [S<N>] labels are removed and counted.
+ * A comma-separated group of full atomic labels canonicalizes to adjacent
+ * individual references only when every atom resolves against the same frozen
+ * maps; a group with any invalid atom is removed and counted once.
  * Offsets come from the block map only; nothing is fabricated.
  * Each citation keeps its sourceId and the label token as emitted in the
  * returned text, so the reader matches c.label (or the persistent label
@@ -142,6 +145,12 @@ function parseToken(token: string, maps: ScopeMaps): ParsedLabel | undefined {
   }
   return undefined;
 }
+/** Comma-separated groups of full atomic labels (for example `[S9:26, S9:27]`); undefined for single tokens. Each atom must be a full label: no implied `[S1:1,2]` shorthand. */
+function splitGroupToken(token: string): string[] | undefined {
+  const inner = token.slice(1, -1);
+  if (!inner.includes(",")) return undefined;
+  return inner.split(",").map((part) => `[${part.trim()}]`);
+}
 
 function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean): ResolvedAnswer {
   const maps = scopeMaps(sources);
@@ -149,7 +158,7 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
   const inline = inlineCodeRanges(answer, fences);
   const code = [...fences, ...inline].sort((a, b) => a.start - b.start);
   const inside = (at: number): boolean => code.some((range) => at >= range.start && at < range.end);
-  const seen = new Set<string>();
+  const seen = new Map<string, string>();
   const citations: Citation[] = [];
   const parts: string[] = [];
   let last = 0;
@@ -160,9 +169,15 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
     const at = match.index ?? -1;
     if (at < 0 || inside(at)) continue;
     const token = match[0];
-    const parsed = parseToken(token, maps);
-    const source = parsed === undefined ? undefined : sources[parsed.sourceIndex];
-    if (parsed === undefined || source === undefined) {
+    const atoms = splitGroupToken(token) ?? [token];
+    const resolved: Array<{ parsed: ParsedLabel; source: LabelSource; atom: string }> = [];
+    for (const atom of atoms) {
+      const parsedAtom = parseToken(atom, maps);
+      const atomSource = parsedAtom === undefined ? undefined : sources[parsedAtom.sourceIndex];
+      if (parsedAtom === undefined || atomSource === undefined) break;
+      resolved.push({ parsed: parsedAtom, source: atomSource, atom });
+    }
+    if (resolved.length !== atoms.length) {
       invalidLabels += 1;
       if (invalidExamples.length < 8) {
         const sample = Array.from(token).slice(0, 160).join("");
@@ -175,23 +190,26 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
       last = at + token.length;
       continue;
     }
-    const outToken = rewriteCompact && token[1] === "S" ? `[R${source.revisionId}:${parsed.block}]` : token;
-    const key = `${source.revisionId}:${parsed.block}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      citations.push({
-        revisionId: source.revisionId,
-        sourceId: source.sourceId,
-        block: parsed.block,
-        start: parsed.start,
-        end: parsed.end,
-        sourceTitle: source.title,
-        deleted: false,
-        label: outToken,
-      });
-    }
     parts.push(answer.slice(last, at));
-    parts.push(outToken);
+    for (const { parsed, source, atom } of resolved) {
+      const key = `${source.revisionId}:${parsed.block}`;
+      const candidate = rewriteCompact && atom[1] === "S" ? `[R${source.revisionId}:${parsed.block}]` : atom;
+      const outToken = seen.get(key) ?? candidate;
+      if (!seen.has(key)) {
+        seen.set(key, outToken);
+        citations.push({
+          revisionId: source.revisionId,
+          sourceId: source.sourceId,
+          block: parsed.block,
+          start: parsed.start,
+          end: parsed.end,
+          sourceTitle: source.title,
+          deleted: false,
+          label: outToken,
+        });
+      }
+      parts.push(outToken);
+    }
     last = at + token.length;
   }
   parts.push(answer.slice(last));
