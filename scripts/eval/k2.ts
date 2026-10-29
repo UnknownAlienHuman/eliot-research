@@ -212,6 +212,18 @@ function journeyExpectedLimits(entry) {
   if (!Number.isSafeInteger(total)) return null;
   return { outputLimit: output, callTokenLimit: total };
 }
+function invalidEvidenceText(row) {
+  const samples = row && Array.isArray(row.invalidLabelExamples)
+    ? row.invalidLabelExamples.filter((s) => typeof s === 'string' && s.length > 0) : [];
+  const count = row && typeof row.invalidLabels === 'number' ? row.invalidLabels : null;
+  if (count === null) {
+    const seen = row && (typeof row.turnId === 'string' || row.answer !== null && row.answer !== undefined || row.model !== null && row.model !== undefined);
+    return seen ? 'invalidLabels UNKNOWN (no stored count available)' : 'skipped';
+  }
+  if (count === 0) return 'invalidLabels: 0';
+  return 'invalidLabels: ' + count + ' (unique samples: ' + (samples.length ? samples.join('; ') : 'none retained')
+    + '; complete original occurrences/positions unavailable)';
+}
 function assertJourneyStaticSelftests() {
   assert.equal(classifyStopOutcome({ state: 'partial', answer: 'A citation points at an exact passage. ', error: STOPPED_CAUSE }), 'stop-pass', 'Partial text with the exact owner-Stop cause must pass.');
   assert.equal(classifyStopOutcome({ state: 'cancelled', answer: '', error: STOPPED_CAUSE }), 'not-run', 'Cancelled before text is a separate NOT_RUN for streamed-partial coverage, not an overall pass.');
@@ -224,10 +236,15 @@ function assertJourneyStaticSelftests() {
   assert.equal(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: null }), null, 'Missing output metadata admits nothing.');
   assert.equal(journeyExpectedLimits({ contextTokens: null, maxOutputTokens: 131072, outputReserveTokens: 8192 }), null, 'Missing context metadata admits nothing.');
 }
+function assertInvalidEvidenceStaticSelftests() {
+  assert.equal(invalidEvidenceText({ turnId: 't1', invalidLabels: 17, invalidLabelExamples: ['[S9:26, S9:27]'] }), 'invalidLabels: 17 (unique samples: [S9:26, S9:27]; complete original occurrences/positions unavailable)', 'Occurrence count must not be arithmetically reduced by the deduplicated sample set.');
+  assert.equal(invalidEvidenceText({ turnId: 't1', invalidLabels: null, invalidLabelExamples: [] }), 'invalidLabels UNKNOWN (no stored count available)', 'A missing stored count must be explicit.');
+}
 assertC2StaticSelftests();
 assertDispatchStopStaticSelftests();
 assertO8StaticSelftests();
 assertJourneyStaticSelftests();
+assertInvalidEvidenceStaticSelftests();
 if (staticSelftest) {
   console.log('K2 evaluator static selftests passed.');
   process.exit(0);
@@ -360,6 +377,8 @@ async function writeCompare(rows, metadata) {
     if (Array.isArray(row.hardFailures)) checkParts.push(...row.hardFailures);
     if (row.reason && !row.skipped) checkParts.push(row.reason);
     if (row.skipped) checkParts.push('skipped: ' + row.skipped);
+    const invalidEvidence = invalidEvidenceText(row);
+    if (invalidEvidence !== 'skipped') checkParts.push(invalidEvidence);
     const factText = checkParts.length ? checkParts.join('; ') : 'skipped';
     const rangeText = Array.isArray(row.citationRanges) && row.citationRanges.length
       ? row.citationRanges.map((r) => r.label + ' ' + r.revisionId + ':' + r.block + '[' + r.start + ',' + r.end + ') ' + String(r.passed === true) + (r.skipped ? ' skipped' : '') + (r.reason ? ' (' + r.reason + ')' : '') + (r.quote ? ' quote=' + r.quote : '')).join('<br>')
@@ -1456,6 +1475,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
       tokenLimit: turn?.tokenLimit ?? null,
     },
     invalidLabelExamples: Array.isArray(turn?.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [],
+    invalidLabels: typeof turn?.invalidLabels === 'number' ? turn.invalidLabels : null,
     failures: [],
   };
   const failures = row.failures;
