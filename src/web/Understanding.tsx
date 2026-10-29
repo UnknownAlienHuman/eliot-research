@@ -185,7 +185,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
           <li key={c.id} className='er-card er-und__claim'>
             <p className='er-und__meta'><span>{c.kind}</span>{c.ambiguous ? <span className='er-chip er-und__badge'>ambiguous match</span> : null}</p>
             <p className='er-und__statement'>{c.statement}</p>
-            {c.valueText !== null && c.valueText !== '' ? <p className='er-und__meta'><span>{c.valueText}{c.unit !== null && c.unit !== '' ? ' ' + c.unit : ''}</span>{c.conditions !== null && c.conditions !== '' ? <span>{c.conditions}</span> : null}</p> : null}
+            {c.valueText !== null && c.valueText !== '' ? <p className='er-und__meta'><span>{c.valueText}{c.unit !== null && c.unit.trim() !== '' && !c.valueText.trim().endsWith(c.unit.trim()) ? ' ' + c.unit : ''}</span>{c.conditions !== null && c.conditions !== '' ? <span>{c.conditions}</span> : null}</p> : null}
             {(c.task ?? '') !== '' || (c.metric ?? '') !== '' || (c.dataset ?? '') !== '' ? <p className='er-und__meta'><span>{[c.task, c.metric, c.dataset].filter((x) => x !== null && x !== '').join(' · ')}</span></p> : null}
             <blockquote className='er-und__quote'>{c.quote}</blockquote>
             <Link className='er-und__cite er-citation' to={'/p/' + encodeURIComponent(projectId) + '/source/' + encodeURIComponent(sourceId) + '?revisionId=' + encodeURIComponent(view.revisionId) + '&start=' + c.start + '&end=' + c.end}>{referenceByBlock.get(c.block)?.label ?? 'Open quote · ' + sourceTitle}</Link>
