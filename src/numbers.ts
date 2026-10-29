@@ -3,12 +3,14 @@ const DIGIT_RUN_RE = /[0-9]+/g;
 const NUMERIC_TOKEN_RE = /[0-9]+(?:[.,][0-9]+)*(?:[eE][+\-\u2212]?[0-9]+)?/g;
 const PERCENT_NUMBER_RE = /(?<![\p{N}.,+^\-\u2212])[+\-\u2212]?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+)(?:[eE][+\-\u2212]?[0-9]+)?/gu;
 const PERCENT_UNIT_RE = /^(?:\s|~|\\[,;:! ])*\\?%(?![\p{N}_%])/u;
+const UNSUPPORTED_PERCENT_FORMAT = "unsupported-percentage-format";
 const COMPOUND_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])(?<mantissa>[+\-\u2212]?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+))[ \t\u00a0\u2009]*(?:[×·*]|times)[ \t\u00a0\u2009]*10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
 const SINGLE_NUMBER_RE = /^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 // Bare 10^N / 10-superscript without a mantissa x (for example 10^-8):
 // one unambiguous scientific quantity, not two numbers. Shares the
 // same power suffix logic as compound powers; no paper pattern is added.
 const BARE_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
+const SIGNED_BARE_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])[+\-\u2212]10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
 
 function quoteRuns(text: string): Set<string> {
   return new Set(text.match(DIGIT_RUN_RE) ?? []);
@@ -32,6 +34,8 @@ const SUPER_DIGITS: Readonly<Record<string, string>> = {
 };
 
 interface CompoundPowerToken { readonly value: string; readonly start: number; readonly end: number }
+interface PercentageToken { readonly value: string; readonly percentIndex: number }
+interface OpaquePercentLexeme { readonly value: string; readonly boundariesProven: boolean }
 
 function compoundPowerTokens(text: string): CompoundPowerToken[] {
   const tokens: CompoundPowerToken[] = [];
@@ -72,34 +76,179 @@ function withoutCompoundPowers(text: string, tokens: readonly CompoundPowerToken
   return parts.join("");
 }
 
-function barePowerTokens(text: string): CompoundPowerToken[] {
+function barePowerTokens(text: string, pattern: RegExp = BARE_POWER_RE): CompoundPowerToken[] {
   const tokens: CompoundPowerToken[] = [];
-  for (const match of text.matchAll(BARE_POWER_RE)) {
+  for (const match of text.matchAll(pattern)) {
     const start = match.index ?? 0;
     tokens.push({ value: match[0], start, end: start + match[0].length });
   }
   return tokens;
 }
 
-function percentageTokens(text: string): Set<string> {
-  const values = new Set<string>();
-  let remaining = text;
-  for (const tokenize of [compoundPowerTokens, barePowerTokens]) {
-    const tokens = tokenize(remaining);
-    for (const token of tokens) {
-      if (PERCENT_UNIT_RE.test(remaining.slice(token.end))) values.add(token.value + "%");
-    }
-    remaining = withoutCompoundPowers(remaining, tokens);
+function signedBarePowerTokens(text: string): CompoundPowerToken[] {
+  return barePowerTokens(text, SIGNED_BARE_POWER_RE);
+}
+
+function structuralPowerTokens(text: string): CompoundPowerToken[] {
+  const tokens: CompoundPowerToken[] = [];
+  for (const candidate of [
+    ...compoundPowerTokens(text),
+    ...signedBarePowerTokens(text),
+    ...barePowerTokens(text),
+  ]) {
+    if (tokens.some((token) => candidate.start < token.end && token.start < candidate.end)) continue;
+    tokens.push(candidate);
   }
-  for (const match of remaining.matchAll(PERCENT_NUMBER_RE)) {
-    if (!PERCENT_UNIT_RE.test(remaining.slice((match.index ?? 0) + match[0].length))) continue;
+  return tokens.sort((left, right) => left.start - right.start);
+}
+
+function normalizePercentMagnitude(magnitude: string): string {
+  const leadingZero = magnitude.startsWith(".") ? "0" + magnitude : magnitude;
+  const normalized = [...decimalTokens(leadingZero)][0] ?? leadingZero;
+  if (/[eE]/u.test(normalized) || !/^\d+\.\d+$/u.test(normalized)) return normalized;
+  return normalized.replace(/0+$/u, "").replace(/\.$/u, "");
+}
+
+function percentageTokens(text: string): PercentageToken[] {
+  const tokens: PercentageToken[] = [];
+  const powerTokens = structuralPowerTokens(text);
+  for (const token of powerTokens) {
+    const unit = PERCENT_UNIT_RE.exec(text.slice(token.end));
+    if (unit) {
+      tokens.push({
+        value: token.value.replace(/\u2212/gu, "-") + "%",
+        percentIndex: token.end + unit[0].indexOf("%"),
+      });
+    }
+  }
+  for (const match of text.matchAll(PERCENT_NUMBER_RE)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (powerTokens.some((token) => start < token.end && token.start < end)) continue;
+    const unit = PERCENT_UNIT_RE.exec(text.slice(end));
+    if (!unit) continue;
     const number = match[0].replace("\u2212", "-");
     const sign = /^[+-]/.exec(number)?.[0] ?? "";
     const magnitude = number.slice(sign.length);
-    const normalized = [...decimalTokens(magnitude)][0] ?? magnitude;
-    values.add(sign + normalized + "%");
+    const normalized = normalizePercentMagnitude(magnitude);
+    tokens.push({ value: sign + normalized + "%", percentIndex: end + unit[0].indexOf("%") });
   }
-  return values;
+  return tokens;
+}
+
+function percentPrefixWithoutFormatting(prefix: string): string {
+  if (prefix.endsWith("\\")) prefix = prefix.slice(0, -1);
+  return prefix.replace(/(?:\s|~|\\[,;:! ])+$/u, "");
+}
+
+function inlineCodeContentAt(text: string, percentIndex: number): { start: number; end: number } | null {
+  let openingStart = -1;
+  let openingLength = 0;
+  for (let cursor = 0; cursor < text.length;) {
+    if (text[cursor] !== "`") {
+      cursor += 1;
+      continue;
+    }
+    let runEnd = cursor + 1;
+    while (runEnd < text.length && text[runEnd] === "`") runEnd += 1;
+    const runLength = runEnd - cursor;
+    if (openingStart < 0) {
+      openingStart = cursor;
+      openingLength = runLength;
+    } else if (runLength === openingLength) {
+      if (openingStart + openingLength <= percentIndex && percentIndex < cursor) {
+        return { start: openingStart + openingLength, end: cursor };
+      }
+      openingStart = -1;
+      openingLength = 0;
+    }
+    cursor = runEnd;
+  }
+  return null;
+}
+
+function isOpenDelimiter(char: string): boolean {
+  return char === "(" || char === "[" || char === "{";
+}
+
+function isMatchingDelimiter(open: string, close: string): boolean {
+  return (open === "(" && close === ")") || (open === "[" && close === "]") || (open === "{" && close === "}");
+}
+
+function opaqueNumericPercentAt(text: string, percentIndex: number): OpaquePercentLexeme | null {
+  const code = inlineCodeContentAt(text, percentIndex);
+  if (code) {
+    const prefix = percentPrefixWithoutFormatting(text.slice(code.start, percentIndex));
+    if (!/\p{N}/u.test(prefix)) return null;
+    return { value: text.slice(code.start, code.end), boundariesProven: true };
+  }
+
+  const prefixEnd = percentPrefixWithoutFormatting(text.slice(0, percentIndex)).length;
+  const stack: string[] = [];
+  let start = 0;
+  for (let cursor = 0; cursor < prefixEnd; cursor += 1) {
+    const char = text[cursor] ?? "";
+    if (isOpenDelimiter(char)) stack.push(char);
+    else if (char === ")" || char === "]" || char === "}") {
+      const opening = stack[stack.length - 1];
+      if (opening === undefined || !isMatchingDelimiter(opening, char)) {
+        const prefix = percentPrefixWithoutFormatting(text.slice(start, prefixEnd));
+        return /\p{N}/u.test(prefix) ? { value: "", boundariesProven: false } : null;
+      }
+      stack.pop();
+    } else if (/\s/u.test(char) && stack.length === 0) start = cursor + 1;
+  }
+
+  const numericPrefix = percentPrefixWithoutFormatting(text.slice(start, prefixEnd));
+  if (!/\p{N}/u.test(numericPrefix)) return null;
+  let end = percentIndex + 1;
+  let boundariesProven = true;
+  const forwardStack = [...stack];
+  let stoppedAtBoundary = false;
+  for (let cursor = percentIndex + 1; cursor < text.length; cursor += 1) {
+    const char = text[cursor] ?? "";
+    if (isOpenDelimiter(char)) forwardStack.push(char);
+    else if (char === ")" || char === "]" || char === "}") {
+      const opening = forwardStack[forwardStack.length - 1];
+      if (opening === undefined || !isMatchingDelimiter(opening, char)) {
+        boundariesProven = false;
+        break;
+      }
+      forwardStack.pop();
+    } else if (/\s/u.test(char) && forwardStack.length === 0) {
+      stoppedAtBoundary = true;
+      break;
+    }
+    end = cursor + 1;
+  }
+  if (!stoppedAtBoundary && forwardStack.length > 0) boundariesProven = false;
+
+  let lexemeStart = start;
+  let beforeStart = lexemeStart - 1;
+  while (beforeStart >= 0 && /\s/u.test(text[beforeStart] ?? "")) beforeStart -= 1;
+  const sign = text[beforeStart] ?? "";
+  if (sign === "+" || sign === "-" || sign === "\u2212") {
+    const lineStart = Math.max(text.lastIndexOf("\n", beforeStart - 1), text.lastIndexOf("\r", beforeStart - 1)) + 1;
+    const markdownBullet = (sign === "+" || sign === "-")
+      && /^[ \t]*$/u.test(text.slice(lineStart, beforeStart))
+      && /\s/u.test(text[beforeStart + 1] ?? "");
+    if (!markdownBullet) lexemeStart = beforeStart;
+  }
+
+  const raw = text.slice(lexemeStart, end);
+  if (raw.includes("`")) boundariesProven = false;
+  return { value: raw.replace(/[.,;:!?]+$/u, ""), boundariesProven };
+}
+
+function numericPercentLexemes(text: string, accountedPercentIndexes: ReadonlySet<number> = new Set()): OpaquePercentLexeme[] {
+  const lexemes: OpaquePercentLexeme[] = [];
+  for (const match of text.matchAll(/%/gu)) {
+    const percentIndex = match.index ?? 0;
+    if (accountedPercentIndexes.has(percentIndex)) continue;
+    const lexeme = opaqueNumericPercentAt(text, percentIndex);
+    if (lexeme) lexemes.push(lexeme);
+  }
+  return lexemes;
 }
 
 /**
@@ -115,8 +264,18 @@ function percentageTokens(text: string): Set<string> {
 export function unsupportedNumbers(text: string, quote: string): string[] {
   if (typeof text !== "string" || typeof quote !== "string") return ["invalid-number-input"];
   if (text.includes("%")) {
-    const supportedPercentages = percentageTokens(quote);
-    const percentages = [...percentageTokens(text)].filter((token) => !supportedPercentages.has(token));
+    const requestedPercentages = percentageTokens(text);
+    const supportedPercentages = new Set(percentageTokens(quote).map((token) => token.value));
+    const accountedPercentIndexes = new Set(requestedPercentages.map((token) => token.percentIndex));
+    // An unparsed numeric percent lexeme must not fall through to digit-only support.
+    const unparsedPercentLexemes = numericPercentLexemes(text, accountedPercentIndexes);
+    const quotedPercentLexemes = new Set(numericPercentLexemes(quote)
+      .filter((token) => token.boundariesProven)
+      .map((token) => token.value));
+    if (unparsedPercentLexemes.some((token) => !token.boundariesProven || !quotedPercentLexemes.has(token.value))) {
+      return [UNSUPPORTED_PERCENT_FORMAT];
+    }
+    const percentages = requestedPercentages.map((token) => token.value).filter((token) => !supportedPercentages.has(token));
     if (percentages.length > 0) return percentages;
   }
   const requestedPowers = compoundPowerTokens(text);

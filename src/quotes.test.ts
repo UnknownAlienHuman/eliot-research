@@ -1,4 +1,4 @@
-import { numbersSupported } from "./numbers.js";
+import { numbersSupported, unsupportedNumbers } from "./numbers.js";
 import { describe, expect, it } from "vitest";
 import { cleanDistillText, resolveQuoteBlock, resultStatement, splitDistillStatements, verifyClaims } from "./quotes.js";
 import type { CandidateClaim, VerifiedClaim } from "./quotes.js";
@@ -133,6 +133,29 @@ describe("verifyClaims", () => {
     expect(cleared.claims[0]).toMatchObject({ valueText: null, valueNumber: null, unit: null, conditions: "test split" });
   });
 
+  it("clears an unsupported percent unit from a non-result method without dropping its evidence", () => {
+    const statement = "The method counts 50 items.";
+    const text = "Intro.\n\n" + statement + "\n";
+    const blocks = [blockFor(1, text, "Intro."), blockFor(2, text, statement)];
+    const out = verifyClaims(text, blocks, [
+      claim({ kind: "method", quote: statement, block: 2, statement, valueText: "50", unit: "%" }),
+    ]);
+    expect(out.dropped).toEqual([]);
+    expect(out.clearedNumbers).toBe(1);
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0]).toMatchObject({
+      kind: "method",
+      statement,
+      quote: statement,
+      block: 2,
+      start: blocks[1]?.start,
+      end: blocks[1]?.end,
+      valueText: null,
+      valueNumber: null,
+      unit: null,
+    });
+  });
+
   it("rejects substring digit groups that are not whole runs", () => {
     const text = "Count.\n\nThere are 950 samples.\n";
     const sub = "There are 950 samples.";
@@ -250,8 +273,14 @@ describe("numbersSupported", () => {
     ["with 50% dropout", "Change 1e50%."],
     ["with 50% dropout", "Malformed 50%0."],
     ["dropout50%", "Training cost 0.50."],
-  ])("does not borrow a percentage from another complete quantity: %s / %s", (text, quote) => {
+    ["−10^8%", "10^8%"],
+    ["50%50", "50%"],
+    ["−10^{ 8}%", "10^{ 8}%"],
+  ])("rejects unsupported or incomplete percentage tokens: %s / %s", (text, quote) => {
     expect(numbersSupported(text, quote)).toBe(false);
+    if (text === "50%50" || text === "−10^{ 8}%") {
+      expect(unsupportedNumbers(text, quote)).toEqual(["unsupported-percentage-format"]);
+    }
   });
 
   it.each([
@@ -263,7 +292,12 @@ describe("numbersSupported", () => {
     ["−5,2%", "Change -5.2 %."],
     ["+1E−2%", "Change +1e-2\\%."],
     ["7.6×10⁹%", "Change 7.6×10^9\\%."],
-  ])("keeps complete signed percentage formats: %s", (value, quote) => {
+    ["−10^8%", "Change -10^8%."],
+    ["`100%10`", "Observed `100%10`."],
+    ["−10^{ 8}%", "Observed −10^{ 8}%."],
+    [".50%", "Observed 0.50%."],
+    ["50%", "Observed 50.0%."],
+  ])("keeps complete and source-exact percentage formats: %s", (value, quote) => {
     expect(numbersSupported(value, quote)).toBe(true);
   });
 

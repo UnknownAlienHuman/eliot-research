@@ -410,7 +410,11 @@ export function verifyClaims(
     let unit = candidate.unit;
     let valueNumber: number | null = null;
     if (valueText !== null && valueText !== undefined) {
-      if (!numbersSupported(valueText, verifiedText)) {
+      const scalarText = valueText.trim();
+      const scalarUnit = typeof unit === "string" && unit.trim() !== "" ? unit.trim() : null;
+      const scalar = scalarUnit === null || scalarText.endsWith(scalarUnit) ? scalarText
+        : scalarUnit === "%" ? scalarText + scalarUnit : scalarText + " " + scalarUnit;
+      if (!numbersSupported(scalar, verifiedText)) {
         valueText = null;
         unit = null;
         clearedNumbers += 1;
