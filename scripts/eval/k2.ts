@@ -697,10 +697,10 @@ if (process.argv.includes('--models-only')) {
       await page.goto(browserOrigin + '/p/' + projectId + '/source/' + sourceId);
       assert.equal((await modelsRead).status(), 200, 'Understanding model catalogue must load.');
       const understanding = page.getByRole('region', { name: 'Understanding', exact: true });
-      const details = understanding.locator('details.er-und__details');
-      if (await details.getAttribute('open') === null) await understanding.locator('details.er-und__details > summary').click();
+      await expect(understanding.locator('details.er-und__details')).toHaveCount(0);
       const select = understanding.getByRole('combobox', { name: 'Understanding model', exact: true });
       const sourceProvider = understanding.getByRole('combobox', { name: 'Understanding model: provider', exact: true });
+      await expect(select).toBeVisible();
       await expect(sourceProvider).toBeEnabled({ timeout: 30000 });
       for (const route of browserModelRoutes) {
         const parts = /^gateway:([^/]+)\/.+/.exec(route);

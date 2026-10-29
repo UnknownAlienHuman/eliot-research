@@ -35,16 +35,12 @@
 .er-lib__empty {
   margin: 0;
   min-height: var(--eliot-size-touch-target);
-  padding-inline: var(--eliot-space-group);
-  border-radius: var(--eliot-shape-large);
-  background: var(--eliot-color-group);
+  padding-block: 0;
   display: flex;
   align-items: center;
   color: var(--md-sys-color-on-surface-variant);
 }
 .er-lib__form {
-  display: grid;
-  gap: var(--eliot-space-block-control);
   justify-items: start;
   max-width: var(--eliot-type-reading-measure);
 }
@@ -66,12 +62,8 @@
 .er-lib__row-title { color: inherit; font-size: var(--eliot-type-body-large-size); overflow-wrap: anywhere; }
 .er-lib__row-meta { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); overflow-wrap: anywhere; }
 .er-lib__badge {
-  display: inline-block;
-  padding-inline: var(--eliot-space-block-control);
-  border-radius: var(--eliot-shape-full);
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
-  font-size: var(--eliot-type-label-medium-size);
 }
 .er-lib__badge[data-tone="bad"] { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 .er-lib__badge[data-tone="warn"], .er-lib__badge[data-tone="paused"] { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
@@ -89,19 +81,15 @@
   border-radius: var(--eliot-shape-medium);
   padding: var(--eliot-space-block-control) var(--eliot-space-gutter);
 }
-.er-lib__facts-content > div { display: grid; gap: var(--eliot-space-tight); min-width: 0; }
+.er-lib__facts-content > .er-field { gap: var(--eliot-space-tight); }
 .er-lib__revision-list { display: grid; gap: var(--eliot-space-tight); margin: 0; padding-inline-start: var(--eliot-space-group); }
 .er-lib__revision-list li { display: flex; flex-wrap: wrap; gap: var(--eliot-space-tight) var(--eliot-space-gutter); min-width: 0; }
 .er-lib__drop {
-  display: grid;
-  gap: var(--eliot-space-block-control);
   justify-items: start;
-  padding: var(--eliot-space-panel) var(--eliot-space-group);
   border: var(--eliot-divider-width) dashed var(--md-sys-color-outline);
   border-radius: var(--eliot-shape-extra-large);
-  background: var(--eliot-color-group);
 }
-.er-lib__progress { display: grid; gap: var(--eliot-space-tight); margin: 0; padding: var(--eliot-space-panel) var(--eliot-space-group); border-radius: var(--eliot-shape-large-increased); background: var(--eliot-color-group); list-style: none; }
+.er-lib__progress { display: grid; gap: var(--eliot-space-tight); margin: 0; border-radius: var(--eliot-shape-large-increased); list-style: none; }
 .er-lib__progress li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-tight) var(--eliot-space-panel); overflow-wrap: anywhere; }
 .er-lib__reader { display: grid; grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr); gap: var(--eliot-space-gutter); align-items: start; min-width: 0; }
 .er-lib__outline { display: grid; gap: var(--eliot-space-block-control); min-width: 0; }
@@ -110,9 +98,6 @@
 .er-lib__outline-list a { overflow-wrap: anywhere; }
 .er-lib__text {
   margin: 0;
-  padding: var(--eliot-space-panel) var(--eliot-space-group);
-  border-radius: var(--eliot-shape-large);
-  background: var(--eliot-color-group);
   max-width: var(--eliot-type-reading-measure);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -120,7 +105,7 @@
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
 }
-.er-lib__excerpt { display: grid; gap: var(--eliot-space-block-control); padding: var(--eliot-space-panel) var(--eliot-space-group); border-inline-start: var(--eliot-focus-width) solid var(--md-sys-color-primary); border-radius: var(--eliot-shape-large); background: var(--eliot-color-group); }
+.er-lib__excerpt { border-inline-start: var(--eliot-focus-width) solid var(--md-sys-color-primary); }
 .er-lib__excerpt p { margin: 0; overflow-wrap: anywhere; }
 .er-lib__excerpt pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--eliot-type-font-family-mono); }
 @media (max-width: 48rem) {

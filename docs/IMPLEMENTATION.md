@@ -584,6 +584,13 @@ Move the accepted Material 3 Expressive UI; do not redraw it. `src/web/ui/` owns
 font stacks, radii or timings outside tokens are defects. Move each feature with the contour that makes it live and
 replace legacy adapters rather than copying old runtime/query layers.
 
+Shared card, chip and labelled-field presentation lives in `src/web/ui/controls.css`; native elements keep their
+semantics and feature styles keep only their layout or distinct variants. The layout uses one 48rem breakpoint;
+reduced-motion and forced-colour queries remain accessibility preferences. Appearance is selected once in the header.
+The chat composer stays visible at the bottom of the reading pane while earlier answers scroll. Answer details show
+cited passages; token counts, timings and context/verification counters stay in API/eval diagnostics. Library and
+understanding show useful availability, progress and actionable failures without model routes or workflow machinery.
+
 Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:sourceId?start=&end=`; K2
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
 Every screen has loading, empty and actionable error states plus stale/paused where relevant. Use one Markdown renderer

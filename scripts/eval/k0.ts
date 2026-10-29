@@ -75,7 +75,7 @@ await asset.body?.cancel();
 const browser = await chromium.launch();
 const screenshots: string[] = [];
 try {
-  for (const width of [1440, 390]) {
+  for (const width of [1440, 768, 390]) {
     for (const theme of ["light", "dark"] as const) {
       // Browser contexts carry no Access headers; only the local Worker bypass
       // is available here. Node API requests remain origin-pinned above.
@@ -99,16 +99,17 @@ try {
       await page.reload();
       await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
       const nav = await primaryNavigation.boundingBox();
-      assert(nav && (width === 390 ? nav.y > 700 : nav.x < 100), "Rail/bottom navigation geometry changed.");
+      assert(nav && (width <= 768 ? nav.y > 700 : nav.x < 100), "Rail/bottom navigation geometry changed.");
       const settings = await primaryNavigation.locator('a[href="/settings"]').boundingBox();
       assert(settings && settings.width >= 48 && settings.height >= 48, "Navigation touch targets must be at least 48px.");
       await page.locator('summary[aria-label="Appearance"]').click();
+      await expect(page.getByRole("combobox", { name: "Appearance", exact: true, includeHidden: true })).toHaveCount(1);
       await page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true }).selectOption(theme === "light" ? "dark" : "light");
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "light" ? "dark" : "light");
-      await expect(page.getByRole("region", { name: "Workspace preferences", exact: true }).getByRole("combobox", { name: "Appearance", exact: true })).toHaveValue(theme === "light" ? "dark" : "light");
       await page.reload();
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "light" ? "dark" : "light");
       await page.locator('summary[aria-label="Appearance"]').click();
+      await expect(page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true })).toHaveValue(theme === "light" ? "dark" : "light");
       await page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true }).selectOption("system");
       await expect(page.locator("html")).not.toHaveAttribute("data-theme");
       await page.evaluate(() => document.fonts.load('16px "Google Sans"', "Исследования"));
@@ -123,6 +124,6 @@ try {
 latency.sort((a, b) => a - b);
 const p50 = latency[Math.floor(latency.length * 0.5)]?.toFixed(1);
 const p95 = latency[Math.ceil(latency.length * 0.95) - 1]?.toFixed(1);
-const report = `K0 actual Worker eval: PASS\nOrigin: ${origin}\nAPI p50/p95: ${p50}/${p95} ms (12 local samples)\nMaterial viewports/themes: 1440/390, light/dark\nScreenshots: ${screenshots.join(", ")}\nModel/search calls: 0; model/search tokens: 0 (no paid calls; no USD gate)\nCloudflare browser login and deployed owner token: ${headers["CF-Access-Client-Id"] ? "owner-token route exercised; browser login NOT_RUN" : "NOT_RUN (local bypass only)"}\n`;
+const report = `K0 actual Worker eval: PASS\nOrigin: ${origin}\nAPI p50/p95: ${p50}/${p95} ms (12 local samples)\nMaterial viewports/themes: 1440/768/390, light/dark\nScreenshots: ${screenshots.join(", ")}\nModel/search calls: 0; model/search tokens: 0 (no paid calls; no USD gate)\nCloudflare browser login and deployed owner token: ${headers["CF-Access-Client-Id"] ? "owner-token route exercised; browser login NOT_RUN" : "NOT_RUN (local bypass only)"}\n`;
 await writeFile(new URL("result.txt", output), report);
 process.stdout.write(report);

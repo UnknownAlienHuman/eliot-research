@@ -616,15 +616,17 @@ if (nativeOnly) {
             assert(visText.trim().length > 0, 'Reader visible text must be non-empty (' + c.name + ').');
             if (probeWords.length > 8) assert(visText.includes(probeWords.slice(0, 24)) || rbStoredText.includes(visText.slice(0, 24)), 'Reader must keep source-derived text (' + c.name + ').');
             if (rbU.state === 'partial') await pwexpect(page.getByText(/Partially understood|Partial understanding/i).first()).toBeVisible({ timeout: 15000 });
+            const understandingRegion = page.getByRole('region', { name: 'Understanding', exact: true });
+            await pwexpect(understandingRegion.locator('details.er-und__details')).toHaveCount(0);
+            await pwexpect(understandingRegion.getByRole('heading', { name: 'Verified claims', exact: true })).toBeVisible();
+            if (typeof rbU.error === 'string' && rbU.error !== '')
+              await pwexpect(understandingRegion.getByRole('alert').filter({ hasText: rbU.error })).toBeVisible();
+            if (rbU.canRecover === true)
+              await pwexpect(understandingRegion.getByRole('button', { name: 'Recheck saved output', exact: true })).toBeVisible();
             const factsBox = page.locator('details.er-lib__facts').first();
             if (await factsBox.count() > 0) {
               const factsOpen = await factsBox.evaluate((el) => (el as HTMLDetailsElement).open);
               if (!factsOpen) await factsBox.locator('summary').first().click();
-            }
-            const undBox = page.locator('details.er-und__details').first();
-            if (await undBox.count() > 0) {
-              const undOpen = await undBox.evaluate((el) => (el as HTMLDetailsElement).open);
-              if (!undOpen) await undBox.locator('summary').first().click();
             }
             if (hasGuide) {
               const guideLoc = page.locator('.er-und__guide').first();
@@ -656,14 +658,16 @@ if (nativeOnly) {
             }
             if (c.name === 'reader-1440-light') {
               const factsPanel = page.locator('.er-lib__facts-content').first();
-              const detailsPanel = page.locator('.er-und__details-content').first();
+              const understandingStatus = page.getByRole('region', { name: 'Understanding', exact: true }).getByRole('status').first();
               await pwexpect(factsPanel).toBeVisible();
-              await pwexpect(detailsPanel).toBeVisible();
+              await pwexpect(understandingStatus).toBeVisible();
               await pwexpect(factsPanel).toContainText(/\S/);
-              await pwexpect(detailsPanel).toContainText(/\S/);
+              await pwexpect(understandingStatus).toContainText(/\S/);
               const facts = await factsPanel.innerText();
-              const det = await detailsPanel.innerText();
-              firstMeta = facts + ' ' + det;
+              const controls = await understandingRegion.locator(':scope > .er-und__hint, :scope > .er-und__meta, :scope > .er-und__actions, :scope > .er-und__model-details').allInnerTexts();
+              firstMeta = facts + ' ' + controls.join(' ');
+              assert(!/workers-ai:|gateway:|bounded calls|reserved|tokens|wallms/i.test(controls.join(' ')), 'Understanding controls must omit service machinery, raw model routes, and verification counters.');
+              await pwexpect(page.getByRole('region', { name: 'Understanding', exact: true })).not.toContainText(/This attempt is terminal|re-queued automatically|Storage-only|Configured model:|Historical revision model:/i);
               if (hasClaims) {
                 const cite = page.locator('.er-und__claims .er-und__cite').first();
                 firstHref = await cite.getAttribute('href') || '';

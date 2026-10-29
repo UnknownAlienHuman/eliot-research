@@ -100,7 +100,7 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
           const quotaText = typeof quota === 'string' && quota !== '' ? quota : 'Quota unknown';
           const fieldError = fieldErrors[i];
           return (
-            <li key={i} className="er-providers__item">
+            <li key={i} className="er-card er-providers__item">
               <div className="er-providers__summary">
                 <h3 className="er-providers__id"><span>{d.id === '' ? 'Unnamed provider' : d.id}</span></h3>
                 <p className="er-providers__type"><span>{d.type === 'workers-ai' ? 'Workers AI (native)' : 'OpenAI compatible'}</span></p>
@@ -113,14 +113,14 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
               <details className="er-providers__details" open={d.isNew}>
                 <summary>Connection details</summary>
                 <div className="er-providers__fields">
-                  <label className="er-providers__row">
+                  <label className="er-field er-providers__row">
                     <span className="er-providers__label">Type</span>
                     <select value={d.type} disabled={disabled} onChange={(e) => update(i, { type: e.currentTarget.value as Draft['type'] })}>
                       <option value="workers-ai">Workers AI (native)</option>
                       <option value="openai-compatible">OpenAI compatible</option>
                     </select>
                   </label>
-                  <label className="er-providers__row">
+                  <label className="er-field er-providers__row">
                     <span className="er-providers__label">ID</span>
                     <input value={d.id} onChange={(e) => update(i, { id: e.currentTarget.value })} autoComplete="off" disabled={disabled || d.type === 'workers-ai'} aria-invalid={fieldError !== undefined} />
                   </label>
@@ -128,15 +128,15 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
                     <p className="er-status"><span>Native binding.</span></p>
                   ) : (
                     <>
-                      <label className="er-providers__row">
+                      <label className="er-field er-providers__row">
                         <span className="er-providers__label">Base URL<span className="er-providers__help">Provider HTTPS base URL, no keys.</span></span>
                         <input type="url" inputMode="url" value={d.baseUrl} onChange={(e) => update(i, { baseUrl: e.currentTarget.value })} placeholder="https://" autoComplete="off" disabled={disabled} aria-invalid={fieldError !== undefined} />
                       </label>
-                      <label className="er-providers__row">
+                      <label className="er-field er-providers__row">
                         <span className="er-providers__label">Gateway provider slug<span className="er-providers__help">Routing slug, e.g. custom-command-code. Not the Gateway ID.</span></span>
                         <input value={d.gatewaySlug} onChange={(e) => update(i, { gatewaySlug: e.currentTarget.value })} placeholder="custom-command-code" autoComplete="off" disabled={disabled} aria-invalid={fieldError !== undefined} />
                       </label>
-                      <label className="er-providers__row">
+                      <label className="er-field er-providers__row">
                         <span className="er-providers__label">Path prefix<span className="er-providers__help">Optional path prefix, e.g. v1. Blank for none.</span></span>
                         <input value={d.gatewayPath} onChange={(e) => update(i, { gatewayPath: e.currentTarget.value })} placeholder="v1" autoComplete="off" disabled={disabled} aria-invalid={fieldError !== undefined} />
                       </label>

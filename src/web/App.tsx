@@ -31,8 +31,7 @@ export function App() {
       </main>
     );
   }
-  const identity = me.data.actor.email
-    ?? (me.data.actor.authentication === "local" ? "Local development session" : "Owner service token");
+  const identity = me.data.actor.email ?? "Workspace owner";
   return (
     <Routes>
       <Route element={<Shell theme={theme} onThemeChange={setTheme} />}>
@@ -47,13 +46,8 @@ export function App() {
             <h1 id="workspace-heading" tabIndex={-1}>Settings</h1>
             <div className="er-shell-settings-list">
               <ModelSettings />
-              <section className="er-shell-settings-row er-shell-settings-row--preferences" aria-label="Workspace preferences">
+              <section className="er-shell-settings-row er-card" aria-label="Workspace identity">
                 <div><h2>Workspace</h2><p>{identity}</p></div>
-                <label>Appearance
-                  <select value={theme} onChange={(event) => setTheme(event.target.value as typeof theme)}>
-                    <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
-                  </select>
-                </label>
               </section>
             </div>
           </>

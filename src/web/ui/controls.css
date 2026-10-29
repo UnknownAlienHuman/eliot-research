@@ -1,8 +1,34 @@
 /*
  * Material 3 Expressive base looks for native controls: select (and its customizable popup),
- * textarea, text inputs, checkbox, radio, file input and disclosures. Every selector uses :where()
- * so it carries zero specificity and any feature class wins. Semantic tokens only.
+ * textarea, text inputs, checkbox, radio, file input and disclosures. Native-control selectors
+ * use :where() so feature classes win. Shared presentation uses the same semantic tokens.
  */
+
+/* ---- Shared card, badge and labelled-field presentation ---- */
+
+:where(.er-card) {
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large);
+  background: var(--eliot-color-group);
+}
+
+:where(.er-chip) {
+  display: inline-flex;
+  align-items: center;
+  padding-inline: var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-field {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
+  font-family: var(--eliot-type-font-family);
+  text-align: start;
+}
 
 /* ---- Native text controls: one filled-tonal Material look, zero specificity ---- */
 
