@@ -24,7 +24,7 @@ vi.mock("ai", async () => {
 vi.mock("../model-transport", async () => ({
   ...await vi.importActual<typeof ModelTransport>("../model-transport"),
   resolveModelTransport: vi.fn(),
-  modelFailure: () => "Unexpected model failure projection",
+  modelFailure: vi.fn(() => "Unexpected model failure projection"),
 }));
 vi.mock("../model-catalog", () => ({ discoverGatewayModels: vi.fn() }));
 vi.mock("../native-model-catalog", () => ({ discoverNativeModels: vi.fn() }));
@@ -34,7 +34,7 @@ vi.mock("../models", async () => ({
 }));
 
 import { NoObjectGeneratedError, generateText } from "ai";
-import { resolveModelTransport } from "../model-transport";
+import { modelFailure, resolveModelTransport } from "../model-transport";
 import { availableModels, requireAvailableModel, requireCatalogModel } from "../models";
 import { discoverGatewayModels } from "../model-catalog";
 import { discoverNativeModels } from "../native-model-catalog";
@@ -145,11 +145,18 @@ const forbiddenLookups = [requireAvailableModel, requireCatalogModel, availableM
 beforeEach(() => {
   vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation"));
   vi.mocked(resolveModelTransport).mockReset().mockRejectedValue(new Error("Fixture transport stopped before dispatch."));
+  vi.mocked(modelFailure).mockReset().mockReturnValue("Unexpected model failure projection");
   for (const lookup of forbiddenLookups) vi.mocked(lookup).mockReset().mockRejectedValue(new Error("Unexpected catalogue lookup"));
 });
 
-async function run(f: ReturnType<typeof fixture>) {
-  const stepDo = vi.fn(async (_name: string, _options: unknown, callback: () => Promise<unknown>) => callback());
+async function run(f: ReturnType<typeof fixture>, serializeErrors = false) {
+  const stepDo = vi.fn(async (_name: string, _options: unknown, callback: () => Promise<unknown>) => {
+    try { return await callback(); } catch (error) {
+      // eslint-disable-next-line preserve-caught-error -- Simulate Workflow serialization stripping the error class and cause.
+      if (serializeErrors && error instanceof Error) throw new Error(error.message);
+      throw error;
+    }
+  });
   await new DistillWorkflow({} as ExecutionContext, f.env).run(
     { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>,
     { do: stepDo } as unknown as WorkflowStep);
@@ -403,7 +410,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
     expect(resolveModelTransport).not.toHaveBeenCalled();
   });
 
-  it("retains typed structured-output failure telemetry without claiming the stored second-step cause", async () => {
+  it("retains typed structured-output failure telemetry and cause across serialized steps", async () => {
     // Does not reproduce eval/out/openrouter-20261028/resnet-trace (generic External failure, distill-call2.json 404, unrecoverable).
     // It covers the proven pinned ai@7.0.152 shape in isolation: NoObjectGeneratedError carries usage/finishReason.
     const f = fixture(snapshot.route);
@@ -413,7 +420,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
     const sdkError = new NoObjectGeneratedError({ message: "No object generated: response did not match schema.", text: '{"guide":', response: { id: "resp-typed-1", timestamp: new Date(), modelId: "fixture/admitted" }, usage: sdkUsage, finishReason: "length" });
     vi.mocked(generateText).mockRejectedValueOnce(sdkError);
     try {
-      const steps = await run(f);
+      const steps = await run(f, true);
       expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
       expect(generateText).toHaveBeenCalledTimes(1);
       expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
@@ -440,8 +447,47 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(report.kept).toBe(0);
       expect(JSON.stringify(report)).not.toContain('{"guide":');
       expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
-      const row = f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId) as { state: string; calls: number };
-      expect(row).toEqual({ state: "failed", calls: 1 });
+      const row = f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_error AS error FROM source_revision WHERE id=?").get(revisionId);
+      expect(row).toEqual({ state: "failed", calls: 1, error: report.error });
+    } finally { f.db.close(); }
+  });
+
+  it("preserves only the safe provider failure across a serialized step with unknown usage", async () => {
+    const f = fixture(snapshot.route);
+    const markers = ["sk-fixture-private-key", "private-header-marker", "private-request-body", "private-response-body"];
+    const providerError = Object.assign(new Error(markers.join(" ")), {
+      statusCode: 401, requestHeaders: { Authorization: `Bearer ${markers[0]}`, "x-private": markers[1] },
+      requestBody: markers[2], responseBody: markers[3],
+    });
+    const failure = "External model request failed (HTTP 401). Check the Gateway connection and provider status; no retry was started.";
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText).mockRejectedValueOnce(providerError);
+    vi.mocked(modelFailure).mockReturnValueOnce(failure);
+    try {
+      const steps = await run(f, true);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
+      expect(steps.mock.calls[0]?.[1]).toMatchObject({ retries: { limit: 0 } });
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(generateText).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0 }));
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      expect(modelFailure).toHaveBeenCalledExactlyOnceWith(providerError, snapshot);
+      const row = f.db.prepare(`SELECT distill_state AS state,distill_calls AS calls,distill_error AS error,
+        distill_input_tokens AS inputTokens,distill_cached_tokens AS cachedTokens,distill_output_tokens AS outputTokens
+        FROM source_revision WHERE id=?`).get(revisionId);
+      expect(row).toEqual({ state: "failed", calls: 1, error: failure, inputTokens: null, cachedTokens: null, outputTokens: null });
+      const reportBody = f.bodies.get(prefix + "distill.json");
+      if (!reportBody) throw new Error("Missing distill.json for provider failure.");
+      const report = JSON.parse(reportBody) as DistillReport & { state: string };
+      expect(report).toMatchObject({ state: "failed", error: failure, kept: 0,
+        usage: { calls: 1, inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: null, providerUsage: [] },
+        raw: { first: null, second: null } });
+      for (const marker of markers) {
+        expect(JSON.stringify(row)).not.toContain(marker);
+        for (const body of f.bodies.values()) expect(body).not.toContain(marker);
+      }
+      expect(f.bodies.has(prefix + "distill-call1.json")).toBe(false);
+      expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
     } finally { f.db.close(); }
   });
 
