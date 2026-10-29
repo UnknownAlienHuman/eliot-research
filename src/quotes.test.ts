@@ -186,6 +186,20 @@ describe("verifyClaims", () => {
     expect(out.clearedNumbers).toBe(0);
   });
 
+  it("rejects a percentage condition borrowed from another block or a decimal axis tick", () => {
+    const cost = "Training cost reached 0.50.";
+    const dropout = "Training used 50% dropout.";
+    const text = cost + "\n\n" + dropout;
+    const blocks = [blockFor(1, text, cost), blockFor(2, text, dropout)];
+    const out = verifyClaims(text, blocks, [
+      claim({ quote: cost, block: 1, statement: "Training cost decreased.", conditions: "with 50% dropout" }),
+      claim({ quote: dropout, block: 2, statement: "Training used dropout.", conditions: "with 50% dropout" }),
+    ]);
+    expect(out.dropped).toEqual([{ index: 0, reason: "unsupported-condition-numbers" }]);
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0]).toMatchObject({ block: 2, quote: dropout, conditions: "with 50% dropout" });
+  });
+
   it("rejects 41.8 glued from a 41.0 passage plus a separate 8", () => {
     const passage =
       "Training took 3.5 days on 8 P100 GPUs.\n" +
@@ -225,6 +239,32 @@ describe("numbersSupported", () => {
     expect(numbersSupported("Score 79.9 here.", "score 79 here and 9 there")).toBe(false);
     expect(numbersSupported("Rate 1e-8 ok.", "rate 1e-8 ok")).toBe(true);
     expect(numbersSupported("Total 1,280,000 items.", "total 1,280,000 items")).toBe(true);
+  });
+
+  it.each([
+    ["with 50% dropout", "Training cost 0.50."],
+    ["with 50% dropout", "Dropout 150%."],
+    ["with 50% dropout", "Count 50."],
+    ["with 50% dropout", "Dropout 0.50%."],
+    ["with 50% dropout", "Change -50%."],
+    ["with 50% dropout", "Change 1e50%."],
+    ["with 50% dropout", "Malformed 50%0."],
+    ["dropout50%", "Training cost 0.50."],
+  ])("does not borrow a percentage from another complete quantity: %s / %s", (text, quote) => {
+    expect(numbersSupported(text, quote)).toBe(false);
+  });
+
+  it.each([
+    ["50%", "Dropout 50%."],
+    ["50 %", "Dropout 50\\%."],
+    ["50\\,\\%", "Dropout 50\u00a0%."],
+    ["50%", "Dropout 50\\,\\%."],
+    ["50%", "Dropout 50\n%."],
+    ["−5,2%", "Change -5.2 %."],
+    ["+1E−2%", "Change +1e-2\\%."],
+    ["7.6×10⁹%", "Change 7.6×10^9\\%."],
+  ])("keeps complete signed percentage formats: %s", (value, quote) => {
+    expect(numbersSupported(value, quote)).toBe(true);
   });
 
   it("keeps the literal exponent sign on integer mantissas", () => {

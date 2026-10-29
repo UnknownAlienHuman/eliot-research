@@ -1,10 +1,12 @@
 // Shared source-number verification for distillation, Wiki and real eval callers.
 const DIGIT_RUN_RE = /[0-9]+/g;
 const NUMERIC_TOKEN_RE = /[0-9]+(?:[.,][0-9]+)*(?:[eE][+\-\u2212]?[0-9]+)?/g;
+const PERCENT_NUMBER_RE = /(?<![\p{N}.,+^\-\u2212])[+\-\u2212]?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+)(?:[eE][+\-\u2212]?[0-9]+)?/gu;
+const PERCENT_UNIT_RE = /^(?:\s|~|\\[,;:! ])*\\?%(?![\p{N}_%])/u;
 const COMPOUND_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])(?<mantissa>[+\-\u2212]?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+))[ \t\u00a0\u2009]*(?:[×·*]|times)[ \t\u00a0\u2009]*10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
 const SINGLE_NUMBER_RE = /^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
-// Bare 10^N / 10-superscript without a mantissa x (for example Adam epsilon
-// 10^-8): one unambiguous scientific quantity, not two numbers. Shares the
+// Bare 10^N / 10-superscript without a mantissa x (for example 10^-8):
+// one unambiguous scientific quantity, not two numbers. Shares the
 // same power suffix logic as compound powers; no paper pattern is added.
 const BARE_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
 
@@ -79,17 +81,44 @@ function barePowerTokens(text: string): CompoundPowerToken[] {
   return tokens;
 }
 
+function percentageTokens(text: string): Set<string> {
+  const values = new Set<string>();
+  let remaining = text;
+  for (const tokenize of [compoundPowerTokens, barePowerTokens]) {
+    const tokens = tokenize(remaining);
+    for (const token of tokens) {
+      if (PERCENT_UNIT_RE.test(remaining.slice(token.end))) values.add(token.value + "%");
+    }
+    remaining = withoutCompoundPowers(remaining, tokens);
+  }
+  for (const match of remaining.matchAll(PERCENT_NUMBER_RE)) {
+    if (!PERCENT_UNIT_RE.test(remaining.slice((match.index ?? 0) + match[0].length))) continue;
+    const number = match[0].replace("\u2212", "-");
+    const sign = /^[+-]/.exec(number)?.[0] ?? "";
+    const magnitude = number.slice(sign.length);
+    const normalized = [...decimalTokens(magnitude)][0] ?? magnitude;
+    values.add(sign + normalized + "%");
+  }
+  return values;
+}
+
 /**
  * Shared maximal-digit-group rule: every digit run in text must occur as a
  * whole maximal digit run in quote. Decimal fractions additionally require
  * a complete token, including its exponent: 41.8/41,8 is not supported by
  * 41.0 plus a lone 8, and 1e8 is not supported by 1e-8. Only unambiguous
  * decimal-comma notation is folded; e/E case and U+2212 minus are
- * normalized, other signs stay literal. Integer/thousands digit rules and
- * source names remain unchanged.
+ * normalized, other signs stay literal. Percentages additionally require
+ * the whole signed quantity and percent unit, including escaped LaTeX units.
+ * Integer/thousands digit rules and source names remain unchanged.
  */
 export function unsupportedNumbers(text: string, quote: string): string[] {
   if (typeof text !== "string" || typeof quote !== "string") return ["invalid-number-input"];
+  if (text.includes("%")) {
+    const supportedPercentages = percentageTokens(quote);
+    const percentages = [...percentageTokens(text)].filter((token) => !supportedPercentages.has(token));
+    if (percentages.length > 0) return percentages;
+  }
   const requestedPowers = compoundPowerTokens(text);
   const supportedPowers = new Set(compoundPowerTokens(quote).map((token) => token.value));
   const powers = requestedPowers.filter((token) => !supportedPowers.has(token.value)).map((token) => token.value);
@@ -114,7 +143,7 @@ export function numbersSupported(text: string, quote: string): boolean {
 /**
  * Count distinct numeric quantities in a stored valueText for the K3
  * one-scalar-per-result contract. Compound powers (for example 4.9x10^-5)
- * and bare 10^N / 10-superscript (for example Adam epsilon 10^-8) each
+ * and bare 10^N / 10-superscript (for example 10^-8) each
  * count as one quantity via the shared power suffix logic; remaining
  * numeric tokens use the shared numeric tokenizer. A compound list such as
  * +27.1% / 8.3% counts as two and must be rejected by the caller. Zero

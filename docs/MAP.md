@@ -217,6 +217,8 @@ re-distilled automatically.
 
 - All ten papers reach `done` or a documented `partial` state; a second eval run performs no re-distillation of unchanged revisions.
 - Every stored quote is an exact byte range; numeric result fields are cleared when not supported by their quote.
+- Percentage statements and conditions must match a whole percentage quantity in that same quote, rather than
+  borrowing digits from a decimal axis tick, another number or another excerpt.
 - A result's `valueText` contains at most one numeric quantity. Compound lists are rejected rather than split or
   silently retained with `valueNumber=null`; scientific notation remains one quantity.
 - Formatting preserves the selected statement's qualifiers and conditions. Missing structured numeric context rejects

@@ -178,6 +178,9 @@ Decimal values additionally require a complete matching token, including any exp
 not support `41.8` or `41,8`. Unambiguous decimal commas match decimal points; ambiguous comma-thousands keep the
 existing digit-group rule. This check also applies to statements, conditions, digest and glossary; existing integer,
 thousands and scientific-value checks remain in force.
+Percentages additionally require a complete number-and-percent token in the same verified quote. A digit run in
+`0.50`, a bare `50`, or part of `150%` does not support `50%`; supported spacing and escaped-percent formatting do not
+change that quantity or its unit. This applies to conditions and statements as well as structured values.
 Explicit multiplication powers such as `7.6×10⁹` and `7.6×10^9` are checked as one token. Flattened `7.6×109`,
 or a mantissa and exponent found separately elsewhere in a passage, cannot support that scientific quantity.
 The production verifier and K3 stored eval share `src/numbers.ts`; the eval does not keep a weaker numeric checker.
