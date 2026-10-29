@@ -10,33 +10,35 @@ const BACKSLASH = String.fromCharCode(92);
 const BT = String.fromCharCode(96);
 const SQ = String.fromCharCode(39);
 const DQ = String.fromCharCode(34);
-const SUPMINUS = String.fromCodePoint(0x207B);
-const SUP8 = String.fromCodePoint(0x2078);
 const UNIMINUS = String.fromCodePoint(0x2212);
 const MIDDOT = String.fromCodePoint(0x00B7);
-const requestedOrigin = process.env.ELIOT_URL || 'http://127.0.0.1:5173';
-const configuredOrigin = process.env.ELIOT_ORIGIN;
-const origin = assertEvalOrigin(requestedOrigin, configuredOrigin);
-const H = { Origin: origin };
-if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
+const SUPER_DIGITS = new Set(Array.from('⁰¹²³⁴⁵⁶⁷⁸⁹'));
+const REQUIRED_PROVIDER_IDS = ['workers-ai', 'openrouter', 'command-code', 'kilo', 'nous', 'opencode-go'];
+const ADDED_PROVIDER_IDS = ['command-code', 'kilo', 'nous', 'opencode-go'];
+const staticSelftest = process.argv.includes('--static-selftest');
+const requestedOrigin = staticSelftest ? 'http://127.0.0.1:5173' : process.env.ELIOT_URL || 'http://127.0.0.1:5173';
+const configuredOrigin = staticSelftest ? undefined : process.env.ELIOT_ORIGIN;
+const origin = staticSelftest ? null : assertEvalOrigin(requestedOrigin, configuredOrigin);
+const H = staticSelftest ? {} : { Origin: origin };
+if (!staticSelftest && process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
   H['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID;
   H['CF-Access-Client-Secret'] = process.env.CF_ACCESS_CLIENT_SECRET;
 }
-if (process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.env.ELIOT_OWNER_JWT).trim();
+if (!staticSelftest && process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.env.ELIOT_OWNER_JWT).trim();
 const nativeOnly = process.argv.includes('--native-only');
-const runModel = !nativeOnly && process.env.ELIOT_K2_MODEL === '1';
+const runModel = !staticSelftest && !nativeOnly && process.env.ELIOT_K2_MODEL === '1';
 const storedOnly = process.argv.includes('--stored-only');
 const modelsOnly = process.argv.includes('--models-only');
-const resumeChat = process.env.ELIOT_EVAL_CHAT || null;
-const evalModelOverride = (process.env.ELIOT_EVAL_MODEL ?? '').trim() || null;
+const resumeChat = staticSelftest ? null : process.env.ELIOT_EVAL_CHAT || null;
+const evalModelOverride = staticSelftest ? null : (process.env.ELIOT_EVAL_MODEL ?? '').trim() || null;
 assert(!storedOnly || (!!resumeChat && !runModel && !modelsOnly), '--stored-only requires an existing chat and forbids model dispatch/catalogue tests.');
 assert(!runModel || evalModelOverride === null, 'K2 benchmark uses the frozen global configured default; ELIOT_EVAL_MODEL overrides are disabled.');
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
 const outDir = fileURLToPath(new URL('../../eval/out/k2/', import.meta.url));
-const notebookAnswersPath = (process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS ?? '').trim()
+const notebookAnswersPath = staticSelftest ? '' : (process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS ?? '').trim()
   || fileURLToPath(new URL('../../eval/out/notebooklm-20261026/answers.md', import.meta.url));
 const order = ['C1', 'C2', 'C3', 'C4', 'O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8'];
-await mkdir(outDir, { recursive: true });
+if (!staticSelftest) await mkdir(outDir, { recursive: true });
 async function apiJson(path, init) {
   // Finite READ default (30s observer bound); explicit caller signal (e.g. 90s POST) is preserved verbatim.
   const readSignal = init && init.signal ? init.signal : AbortSignal.timeout(30000);
@@ -53,9 +55,60 @@ async function apiBytes(path, init) {
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
 }
 const pct = (a, p) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
+function assertProviderConfigs(providers, source, requireExactIds = false) {
+  assert(Array.isArray(providers), source + ' must be a provider array.');
+  const byId = new Map();
+  for (const provider of providers) {
+    assert(provider && typeof provider === 'object' && !Array.isArray(provider), source + ' entries must be objects.');
+    assert(typeof provider.id === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(provider.id), source + ' provider IDs must be valid.');
+    assert(!byId.has(provider.id), source + ' provider IDs must be unique (' + provider.id + ').');
+    assert(['workers-ai', 'openai-compatible'].includes(provider.type), source + ' provider type must be supported (' + provider.id + ').');
+    assert(typeof provider.enabled === 'boolean', source + ' enabled must be boolean (' + provider.id + ').');
+    assert(typeof provider.gatewayPath === 'string' && /^(?:[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)?$/.test(provider.gatewayPath), source + ' Gateway path must be valid (' + provider.id + ').');
+    if (provider.type === 'workers-ai') {
+      assert.equal(provider.id, 'workers-ai', source + ' native binding must use its stable provider ID.');
+      assert.equal(provider.baseUrl, null, source + ' native binding must not have a base URL.');
+      assert.equal(provider.gatewaySlug, null, source + ' native binding must not have a Gateway slug.');
+      assert.equal(provider.gatewayPath, '', source + ' native binding must not have a Gateway path.');
+      assert.equal(provider.modelsUrl, undefined, source + ' native binding must not have a models URL.');
+      assert.equal(provider.metadataUrl, undefined, source + ' native binding must not have a metadata URL.');
+    } else {
+      assert(provider.id !== 'workers-ai', source + ' cannot route a compatible provider through the native ID.');
+      assert(typeof provider.baseUrl === 'string', source + ' compatible providers need an HTTPS base URL (' + provider.id + ').');
+      let baseUrl;
+      try { baseUrl = new URL(provider.baseUrl); } catch { assert.fail(source + ' compatible provider base URL must be valid (' + provider.id + ').'); }
+      assert.equal(baseUrl.protocol, 'https:', source + ' compatible provider base URL must use HTTPS (' + provider.id + ').');
+      assert.equal(baseUrl.username, '', source + ' provider URLs must not contain credentials (' + provider.id + ').');
+      assert.equal(baseUrl.password, '', source + ' provider URLs must not contain credentials (' + provider.id + ').');
+      assert.equal(baseUrl.search, '', source + ' provider URLs must not contain a query (' + provider.id + ').');
+      assert.equal(baseUrl.hash, '', source + ' provider URLs must not contain a fragment (' + provider.id + ').');
+      assert(typeof provider.gatewaySlug === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(provider.gatewaySlug), source + ' compatible providers need a valid Gateway slug (' + provider.id + ').');
+      for (const field of ['modelsUrl', 'metadataUrl']) {
+        const endpoint = provider[field];
+        if (endpoint === undefined) continue;
+        assert(typeof endpoint === 'string', source + ' ' + field + ' must be a URL when present (' + provider.id + ').');
+        let endpointUrl;
+        try { endpointUrl = new URL(endpoint); } catch { assert.fail(source + ' ' + field + ' must be a valid URL (' + provider.id + ').'); }
+        assert.equal(endpointUrl.protocol, 'https:', source + ' ' + field + ' must use HTTPS (' + provider.id + ').');
+        assert.equal(endpointUrl.username, '', source + ' ' + field + ' must not contain credentials (' + provider.id + ').');
+        assert.equal(endpointUrl.password, '', source + ' ' + field + ' must not contain credentials (' + provider.id + ').');
+        assert.equal(endpointUrl.search, '', source + ' ' + field + ' must not contain a query (' + provider.id + ').');
+        assert.equal(endpointUrl.hash, '', source + ' ' + field + ' must not contain a fragment (' + provider.id + ').');
+      }
+    }
+    byId.set(provider.id, provider);
+  }
+  for (const id of REQUIRED_PROVIDER_IDS) assert(byId.has(id), source + ' must preserve required provider ID ' + id + '.');
+  if (requireExactIds) assert.deepEqual([...byId.keys()].sort(), [...REQUIRED_PROVIDER_IDS].sort(), source + ' must contain exactly the six expected provider IDs.');
+  return byId;
+}
 function normMath(s) {
-  let n = String(s).replace(/\[(?:S\d+|R[0-9a-f-]{36}):\d+\]/gi, ' ').toLowerCase().split(',').join('.');
-  n = n.split(SUPMINUS).join('-').split(SUP8).join('8').split(UNIMINUS).join('-');
+  const chars = Array.from(String(s));
+  for (let i = 1; i + 1 < chars.length; i++) {
+    if (chars[i] === MIDDOT && SUPER_DIGITS.has(chars[i - 1]) && SUPER_DIGITS.has(chars[i + 1])) chars[i] = '.';
+  }
+  let n = chars.join('').normalize('NFKC').replace(/\[(?:S\d+|R[0-9a-f-]{36}):\d+\]/gi, ' ').toLowerCase().split(',').join('.');
+  n = n.split(UNIMINUS).join('-');
   n = n.split('=').join(' = ');
   const strip = ['$', '*', '_', BT, BACKSLASH, '{', '}', '^', '(', ')', '[', ']', ':', ';', SQ, DQ, MIDDOT];
   for (const ch of strip) n = n.split(ch).join(' ');
@@ -80,9 +133,13 @@ function checkAnswer(qid, ans) {
     add('attention heads=8', heads8 || m.includes(' восемь ') || m.includes(' eight '), 'Expected eight attention heads.');
   }
   if (qid === 'C2') {
-    const warm = m.includes('warmup') || m.includes('warm-up') || m.includes('warm up') || m.includes('разогрев') || m.includes('прогрев') || m.includes('размин');
-    const strictFormula = has('4000') && warm && (m.includes('d model') || m.includes('step')) && m.includes('min') && m.includes('-0.5') && m.includes('-1.5');
-    const sqrtFormula = m.includes('sqrt') && has('4000') && warm;
+    const warmup4000 = /(?:\b(?:warmup|warm-up|warm up)\b|разогрев|прогрев|размин[а-яё]*)[\s\S]{0,40}\b4000\b|\b4000\b[\s\S]{0,40}(?:\b(?:warmup|warm-up|warm up)\b|разогрев|прогрев|размин[а-яё]*)/iu.test(m);
+    const strictFormula = warmup4000 && /\bd model\s*-0\.5\b[\s\S]{0,120}\bmin\b[\s\S]{0,100}\bstep\s*-0\.5\b[\s\S]{0,80}\bstep\b[\s\S]{0,100}\bwarmup\s*-1\.5\b/u.test(m);
+    const sqrtModelExponent = /\bd model\s*-0\.5\b|\bd model\s*-1\/2\b|1\s*\/\s*sqrt\s+d model|sqrt\s+d model\s*-1\b/u.test(m);
+    const sqrtStepExponent = /\bstep\s*-0\.5\b|\bstep\s*-1\/2\b|1\s*\/\s*sqrt\s+step|sqrt\s+step\s*-1\b/u.test(m);
+    const sqrtWarmupExponent = /\bwarmup\s*-1\.5\b|\bwarmup\s*-3\/2\b|\/\s*warmup\s+(?:1\.5|3\/2)\b/u.test(m);
+    const sqrtFormula = m.includes('sqrt') && warmup4000 && /\bmin\b/u.test(m)
+      && sqrtModelExponent && sqrtStepExponent && sqrtWarmupExponent;
     add('learning-rate formula and warmup=4000', strictFormula || sqrtFormula, 'Expected d_model^-0.5 min(step^-0.5, step·warmup^-1.5), warmup 4000, or an equivalent square-root expression.');
   }
   if (qid === 'C3') add('Adam defaults', has('0.001') && has('0.9') && has('0.999') && (has('1e-8') || m.includes('10 -8') || m.includes('10 - 8') || m.includes('10-8') || has('0.00000001')), 'Expected alpha=0.001, beta1=0.9, beta2=0.999 and epsilon=1e-8.');
@@ -93,6 +150,24 @@ function checkAnswer(qid, ans) {
   else if (['O4', 'O5', 'O6', 'O7'].includes(qid))
     checks.push({ name: 'semantic coverage', status: 'NOT_AUTOMATED', detail: 'Gold facts are shown; no automatic semantic pass is claimed.' });
   return checks;
+}
+function assertC2StaticSelftests() {
+  const c2 = (answer) => checkAnswer('C2', answer).find((check) => check.name === 'learning-rate formula and warmup=4000')?.status;
+  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 4000'), 'PASS', 'Unicode superscript learning-rate formula must pass.');
+  assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step/warmup^1.5), warmup 4000'), 'PASS', 'Equivalent square-root learning-rate formula must pass.');
+  assert.equal(c2('d_model⁻⁰·⁶ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 4000'), 'FAIL', 'Wrong d_model exponent must fail.');
+  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁶, step · warmup⁻¹·⁵), warmup 4000'), 'FAIL', 'Wrong step exponent must fail.');
+  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁴), warmup 4000'), 'FAIL', 'Wrong warmup exponent must fail.');
+  assert.equal(c2('d_model⁻⁰·⁶ · min(1/sqrt(step), step/warmup^1.5), warmup 4000'), 'FAIL', 'Wrong model exponent in the square-root form must fail.');
+  assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step/warmup^1.4), warmup 4000'), 'FAIL', 'Wrong warmup exponent in the square-root form must fail.');
+  assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step · warmup^1.5), warmup 4000'), 'FAIL', 'Warmup to a positive exponent must be in the denominator.');
+  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 2000'), 'FAIL', 'Wrong warmup value must fail.');
+  assert(!normMath('2·3').includes('2.3'), 'An ordinary middle dot must not become a decimal point.');
+}
+assertC2StaticSelftests();
+if (staticSelftest) {
+  console.log('K2 evaluator static selftests passed.');
+  process.exit(0);
 }
 const qmd = await readFile(evalDir + '/arxiv-10/questions.md', 'utf8');
 const Q = new Map();
@@ -242,7 +317,7 @@ if (process.argv.includes('--models-only')) {
   const before = await apiJson('/api/settings');
   const providersBefore = await apiJson('/api/models/providers');
   assert.equal(providersBefore.status, 200, 'GET /api/models/providers must be 200.');
-  assert.equal(providersBefore.body.providers.length, 3, 'Local scratch namespace must start with 3 seeded providers.');
+  const providerConfigs = assertProviderConfigs(providersBefore.body?.providers, 'Stored provider configuration', true);
   let providerCrud = { status: 'NOT_RUN' };
   const connection = await apiJson('/api/models/connection');
   assert.equal(before.status, 200);
@@ -275,12 +350,28 @@ if (process.argv.includes('--models-only')) {
   const nativePairs = externals.map((m) => {
     const parts = /^gateway:([^/]+)\/.+/.exec(m.route);
     assert(parts && typeof m.id === 'string' && m.id.trim().length > 0, 'Gateway entries require a provider and native ID.');
+    assert(providerConfigs.has(parts[1]), 'Every Gateway catalogue route must have stored provider configuration (' + parts[1] + ').');
     return [parts[1], m.id];
   });
   assert.equal(new Set(nativePairs.map((pair) => JSON.stringify(pair))).size, externals.length, 'Provider/native ID pairs must be unique.');
   for (const m of externals) assert(m && !m.enabled && m.unavailableReason, 'External model must be visibly disabled without owner credential opt-in (' + m.route + ').');
   const external = externals[0];
   assert(external, 'At least one external Gateway route is required.');
+  const firstRouteByProvider = new Map();
+  for (const model of externals) {
+    const providerId = /^gateway:([^/]+)\/.+/.exec(model.route)?.[1];
+    if (providerId && !firstRouteByProvider.has(providerId)) firstRouteByProvider.set(providerId, model.route);
+  }
+  const providerRoutesForBrowser = [];
+  for (const providerId of ADDED_PROVIDER_IDS) {
+    const provider = providerConfigs.get(providerId);
+    const route = firstRouteByProvider.get(providerId);
+    if (provider.enabled) {
+      assert(route, 'Enabled provider ' + providerId + ' must return a discovered model route.');
+      providerRoutesForBrowser.push(route);
+    }
+  }
+  const browserModelRoutes = [...new Set([external.route, ...providerRoutesForBrowser])];
   const embedders = models.body.models.filter((m) => m && /embed|rerank/i.test(m.route + ' ' + (m.id || '') + ' ' + (m.label || '')));
   for (const m of embedders) assert(!m.enabled && m.unavailableReason, 'Embed/rerank inventory entries must not be selectable (' + m.route + ').');
   const flash = models.body.models.find((m) => m.route === 'workers-ai:@cf/zai-org/glm-5.3-flash');
@@ -437,7 +528,7 @@ if (process.argv.includes('--models-only')) {
         free: page.getByRole('checkbox', { name: /free/i }),
       };
     }
-    async function assertDisabledChoice(page, mode) {
+    async function assertDisabledChoice(page, mode, routes) {
       const label = mode === 'answers' ? 'Answer model' : 'Understanding model';
       const expected = mode === 'answers' ? before.body.settings.answerModel : before.body.settings.distillModel;
       const picked = await activePicker(page, mode);
@@ -446,13 +537,18 @@ if (process.argv.includes('--models-only')) {
       const search = picked.search;
       const free = picked.free;
       await expect(select).toHaveValue(expected);
-      assert.equal(await select.locator('option').evaluateAll((options, route) => options.filter((option) => option.value === route).length, external.route), 1, 'Expanded catalogue must attach the exact provider/native route without paging (' + label + ').');
-      await provider.selectOption(external.route.slice('gateway:'.length).split('/')[0]);
-      await expect(select).toHaveValue(expected);
-      await search.fill(external.route);
-      await expect(select).toHaveValue(expected);
-      await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
-        .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), external.route), { timeout: 30000 }).toEqual([true]);
+      for (const route of routes) {
+        const parts = /^gateway:([^/]+)\/.+/.exec(route);
+        assert(parts, 'Browser check requires a complete provider/native route.');
+        assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter((option) => option.value === value).length, route), 1,
+          'Expanded catalogue must attach the exact provider/native route without paging (' + parts[1] + ', ' + label + ').');
+        await provider.selectOption(parts[1]);
+        await expect(select).toHaveValue(expected);
+        await search.fill(route);
+        await expect(select).toHaveValue(expected);
+        await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
+          .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([true]);
+      }
       await free.check();
       await expect(select).toHaveValue(expected);
       await free.uncheck();
@@ -488,8 +584,8 @@ if (process.argv.includes('--models-only')) {
     assert.strictEqual(await page.locator('section.er-model-picker__advanced').count(), 0, 'Expanded picker must not hide Model details.');
     const summaries = page.locator('#workspace-main details.er-models__details > summary');
     for (let i = 0; i < await summaries.count(); i++) assert((await summaries.nth(i).innerText()).trim().length > 0, 'Every collapsed gateway section must carry an accessible label.');
-    await assertDisabledChoice(page, 'answers');
-    await assertDisabledChoice(page, 'understanding');
+    await assertDisabledChoice(page, 'answers', browserModelRoutes);
+    await assertDisabledChoice(page, 'understanding', browserModelRoutes);
     await activePicker(page, 'answers');
     await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(before.body.settings.answerModel);
     await activePicker(page, 'understanding');
@@ -519,12 +615,18 @@ if (process.argv.includes('--models-only')) {
       const understanding = page.getByRole('region', { name: 'Understanding', exact: true });
       const details = understanding.locator('details.er-und__details');
       if (await details.getAttribute('open') === null) await understanding.locator('details.er-und__details > summary').click();
-      const sourceProvider = understanding.getByRole('combobox', { name: 'Understanding model: provider', exact: true });
-      await sourceProvider.selectOption(external.route.slice('gateway:'.length).split('/')[0]);
       const select = understanding.getByRole('combobox', { name: 'Understanding model', exact: true });
       await expect(select).toBeEnabled({ timeout: 30000 });
-      await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
-        .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), external.route), { timeout: 30000 }).toEqual([true]);
+      const sourceProvider = understanding.getByRole('combobox', { name: 'Understanding model: provider', exact: true });
+      for (const route of browserModelRoutes) {
+        const parts = /^gateway:([^/]+)\/.+/.exec(route);
+        assert(parts, 'Understanding browser check requires a complete provider/native route.');
+        assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter((option) => option.value === value).length, route), 1,
+          'Understanding catalogue must attach the exact provider/native route (' + parts[1] + ').');
+        await sourceProvider.selectOption(parts[1]);
+        await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
+          .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([true]);
+      }
     }
     assert.strictEqual(settingsPuts, 0, 'The entire browser journey must attempt zero settings PUTs.');
     assert.deepEqual(mutations, [], 'The browser journey must attempt no API mutation, including Gateway/model requests.');
@@ -576,9 +678,21 @@ if (process.argv.includes('--models-only')) {
         await response.finished();
       }
       await expect(ppage.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
-      assert.equal(await ppage.locator('.er-providers__item').count(), 3, 'Provider editor must start from the 3 seeded providers.');
+      const providerItems = ppage.locator('.er-providers__item');
+      assert.equal(await providerItems.count(), providersBefore.body.providers.length, 'Provider editor must show every stored provider.');
+      const displayedProviderConfigs = await providerItems.evaluateAll((items) => items.map((item) => ({
+        id: item.querySelector('.er-providers__id span')?.textContent?.trim() ?? '',
+        enabled: item.querySelector('.er-providers__check input')?.checked === true,
+        type: item.querySelector('.er-providers__fields select')?.value ?? '',
+      })));
+      const expectedProviderConfigs = providersBefore.body.providers.map((provider) => ({
+        id: provider.id,
+        enabled: provider.enabled,
+        type: provider.type,
+      }));
+      assert.deepEqual(displayedProviderConfigs, expectedProviderConfigs, 'Provider Settings browser must show the stored provider IDs, types, and enabled states.');
       await ppage.getByRole('button', { name: 'Add provider', exact: true }).click();
-      assert.equal(await ppage.locator('.er-providers__item').count(), 4, 'Add provider must append one draft row.');
+      assert.equal(await providerItems.count(), providersBefore.body.providers.length + 1, 'Add provider must append one draft row.');
       const draft = ppage.locator('.er-providers__item').last();
       assert.equal(await draft.locator('details.er-providers__details').evaluate((el) => el.open), true, 'New provider draft must open Connection details (isNew stable).');
       await expect(draft.locator('select')).toHaveValue('openai-compatible');
@@ -597,8 +711,12 @@ if (process.argv.includes('--models-only')) {
       await expect(ppage.getByText('Saved.', { exact: true })).toBeVisible();
       const saved = await apiJson('/api/models/providers');
       assert.equal(saved.status, 200);
-      assert.equal(saved.body.providers.length, 4, 'Saved providers must append the eval row.');
-      const evalRow = saved.body.providers.find((p) => p && p.id === evalProviderId);
+      assert.equal(saved.body.providers.length, providersBefore.body.providers.length + 1, 'Saved providers must append only the eval row.');
+      const savedProviderConfigs = assertProviderConfigs(saved.body.providers, 'Saved provider configuration');
+      for (const provider of providersBefore.body.providers) {
+        assert.deepEqual(savedProviderConfigs.get(provider.id), provider, 'Saving a new provider must preserve existing provider ' + provider.id + '.');
+      }
+      const evalRow = savedProviderConfigs.get(evalProviderId);
       assert(evalRow, 'Saved providers must contain the eval provider ID.');
       assert.equal(evalRow.type, 'openai-compatible');
       assert.equal(evalRow.baseUrl, 'https://example.invalid/v1', 'Base URL must normalize without a trailing slash.');
@@ -617,10 +735,11 @@ if (process.argv.includes('--models-only')) {
       providerCrud = providerCrudInner;
     } finally {
       const restore = await apiJson('/api/models/providers', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ providers: providersBefore.body.providers }) });
-      assert.equal(restore.status, 200, 'Restore of the 3 seeded providers must PUT 200.');
+      assert.equal(restore.status, 200, 'Restoring the provider snapshot must PUT 200.');
       const reread = await apiJson('/api/models/providers');
       assert.equal(reread.status, 200);
-      assert.equal(reread.body.providers.length, 3, 'Restored providers must return to 3 rows.');
+      assert.equal(reread.body.providers.length, providersBefore.body.providers.length, 'Restored providers must return to the original row count.');
+      assertProviderConfigs(reread.body.providers, 'Restored provider configuration', true);
       assert.deepEqual(reread.body.providers, providersBefore.body.providers, 'Restored providers must equal the pre-eval snapshot.');
       providerCrud.restored = true;
       await providerContext.close().catch(() => undefined);
@@ -630,7 +749,11 @@ if (process.argv.includes('--models-only')) {
       const reloadPage = await providerReloadContext.newPage();
       await reloadPage.goto(browserOrigin + '/settings');
       await expect(reloadPage.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
-      assert.equal(await reloadPage.locator('.er-providers__item').count(), 3, 'Reload after restore must show 3 providers.');
+      const restoredItems = reloadPage.locator('.er-providers__item');
+      assert.equal(await restoredItems.count(), providersBefore.body.providers.length, 'Reload after restore must show the original provider row count.');
+      const restoredProviderIds = await restoredItems.locator('.er-providers__id span').allTextContents();
+      assert.deepEqual(restoredProviderIds.map((id) => id.trim()), providersBefore.body.providers.map((provider) => provider.id),
+        'Reload after restore must show every original required provider ID in order.');
       await expect(reloadPage.locator('.er-providers__item', { hasText: evalProviderId })).toHaveCount(0);
     } finally {
       await providerReloadContext.close().catch(() => undefined);
@@ -647,7 +770,10 @@ if (process.argv.includes('--models-only')) {
   assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
   const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, consentRejected: true, disconnectedTurnTokenLimit: turn.body.turn.tokenLimit ?? null,
     nativeUsageMode: { original: originalMode, restored: after.body.settings.nativeUsageMode },
-    catalogue: { externalModels: externals.length, providers: [...new Set(nativePairs.map((pair) => pair[0]))], discovery: warnings.length ? 'PARTIAL' : 'NO_WARNINGS', warnings },
+    catalogue: { externalModels: externals.length, providers: [...new Set(nativePairs.map((pair) => pair[0]))],
+      providerBrowserChecks: [...new Set(browserModelRoutes.map((route) => /^gateway:([^/]+)\/.+/.exec(route)?.[1]).filter(Boolean))],
+      providerSettingsBrowserChecks: providersBefore.body.providers.map((provider) => provider.id),
+      discovery: warnings.length ? 'PARTIAL' : 'NO_WARNINGS', warnings },
     dailyUsage: after.body.usage, provider: 'NOT_RUN', streaming: 'NOT_RUN', distill, browser390: 'LOCAL_PASS', credentialAccess: 'NOT_ENABLED' };
   result.providerCrud = providerCrud;
   await writeFile(outDir + '/external-models-native.json', JSON.stringify(result, null, 2));
