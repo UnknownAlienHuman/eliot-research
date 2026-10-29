@@ -215,6 +215,45 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
+  it("rejects explicit different model on already-queued revision without dispatch", async () => {
+    const f = callerFixture();
+    const different: ModelSpec = { ...snapshot, route: "gateway:command-code/fixture/different-model", id: "different-model" };
+    vi.mocked(requireAvailableModel).mockImplementation(async (_env, route: string) => {
+      if (route === snapshot.route) return snapshot;
+      if (route === different.route) return different;
+      throw new LibraryError("unavailable", "This model is absent from the current provider catalogue.", 503);
+    });
+    f.db.prepare("UPDATE settings SET distill_model=? WHERE id=1").run(different.route);
+    try {
+      await expect(
+        requestUnderstanding(f.env, { type: "owner" } as Actor, {
+          sourceId: explicitlySelectedSourceId,
+          revisionId: explicitlySelectedRevisionId,
+          model: different.route,
+        }),
+      ).rejects.toMatchObject({ code: "conflict", status: 409 });
+      expect(
+        f.db.prepare("SELECT distill_model AS model, distill_state AS state FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId),
+      ).toEqual({ model: snapshot.route, state: "queued" });
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+      await expect(
+        requestUnderstanding(f.env, { type: "owner" } as Actor, {
+          sourceId: explicitlySelectedSourceId,
+          revisionId: explicitlySelectedRevisionId,
+        }),
+      ).resolves.toEqual({ revisionId: explicitlySelectedRevisionId });
+      expect(f.createWorkflow).toHaveBeenCalledTimes(1);
+      expect(f.createWorkflow.mock.calls[0]?.[0]).toEqual({
+        id: `distill-${explicitlySelectedRevisionId}`,
+        params: { revisionId: explicitlySelectedRevisionId, model: snapshot },
+      });
+      expect(generateText).not.toHaveBeenCalled();
+    } finally {
+      f.db.close();
+    }
+  });
+
   it("uses generic source guidance and exposes only citable block labels to a new first pass", async () => {
     const document = documentWithBlocks([
       { type: "heading", text: "### Page 1\n" },

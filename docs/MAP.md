@@ -206,6 +206,7 @@ re-distilled automatically.
 3. Admit only the explicitly requested revision while concurrency and provider allowance permit. Blocked work is
    visibly `paused` until another explicit request. Cron only reconciles stale `running` rows against
    deterministic Workflow IDs; it never admits queued revisions.
+   Keep an already queued model selection on repeat; reject a conflicting explicit model before dispatch.
 4. Use at most two bounded calls: labelled canonical text produces guide and candidate claims; code verifies
    quotes/ranges/numbers; the second call receives only verified material and produces digest/glossary. Store raw
    output/report in R2 and compact claims in D1. Paid calls do not retry.

@@ -279,6 +279,8 @@ K3 records `distill_calls` (hard maximum two), `distill_started_at` and `distill
 records both full-context call bounds before dispatch, with at most two revisions running. Each
 new internal `DistillInput` is `{ revisionId, model: ModelSpec }`: after admission and before Workflow creation,
 snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
+Queued work retains its selected route. Repeating the request without an override keeps that selection; an explicit
+different route conflicts before scheduling. Only a successful `none`/`paused` transition may establish a new selection.
 Old terminal reports and cached Save retain their recorded usage and shape. Each
 Workflow paid step has zero retries; an atomic per-revision dispatch count prevents step replay from buying a duplicate
 call. Explicit Understand schedules only its requested revision. Ingest and cron never start source understanding;

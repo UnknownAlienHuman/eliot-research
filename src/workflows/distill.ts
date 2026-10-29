@@ -448,9 +448,9 @@ export async function scheduleDistillation(env: Env, targetRevisionId?: string) 
 export async function requestUnderstanding(env: Env, actor: Actor, input: { sourceId: string; revisionId?: string | undefined; saveAvailable?: boolean | undefined; model?: string | undefined }) {
   if (actor.type !== "owner") throw new AuthError("invalid", "Only the owner may start paid source understanding.");
   const { sourceId, revisionId } = input;
-  const row = await env.DB.prepare(`SELECT r.id,r.distill_state,r.distill_report_key FROM source s JOIN source_revision r ON r.source_id=s.id
+  const row = await env.DB.prepare(`SELECT r.id,r.distill_state,r.distill_report_key,r.distill_model FROM source s JOIN source_revision r ON r.source_id=s.id
     WHERE s.id=? AND r.id=COALESCE(?,s.current_revision_id) AND s.state!='deleted' AND r.deleted_at IS NULL AND r.readable_state IN ('readable','readable_with_warnings')`)
-    .bind(sourceId, revisionId ?? null).first<{ id: string; distill_state: string; distill_report_key: string | null }>();
+    .bind(sourceId, revisionId ?? null).first<{ id: string; distill_state: string; distill_report_key: string | null; distill_model: string | null }>();
   if (!row) throw new LibraryError("not_found", "Readable source revision not found.", 404);
   if (input.saveAvailable) {
     if (input.model !== undefined) throw new LibraryError("invalid", "Saving existing output cannot select or run a model.", 400);
@@ -482,9 +482,15 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: { sour
   }
   if (["done", "partial", "running"].includes(row.distill_state)) return { revisionId: row.id };
   if (row.distill_state === "failed") throw new LibraryError("conflict", "The previous attempt failed. Its error is saved; it will not restart automatically.", 409);
+  if (row.distill_state === "queued") {
+    if (input.model !== undefined && input.model !== row.distill_model) throw new LibraryError("conflict", "This revision is already queued with a different model. It will not be re-queued automatically.", 409);
+    await scheduleDistillation(env, row.id);
+    return { revisionId: row.id };
+  }
   const settings = await env.DB.prepare("SELECT distill_model AS model FROM settings WHERE id=1").first<{ model: string }>();
   const model = await requireAvailableModel(env, input.model ?? settings?.model ?? "");
-  await env.DB.prepare("UPDATE source_revision SET distill_state='queued',distill_error=NULL,distill_model=? WHERE id=? AND distill_state IN ('none','paused') AND distill_calls=0").bind(model.route, row.id).run();
+  const queued = await env.DB.prepare("UPDATE source_revision SET distill_state='queued',distill_error=NULL,distill_model=? WHERE id=? AND distill_state IN ('none','paused') AND distill_calls=0").bind(model.route, row.id).run();
+  if (!queued.meta.changes) throw new LibraryError("conflict", "This revision changed before it could be queued. Reload and retry explicitly.", 409);
   await scheduleDistillation(env, row.id);
   return { revisionId: row.id };
 }
