@@ -172,18 +172,15 @@ them. Saving an answer rewrites compact aliases to persistent labels.
 
 For each candidate quote, search exact bytes in the stated block, then adjacent blocks; only then apply conservative
 whitespace/quote/dash/soft-hyphen normalization with a map back to original bytes. Prefer the stated block, mark
-ambiguous duplicates, and drop unmatched claims. Every digit group in a structured numeric value must occur in the
-verified quote or the structured numeric field is cleared.
-Decimal values additionally require a complete matching token, including any exponent: `41.0` and a separate `8` do
-not support `41.8` or `41,8`. Unambiguous decimal commas match decimal points; ambiguous comma-thousands keep the
-existing digit-group rule. This check also applies to statements, conditions, digest and glossary; existing integer,
-thousands and scientific-value checks remain in force.
-Percentages additionally require a complete number-and-percent token in the same verified quote. A digit run in
-`0.50`, a bare `50`, or part of `150%` does not support `50%`; supported spacing and escaped-percent formatting do not
-change that quantity or its unit. This applies to conditions and statements as well as structured values.
-Scalar metadata is checked with its separately supplied unit for every claim kind; unsupported scalar/unit fields
-are cleared together. Source-exact opaque code/math may retain a complete literal expression, including its sign and
-operators. Unprovable expression boundaries are rejected rather than falling back to unrelated digit runs.
+ambiguous duplicates, and drop unmatched claims. Numeric support compares complete numeric literals, including their
+signs and exponents, rather than digits borrowed from a fraction or another quantity. `0.50` does not support `50`;
+`41.0` and a separate `8` do not support `41.8` or `41,8`. Unambiguous decimal commas match decimal points; ambiguous
+comma-thousands retain their written grouping. This check also applies to statements, conditions, digest and glossary.
+An explicit percentage needs both its complete numeric value and percentage-unit evidence in the same verified quote.
+The unit may appear in that quote's table header; adjacency is not required and no fraction-to-percent conversion is
+performed. Value/unit occurrence does not prove which row, metric or condition they describe: the own-quote semantic
+gate remains separate. Scalar metadata is checked with its separately supplied unit for every claim kind;
+unsupported scalar/unit fields are cleared together. Numeric verification does not evaluate arbitrary mathematics.
 Explicit multiplication powers such as `7.6×10⁹` and `7.6×10^9` are checked as one token. Flattened `7.6×109`,
 or a mantissa and exponent found separately elsewhere in a passage, cannot support that scientific quantity.
 The production verifier and K3 stored eval share `src/numbers.ts`; the eval does not keep a weaker numeric checker.

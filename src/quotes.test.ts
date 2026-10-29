@@ -1,4 +1,4 @@
-import { numbersSupported, unsupportedNumbers } from "./numbers.js";
+import { numbersSupported } from "./numbers.js";
 import { describe, expect, it } from "vitest";
 import { cleanDistillText, resolveQuoteBlock, resultStatement, splitDistillStatements, verifyClaims } from "./quotes.js";
 import type { CandidateClaim, VerifiedClaim } from "./quotes.js";
@@ -156,6 +156,21 @@ describe("verifyClaims", () => {
     });
   });
 
+  it("keeps a result whose percent unit is explicit in its own table header", () => {
+    const quote = "| Method | Accuracy (%) |\n| --- | --- |\n| A | 50 |";
+    const statement = "Method A has 50% accuracy.";
+    const blocks = [{ ...blockFor(1, quote, quote), type: "table" as const }];
+    const out = verifyClaims(quote, blocks, [
+      claim({ quote, block: 1, statement, metric: "Accuracy", valueText: "50", unit: "%" }),
+    ]);
+    expect(out.dropped).toEqual([]);
+    expect(out.claims).toHaveLength(1);
+    const stored = out.claims[0];
+    if (!stored) throw new Error("The same-quote table result must be retained.");
+    expect(stored).toMatchObject({ quote, start: 0, end: TE.encode(quote).byteLength, valueText: "50", valueNumber: 50, unit: "%" });
+    expect(resultStatement(stored)).toBe(statement);
+  });
+
   it("rejects substring digit groups that are not whole runs", () => {
     const text = "Count.\n\nThere are 950 samples.\n";
     const sub = "There are 950 samples.";
@@ -223,6 +238,28 @@ describe("verifyClaims", () => {
     expect(out.claims[0]).toMatchObject({ block: 2, quote: dropout, conditions: "with 50% dropout" });
   });
 
+  it.each([
+    ["−(50%)", "(50%)"],
+    ["(50%)", "−(50%)"],
+  ])("preserves a single-number parenthesized sign in statements and results: %s / %s", (value, sourceValue) => {
+    const quote = "Reported change " + sourceValue + ".";
+    const statement = "Reported change " + value + ".";
+    const blocks = [blockFor(1, quote, quote)];
+    const candidate = claim({ quote, block: 1, statement, valueText: value });
+    const out = verifyClaims(quote, blocks, [candidate]);
+    expect(out.claims).toEqual([]);
+    expect(out.dropped).toEqual([{ index: 0, reason: "unsupported-statement-numbers" }]);
+    expect(resultStatement({ ...candidate, start: 0, end: TE.encode(quote).byteLength, ambiguous: false, valueNumber: null })).toBeNull();
+
+    const supported = verifyClaims(quote, blocks, [claim({ quote, block: 1, statement: quote, valueText: sourceValue })]);
+    expect(supported.dropped).toEqual([]);
+    expect(supported.claims).toHaveLength(1);
+    const stored = supported.claims[0];
+    if (!stored) throw new Error("Source-exact percentage result must be retained.");
+    expect(resultStatement(stored)).toBe(quote);
+    expect(numbersSupported("50%", quote)).toBe(sourceValue === "(50%)");
+  });
+
   it("rejects 41.8 glued from a 41.0 passage plus a separate 8", () => {
     const passage =
       "Training took 3.5 days on 8 P100 GPUs.\n" +
@@ -262,25 +299,25 @@ describe("numbersSupported", () => {
     expect(numbersSupported("Score 79.9 here.", "score 79 here and 9 there")).toBe(false);
     expect(numbersSupported("Rate 1e-8 ok.", "rate 1e-8 ok")).toBe(true);
     expect(numbersSupported("Total 1,280,000 items.", "total 1,280,000 items")).toBe(true);
+    expect(numbersSupported("10,000", "10,000dollars")).toBe(true);
   });
 
   it.each([
+    ["50", "Training cost 0.50."],
+    ["50", "Count 150."],
+    ["50", "Scale 1e50."],
+    ["8512", "Values 8 512."],
+    ["10000", "10,000dollars"],
     ["with 50% dropout", "Training cost 0.50."],
     ["with 50% dropout", "Dropout 150%."],
     ["with 50% dropout", "Count 50."],
     ["with 50% dropout", "Dropout 0.50%."],
     ["with 50% dropout", "Change -50%."],
     ["with 50% dropout", "Change 1e50%."],
-    ["with 50% dropout", "Malformed 50%0."],
     ["dropout50%", "Training cost 0.50."],
     ["−10^8%", "10^8%"],
-    ["50%50", "50%"],
-    ["−10^{ 8}%", "10^{ 8}%"],
-  ])("rejects unsupported or incomplete percentage tokens: %s / %s", (text, quote) => {
+  ])("rejects borrowed numeric literals and unsupported percent units: %s / %s", (text, quote) => {
     expect(numbersSupported(text, quote)).toBe(false);
-    if (text === "50%50" || text === "−10^{ 8}%") {
-      expect(unsupportedNumbers(text, quote)).toEqual(["unsupported-percentage-format"]);
-    }
   });
 
   it.each([
