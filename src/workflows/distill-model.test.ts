@@ -516,3 +516,36 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 });
+
+describe("modelFailure gateway 404 cause projection", () => {
+  it("projects a known no-endpoint data-policy 404 body to the fixed actionable reason", async () => {
+    const actual = await vi.importActual<typeof ModelTransport>("../model-transport");
+    const secret = "sk-live-policy-secret user_id=policy-probe";
+    const policyBody = JSON.stringify({ error: { message: "No endpoints found matching your data policy (data_collection: deny). " + secret, code: 404 } });
+    const policyError = Object.assign(new Error("request failed"), { statusCode: 404, responseBody: policyBody });
+    expect(actual.modelFailure(policyError, snapshot)).toBe(
+      "External model request failed (HTTP 404). Provider reports no endpoint matching its data policy. Review provider privacy settings or choose another model. No retry was started.",
+    );
+    expect(actual.modelFailure(policyError, snapshot)).toContain("HTTP 404");
+    const incidentalError = Object.assign(new Error("missing"), { statusCode: 404, responseBody: JSON.stringify({ error: { message: "Not found. Diagnostic mentions no endpoint and data policy", code: 404 } }) });
+    expect(actual.modelFailure(incidentalError, snapshot)).toBe(
+      "External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.",
+    );
+    const typedError = Object.assign(new Error("missing"), { statusCode: 404, responseBody: JSON.stringify({ error: { message: { text: "No endpoints found matching your data policy" }, code: 404 } }) });
+    expect(actual.modelFailure(typedError, snapshot)).toBe(
+      "External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.",
+    );
+    const plainError = Object.assign(new Error("missing"), { statusCode: 404, responseBody: JSON.stringify({ error: { message: "Not found", code: 404 } }) });
+    expect(actual.modelFailure(plainError, snapshot)).toBe(
+      "External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.",
+    );
+    const malformedError = Object.assign(new Error("missing"), { statusCode: 404, responseBody: "<html>not json" });
+    expect(actual.modelFailure(malformedError, snapshot)).toBe(
+      "External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.",
+    );
+    const echoError = Object.assign(new Error("missing"), { statusCode: 404, responseBody: JSON.stringify({ error: { message: "Not found", code: 404 }, request: { echo: "no endpoint data policy debug" } }) });
+    expect(actual.modelFailure(echoError, snapshot)).toBe(
+      "External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.",
+    );
+  });
+});
