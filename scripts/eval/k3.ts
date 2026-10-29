@@ -180,6 +180,48 @@ assert.deepEqual(numericsUnsupported('score 41.8 here', '41,8'), [], 'Harness se
 assert.deepEqual(numericsUnsupported('energy 41.8e2 joules', '41.8', 41.8), ['41.8'], 'Harness selftest: full tokens, 41.8 is not supported by 41.8e2.');
 const isTokenObservation = (v) => v === null || (Number.isSafeInteger(v) && v >= 0);
 assert(isTokenObservation(null) && isTokenObservation(0) && isTokenObservation(40978) && !isTokenObservation(undefined) && !isTokenObservation(-1) && !isTokenObservation(1.5) && !isTokenObservation('40978'), 'Harness selftest: token observations accept nonnegative safe integers or null unknown, nothing else.');
+function outputBound(model) {
+  const requested = model.outputReserveTokens ?? model.maxOutputTokens;
+  const published = model.maxOutputTokens ?? requested;
+  if (!Number.isSafeInteger(requested) || requested <= 0 || !Number.isSafeInteger(published) || published <= 0) return null;
+  return Math.min(requested, published);
+}
+assert.equal(outputBound({ maxOutputTokens: 131072, outputReserveTokens: 8192 }), 8192, 'Captured Nemo job output reserve wins over larger published capacity.');
+assert.equal(outputBound({ maxOutputTokens: 4096, outputReserveTokens: 8192 }), 4096, 'A smaller published maximum still caps the reserve.');
+assert.equal(outputBound({ maxOutputTokens: null }), null, 'Unknown output metadata stays unknown.');
+assert.equal(outputBound({ maxOutputTokens: -1, outputReserveTokens: 8192 }), null, 'Invalid published output metadata cannot authorize a bound.');
+assert.equal(outputBound({ maxOutputTokens: '131072', outputReserveTokens: 8192 }), null, 'Output metadata is not coerced from strings.');
+const isCallCount = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 2;
+assert(!isCallCount(-1) && !isCallCount(1.5) && !isCallCount(3) && !isCallCount('2') && !isCallCount(NaN) && !isCallCount(Infinity), 'Call counts reject invalid or out-of-bound observations.');
+function owningCallCount(u, what) {
+  const row = u.progress?.attempts, reported = u.report?.usage?.calls;
+  for (const [name, value] of [['progress.attempts', row], ['report.usage.calls', reported]])
+    if (value !== null && value !== undefined) assert(isCallCount(value), what + ': invalid ' + name + ' (expected integer 0-2).');
+  if (isCallCount(row) && isCallCount(reported)) assert.equal(row, reported, what + ': owning-row/report call count mismatch.');
+  return isCallCount(row) ? row : isCallCount(reported) ? reported : null;
+}
+function executionCallDelta(before, after, attempted, confirmedOrTerminal, what) {
+  assert((before === null || isCallCount(before)) && (after === null || isCallCount(after)), what + ': invalid call observations.');
+  if (!attempted) return 0;
+  if (!confirmedOrTerminal || before === null || after === null) return null;
+  assert(after >= before, what + ': owning call count decreased.');
+  return after - before;
+}
+const capturedNone = { progress: { attempts: 0 }, report: null };
+const capturedReused = { progress: { attempts: 2 }, report: { usage: { calls: 2 } } };
+assert.equal(owningCallCount(capturedNone, 'captured none'), 0);
+assert.equal(owningCallCount({ report: capturedReused.report }, 'legacy report fallback'), 2);
+assert.equal(owningCallCount({}, 'missing observations'), null);
+assert.equal(executionCallDelta(2, owningCallCount(capturedReused, 'reused terminal'), false, true, 'reused terminal'), 0);
+assert.equal(executionCallDelta(2, 2, true, true, 'idempotent posted terminal'), 0);
+assert.equal(executionCallDelta(0, 2, true, true, 'fresh or unconfirmed POST observed terminal 0-to-2'), 2);
+assert.equal(executionCallDelta(null, 2, true, true, 'unknown preflight'), null);
+assert.equal(executionCallDelta(0, 0, true, false, 'unconfirmed POST followed by NONE/0 before possible late admission'), null);
+assert.equal(executionCallDelta(0, 0, true, true, 'confirmed 202 observed zero delta'), 0);
+assert.equal(executionCallDelta(0, null, true, true, 'failed reread after confirmed POST'), null);
+assert.throws(() => owningCallCount({ progress: { attempts: -1 } }, 'invalid row'), /invalid/);
+assert.throws(() => owningCallCount({ progress: { attempts: 2 }, report: { usage: { calls: 1 } } }, 'terminal mismatch'), /mismatch/);
+assert.throws(() => executionCallDelta(2, 1, true, true, 'decreased calls'), /decreased/);
 function snapOf(t) {
   if (!t || (t.state !== 'done' && t.state !== 'partial')) return null;
   const rep = t.report && typeof t.report === 'object' ? t.report : null;
@@ -271,11 +313,12 @@ function storedRevisionSnapshot(u, what) {
   assert(Array.isArray(u.claims), what + ' must expose its exact claim rows.');
   const usage = u.report && typeof u.report === 'object' && u.report.usage && typeof u.report.usage === 'object'
     ? u.report.usage : null;
+  const calls = owningCallCount(u, what);
   if (u.state === 'done' || u.state === 'partial') {
-    assert(usage && Number.isSafeInteger(usage.calls) && usage.calls >= 0, what + ' must carry owning-revision call count.');
+    assert(usage && isCallCount(usage.calls), what + ' must carry owning-revision call count.');
     assert(Number.isSafeInteger(usage.tokenLimit) && usage.tokenLimit >= 0, what + ' must carry owning-revision tokenLimit.');
   }
-  return { body: u, claimRows: u.claims.length, calls: usage ? usage.calls : null, tokenLimit: usage ? usage.tokenLimit : null };
+  return { body: u, claimRows: u.claims.length, calls, tokenLimit: usage ? usage.tokenLimit : null };
 }
 const whole = new Map();
 async function checkRange(rev, st, en) {
@@ -394,12 +437,12 @@ assert.equal(modelList.status, 200, 'Read current catalogue before reporting the
 const answerMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_ANSWER_MODEL);
 assert(answerMeta && answerMeta.enabled, 'Selected answerModel must be present and enabled in the current catalogue; no substitution is made here.');
 assert(Number.isSafeInteger(answerMeta.contextTokens) && answerMeta.contextTokens > 0, 'Selected answerModel context must be known.');
-const answerOutputBound = answerMeta.outputReserveTokens ?? answerMeta.maxOutputTokens;
+const answerOutputBound = outputBound(answerMeta);
 assert(Number.isSafeInteger(answerOutputBound) && answerOutputBound > 0, 'Selected answerModel output bound must be known.');
 const distillMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_DISTILL_MODEL);
 assert(distillMeta && distillMeta.enabled, 'Selected distillModel must be present and enabled in the current catalogue; no substitution is made here.');
 assert(Number.isSafeInteger(distillMeta.contextTokens) && distillMeta.contextTokens > 0, 'Selected distillModel context must be known.');
-const distillOutputBound = distillMeta.outputReserveTokens ?? distillMeta.maxOutputTokens;
+const distillOutputBound = outputBound(distillMeta);
 assert(Number.isSafeInteger(distillOutputBound) && distillOutputBound > 0, 'Selected distillModel output bound must be known.');
 const answerCallTokenLimit = answerMeta.contextTokens + answerOutputBound;
 const distillCallTokenLimit = distillMeta.contextTokens + distillOutputBound;
@@ -509,6 +552,7 @@ if (nativeOnly) {
       const crep = cu.report;
       assert(crep && typeof crep === 'object', 'Check report must be present.');
       const cusage = crep.usage || {};
+      owningCallCount(cu, 'native check source');
       for (const kk of ['calls', 'tokenLimit', 'wallMs']) assert(typeof cusage[kk] === 'number', 'Check report.usage.' + kk + ' must be numeric owning-revision usage.');
       for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) assert(isTokenObservation(cusage[kk]), 'Check report.usage.' + kk + ' must be a nonnegative safe integer or null unknown.');
       assert(cusage.calls <= 2, 'Check calls bounded at most 2, got ' + cusage.calls + '.');
@@ -764,7 +808,7 @@ if (nativeOnly) {
     const revisionCallsBefore = [...revisionRecordsBefore.values()].reduce((sum, record) => sum + (typeof record.calls === 'number' ? record.calls : 0), 0);
     const revisionCallCountsUnknownBefore = [...revisionRecordsBefore.values()].filter((record) => typeof record.calls !== 'number').length;
     const claimRowsBefore = [...revisionRecordsBefore.values()].reduce((sum, record) => sum + record.claimRows, 0);
-    const md = ['# K3 native-only (storage, zero model calls)', '', '- project: ' + title, '- readable arxiv rows: ' + scoped.length + '/10 (no ingestion/conversion repeats)', '- owning revision rows before/after: ' + revisionRecordsBefore.size + '/' + revisionRowsReadAfter, '- exact unchanged revision records preserved: ' + exactRevisionRecordsPreserved + '/' + (scoped.length - [...recoveryUpdatedRevisions].filter((rev) => revisionRecordsBefore.has(rev)).length), '- owning revision claim rows before/after: ' + claimRowsBefore + '/' + claimRowsAfter, '- owning revision calls before/after (known subtotal): ' + revisionCallsBefore + '/' + revisionCallsAfter + '; unknown rows ' + revisionCallCountsUnknownBefore + '/' + revisionCallCountsUnknownAfter, '- settings record preserved: true', '- understandingRouteWired: ' + String(understandingWired), '- overviewRouteWired: ' + String(overviewWired), '- reader range self-check: 1 exact range', '- paid distillation: skipped (root opt-in required)', '- claim-mode C1-C4: skipped (separate root step; hard gate remains open)', '- fullK3Accepted: false', ''].concat(recLines).concat(['']).join(EOL);
+    const md = ['# K3 native-only (storage, zero model calls)', '', '- project: ' + title, '- readable arxiv rows: ' + scoped.length + '/10 (no ingestion/conversion repeats)', '- owning revision rows before/after: ' + revisionRecordsBefore.size + '/' + revisionRowsReadAfter, '- exact unchanged revision records preserved: ' + exactRevisionRecordsPreserved + '/' + (scoped.length - [...recoveryUpdatedRevisions].filter((rev) => revisionRecordsBefore.has(rev)).length), '- owning revision claim rows before/after: ' + claimRowsBefore + '/' + claimRowsAfter, '- recorded owning revision calls before/after (known subtotal): ' + revisionCallsBefore + '/' + revisionCallsAfter + '; unknown rows ' + revisionCallCountsUnknownBefore + '/' + revisionCallCountsUnknownAfter, '- calls this run on POSTed revisions (known delta subtotal): 0; unknown delta rows 0 (storage-only)', '- settings record preserved: true', '- understandingRouteWired: ' + String(understandingWired), '- overviewRouteWired: ' + String(overviewWired), '- reader range self-check: 1 exact range', '- paid distillation: skipped (root opt-in required)', '- claim-mode C1-C4: skipped (separate root step; hard gate remains open)', '- fullK3Accepted: false', ''].concat(recLines).concat(['']).join(EOL);
   await writeFile(outDir + '/k3-native-' + Date.now() + '.md', md);
   console.log(md);
   }
@@ -916,7 +960,7 @@ if (!runModel) {
       }
     }
   }
-  const md = ['# K3 stored hard-gate validation (zero paid calls)', '', '- project: ' + title, '- owning revision rows before/after: ' + storedRevisionRecordsBefore.size + '/' + revisionRecordsAfterCount + '; exact records preserved: ' + exactRevisionRowsPreserved, '- owning revision claim rows before/after: ' + sClaimRows + '/' + sClaimRowsAfter, '- owning revision calls before/after: ' + sCalls + '/' + sCallsAfter + '; unknown rows ' + sCallRowsUnknown + '/' + sCallRowsUnknownAfter, '- chat settings record preserved: ' + String(JSON.stringify(settingsAfterStored.body.settings) === JSON.stringify(settingsForRun.body.settings)), '- fullK3Accepted: false', '- violations: ' + violations.length, '', '| source | state | claims | mode |', '|---|---|---|---|'].concat(sRows).concat(['', '## Violations / open gates', '']).concat(violations.map((v) => '- ' + v)).concat(['']).join(EOL);
+  const md = ['# K3 stored hard-gate validation (zero paid calls)', '', '- project: ' + title, '- owning revision rows before/after: ' + storedRevisionRecordsBefore.size + '/' + revisionRecordsAfterCount + '; exact records preserved: ' + exactRevisionRowsPreserved, '- owning revision claim rows before/after: ' + sClaimRows + '/' + sClaimRowsAfter, '- recorded owning revision calls before/after (known subtotal): ' + sCalls + '/' + sCallsAfter + '; unknown rows ' + sCallRowsUnknown + '/' + sCallRowsUnknownAfter, '- calls this run on POSTed revisions (known delta subtotal): 0; unknown delta rows 0 (storage-only)', '- chat settings record preserved: ' + String(JSON.stringify(settingsAfterStored.body.settings) === JSON.stringify(settingsForRun.body.settings)), '- fullK3Accepted: false', '- violations: ' + violations.length, '', '| source | state | claims | mode |', '|---|---|---|---|'].concat(sRows).concat(['', '## Violations / open gates', '']).concat(violations.map((v) => '- ' + v)).concat(['']).join(EOL);
   await writeFile(outDir + '/k3-stored-' + Date.now() + '.md', md);
   console.log(md);
   assert.equal(violations.length, 0, 'K3 MAP hard gates OPEN: ' + violations.length);
@@ -934,8 +978,8 @@ async function getUnderstanding(sourceId, rev) {
 const rows = [];
 let posted = 0;
 const failedRevs = [], pausedRevs = [];
-let distillCalls = 0;
 const paidByFile = new Map();
+const attemptedRevisions = new Set();
 const postedRevisions = new Set();
 const firstPass = new Map();
 let admit = true;
@@ -958,6 +1002,7 @@ async function distillOne(s) {
     return;
   }
   if (u.state === 'none' || u.state === 'queued') {
+    attemptedRevisions.add(rev);
     const p = await apiJson('/api/sources/' + encodeURIComponent(s.id) + '/understanding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionId: rev, model: SELECTED_DISTILL_MODEL }) });
     assert.equal(p.status, 202, 'POST understanding is always 202 idempotent for ' + s.originalFilename + '.');
     assert(p.body && p.body.revisionId === rev, 'POST understanding must echo {revisionId} for ' + s.originalFilename + '.');
@@ -1007,7 +1052,6 @@ async function distillOne(s) {
   assert(typeof rep.kept === 'number', 'report.kept must be a number (' + s.originalFilename + ').');
   assert(Array.isArray(rep.dropped), 'report.dropped must be an array of {index,reason} (' + s.originalFilename + ').');
   assert(typeof rep.clearedNumbers === 'number', 'report.clearedNumbers must be a number (' + s.originalFilename + ').');
-  distillCalls += usage.calls;
   if (postedRevisions.has(rev)) {
     let rowUnknown = false;
     if (Number.isSafeInteger(usage.inputTokens)) newTokens += usage.inputTokens;
@@ -1054,6 +1098,7 @@ await Promise.all([pump(), pump()]);
 const changed = [];
 const unbased = [];
 const tailV = [];
+const executionCalls = new Map([...attemptedRevisions].map((revision) => [revision, null]));
 let revisionCallsAfter = 0, revisionCallRowsUnknownAfter = 0, revisionClaimRowsAfter = 0, revisionRowsReadAfter = 0, terminalSnapshotsStable = 0;
 const revisionCallsBefore = [...revisionRecordsBefore.values()].reduce((sum, record) => sum + (typeof record.calls === 'number' ? record.calls : 0), 0);
 const revisionCallRowsUnknownBefore = [...revisionRecordsBefore.values()].filter((record) => typeof record.calls !== 'number').length;
@@ -1069,6 +1114,11 @@ try {
     revisionClaimRowsAfter += currentRecord.claimRows;
     const beforeRecord = revisionRecordsBefore.get(rev);
     if (!beforeRecord) { unbased.push(s.originalFilename + ': no exact preflight revision record was captured'); continue; }
+    if (attemptedRevisions.has(rev)) {
+      const confirmedOrTerminal = postedRevisions.has(rev) || TERMINAL.has(u.state);
+      executionCalls.set(rev, executionCallDelta(beforeRecord.calls, currentRecord.calls, true, confirmedOrTerminal, s.originalFilename));
+      if (!confirmedOrTerminal) tailV.push(s.originalFilename + ': POST unconfirmed; state=' + u.state + '; observed call delta remains unknown, no redispatch.');
+    }
     const snap = firstPass.get(rev);
     if (!snap) {
       if (!postedRevisions.has(rev)) {
@@ -1108,7 +1158,9 @@ try {
 const settingsAfterRun = await apiJson('/api/settings');
 if (settingsAfterRun.status !== 200 || !settingsAfterRun.body || !settingsAfterRun.body.settings) tailV.push('Stored settings reread unavailable after K3 work.');
 else if (JSON.stringify(settingsAfterRun.body.settings) !== settingsBeforeRun) tailV.push('Stored settings changed during K3 work.');
-const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- POSTed revisions this run: ' + posted + ' (second scan needs 0)', '- owning revision rows before/after: ' + revisionRecordsBefore.size + '/' + revisionRowsReadAfter, '- owning revision claim rows before/after: ' + revisionClaimRowsBefore + '/' + revisionClaimRowsAfter, '- owning revision calls before/after (known subtotal): ' + revisionCallsBefore + '/' + revisionCallsAfter + '; unknown rows ' + revisionCallRowsUnknownBefore + '/' + revisionCallRowsUnknownAfter, '- exact owning revision records stable on reread: ' + terminalSnapshotsStable + '/' + revisionRowsReadAfter, '- calls this run: ' + distillCalls + '; input/output tokens on posted revision records (known subtotal): ' + newTokens + '; unknown token rows ' + newTokensUnknown, '- settings record preserved: ' + String(settingsAfterRun.status === 200 && JSON.stringify(settingsAfterRun.body?.settings) === settingsBeforeRun), '- claim-mode C1-C4: skipped (hard gate remains open)', '- fullK3Accepted: false', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | state | claims | calls | in/cached/out | tokenLimit | wall_ms |', '|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
+const executedCallsKnown = [...executionCalls.values()].reduce((sum, calls) => sum + (calls ?? 0), 0);
+const executedCallRowsUnknown = [...executionCalls.values()].filter((calls) => calls === null).length;
+const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- revision POST attempts this run: ' + attemptedRevisions.size + '; accepted 202 responses: ' + posted + ' (second scan needs 0)', '- owning revision rows before/after: ' + revisionRecordsBefore.size + '/' + revisionRowsReadAfter, '- owning revision claim rows before/after: ' + revisionClaimRowsBefore + '/' + revisionClaimRowsAfter, '- recorded owning revision calls before/after (known subtotal): ' + revisionCallsBefore + '/' + revisionCallsAfter + '; unknown rows ' + revisionCallRowsUnknownBefore + '/' + revisionCallRowsUnknownAfter, '- exact owning revision records stable on reread: ' + terminalSnapshotsStable + '/' + revisionRowsReadAfter, '- calls this run on attempted revisions (known delta subtotal): ' + executedCallsKnown + '; unknown delta rows ' + executedCallRowsUnknown + '; input/output tokens on accepted revision records (known subtotal): ' + newTokens + '; unknown token rows ' + newTokensUnknown, '- settings record preserved: ' + String(settingsAfterRun.status === 200 && JSON.stringify(settingsAfterRun.body?.settings) === settingsBeforeRun), '- claim-mode C1-C4: skipped (hard gate remains open)', '- fullK3Accepted: false', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | state | claims | recorded calls | in/cached/out | tokenLimit | wall_ms |', '|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
 console.log(md);
 await writeFile(outDir + '/k3-' + Date.now() + '.md', boundReport + EOL + EOL + md);
 const claimTitle = process.env.ELIOT_K3_CLAIM_PROJECT;
@@ -1139,7 +1191,7 @@ else {
     for (const rev of scoped.map((s) => s.currentRevisionId)) if (!cread.some((s) => s.currentRevisionId === rev)) claimV.push('Claim project misses baseline revision ' + String(rev).slice(0, 8));
     if (cread.length < scoped.length + 2) claimV.push('Claim project needs the baseline 10 plus at least two extra readable papers (GPT-3/PaLM minimum).');
     const sizeTokens = cread.reduce((n, s) => n + (typeof s.readableSize === 'number' ? s.readableSize : 0) / 3, 0);
-    const answerOverflowReserve = answerMeta.maxOutputTokens ?? answerMeta.outputReserveTokens;
+    const answerOverflowReserve = outputBound(answerMeta);
     assert(Number.isSafeInteger(answerOverflowReserve) && answerOverflowReserve > 0, 'Selected answerModel output reserve must be known for whole-cap.');
     if (!(sizeTokens + answerOverflowReserve > Math.min(0.6 * answerMeta.contextTokens, 400000))) claimV.push('Claim scope must overflow whole mode (UTF8/3 + output reserve > min(0.6*ctx,400k)).');
     for (const s of cread) {

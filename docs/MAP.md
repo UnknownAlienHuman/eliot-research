@@ -253,6 +253,9 @@ re-distilled automatically.
   whole-reading cap, and all four turns must report `contextMode=claims`. The baseline PDFs/questions remain unchanged;
   no forced mode, reduced model cap, repeated padding or K5 search infrastructure is used.
 - Eval prints per-revision calls, known/unknown tokens, recorded token bounds, kept/dropped reasons and wall time.
+  Recorded historical calls and observed calls since the run's preflight are separate totals; an unconfirmed request
+  remains unknown until its accepted submission or terminal observation is known. Overflow uses the actual job output
+  reserve within published capacity, rather than treating published output capacity as a reservation.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 
