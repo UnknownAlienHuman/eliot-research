@@ -216,6 +216,7 @@ re-distilled automatically.
 6. Add claim context mode. The same answer prompt and citation resolver are used.
 7. Add reader guide/claims UI, quote cases and `pnpm eval k3`. Reader metadata shows availability and verification
    caveats; quote links retain exact identities without displaying UUIDs or call/token/time/reservation counters.
+   API progress retains the admitted job bound independently of later model-default or catalogue changes.
 
 **Hard acceptance — `pnpm eval k3`**
 

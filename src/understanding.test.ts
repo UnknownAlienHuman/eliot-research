@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getUnderstanding } from "./understanding";
+import type { DistillState } from "./understanding";
 import type { Actor } from "./auth";
 
 vi.mock("cloudflare:workers", () => ({ WorkflowEntrypoint: class {} }));
@@ -29,7 +30,10 @@ const entry = (route: string, id: string, contextTokens: number, outputReserveTo
   ...(enabled ? {} : { unavailableReason: "Provider is disabled." }),
 });
 
-function makeEnv(configured: string, models: unknown[]) {
+function makeEnv(configured: string, models: unknown[], options: {
+  state?: DistillState; attempts?: number; model?: string | null; tokenLimit?: number | null; report?: typeof storedReport | null;
+} = {}) {
+  const { state = "done", attempts = 1, model = HIST, tokenLimit = null, report = storedReport } = options;
   let writes = 0;
   const snapshot = { updatedAt: "2026-10-28T00:00:00.000Z", warnings: [], models, providers };
   const DB = {
@@ -37,7 +41,7 @@ function makeEnv(configured: string, models: unknown[]) {
       bind: () => ({
         first: async () => {
           if (sql.includes("FROM source WHERE")) return { id: SRC, authors: "Synth Author", published: "2026", currentRevisionId: REV };
-          if (sql.includes("FROM source_revision")) return { id: REV, state: "done", error: null, attempts: 1, reportKey: null, model: HIST };
+          if (sql.includes("FROM source_revision")) return { id: REV, state, error: null, attempts, reportKey: null, model, tokenLimit };
           if (sql.includes("distill_model AS model")) return { model: configured };
           return null;
         },
@@ -57,7 +61,7 @@ function makeEnv(configured: string, models: unknown[]) {
   };
   const guides: Record<string, string> = { ["source/" + REV + "/guide.md"]: "synth guide", ["source/" + REV + "/digest.md"]: "synth digest" };
   const objs: Record<string, unknown> = {
-    ["source/" + REV + "/distill.json"]: storedReport,
+    ...(report === null ? {} : { ["source/" + REV + "/distill.json"]: report }),
     ["source/" + REV + "/glossary.json"]: [],
     ["source/" + REV + "/blocks.json"]: [{ id: 1, start: 0, end: 5 }],
   };
@@ -76,22 +80,24 @@ function makeEnv(configured: string, models: unknown[]) {
 const owner = { type: "owner" } as Actor;
 
 describe("getUnderstanding stored-catalogue regression", () => {
-  it("keeps stored history while a separate future route sets 2*(ctx+reserve)", async () => {
+  it("keeps recorded row/report bounds and legacy history despite a larger future default", async () => {
     const fetchSpy = vi.fn(async () => { throw new Error("no discovery"); });
     vi.stubGlobal("fetch", fetchSpy);
-    const f = makeEnv(FUT, [entry(HIST, "synth-historic-v1", 16000, 4000), entry(FUT, "synth-future-v1", 32000, 8000)]);
-    const r = await getUnderstanding(f.env, owner, { sourceId: SRC, revisionId: REV });
-    expect(r.progress.model).toBe(HIST);
-    expect(r.progress.configuredModel).toBe(FUT);
-    expect(r.progress.maximumTokens).toBe(80000);
-    expect(r.guide).toBe("synth guide");
-    expect(r.report).toEqual(storedReport);
-    expect((r.report?.usage as unknown as { estimatedCostMicrousd: number }).estimatedCostMicrousd).toBe(322766);
+    for (const [tokenLimit, expected] of [[null, 44000], [60000, 60000], [0, 0]] as const) {
+      const f = makeEnv(FUT, [entry(HIST, "synth-historic-v1", 16000, 4000), entry(FUT, "synth-future-v1", 32000, 8000)], { tokenLimit });
+      const r = await getUnderstanding(f.env, owner, { sourceId: SRC, revisionId: REV });
+      expect(r.progress.model).toBe(HIST);
+      expect(r.progress.configuredModel).toBe(FUT);
+      expect(r.progress.maximumTokens).toBe(expected);
+      expect(r.guide).toBe("synth guide");
+      expect(r.report).toEqual(storedReport);
+      expect((r.report?.usage as unknown as { estimatedCostMicrousd: number }).estimatedCostMicrousd).toBe(322766);
+      expect(f.writes()).toBe(0);
+    }
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(f.writes()).toBe(0);
   });
 
-  it("missing/disabled configured metadata stays null, never zero, without discovery or writes", async () => {
+  it("missing or disabled default metadata cannot erase the historical report bound", async () => {
     const fetchSpy = vi.fn(async () => { throw new Error("no discovery"); });
     vi.stubGlobal("fetch", fetchSpy);
     const hist = entry(HIST, "synth-historic-v1", 16000, 4000);
@@ -99,12 +105,32 @@ describe("getUnderstanding stored-catalogue regression", () => {
     const off = makeEnv(FUT, [hist, entry(FUT, "synth-future-v1", 32000, 8000, false)]);
     const rm = await getUnderstanding(absent.env, owner, { sourceId: SRC, revisionId: REV });
     const rd = await getUnderstanding(off.env, owner, { sourceId: SRC, revisionId: REV });
-    expect(rm.progress.maximumTokens).toBeNull();
-    expect(rd.progress.maximumTokens).toBeNull();
-    expect(rd.progress.maximumTokens).not.toBe(0 as unknown as null);
+    expect(rm.progress.maximumTokens).toBe(44000);
+    expect(rd.progress.maximumTokens).toBe(44000);
+    expect(rm.progress.model).toBe(HIST);
     expect(rd.progress.model).toBe(HIST);
+    expect(rm.report).toEqual(storedReport);
     expect(rd.report).toEqual(storedReport);
     expect(fetchSpy).not.toHaveBeenCalled();
+    expect(absent.writes()).toBe(0);
     expect(off.writes()).toBe(0);
+  });
+
+  it("forecasts only unstarted revisions from their selected route or default, retaining unknown as null", async () => {
+    const fetchSpy = vi.fn(async () => { throw new Error("no discovery"); });
+    vi.stubGlobal("fetch", fetchSpy);
+    const hist = entry(HIST, "synth-historic-v1", 16000, 4000);
+    const future = entry(FUT, "synth-future-v1", 32000, 8000);
+    const none = makeEnv(FUT, [hist, future], { state: "none", attempts: 0, model: null, report: null });
+    const queued = makeEnv(FUT, [hist, future], { state: "queued", attempts: 0, report: null });
+    const missing = makeEnv(FUT, [future], { state: "queued", attempts: 0, report: null });
+    const terminal = makeEnv(FUT, [hist, future], { state: "failed", report: null });
+    for (const [f, expected] of [[none, 80000], [queued, 40000], [missing, null], [terminal, null]] as const) {
+      const r = await getUnderstanding(f.env, owner, { sourceId: SRC, revisionId: REV });
+      expect(r.progress.maximumTokens).toBe(expected);
+      expect(r.report).toBeNull();
+      expect(f.writes()).toBe(0);
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
