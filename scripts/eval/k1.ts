@@ -659,7 +659,10 @@ try {
   });
   await page.goto(origin + '/p/' + revPid + '/source/' + revSid + '?revisionId=' + otherRev);
   await expect(page.locator('.er-und__title')).toBeVisible({ timeout: 15000 });
-  assert(undGets.some((u) => u.includes(encodeURIComponent(otherRev))), 'Revision switch must GET understanding for the new exact revision.');
+  // The loading title can render before the understanding read effect dispatches its GET.
+  await expect.poll(() => undGets.some((u) => new URL(u).searchParams.get('revisionId') === otherRev), {
+    timeout: 15000, message: 'Revision switch must GET understanding for the new exact revision.',
+  }).toBe(true);
   assert.deepEqual(undPosts, [], 'Revision switch must never POST understanding.');
   await page.locator('#workspace-main').getByRole('link', { name: 'Sources', exact: true }).click();
   await expect(page.locator('#er-lib-files')).toBeVisible();

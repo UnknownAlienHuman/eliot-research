@@ -133,16 +133,19 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
     return { output, usage: { inputTokens, cachedTokens, outputTokens, tokenLimit, providerUsage: usage.raw ?? null } };
   } catch (error) {
     const detail = structuredFailureDetail(error, result);
+    let failure: string;
     if (detail) {
       const failed = { output: null, usage: toStoredUsage(detail.usage, model) };
       try { await put(env, revisionId, artifactName, failed); } catch { /* Preserve the failure without repeating inference if storage is unavailable. */ }
-      if (detail.finishReason === "length") {
-        throw new LibraryError("unavailable", "model reached output bound before complete output", 503);
-      }
-      throw new LibraryError("unavailable", "model returned incomplete or invalid structured output", 503);
+      failure = detail.finishReason === "length" ? "model reached output bound before complete output"
+        : "model returned incomplete or invalid structured output";
+    } else {
+      // Provider errors can contain credentials; retain only the fixed safe projection.
+      failure = modelFailure(error, model);
     }
-    // Provider errors can contain credentials; retain only the fixed safe projection.
-    throw new LibraryError("unavailable", modelFailure(error, model), 503);
+    await env.DB.prepare("UPDATE source_revision SET distill_error=? WHERE id=? AND distill_state='running' AND distill_calls=?")
+      .bind(failure, revisionId, ordinal).run();
+    throw new LibraryError("unavailable", failure, 503);
   }
 }
 
@@ -341,8 +344,8 @@ async function commitSynthesis(env: Env, revisionId: string): Promise<Projection
   return { kept: prepared.kept, guideSentences: prepared.guideSentences, dropped: prepared.dropped, clearedNumbers: prepared.clearedNumbers };
 }
 async function finish(env: Env, revisionId: string, error?: unknown, projection?: Projection) {
-  const row = await env.DB.prepare("SELECT distill_state,distill_started_at,distill_calls,guide_summary,distill_token_limit FROM source_revision WHERE id=?")
-    .bind(revisionId).first<{ distill_state: string; distill_started_at: number; distill_calls: number; guide_summary: string | null; distill_token_limit: number | null }>();
+  const row = await env.DB.prepare("SELECT distill_state,distill_started_at,distill_calls,guide_summary,distill_token_limit,distill_error FROM source_revision WHERE id=?")
+    .bind(revisionId).first<{ distill_state: string; distill_started_at: number; distill_calls: number; guide_summary: string | null; distill_token_limit: number | null; distill_error: string | null }>();
   if (!row || row.distill_state !== "running") return;
   const saved = await env.BUCKET.get(key(revisionId, "distill.json"));
   let report = saved ? await saved.json<FinalReport>() : null;
@@ -368,7 +371,7 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
       outputTokens: completeUsage ? sumTokens("outputTokens") : null, tokenLimit, wallMs,
       providerUsage: measured.map((item) => item.usage.providerUsage ?? null) },
     kept, dropped, clearedNumbers: projection?.clearedNumbers ?? verified?.clearedNumbers ?? 0,
-    raw: { first: first ? key(revisionId, "distill-call1.json") : null, second: second ? key(revisionId, "distill-call2.json") : null }, error: error ? message(error) : null } satisfies FinalReport);
+    raw: { first: first ? key(revisionId, "distill-call1.json") : null, second: second ? key(revisionId, "distill-call2.json") : null }, error: error ? row.distill_error ?? message(error) : null } satisfies FinalReport);
   report = await json<FinalReport>(env, revisionId, "distill.json");
   }
   await env.DB.prepare(`UPDATE source_revision SET distill_state=?,distill_error=?,distill_ms=?,distill_input_tokens=?,distill_cached_tokens=?,
