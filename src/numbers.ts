@@ -1,27 +1,20 @@
 // Shared source-number verification for distillation, Wiki and real eval callers.
-const DIGIT_RUN_RE = /[0-9]+/g;
 const NUMERIC_TOKEN_RE = /[0-9]+(?:[.,][0-9]+)*(?:[eE][+\-\u2212]?[0-9]+)?/g;
+const NUMERIC_LITERAL_RE = /(?:[+\-\u2212][ \t\u00a0\u2009]*)?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+)(?:[eE][+\-\u2212]?[0-9]+)?/g;
 const COMPOUND_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])(?<mantissa>[+\-\u2212]?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+))[ \t\u00a0\u2009]*(?:[×·*]|times)[ \t\u00a0\u2009]*10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
 const SINGLE_NUMBER_RE = /^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
-// Bare 10^N / 10-superscript without a mantissa x (for example Adam epsilon
-// 10^-8): one unambiguous scientific quantity, not two numbers. Shares the
+// Bare 10^N / 10-superscript without a mantissa x (for example 10^-8):
+// one unambiguous scientific quantity, not two numbers. Shares the
 // same power suffix logic as compound powers; no paper pattern is added.
-const BARE_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
+const BARE_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])(?<sign>[+\-\u2212]?)10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
 
-function quoteRuns(text: string): Set<string> {
-  return new Set(text.match(DIGIT_RUN_RE) ?? []);
-}
-
-function decimalTokens(text: string): Set<string> {
-  return new Set((text.match(NUMERIC_TOKEN_RE) ?? []).filter((token) => {
-    const parts = token.split(/[eE]/);
-    // A scientific token keeps its literal sign/exponent identity even with
-    // an integer mantissa: 1e8 is not supported by 1e-8.
-    if (parts.length > 1) return true;
-    const mantissa = parts[0] ?? "";
-    // A single comma can be a decimal separator; an ordinary thousands group stays ambiguous.
-    return mantissa.includes(".") || (/^\d+,\d+$/.test(mantissa) && !/^[1-9]\d{0,2},\d{3}$/.test(mantissa));
-  }).map((token) => token.replace(",", ".").replace("\u2212", "-").toLowerCase()));
+function normalizeNumericLiteral(value: string): string {
+  const [raw = "", exponent] = value.replace(/[ \t\u00a0\u2009]/g, "").replace(/\u2212/g, "-").toLowerCase().split("e");
+  let mantissa = raw;
+  if (/^[+-]?\d+,\d+$/.test(mantissa) && !/^[+-]?[1-9]\d{0,2},\d{3}$/.test(mantissa)) mantissa = mantissa.replace(",", ".");
+  mantissa = mantissa.replace(/^([+-]?)\./, (_match, sign: string) => sign + "0.");
+  if (/^[+-]?\d+\.\d+$/.test(mantissa)) mantissa = mantissa.replace(/0+$/, "").replace(/\.$/, "");
+  return mantissa + (exponent === undefined ? "" : "e" + exponent);
 }
 
 const SUPER_DIGITS: Readonly<Record<string, string>> = {
@@ -30,6 +23,14 @@ const SUPER_DIGITS: Readonly<Record<string, string>> = {
 };
 
 interface CompoundPowerToken { readonly value: string; readonly start: number; readonly end: number }
+
+function normalizePower(raw: string): string {
+  const text = raw.startsWith("^")
+    ? raw.slice(1).replace(/[ \t\u00a0\u2009]/g, "").replace("\u2212", "-")
+    : [...raw].map((char) => char === "⁻" ? "-" : char === "⁺" ? "+" : SUPER_DIGITS[char] ?? char).join("");
+  const sign = text.startsWith("-") ? "-" : "";
+  return sign + (text.replace(/^[+-]/, "").replace(/^0+(?=\d)/, "") || "0");
+}
 
 function compoundPowerTokens(text: string): CompoundPowerToken[] {
   const tokens: CompoundPowerToken[] = [];
@@ -45,15 +46,8 @@ function compoundPowerTokens(text: string): CompoundPowerToken[] {
     }
     mantissa = sign + magnitude;
 
-    const rawPower = groups.power ?? "";
-    const powerText = rawPower.startsWith("^")
-      ? rawPower.slice(1).replace(/[ \t\u00a0\u2009]/g, "").replace("\u2212", "-")
-      : [...rawPower].map((character) => character === "⁻" ? "-" : character === "⁺" ? "+" : SUPER_DIGITS[character] ?? character).join("");
-    const powerSign = powerText.startsWith("-") ? "-" : "";
-    const powerDigits = powerText.replace(/^[+-]/, "").replace(/^0+(?=\d)/, "");
-    const power = powerSign + (powerDigits || "0");
     const start = match.index ?? 0;
-    tokens.push({ value: `${mantissa}×10^${power}`, start, end: start + match[0].length });
+    tokens.push({ value: `${mantissa}×10^${normalizePower(groups.power ?? "")}`, start, end: start + match[0].length });
   }
   return tokens;
 }
@@ -74,37 +68,54 @@ function barePowerTokens(text: string): CompoundPowerToken[] {
   const tokens: CompoundPowerToken[] = [];
   for (const match of text.matchAll(BARE_POWER_RE)) {
     const start = match.index ?? 0;
-    tokens.push({ value: match[0], start, end: start + match[0].length });
+    const sign = (match.groups?.sign ?? "").replace("\u2212", "-");
+    tokens.push({ value: sign + "10^" + normalizePower(match.groups?.power ?? ""), start, end: start + match[0].length });
   }
   return tokens;
 }
 
+function withParenthesizedSign(text: string, token: CompoundPowerToken): string {
+  const sign = /([+\-\u2212])\s*\(\s*$/u.exec(text.slice(0, token.start))?.[1];
+  // Only a sign around one atom, optionally with its percent marker; no algebra.
+  const closes = /^(?:\s|~|\\[,;:! ])*(?:\\?%(?:\s|~|\\[,;:! ])*)?\)/u.test(text.slice(token.end));
+  return sign && closes && !/^[+-]/.test(token.value) ? sign.replace("\u2212", "-") + token.value : token.value;
+}
+
+function numericLiterals(text: string): Set<string> {
+  const values = new Set<string>();
+  let remaining = text;
+  for (const tokenize of [compoundPowerTokens, barePowerTokens]) {
+    const tokens = tokenize(remaining);
+    for (const token of tokens) values.add(withParenthesizedSign(remaining, token));
+    remaining = withoutCompoundPowers(remaining, tokens);
+  }
+  for (const match of remaining.matchAll(NUMERIC_LITERAL_RE)) {
+    const start = match.index ?? 0;
+    values.add(withParenthesizedSign(remaining, {
+      value: normalizeNumericLiteral(match[0]), start, end: start + match[0].length,
+    }));
+  }
+  return values;
+}
+
 /**
- * Shared maximal-digit-group rule: every digit run in text must occur as a
- * whole maximal digit run in quote. Decimal fractions additionally require
- * a complete token, including its exponent: 41.8/41,8 is not supported by
- * 41.0 plus a lone 8, and 1e8 is not supported by 1e-8. Only unambiguous
- * decimal-comma notation is folded; e/E case and U+2212 minus are
- * normalized, other signs stay literal. Integer/thousands digit rules and
- * source names remain unchanged.
+ * Require complete numeric literals, preserving signs and exponent identity.
+ * Decimal commas and insignificant fractional zeros are formatting; ambiguous
+ * comma grouping stays literal, and source spaces never join separate numbers.
+ * Unit, row, metric and condition association remain own-quote semantic checks;
+ * the absence of literal percent typography does not change numeric identity.
  */
 export function unsupportedNumbers(text: string, quote: string): string[] {
   if (typeof text !== "string" || typeof quote !== "string") return ["invalid-number-input"];
-  const requestedPowers = compoundPowerTokens(text);
-  const supportedPowers = new Set(compoundPowerTokens(quote).map((token) => token.value));
-  const powers = requestedPowers.filter((token) => !supportedPowers.has(token.value)).map((token) => token.value);
-  if (powers.length > 0) return [...new Set(powers)];
-
-  // Compound tokens are checked as a unit so their mantissa/exponent digits
-  // cannot be satisfied by unrelated occurrences elsewhere in the quote.
-  const remainingText = withoutCompoundPowers(text, requestedPowers);
-  const remainingQuote = withoutCompoundPowers(quote, compoundPowerTokens(quote));
-  const groups = remainingText.match(DIGIT_RUN_RE) ?? [];
-  const supported = quoteRuns(remainingQuote);
-  const missingGroups = groups.filter((group) => !supported.has(group));
-  if (missingGroups.length > 0) return [...new Set(missingGroups)];
-  const decimals = decimalTokens(remainingQuote);
-  return [...decimalTokens(remainingText)].filter((token) => !decimals.has(token));
+  const supported = numericLiterals(quote);
+  // Preserve accepted authored space-group spelling only when the quote
+  // explicitly supplies that same written comma grouping; never join source tokens.
+  const writtenText = text.replace(/(?<![\d.,])[+\-\u2212]?\d{1,3}(?:[ \u00a0\u2009]\d{3})+(?![\d.,])/g, (spaced, start: number) => {
+    const grouped = spaced.replace(/[ \u00a0\u2009]/g, ",");
+    const token = { value: normalizeNumericLiteral(grouped), start, end: start + spaced.length };
+    return supported.has(withParenthesizedSign(text, token)) ? grouped : spaced;
+  });
+  return [...numericLiterals(writtenText)].filter((token) => !supported.has(token));
 }
 
 export function numbersSupported(text: string, quote: string): boolean {
@@ -114,7 +125,7 @@ export function numbersSupported(text: string, quote: string): boolean {
 /**
  * Count distinct numeric quantities in a stored valueText for the K3
  * one-scalar-per-result contract. Compound powers (for example 4.9x10^-5)
- * and bare 10^N / 10-superscript (for example Adam epsilon 10^-8) each
+ * and bare 10^N / 10-superscript (for example 10^-8) each
  * count as one quantity via the shared power suffix logic; remaining
  * numeric tokens use the shared numeric tokenizer. A compound list such as
  * +27.1% / 8.3% counts as two and must be rejected by the caller. Zero

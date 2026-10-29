@@ -133,6 +133,40 @@ describe("verifyClaims", () => {
     expect(cleared.claims[0]).toMatchObject({ valueText: null, valueNumber: null, unit: null, conditions: "test split" });
   });
 
+  it("checks scalar numeric identity without requiring percent typography", () => {
+    const quote = "Validation accuracy reached 50.";
+    const statement = "Validation accuracy reached 50%.";
+    const blocks = [blockFor(1, quote, quote)];
+    const out = verifyClaims(quote, blocks, [
+      claim({ quote, block: 1, statement, metric: "validation accuracy", valueText: "50", unit: "%" }),
+    ]);
+    expect(out.dropped).toEqual([]);
+    expect(out.clearedNumbers).toBe(0);
+    expect(out.claims).toHaveLength(1);
+    const stored = out.claims[0];
+    if (!stored) throw new Error("The numerically supported scalar must be retained.");
+    expect(stored).toMatchObject({ quote, statement, valueText: "50", valueNumber: 50, unit: "%" });
+    expect(resultStatement(stored)).toBe(statement);
+    // Numeric presence alone grants no unit or condition entailment.
+    expect(numbersSupported("with 50% dropout", "Count 50.")).toBe(true);
+    expect(numbersSupported("with 50% dropout", "Training cost 0.50.")).toBe(false);
+  });
+
+  it("keeps a result whose percent unit is explicit in its own table header", () => {
+    const quote = "| Method | Accuracy (%) |\n| --- | --- |\n| A | 50 |";
+    const statement = "Method A has 50% accuracy.";
+    const blocks = [{ ...blockFor(1, quote, quote), type: "table" as const }];
+    const out = verifyClaims(quote, blocks, [
+      claim({ quote, block: 1, statement, metric: "Accuracy", valueText: "50", unit: "%" }),
+    ]);
+    expect(out.dropped).toEqual([]);
+    expect(out.claims).toHaveLength(1);
+    const stored = out.claims[0];
+    if (!stored) throw new Error("The same-quote table result must be retained.");
+    expect(stored).toMatchObject({ quote, start: 0, end: TE.encode(quote).byteLength, valueText: "50", valueNumber: 50, unit: "%" });
+    expect(resultStatement(stored)).toBe(statement);
+  });
+
   it("rejects substring digit groups that are not whole runs", () => {
     const text = "Count.\n\nThere are 950 samples.\n";
     const sub = "There are 950 samples.";
@@ -186,6 +220,42 @@ describe("verifyClaims", () => {
     expect(out.clearedNumbers).toBe(0);
   });
 
+  it("rejects a percentage condition borrowed from another block or a decimal axis tick", () => {
+    const cost = "Training cost reached 0.50.";
+    const dropout = "Training used 50% dropout.";
+    const text = cost + "\n\n" + dropout;
+    const blocks = [blockFor(1, text, cost), blockFor(2, text, dropout)];
+    const out = verifyClaims(text, blocks, [
+      claim({ quote: cost, block: 1, statement: "Training cost decreased.", conditions: "with 50% dropout" }),
+      claim({ quote: dropout, block: 2, statement: "Training used dropout.", conditions: "with 50% dropout" }),
+    ]);
+    expect(out.dropped).toEqual([{ index: 0, reason: "unsupported-condition-numbers" }]);
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0]).toMatchObject({ block: 2, quote: dropout, conditions: "with 50% dropout" });
+  });
+
+  it.each([
+    ["−(50%)", "(50%)"],
+    ["(50%)", "−(50%)"],
+  ])("preserves a single-number parenthesized sign in statements and results: %s / %s", (value, sourceValue) => {
+    const quote = "Reported change " + sourceValue + ".";
+    const statement = "Reported change " + value + ".";
+    const blocks = [blockFor(1, quote, quote)];
+    const candidate = claim({ quote, block: 1, statement, valueText: value });
+    const out = verifyClaims(quote, blocks, [candidate]);
+    expect(out.claims).toEqual([]);
+    expect(out.dropped).toEqual([{ index: 0, reason: "unsupported-statement-numbers" }]);
+    expect(resultStatement({ ...candidate, start: 0, end: TE.encode(quote).byteLength, ambiguous: false, valueNumber: null })).toBeNull();
+
+    const supported = verifyClaims(quote, blocks, [claim({ quote, block: 1, statement: quote, valueText: sourceValue })]);
+    expect(supported.dropped).toEqual([]);
+    expect(supported.claims).toHaveLength(1);
+    const stored = supported.claims[0];
+    if (!stored) throw new Error("Source-exact percentage result must be retained.");
+    expect(resultStatement(stored)).toBe(quote);
+    expect(numbersSupported("50%", quote)).toBe(sourceValue === "(50%)");
+  });
+
   it("rejects 41.8 glued from a 41.0 passage plus a separate 8", () => {
     const passage =
       "Training took 3.5 days on 8 P100 GPUs.\n" +
@@ -225,6 +295,42 @@ describe("numbersSupported", () => {
     expect(numbersSupported("Score 79.9 here.", "score 79 here and 9 there")).toBe(false);
     expect(numbersSupported("Rate 1e-8 ok.", "rate 1e-8 ok")).toBe(true);
     expect(numbersSupported("Total 1,280,000 items.", "total 1,280,000 items")).toBe(true);
+    expect(numbersSupported("10,000", "10,000dollars")).toBe(true);
+  });
+
+  it.each([
+    ["50", "Training cost 0.50."],
+    ["50", "Count 150."],
+    ["50", "Scale 1e50."],
+    ["8512", "Values 8 512."],
+    ["10000", "10,000dollars"],
+    ["with 50% dropout", "Training cost 0.50."],
+    ["with 50% dropout", "Dropout 150%."],
+    ["with 50% dropout", "Dropout 0.50%."],
+    ["with 50% dropout", "Change -50%."],
+    ["with 50% dropout", "Change 1e50%."],
+    ["dropout50%", "Training cost 0.50."],
+    ["−10^8%", "10^8%"],
+  ])("rejects borrowed numeric literals: %s / %s", (text, quote) => {
+    expect(numbersSupported(text, quote)).toBe(false);
+  });
+
+  it.each([
+    ["50%", "Dropout 50%."],
+    ["50 %", "Dropout 50\\%."],
+    ["50\\,\\%", "Dropout 50\u00a0%."],
+    ["50%", "Dropout 50\\,\\%."],
+    ["50%", "Dropout 50\n%."],
+    ["−5,2%", "Change -5.2 %."],
+    ["+1E−2%", "Change +1e-2\\%."],
+    ["7.6×10⁹%", "Change 7.6×10^9\\%."],
+    ["−10^8%", "Change -10^8%."],
+    ["`100%10`", "Observed `100%10`."],
+    ["−10^{ 8}%", "Observed −10^{ 8}%."],
+    [".50%", "Observed 0.50%."],
+    ["50%", "Observed 50.0%."],
+  ])("keeps complete and source-exact percentage formats: %s", (value, quote) => {
+    expect(numbersSupported(value, quote)).toBe(true);
   });
 
   it("keeps the literal exponent sign on integer mantissas", () => {
