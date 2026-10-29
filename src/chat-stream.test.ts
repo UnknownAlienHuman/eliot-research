@@ -627,5 +627,27 @@ describe("chat-stream K2 wire regression", () => {
       expect(found.inputTokens).toBe(10);
     } finally { h.db.close(); h.d1.close(); }
   });
+
+  it("streams grouped citations to a normal completed turn with one AI call", async () => {
+    const h = makeHarness("A source");
+    try {
+      await h.agent.onStart();
+      const answer = "Both points hold [S1:1, S1:1].";
+      nextSSE = sse([chunk({ content: answer }, "stop", { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 })]);
+      const turn = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: "cccccccc-cccc-4ccc-8ccc-000000000010", question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+      expect(turn.state).toBe("completed");
+      expect(turn.error).toBeNull();
+      expect(turn.answer).toBe("Both points hold [S1:1][S1:1].");
+      expect(turn.citations).toHaveLength(1);
+      expect(turn.citations[0]).toMatchObject({ sourceId: "s1", block: 1, start: 0, end: 8 });
+      expect(turn.invalidLabels).toBe(0);
+      expect(fetchCalls).toBe(1);
+      const saved = await h.agent.getStoredTurn(projectId, "cccccccc-cccc-4ccc-8ccc-000000000010");
+      expect(saved.answer).toContain("[Rr1:1]");
+      expect(saved.citations).toHaveLength(1);
+      expect(saved.citations[0]).toMatchObject({ block: 1, start: 0, end: 8 });
+    } finally { h.db.close(); h.d1.close(); }
+  });
+
 });
 

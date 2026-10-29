@@ -165,6 +165,8 @@ stop/reconnect, reopen chat and save an answer as a page.
 **Behavioral contract.** Only Send starts answer inference. Each turn freezes its source revisions and admitted model
 metadata. Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
 across corpora, with no fixed-paper coaching or JSON sentence/label enum. The server resolves labels and byte ranges.
+Groups of fully specified labels may normalize to separate inline references after every member passes the same
+frozen-scope validation; unknown identities and shorthand remain failures.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
 canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
 never retried automatically.

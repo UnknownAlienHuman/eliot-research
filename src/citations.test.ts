@@ -8,6 +8,10 @@ const SRC_A = "223e4567-e89b-12d3-a456-426614174000";
 const SRC_B = "223e4567-e89b-12d3-a456-426614174001";
 const REV_A = "123e4567-e89b-12d3-a456-426614174000";
 const REV_B = "123e4567-e89b-12d3-a456-426614174001";
+const GROUP_SRC = "223e4567-e89b-12d3-a456-426614174009";
+const GROUP_SRC2 = "223e4567-e89b-12d3-a456-426614174010";
+const GROUP_REV = "123e4567-e89b-12d3-a456-426614174009";
+const GROUP_REV2 = "123e4567-e89b-12d3-a456-426614174010";
 
 function makeBlocks(count: number): Block[] {
   const out: Block[] = [];
@@ -114,6 +118,68 @@ describe("resolveCitations", () => {
     expect(out.text).toBe(answer);
     expect(out.citations[0]).toMatchObject({ revisionId: REV_B, sourceId: SRC_B, block: 2, start: 10, end: 20 });
   });
+
+  it("resolves fully spelled comma groups to canonical individual refs", () => {
+    const groupSources: LabelSource[] = [
+      { sourceId: GROUP_SRC, revisionId: GROUP_REV, title: "Paper G", blocks: makeBlocks(30), alias: "S9" },
+      { sourceId: GROUP_SRC2, revisionId: GROUP_REV2, title: "Paper H", blocks: makeBlocks(27), alias: "S10" },
+    ];
+    const out = resolveCitations("a [S9:26, S9:27] b [S9:26, S10:27] c", groupSources);
+    expect(out.invalidLabels).toBe(0);
+    expect(out.text).toBe("a [S9:26][S9:27] b [S9:26][S10:27] c");
+    expect(out.citations).toEqual([
+      { revisionId: GROUP_REV, sourceId: GROUP_SRC, block: 26, start: 250, end: 260, sourceTitle: "Paper G", deleted: false, label: "[S9:26]" },
+      { revisionId: GROUP_REV, sourceId: GROUP_SRC, block: 27, start: 260, end: 270, sourceTitle: "Paper G", deleted: false, label: "[S9:27]" },
+      { revisionId: GROUP_REV2, sourceId: GROUP_SRC2, block: 27, start: 260, end: 270, sourceTitle: "Paper H", deleted: false, label: "[S10:27]" },
+    ]);
+  });
+
+  it("rejects a comma group with an unknown atom as a whole", () => {
+    const groupSources: LabelSource[] = [
+      { sourceId: GROUP_SRC, revisionId: GROUP_REV, title: "Paper G", blocks: makeBlocks(30), alias: "S9" },
+    ];
+    const out = resolveCitations("a [S9:26, S9:99] b", groupSources);
+    expect(out.citations).toEqual([]);
+    expect(out.text).not.toContain("S9:26");
+    expect(out.text).not.toContain("S9:99");
+    expect(out.invalidLabels).toBe(1);
+  });
+
+  it("rejects the real C4 S10 group when block 32 is not citable", () => {
+    const groupSources: LabelSource[] = [
+      { sourceId: GROUP_SRC2, revisionId: GROUP_REV2, title: "Paper H", blocks: makeBlocks(27), alias: "S10" },
+    ];
+    const out = resolveCitations("a [S10:27, S10:32] b", groupSources);
+    expect(out.citations).toEqual([]);
+    expect(out.text).not.toContain("S10:27");
+    expect(out.text).not.toContain("S10:32");
+    expect(out.invalidLabels).toBe(1);
+  });
+
+  it("keeps implied-alias comma shorthands invalid", () => {
+    const out = resolveCitations("a [S1:1,2] b", makeSources());
+    expect(out.citations).toEqual([]);
+    expect(out.text).not.toContain("[S1:1,2]");
+    expect(out.invalidLabels).toBe(1);
+  });
+
+  it("keeps ranged shorthands invalid", () => {
+    const out = resolveCitations("a [S1:1–2] b", makeSources());
+    expect(out.citations).toEqual([]);
+    expect(out.text).not.toContain("[S1:1");
+    expect(out.invalidLabels).toBe(1);
+  });
+
+  it("dedups repeated refs inside comma groups", () => {
+    const groupSources: LabelSource[] = [
+      { sourceId: GROUP_SRC, revisionId: GROUP_REV, title: "Paper G", blocks: makeBlocks(30), alias: "S9" },
+    ];
+    const out = resolveCitations("a [S9:26, S9:26] b [S9:26, S9:27] c [S9:26, S9:27] d", groupSources);
+    expect(out.invalidLabels).toBe(0);
+    expect(out.citations).toHaveLength(2);
+    expect(out.citations).toMatchObject([{ block: 26 }, { block: 27 }]);
+  });
+
 });
 
 describe("persistentAnswer", () => {
