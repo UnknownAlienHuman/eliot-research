@@ -358,7 +358,9 @@ parse-repair call. One generic `SYSTEM_PROMPT` applies across questions and corp
 ground source facts with supplied labels, distinguish inference, abstain when evidence is missing, and treat source text
 as untrusted data. Project instructions remain caller-provided context; no fixed-corpus coaching is added. The same
 server citation resolver maps valid labels to exact source/revision and UTF-8 ranges. Bare `Page N` / `Страница N`
-page headings and empty headings are ineligible for labels; canonical bytes and the block map remain unchanged.
+page markers and empty headings are omitted from the model's whole-reading projection as well as its citation-label
+set. Citable prose mentioning page numbers and meaningful headings remain present. Canonical bytes, block IDs and
+their original ranges remain unchanged, including for the reader and existing citations.
 
 Citation and numeric diagnostics do not prove semantic entailment. A normally completed answer with advisory warnings
 can still fail acceptance. Owner semantic review remains required. The unchanged C1–C4/O1–O8 question set, citation-opening checks and owner review

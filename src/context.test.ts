@@ -222,8 +222,8 @@ describe("buildContext K2 whole scope", () => {
     expect(res.estimatedInputTokens).toBeGreaterThan(0);
   });
 
-  it("keeps PDF page markers as unlabelled whole-reading orientation", async () => {
-    const text = "### Page 1\n\n## Методы 🌿\n\nLes mesures sont exactes.\n\n### Страница 2\n";
+  it("omits noncitable standalone page markers but keeps mentions in citable passages", async () => {
+    const text = "### Page 1\n\n## Методы 🌿\n\nLes mesures de la Page 1 sont exactes.\n\n### Страница 2\n\nPage 3\n";
     const blocks = scanBlocks(text);
     const byteLength = new TextEncoder().encode(text).byteLength;
     const { env } = makeEnv({
@@ -236,18 +236,20 @@ describe("buildContext K2 whole scope", () => {
     expect(res.mode).toBe("whole");
     expect(res.sources[0]?.blocks).toEqual([blocks[1], blocks[2]]);
     expect(res.sources[0]?.blocks.map((block) => sliceUtf8(text, block.start, block.end))).toEqual([
-      "## Методы 🌿\n", "Les mesures sont exactes.\n",
+      "## Методы 🌿\n", "Les mesures de la Page 1 sont exactes.\n",
     ]);
     const source = res.messages[1]?.content ?? "";
-    expect(source).toContain("### Page 1\n");
-    expect(source).toContain("### Страница 2\n");
+    expect(source).not.toContain("### Page 1\n");
+    expect(source).not.toContain("### Страница 2\n");
+    expect(source).not.toContain("Page 3\n");
     expect(source).not.toContain("[S1:1]");
     expect(source).not.toContain("[S1:4]");
+    expect(source).not.toContain("[S1:5]");
     expect(source).toContain("[S1:2] ## Методы 🌿");
-    expect(source).toContain("[S1:3] Les mesures sont exactes.");
-    const resolved = resolveCitations("The marker [S1:1] and heading [S1:2].", res.sources);
+    expect(source).toContain("[S1:3] Les mesures de la Page 1 sont exactes.");
+    const resolved = resolveCitations("The page markers [S1:1], [S1:4] and [S1:5]; heading [S1:2].", res.sources);
     expect(resolved.citations).toMatchObject([{ block: 2, start: blocks[1]?.start, end: blocks[1]?.end }]);
-    expect(resolved.invalidLabels).toBe(1);
+    expect(resolved.invalidLabels).toBe(3);
   });
 
   it("narrowed scope keeps answers citing only A and drops answers citing B", async () => {
