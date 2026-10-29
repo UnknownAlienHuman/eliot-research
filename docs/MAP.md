@@ -216,6 +216,10 @@ re-distilled automatically.
   `pnpm eval k3 --unchanged-only` preflights all ten terminal revisions, submits each exact revision ID once and compares
   the stored reports, claims, call counts and usage. This reuse check does not waive the semantic or claim-mode gates.
 - Every stored quote is an exact byte range; numeric result fields are cleared when not supported by their quote.
+- A result's `valueText` contains at most one numeric quantity. Compound lists are rejected rather than split or
+  silently retained with `valueNumber=null`; scientific notation remains one quantity.
+- Formatting preserves the selected statement's qualifiers and conditions. Missing structured numeric context rejects
+  the card rather than rewriting it into a bare scalar; the primary numeric value must occur in the stored statement.
 - Transformer, ResNet and LoRA anchor expectations in `eval/arxiv-10/questions.md` are present with correct conditions;
   no unsupported number is stored. Claim count and drop rate are reported, not quality gates.
 - An anchor must be expressed by a stored claim statement and supported by that same claim's exact quote; a matching

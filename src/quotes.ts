@@ -1,4 +1,4 @@
-import { numbersSupported, parseSingleNumber } from "./numbers.js";
+import { countNumericQuantities, numbersSupported, parseSingleNumber } from "./numbers.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
 
@@ -415,12 +415,18 @@ export function verifyClaims(
 /**
  * Format one stored result card after the normal verify step. Non-result
  * claims keep their original statement. A result claim must carry its
- * single parsed scalar (valueText plus a finite valueNumber); the card
- * keeps only that primary record built from the raw task/dataset/
- * conditions plus metric:valueText+unit, joining (never doubling) the
- * unit. The composed record must itself be supported by the same verified
- * quote, otherwise the card is rejected with null. Callers run
- * verifyClaims first; this formats, it does not re-admit.
+ * single scalar valueText (one numeric quantity; valueNumber stays optional
+ * because parseSingleNumber leaves unparsed literals null). The card
+ * preserves the original validated statement only when the structured
+ * one-primary-result plus context covers it; otherwise the card is
+ * rejected with null, never split, relabeled, or rebuilt from conditions.
+ * Guards: valueText holds at most one numeric quantity (compound powers
+ * count as one via the shared tokenizer); the composed task/dataset/
+ * conditions plus metric:valueText+unit (joining, never doubling, the
+ * unit) must be supported by the verified quote; valueText must be
+ * supported by the statement; the statement must be supported by the
+ * composed record. Callers run verifyClaims first; this formats, it does
+ * not re-admit or infer conditions.
  */
 export function resultStatement(claim: VerifiedClaim): string | null {
   if (claim.kind !== "result") return claim.statement;
@@ -434,6 +440,10 @@ export function resultStatement(claim: VerifiedClaim): string | null {
   const clean = (value: string | null): string | null =>
     typeof value === "string" && value.trim() !== "" ? value.trim() : null;
   const text = claim.valueText.trim();
+  // K3 one-scalar-per-result: valueText must hold at most one numeric
+  // quantity (compound powers count as one via the shared tokenizer).
+  // Never split, relabel, or borrow conditions to repair a compound.
+  if (countNumericQuantities(text) > 1) return null;
   const unit = clean(claim.unit);
   const scalar =
     unit === null || text.endsWith(unit) ? text : unit === "%" ? text + unit : text + " " + unit;
@@ -444,5 +454,7 @@ export function resultStatement(claim: VerifiedClaim): string | null {
   );
   const composed = context.length > 0 ? context.join(", ") + ": " + record : record;
   if (!numbersSupported(composed, claim.quote)) return null;
-  return composed;
+  if (!numbersSupported(text, claim.statement)) return null;
+  if (!numbersSupported(claim.statement, composed)) return null;
+  return claim.statement;
 }

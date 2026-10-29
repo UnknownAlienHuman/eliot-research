@@ -232,9 +232,17 @@ request/validation changes do not establish paid-service or quality acceptance.
 Code verifies quotes and numbers between calls. Draft statements are hypotheses, not evidence: the second call checks
 each retained candidate against its own quote and can add a small number of atomic facts from the same frozen excerpts.
 Only its supported, code-checked output is committed to the claim reader. Result claims describe one scalar result
-per task/dataset/metric/condition instead of a compound table row. Citation annotations are resolved separately from
-factual numbers; an unknown annotation rejects its item. Paid steps have no retry; only deterministic storage steps
+per task/dataset/metric/condition instead of a compound table row. A result's `valueText` may contain at most one numeric
+quantity; an explicit list such as two percentages is rejected even when both values occur in the quote and
+`valueNumber` is null. Scientific powers count as one quantity. Code does not split the list, infer conditions or relabel
+it to retain a card. Citation annotations are resolved separately from factual numbers; an unknown annotation rejects
+its item. Paid steps have no retry; only deterministic storage steps
 may use bounded native Workflow retries, with immutable R2 writes and natural `(revision, ordinal)` claim keys.
+Result cards preserve the original statement selected by call two instead of replacing it with a synthetic scalar
+sentence. Its primary numeric value must occur in that statement, and every authored number must be represented in
+the structured primary result or context, all supported by the same exact quote. Missing numeric conditions reject
+the card instead of disappearing during formatting. Qualifiers and delta descriptions remain authored prose;
+semantic support is still a separate quality gate.
 Both existing calls request central mechanism and material qualitative claim statements when the paper states them.
 Guide text and a fact merely occurring inside a quoted block do not substitute for an owner-visible claim. When the
 unchanged 32-card bound binds, supported central explanatory/qualitative coverage takes priority over duplicate or
