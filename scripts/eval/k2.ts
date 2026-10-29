@@ -20,6 +20,7 @@ const staticSelftest = process.argv.includes('--static-selftest');
 const nativeOnly = process.argv.includes('--native-only');
 const storedOnly = process.argv.includes('--stored-only');
 const modelsOnly = process.argv.includes('--models-only');
+const journeyOnly = process.argv.includes('--journey-only');
 const runModel = !staticSelftest && !nativeOnly && process.env.ELIOT_K2_MODEL === '1';
 const requestedOrigin = staticSelftest ? 'http://127.0.0.1:5173' : process.env.ELIOT_URL || 'http://127.0.0.1:5173';
 const configuredOrigin = staticSelftest ? undefined : process.env.ELIOT_ORIGIN;
@@ -37,6 +38,7 @@ if (modelsOnly && !staticSelftest) {
 const resumeChat = staticSelftest || modelsOnly ? null : process.env.ELIOT_EVAL_CHAT || null;
 const evalModelOverride = staticSelftest || modelsOnly ? null : (process.env.ELIOT_EVAL_MODEL ?? '').trim() || null;
 assert(!storedOnly || (!!resumeChat && !runModel && !modelsOnly), '--stored-only requires an existing chat and forbids model dispatch/catalogue tests.');
+assert(!journeyOnly || (!storedOnly && !modelsOnly && !nativeOnly), '--journey-only is a standalone journey mode; it cannot combine with stored-only, models-only or native-only.');
 assert(!runModel || evalModelOverride === null, 'K2 benchmark uses the frozen global configured default; ELIOT_EVAL_MODEL overrides are disabled.');
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
 const outDir = fileURLToPath(new URL('../../eval/out/k2/', import.meta.url));
@@ -185,9 +187,47 @@ function assertO8StaticSelftests() {
   assert.equal(o8('В корпусе отсутствуют подробные таблицы результатов, но метод борьбы описан в S9.'), false, 'Absence of tables without abstention must not pass.');
   assert.equal(o8('В корпусе отсутствуют методы сжатия моделей. Зато эти статьи решают галлюцинации.'), false, 'Unrelated absence plus affirmative hallucination claim must not pass.');
 }
+const STOPPED_CAUSE = 'Stopped. A new Send starts a new turn.';
+const JOURNEY_STOP_QUESTION = 'You are helping draft public research notes (no sources are attached; answer from general knowledge). Explain what a citation is in a research workspace and why exact passage links matter for trust. Structure the answer in 8 short numbered sections, each with a concrete example: 1 definition, 2 passage links, 3 quotes, 4 revisions, 5 authorship, 6 verification, 7 reuse in notes, 8 common mistakes. Keep each section to two or three sentences.';
+function journeyStopPayload(turnId, model) {
+  return { turnId: turnId, question: JOURNEY_STOP_QUESTION, scopeMode: 'empty', model: model };
+}
+function classifyStopOutcome(turn) {
+  const state = turn && typeof turn.state === 'string' ? turn.state : 'unknown';
+  const answer = turn && typeof turn.answer === 'string' ? turn.answer : '';
+  const error = turn && typeof turn.error === 'string' ? turn.error : null;
+  if (state === 'cancelled' && error === STOPPED_CAUSE) return 'not-run';
+  if (state === 'partial' && answer.trim().length > 0 && error === STOPPED_CAUSE) return 'stop-pass';
+  if (state === 'completed') return 'not-run';
+  return 'failed';
+}
+function journeyExpectedLimits(entry) {
+  const context = entry && typeof entry.contextTokens === 'number' ? entry.contextTokens : NaN;
+  const max = entry && typeof entry.maxOutputTokens === 'number' ? entry.maxOutputTokens : null;
+  const reserve = entry && typeof entry.outputReserveTokens === 'number' ? entry.outputReserveTokens : null;
+  const bound = reserve !== null ? reserve : max;
+  const output = bound === null ? NaN : Math.min(bound, max !== null ? max : bound);
+  if (!Number.isSafeInteger(context) || context <= 0 || !Number.isSafeInteger(output) || output <= 0) return null;
+  const total = context + output;
+  if (!Number.isSafeInteger(total)) return null;
+  return { outputLimit: output, callTokenLimit: total };
+}
+function assertJourneyStaticSelftests() {
+  assert.equal(classifyStopOutcome({ state: 'partial', answer: 'A citation points at an exact passage. ', error: STOPPED_CAUSE }), 'stop-pass', 'Partial text with the exact owner-Stop cause must pass.');
+  assert.equal(classifyStopOutcome({ state: 'cancelled', answer: '', error: STOPPED_CAUSE }), 'not-run', 'Cancelled before text is a separate NOT_RUN for streamed-partial coverage, not an overall pass.');
+  assert.equal(classifyStopOutcome({ state: 'completed', answer: 'Full text.', error: null }), 'not-run', 'A completed answer leaves Stop unproven.');
+  assert.equal(classifyStopOutcome({ state: 'partial', answer: 'Some text.', error: 'The answer exceeded the 90 s time bound. A new Send starts a new turn; no retry was started.' }), 'failed', 'A deadline partial must not pass as an owner Stop.');
+  assert.equal(classifyStopOutcome({ state: 'failed', answer: '', error: 'External model request failed (HTTP 404).' }), 'failed', 'A provider failure must not pass as an owner Stop.');
+  assert.equal(classifyStopOutcome({ state: 'partial', answer: 'Some text.', error: 'The model stopped before a normal completion (stop).' }), 'failed', 'A generic stop finish without the owner-Stop cause must not pass.');
+  assert.deepEqual(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: 131072, outputReserveTokens: 8192 }), { outputLimit: 8192, callTokenLimit: 1008192 }, 'The admitted call bound uses the SDK job reserve, not published capacity.');
+  assert.deepEqual(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: 131072 }), { outputLimit: 131072, callTokenLimit: 1131072 }, 'Without a job reserve the published max bounds the call.');
+  assert.equal(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: null }), null, 'Missing output metadata admits nothing.');
+  assert.equal(journeyExpectedLimits({ contextTokens: null, maxOutputTokens: 131072, outputReserveTokens: 8192 }), null, 'Missing context metadata admits nothing.');
+}
 assertC2StaticSelftests();
 assertDispatchStopStaticSelftests();
 assertO8StaticSelftests();
+assertJourneyStaticSelftests();
 if (staticSelftest) {
   console.log('K2 evaluator static selftests passed.');
   process.exit(0);
@@ -337,9 +377,11 @@ async function writeCompare(rows, metadata) {
   await writeFile(outDir + '/compare.md', lines.join(EOL) + EOL);
   console.log('K2 compare written: ' + outDir + '/compare.md (' + order.length + ' rows; hardChecksPassed=' + String(metadata.hardChecksPassed === true) + ').');
 }
-const me = await apiJson('/api/me');
+const me = journeyOnly ? null : await apiJson('/api/me');
+if (!journeyOnly) {
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
+}
 if (process.argv.includes('--models-only')) {
   // Catalog/storage checks only. Never dispatches a model turn; the isolated UI Gateway roundtrip restores blank.
   const before = await apiJson('/api/settings');
@@ -939,6 +981,374 @@ if (process.argv.includes('--models-only')) {
   await writeFile(outDir + '/external-models-native.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
   process.exit(0);
+}
+if (journeyOnly) {
+  const journeyProjectTitle = process.env.ELIOT_EVAL_PROJECT || '';
+  const journeyFixtureChat = resumeChat || '';
+  assert(journeyProjectTitle.trim().length > 0, 'The journey resolves its project from ELIOT_EVAL_PROJECT; no project title is hardcoded.');
+  assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(journeyFixtureChat), 'The journey reuses the chat from ELIOT_EVAL_CHAT; it must be a full UUID.');
+  assert(evalModelOverride === null, 'The journey freezes the configured global answer model; ELIOT_EVAL_MODEL overrides are disabled.');
+  const journeyAccessHeaders = ['CF-Access-Client-Id', 'CF-Access-Client-Secret', 'cf-access-jwt-assertion'];
+  assert(!journeyAccessHeaders.some((name) => typeof H[name] === 'string' && H[name].length > 0),
+    'Journey browser eval refuses Access credential headers; use the bare loopback development path.');
+  const journeyOrigin = assertEvalBrowserOrigin(origin, configuredOrigin);
+  if (!runModel) {
+    console.log(JSON.stringify({ journey: 'stop-reconnect-save', mode: 'model0-dry-run', dispatch: 'NOT_RUN',
+      reason: 'Set ELIOT_K2_MODEL=1 for the single released dispatch; this dry run performs zero network requests.',
+      project: journeyProjectTitle, fixtureChat: journeyFixtureChat,
+      frozenModelFrom: 'GET /api/settings at live time (frozen, never overridden; no catalogue refresh)',
+      stopQuestionChars: JOURNEY_STOP_QUESTION.length, stopScopeMode: 'empty',
+      boundPreflight: 'SDK modelOutputLimit min(outputReserveTokens ?? maxOutputTokens, maxOutputTokens ?? reserve); admitted bound = contextTokens + output (Nemo: 1000000 + 8192 = 1008192)',
+      plan: ['preflight existing C3 (completed, invalidLabels 0, cites>0, frozen model, exact current scope, every cited range opens)',
+        'create ONE stop chat, dispatch ONE empty-scope turn (async 202, exact request id, no retry)',
+        'watch the stream in the real UI; after first non-empty text click the existing Stop button',
+        'require visible text, UI Stop, and terminal partial with the owner-Stop cause; cancelled before text stays NOT_RUN',
+        'reload/reconnect: exact stored turn preserved, no resend, settings/catalogue unchanged',
+        'save existing C3 once via pages/from-turn; repeat the same mutationId (idempotent); page ranges open and content stable'] }, null, 2));
+    process.exit(2);
+  }
+  const jreport = { journey: 'stop-reconnect-save', mode: 'live', origin: journeyOrigin, project: journeyProjectTitle,
+    fixtureChat: journeyFixtureChat, frozenAnswerModel: null, frozenModelMetadata: null, expectedCallTokenLimit: null,
+    preflight: null, stop: null, reconnect: null, save: null, freezes: null, deltas: null, outcome: 'unknown' };
+  let journeyNotRun = false;
+  let jbrowser: any = null;
+  let journeyStopChatPath: string | null = null;
+  let journeyStopApiPath: string | null = null;
+  let journeyRequestTurnId: string | null = null;
+  try {
+    const jme = await apiJson('/api/me');
+    assert.equal(jme.status, 200, 'GET /api/me must be 200; start the 5244 runtime first.');
+    assert.equal(jme.body.actor.type, 'owner', 'Journey eval must run as owner.');
+    const jsettings = await apiJson('/api/settings');
+    assert.equal(jsettings.status, 200, 'GET /api/settings must be 200.');
+    const frozenAnswerModel = jsettings.body && jsettings.body.settings ? jsettings.body.settings.answerModel : null;
+    assert(typeof frozenAnswerModel === 'string' && frozenAnswerModel.length > 0, 'The stored global answerModel is required; no catalogue refresh or model override is allowed.');
+    jreport.frozenAnswerModel = frozenAnswerModel;
+    const settingsBefore = jsettings.body.settings;
+    const catalogueBefore = (await apiJson('/api/models')).body;
+    assert(catalogueBefore && Array.isArray(catalogueBefore.models), 'GET /api/models must return a catalogue array.');
+    const frozenEntry = catalogueBefore.models.find((m) => m && m.route === frozenAnswerModel);
+    assert(frozenEntry, 'The frozen global answer model must exist in the cached catalogue; no refresh is started.');
+    assert.equal(frozenEntry.enabled, true, 'The frozen global answer model must be enabled for admission.');
+    const expectedLimits = journeyExpectedLimits(frozenEntry);
+    assert(expectedLimits, 'The frozen catalogue entry must carry usable context/output metadata; unusable metadata admits nothing.');
+    jreport.frozenModelMetadata = { route: frozenEntry.route, contextTokens: frozenEntry.contextTokens,
+      maxOutputTokens: frozenEntry.maxOutputTokens === undefined ? null : frozenEntry.maxOutputTokens,
+      outputReserveTokens: frozenEntry.outputReserveTokens === undefined ? null : frozenEntry.outputReserveTokens };
+    jreport.expectedCallTokenLimit = expectedLimits.callTokenLimit;
+    let jprojects = [];
+    let jcursor = undefined;
+    for (let i = 0; i < 5; i++) {
+      const jp = await apiJson('/api/projects' + (jcursor ? '?cursor=' + encodeURIComponent(jcursor) : ''));
+      assert.equal(jp.status, 200, 'GET /api/projects must be 200.');
+      jprojects = jprojects.concat(jp.body.projects || []);
+      jcursor = jp.body.nextCursor || undefined;
+      if (!jcursor) break;
+    }
+    const jproj = jprojects.find((p) => p && p.title === journeyProjectTitle);
+    assert(jproj, 'Journey project must exist; nothing is uploaded or converted by this eval.');
+    const jprojectId = jproj.id;
+    const fixturePath = '/api/projects/' + encodeURIComponent(jprojectId) + '/chats/' + encodeURIComponent(journeyFixtureChat);
+    const fixtureBefore = await apiJson(fixturePath);
+    assert.equal(fixtureBefore.status, 200, 'GET fixture chat must be 200 and storage-only.');
+    assert(fixtureBefore.body && typeof fixtureBefore.body.chat === 'object' && Array.isArray(fixtureBefore.body.turns), 'GET fixture chat must return {chat, turns}.');
+    let jsources = [];
+    let jscur = undefined;
+    for (let i = 0; i < 10; i++) {
+      const js = await apiJson('/api/projects/' + encodeURIComponent(jprojectId) + '/sources' + (jscur ? '?cursor=' + encodeURIComponent(jscur) : ''));
+      assert.equal(js.status, 200, 'GET sources must be 200.');
+      jsources = jsources.concat(js.body.sources || []);
+      jscur = js.body.nextCursor || undefined;
+      if (!jscur) break;
+    }
+    const readableById = new Map();
+    for (const s of jsources) {
+      if (s && typeof s.id === 'string' && typeof s.currentRevisionId === 'string'
+        && (s.readableState === 'readable' || s.readableState === 'readable_with_warnings')) readableById.set(s.id, s.currentRevisionId);
+    }
+    const c3question = Q.get('C3');
+    assert(typeof c3question === 'string' && c3question.length > 0, 'questions.md must define C3.');
+    const c3done = (fixtureBefore.body.turns || []).filter((t) => t && t.question === c3question && t.state === 'completed');
+    assert(c3done.length > 0, 'No completed C3 turn exists in the fixture chat; root/Einstein verify C3 first.');
+    const c3 = c3done[c3done.length - 1];
+    assert.equal(c3.invalidLabels, 0, 'Preflight C3 must have invalidLabels 0.');
+    assert(Array.isArray(c3.citations) && c3.citations.length > 0, 'Preflight C3 must carry citations.');
+    assert.equal(c3.model, frozenAnswerModel, 'Preflight C3 must use the frozen global answer model.');
+    assert(Array.isArray(c3.sourceIds) && c3.sourceIds.length > 0, 'Preflight C3 must have a nonempty frozen scope.');
+    for (const sid of c3.sourceIds) assert(readableById.has(sid), 'Preflight C3 scope must resolve to a current readable project source.');
+    assert(Array.isArray(c3.revisionIds) && c3.revisionIds.length === c3.sourceIds.length
+      && c3.sourceIds.every((sid) => c3.revisionIds.indexOf(readableById.get(sid)) !== -1), 'Preflight C3 revisions must equal the current readable revisions (exact frozen scope).');
+    const journeyWhole = new Map();
+    async function journeyCheckRange(rev, st, en) {
+      let w = journeyWhole.get(rev);
+      if (!w) { const t = await apiBytes('/api/revisions/' + encodeURIComponent(rev) + '/text'); assert.equal(t.status, 200, 'GET revision text 200.'); w = t.bytes; journeyWhole.set(rev, w); }
+      const r = await apiBytes('/api/revisions/' + encodeURIComponent(rev) + '/range?start=' + st + '&end=' + en);
+      assert.equal(r.status, 200, 'Each cited range must open (GET range 200).');
+      assert(r.bytes.equals(w.subarray(st, en)), 'Cited range must equal the whole-text slice.');
+      return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(r.bytes);
+    }
+    for (const citation of c3.citations) {
+      assert(citation && typeof citation.revisionId === 'string' && Number.isSafeInteger(citation.block)
+        && Number.isSafeInteger(citation.start) && Number.isSafeInteger(citation.end) && citation.end > citation.start, 'Preflight C3 citations must carry exact ranges.');
+      await journeyCheckRange(citation.revisionId, citation.start, citation.end);
+    }
+    jreport.preflight = { c3TurnId: c3.turnId, state: c3.state, invalidLabels: 0, cites: c3.citations.length,
+      model: c3.model, scopeSources: c3.sourceIds.length, rangesOpened: c3.citations.length };
+    const fixtureTurnsBefore = fixtureBefore.body.turns.length;
+    const pagesBefore = await apiJson('/api/projects/' + encodeURIComponent(jprojectId) + '/pages');
+    assert.equal(pagesBefore.status, 200, 'GET pages must be 200.');
+    assert(!pagesBefore.body.nextCursor, 'Journey pages must fit one list read.');
+    const pageIdsBefore = new Set((pagesBefore.body.pages || []).map((p) => p && p.id).filter(Boolean));
+    const chatsBefore = await apiJson('/api/projects/' + encodeURIComponent(jprojectId) + '/chats');
+    assert.equal(chatsBefore.status, 200, 'GET chats must be 200.');
+    assert(!chatsBefore.body.nextCursor, 'Journey chats must fit one list read.');
+    const chatIdsBefore = new Set((chatsBefore.body.chats || []).map((c) => c && c.id).filter(Boolean));
+    const sourceIdsBefore = new Set(jsources.map((s) => s && s.id).filter(Boolean));
+    const stopChat = await apiJson('/api/projects/' + encodeURIComponent(jprojectId) + '/chats',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'k2-journey-stop ' + Date.now() }) });
+    assert(stopChat.status === 201 || stopChat.status === 200, 'POST chats must be 201/200.');
+    assert(stopChat.body && stopChat.body.chat && typeof stopChat.body.chat.id === 'string', 'Stop chat id required.');
+    const stopChatId = stopChat.body.chat.id;
+    const requestTurnId = randomUUID();
+    const stopChatPath = '/api/projects/' + encodeURIComponent(jprojectId) + '/chats/' + encodeURIComponent(stopChatId);
+    const stopApiPath = stopChatPath + '/turns/' + encodeURIComponent(requestTurnId) + '/stop';
+    journeyStopChatPath = stopChatPath; journeyStopApiPath = stopApiPath; journeyRequestTurnId = requestTurnId;
+    const { chromium, expect } = await import('@playwright/test');
+    jbrowser = await chromium.launch();
+    const jmutations = [];
+    let jstopPosts = 0;
+    let jputs = 0;
+    let cleanupStops = 0;
+    let uiSavePosts = 0;
+    let uiSaveBody: any = null;
+    let journeyUiSaveAllow: any = null;
+    const jcontext = await jbrowser.newContext({ viewport: { width: 390, height: 844 } });
+    await jcontext.route('**/api/**', async (route) => {
+      const request = route.request();
+      const requestUrl = new URL(request.url());
+      if (['GET', 'HEAD', 'OPTIONS'].indexOf(request.method()) !== -1) { await route.continue(); return; }
+      if (request.method() === 'POST' && requestUrl.pathname === stopApiPath) { jstopPosts += 1; await route.continue(); return; }
+      if (request.method() === 'POST' && journeyUiSaveAllow && requestUrl.pathname === journeyUiSaveAllow.path) {
+        const postBody = request.postDataJSON();
+        if (postBody && postBody.chatId === journeyUiSaveAllow.chatId && postBody.turnId === journeyUiSaveAllow.turnId && uiSavePosts === 0) {
+          uiSavePosts += 1; uiSaveBody = postBody;
+          await route.continue(); return;
+        }
+        jmutations.push({ method: request.method(), path: requestUrl.pathname });
+        await route.abort('blockedbyclient'); return;
+      }
+      if (request.method() === 'PUT') jputs += 1;
+      jmutations.push({ method: request.method(), path: requestUrl.pathname });
+      await route.abort('blockedbyclient');
+      return;
+    });
+    const jpage = await jcontext.newPage();
+    const jerrors = [];
+    jpage.on('pageerror', (error) => jerrors.push(String(error && error.message ? error.message : error).slice(0, 300)));
+    await jpage.goto(journeyOrigin + '/p/' + encodeURIComponent(jprojectId) + '/chat/' + encodeURIComponent(stopChatId));
+    await expect(jpage.getByText('Ask a question to start this conversation.', { exact: true })).toBeVisible({ timeout: 30000 });
+    const dispatch = await apiJson('/api/projects/' + encodeURIComponent(jprojectId) + '/chats/' + encodeURIComponent(stopChatId) + '/turns',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(journeyStopPayload(requestTurnId, frozenAnswerModel)) });
+    assert(dispatch.status === 202 || dispatch.status === 200 || dispatch.status === 201, 'Async turn send must be accepted; got ' + dispatch.status + '. No retry is sent.');
+    assert(dispatch.body && dispatch.body.turnId === requestTurnId && !dispatch.body.busy && !dispatch.body.queued, 'The accepted send must reference the exact submitted request id with no busy/queued flag.');
+    async function readStopRow(what) {
+      const snap = await apiJson(stopChatPath);
+      assert.equal(snap.status, 200, 'GET stop chat must be 200 and storage-only (' + what + ').');
+      assert(snap.body && Array.isArray(snap.body.turns), 'GET stop chat must return stored turn rows (' + what + ').');
+      const row = snap.body.turns.find((t) => t && t.turnId === requestTurnId) || null;
+      assert(row, 'The submitted stop turn must have exactly one stored row (' + what + ').');
+      assert.equal(snap.body.turns.length, 1, 'The stop chat must contain only the submitted turn (' + what + ').');
+      return row;
+    }
+    const jturnLi = jpage.locator('ol.er-chat__turns > li.er-chat__turn').first();
+    await expect(jturnLi).toBeVisible({ timeout: 30000 });
+    const janswer = jturnLi.locator('.er-chat__answer');
+    const jstopButton = jturnLi.getByRole('button', { name: 'Stop', exact: true });
+    let sawText = false;
+    let clickedStop = false;
+    let preTerminal = null;
+    const watchStart = Date.now();
+    while (Date.now() - watchStart < 60000) {
+      const state = await jturnLi.getAttribute('data-state');
+      if (state !== 'started') { preTerminal = state; break; }
+      let text = '';
+      try { text = await janswer.innerText({ timeout: 2000 }); } catch { text = ''; }
+      if (text.indexOf('Preparing your answer') === -1 && text.trim().length > 0) {
+        sawText = true;
+        try { await jstopButton.click({ timeout: 5000 }); clickedStop = true; } catch { clickedStop = false; }
+        break;
+      }
+      await jpage.waitForTimeout(500);
+    }
+    let stopRow = await readStopRow('after-watch');
+    if (!clickedStop && !sawText && stopRow.state === 'started') {
+      await apiJson(stopApiPath, { method: 'POST' });
+      cleanupStops += 1;
+      stopRow = await readStopRow('cleanup-stop');
+    }
+    const terminalStart = Date.now();
+    while (['completed', 'partial', 'cancelled', 'failed'].indexOf(stopRow.state) === -1 && Date.now() - terminalStart < 30000) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      stopRow = await readStopRow('terminal-poll');
+    }
+    if (stopRow.state === 'started') {
+      await apiJson(stopApiPath, { method: 'POST' });
+      cleanupStops += 1;
+      const cleanupStart = Date.now();
+      while (stopRow.state === 'started' && Date.now() - cleanupStart < 30000) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        stopRow = await readStopRow('cleanup-poll');
+      }
+    }
+    const stopOutcome = classifyStopOutcome(stopRow);
+    if (stopRow.totalMs !== null && stopRow.totalMs !== undefined) assert(stopRow.totalMs <= 90000, 'The stopped turn must respect the existing 90 s ceiling.');
+    if (stopRow.state === 'partial') {
+      assert.equal(stopRow.tokenLimit, jreport.expectedCallTokenLimit, 'The reserved bound must equal the SDK admission bound for the frozen catalogue entry (context + job reserve).');
+    } else {
+      assert(stopRow.tokenLimit === null || stopRow.tokenLimit === 0 || stopRow.tokenLimit === jreport.expectedCallTokenLimit, 'A cancelled or unproven stop turn must hold no reservation beyond the admitted bound.');
+    }
+    assert.equal(stopRow.model, frozenAnswerModel, 'The stop turn must use the frozen global answer model.');
+    jreport.stop = { requestTurnId: requestTurnId, sawText: sawText, clickedStop: clickedStop, preTerminal: preTerminal,
+      state: stopRow.state, cause: stopRow.error, answerChars: typeof stopRow.answer === 'string' ? stopRow.answer.length : 0,
+      tokenLimit: stopRow.tokenLimit, model: stopRow.model, totalMs: stopRow.totalMs === undefined ? null : stopRow.totalMs,
+      outcome: stopOutcome, uiStopPosts: jstopPosts, cleanupStops: cleanupStops };
+    if (stopOutcome === 'failed') {
+      throw new Error('Stop test failed: state=' + stopRow.state + ' cause=' + JSON.stringify(stopRow.error));
+    }
+    if (stopOutcome === 'not-run') {
+      journeyNotRun = true;
+      jreport.stop.note = 'The answer completed before Stop landed; Stop is unproven and no waiver is granted.';
+    }
+    if (!clickedStop && !sawText && !journeyNotRun) {
+      journeyNotRun = true;
+      jreport.stop.note = 'No provider text arrived within the finite watch; Stop is unproven and no waiver is granted.';
+    }
+    const stopRowBeforeReload = JSON.parse(JSON.stringify(stopRow));
+    const uiMutationsBeforeReload = jmutations.length;
+    await jpage.reload();
+    await expect(jpage.locator('ol.er-chat__turns > li.er-chat__turn').first()).toBeVisible({ timeout: 30000 });
+    const stopRowAfterReload = await readStopRow('after-reload');
+    assert.deepEqual(stopRowAfterReload, stopRowBeforeReload, 'Reload/reconnect must preserve the exact stored stop turn.');
+    assert.equal(jmutations.length, uiMutationsBeforeReload, 'Reload/reconnect must send no further UI mutations (no resend, no refresh, no model call).');
+    const uiState = await jturnLi.getAttribute('data-state');
+    assert.equal(uiState, stopRowAfterReload.state, 'The reloaded UI must show the stored terminal state.');
+    jreport.reconnect = { preserved: true, uiState: uiState, uiMutationsAfterReload: jmutations.length - uiMutationsBeforeReload };
+    const fromTurnPath = '/api/projects/' + encodeURIComponent(jprojectId) + '/pages/from-turn';
+    journeyUiSaveAllow = { path: fromTurnPath, chatId: journeyFixtureChat, turnId: c3.turnId };
+    await jpage.goto(journeyOrigin + '/p/' + encodeURIComponent(jprojectId) + '/chat/' + encodeURIComponent(journeyFixtureChat));
+    const c3li = jpage.locator('ol.er-chat__turns > li.er-chat__turn[data-state="completed"]')
+      .filter({ has: jpage.getByText(c3question, { exact: true }) }).last();
+    await expect(c3li).toBeVisible({ timeout: 30000 });
+    const saveResponsePromise = jpage.waitForResponse((r) => r.url() === journeyOrigin + fromTurnPath && r.request().method() === 'POST', { timeout: 30000 });
+    await c3li.getByRole('button', { name: 'Save as page', exact: true }).click({ timeout: 30000 });
+    const saveResponse = await saveResponsePromise;
+    assert.equal(saveResponse.status(), 201, 'UI Save as page must be 201.');
+    const savedPageId = (await saveResponse.json()).page.id;
+    assert(typeof savedPageId === 'string' && savedPageId.length > 0, 'UI save must return the page id.');
+    assert(uiSaveBody && uiSaveBody.chatId === journeyFixtureChat && uiSaveBody.turnId === c3.turnId && typeof uiSaveBody.mutationId === 'string', 'The captured UI save request must carry the C3 chat/turn and a UI-generated mutationId.');
+    assert.equal(uiSavePosts, 1, 'The UI must send exactly one Save POST.');
+    const saveRepeat = await apiJson(fromTurnPath, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(uiSaveBody) });
+    assert.equal(saveRepeat.status, 201, 'Repeat of the captured UI save body must be 201 (idempotent, no second UI click).');
+    assert.equal(saveRepeat.body.page.id, savedPageId, 'The same mutationId must return the already committed page (no duplicate).');
+    const pageGet1 = await apiJson('/api/projects/' + encodeURIComponent(jprojectId) + '/pages/' + encodeURIComponent(savedPageId));
+    const pageGet2 = await apiJson('/api/projects/' + encodeURIComponent(jprojectId) + '/pages/' + encodeURIComponent(savedPageId));
+    assert.equal(pageGet1.status, 200, 'GET saved page must be 200.');
+    assert.deepEqual(pageGet2.body, pageGet1.body, 'GET saved page content must be stable across reads.');
+    const savedCitations = pageGet1.body.page.citations;
+    assert(Array.isArray(savedCitations) && savedCitations.length > 0, 'The saved page must carry structured citations.');
+    assert.equal(pageGet1.body.page.kind, 'answer', 'The saved page kind must be answer.');
+    assert.deepEqual(savedCitations.map((c) => c && c.label), c3.citations.map((c) => '[R' + c.revisionId + ':' + c.block + ']'), 'Saved labels must be the full persistent R form of the known C3 targets.');
+    let savedQuote = null;
+    for (const citation of savedCitations) {
+      assert(c3.revisionIds.indexOf(citation.revisionId) !== -1, 'Every saved citation must stay inside the frozen C3 scope.');
+      const quote = await journeyCheckRange(citation.revisionId, citation.start, citation.end);
+      if (savedQuote === null) savedQuote = quote;
+    }
+    const normRefs = (s) => String(s).replace(/\[(S\d+|R[0-9a-fA-F-]{36}):\d+\]/g, '[CITE]').replace(/\s+/g, ' ').trim();
+    const normSaved = normRefs(pageGet1.body.page.body);
+    const normC3 = normRefs(c3.answer);
+    assert(normSaved === normC3 || normSaved.endsWith(normC3), 'Saved body must preserve the C3 factual text after reference normalization.');
+    const savePrefixLen = normSaved.length - normC3.length;
+    assert(savePrefixLen >= 0 && savePrefixLen <= 300, 'Any save prefix must stay concise.');
+    const savedChecks = checkAnswer('C3', pageGet1.body.page.body);
+    const adamCheck = savedChecks.find((ch) => ch && ch.name === 'Adam defaults');
+    assert(adamCheck && adamCheck.passed === true, 'Saved body must keep the C3 calibration facts true.');
+    const pickPage = (p) => ({ body: p.body, labels: (p.citations || []).map((c) => c && c.label) });
+    assert.deepEqual(pickPage(pageGet1.body.page), pickPage(saveRepeat.body.page), 'UI POST and API repeat must return the same stored body/cites.');
+    assert.deepEqual(pickPage(pageGet2.body.page), pickPage(pageGet1.body.page), 'Repeated GETs must return the same stored body/cites.');
+    jreport.save = { pageId: savedPageId, mutationId: uiSaveBody.mutationId, uiClicked: true, idempotentRepeat: true, cites: savedCitations.length, rangesOpened: savedCitations.length, contentStable: true, calibrationC3: true };
+    await jpage.goto(journeyOrigin + '/p/' + encodeURIComponent(jprojectId) + '/studio');
+    await expect(jpage.getByRole('heading', { name: 'Studio', exact: true })).toBeVisible({ timeout: 30000 });
+    await jpage.getByRole('button', { name: uiSaveBody.title, exact: true }).click({ timeout: 30000 });
+    const studioArticle = jpage.locator('article.er-chat__page');
+    await expect(studioArticle).toBeVisible({ timeout: 30000 });
+    const studioText = await studioArticle.locator('.er-chat__answer').innerText();
+    assert(studioText.indexOf('0.001') !== -1, 'Studio must render the saved C3 factual body.');
+    await studioArticle.locator('details > summary').click();
+    const studioCite = studioArticle.locator('ul.er-chat__cites > li.er-chat__cite').first();
+    await expect(studioCite).toBeVisible({ timeout: 30000 });
+    const citeHref = await studioCite.locator('a.er-chip').getAttribute('href');
+    const expectedCite = savedCitations[0];
+    const expectedHref = '/p/' + jprojectId + '/source/' + expectedCite.sourceId + '?revisionId=' + expectedCite.revisionId + '&start=' + expectedCite.start + '&end=' + expectedCite.end;
+    assert.equal(citeHref, expectedHref, 'Studio must link the saved citation to its exact reader range.');
+    await studioCite.locator('a.er-chip').click({ timeout: 30000 });
+    await expect(jpage.locator('div.er-lib__excerpt')).toBeVisible({ timeout: 30000 });
+    const excerptText = await jpage.locator('div.er-lib__excerpt pre').innerText();
+    assert.equal(excerptText, savedQuote, 'The reader must open the exact saved passage range.');
+    await jpage.screenshot({ path: outDir + '/k2-journey-studio-390.png' });
+    jreport.save.studioVerified = true;
+    jreport.save.readerVerified = true;
+    await jbrowser.close().catch(() => undefined);
+    const settingsAfter = (await apiJson('/api/settings')).body.settings;
+    assert.deepEqual(settingsAfter, settingsBefore, 'Global settings (model/defaults/native choice) must be unchanged.');
+    const catalogueAfter = (await apiJson('/api/models')).body;
+    assert.deepEqual(catalogueAfter, catalogueBefore, 'The cached catalogue and snapshot metadata must be unchanged (no refresh).');
+    const fixtureAfter = await apiJson(fixturePath);
+    assertTurnSnapshotDelta(fixtureBefore.body.turns, fixtureAfter.body.turns, 0, 'Fixture chat turns');
+    const pagesAfter = await apiJson('/api/projects/' + encodeURIComponent(jprojectId) + '/pages');
+    const pageIdsAfter = new Set((pagesAfter.body.pages || []).map((p) => p && p.id).filter(Boolean));
+    assert.deepEqual([...pageIdsAfter].filter((id) => !pageIdsBefore.has(id)), [savedPageId], 'Exactly one page may be added: the saved C3.');
+    const chatsAfter = await apiJson('/api/projects/' + encodeURIComponent(jprojectId) + '/chats');
+    const chatIdsAfter = new Set((chatsAfter.body.chats || []).map((c) => c && c.id).filter(Boolean));
+    assert.deepEqual([...chatIdsAfter].filter((id) => !chatIdsBefore.has(id)), [stopChatId], 'Exactly one chat may be added: the stop-test chat.');
+    let jsourcesAfter = [];
+    let jsacur = undefined;
+    for (let i = 0; i < 10; i++) {
+      const js2 = await apiJson('/api/projects/' + encodeURIComponent(jprojectId) + '/sources' + (jsacur ? '?cursor=' + encodeURIComponent(jsacur) : ''));
+      jsourcesAfter = jsourcesAfter.concat(js2.body.sources || []);
+      jsacur = js2.body.nextCursor || undefined;
+      if (!jsacur) break;
+    }
+    assert.deepEqual(new Set(jsourcesAfter.map((s) => s && s.id).filter(Boolean)), sourceIdsBefore, 'Source records must be unchanged (no uploads, no conversions).');
+    assert.deepEqual(jmutations, [], 'The UI must attempt no blocked mutation beyond the explicit Stop POST (no resend, no refresh, no model call).');
+    assert.equal(jputs, 0, 'The journey must attempt zero settings PUTs.');
+    assert.deepEqual(jerrors, [], 'The journey UI must not throw page errors.');
+    jreport.freezes = { settingsUnchanged: true, catalogueUnchanged: true, uiPuts: jputs, uiBlockedMutations: jmutations.length, uiStopPosts: jstopPosts, uiSavePosts: uiSavePosts, cleanupStops: cleanupStops, uiErrors: jerrors.length };
+    jreport.deltas = { fixtureChatTurns: [fixtureTurnsBefore, fixtureAfter.body.turns.length], stopChatTurns: 1, pagesAdded: 1, chatsAdded: 1, sourcesChanged: 0 };
+    jreport.outcome = journeyNotRun ? 'NOT_RUN' : 'PASS';
+    await writeFile(outDir + '/k2-journey-' + Date.now() + '.json', JSON.stringify(jreport, null, 2));
+    console.log(JSON.stringify(jreport, null, 2));
+    if (journeyNotRun) process.exit(2);
+    process.exit(0);
+  } catch (journeyError) {
+    try { if (jbrowser) await jbrowser.close(); } catch { /* best-effort browser cleanup before reporting */ }
+    try {
+      if (journeyStopChatPath && journeyRequestTurnId && journeyStopApiPath) {
+        for (let i = 0; i < 30; i++) {
+          const snap = await apiJson(journeyStopChatPath);
+          const row = snap.body && Array.isArray(snap.body.turns) ? snap.body.turns.find((t) => t && t.turnId === journeyRequestTurnId) : null;
+          if (!row || ['completed', 'partial', 'cancelled', 'failed'].indexOf(row.state) !== -1) break;
+          if (i === 0) await apiJson(journeyStopApiPath, { method: 'POST' });
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+    } catch { /* best-effort failure cleanup: finite same-ID observation only, never a resubmit */ }
+    jreport.outcome = 'FAILED';
+    jreport.error = journeyError instanceof Error ? journeyError.message : String(journeyError);
+    try { await writeFile(outDir + '/k2-journey-' + Date.now() + '.json', JSON.stringify(jreport, null, 2)); } catch { /* report best-effort */ }
+    console.log(JSON.stringify(jreport, null, 2));
+    process.exit(1);
+  }
 }
 const title = process.env.ELIOT_EVAL_PROJECT || (nativeOnly ? 'k1-eval' : 'Библиотека — PDF и точные ссылки');
 let projects = [], cursor = undefined;
