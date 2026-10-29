@@ -149,7 +149,7 @@ function checkAnswer(qid, ans) {
   }
   if (qid === 'C3') add('Adam defaults', has('0.001') && has('0.9') && has('0.999') && (has('1e-8') || m.includes('10 -8') || m.includes('10 - 8') || m.includes('10-8') || has('0.00000001')), 'Expected alpha=0.001, beta1=0.9, beta2=0.999 and epsilon=1e-8.');
   if (qid === 'C4') add('positional encoding contrast', (m.includes('синус') || m.includes('sinus')) && (m.includes('обуч') || m.includes('learn')), 'Expected sinusoidal versus learned positional encodings.');
-  if (qid === 'O8') add('honest abstention', /нет в корпусе|в корпусе нет|не решают|не содержат|ни одн(?:а|ой|ого|у)|abstain|not in (the )?corpus|no paper/i.test(ans), 'Expected an answer that the corpus does not solve hallucinations.');
+  if (qid === 'O8') add('honest abstention', /нет в корпусе|в корпусе нет|не решают|не содержат|ни одн(?:а|ой|ого|у)|в корпусе отсутствуют методы борьбы с галлюцинациями|нет работы, которая предлагает решение проблемы галлюцинаций|abstain|not in (the )?corpus|no paper/i.test(ans), 'Expected an answer that the corpus does not solve hallucinations.');
   if (['O1', 'O2', 'O3', 'O8'].includes(qid))
     checks.push({ name: 'semantic quality', ownerReviewRequired: true, detail: 'Gold facts are shown for owner review; the evaluator does not judge entailment or usefulness.' });
   else if (['O4', 'O5', 'O6', 'O7'].includes(qid))
@@ -178,8 +178,16 @@ function assertDispatchStopStaticSelftests() {
   assert.equal(dispatchUnavailable(200, { turn: { error: 'External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.' } }, null), true, 'Embedded HTTP 404 turn error must stop the batch.');
   assert.equal(dispatchUnavailable(200, null, { error: 'Partial answer stored; 2 unsupported numeric statements remain' }), false, 'Ordinary quality partial must not stop the batch.');
 }
+function assertO8StaticSelftests() {
+  const o8 = (answer) => checkAnswer('O8', answer).find((check) => check.name === 'honest abstention')?.passed;
+  assert.equal(o8('В предоставленном корпусе нет работы, которая предлагает решение проблемы галлюцинаций языковых моделей. Таким образом, в корпусе отсутствуют методы борьбы с галлюцинациями языковых моделей; проблема лишь упоминается в S3 как нерешённая.'), true, 'Explicit corpus abstention in the retained wording must pass.');
+  assert.equal(o8('В корпусе есть работа, которая предлагает решение проблемы галлюцинаций: метод борьбы описан в S9.'), false, 'An affirmative answer must not pass as abstention.');
+  assert.equal(o8('В корпусе отсутствуют подробные таблицы результатов, но метод борьбы описан в S9.'), false, 'Absence of tables without abstention must not pass.');
+  assert.equal(o8('В корпусе отсутствуют методы сжатия моделей. Зато эти статьи решают галлюцинации.'), false, 'Unrelated absence plus affirmative hallucination claim must not pass.');
+}
 assertC2StaticSelftests();
 assertDispatchStopStaticSelftests();
+assertO8StaticSelftests();
 if (staticSelftest) {
   console.log('K2 evaluator static selftests passed.');
   process.exit(0);
