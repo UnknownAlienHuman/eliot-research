@@ -178,6 +178,12 @@ Provider data-policy rejection shows a safe reason and leaves the chosen model a
 
 **Hard acceptance — `pnpm eval k2`**
 
+`pnpm eval k2 --journey-only` exercises the phone Stop/reconnect/Save path separately from the fixed twelve-question
+benchmark. It reads `ELIOT_EVAL_PROJECT` and an existing calibrated C3 chat in `ELIOT_EVAL_CHAT`; model work requires
+`ELIOT_K2_MODEL=1`. The run creates at most one empty-scope control turn on the frozen global model, stops after
+visible text, reopens the stored result, and saves the existing C3 once with an idempotent repeat and exact reader
+links. A completed-before-Stop or cancelled-before-text outcome remains `NOT_RUN` for streamed Stop coverage.
+
 - Run C1–C4 and O1–O8 from `eval/arxiv-10/questions.md` in whole mode.
   Freeze the configured global answer model for the complete run. The owner's temporary OpenRouter selection changes
   the provider, not the questions, source bytes, citation rules or quality gates.
