@@ -21,31 +21,37 @@ const nativeOnly = process.argv.includes('--native-only');
 const storedOnly = process.argv.includes('--stored-only');
 const modelsOnly = process.argv.includes('--models-only');
 const journeyOnly = process.argv.includes('--journey-only');
-const runModel = !staticSelftest && !nativeOnly && process.env.ELIOT_K2_MODEL === '1';
+const pickerOnly = process.argv.includes('--picker-only');
+const runModel = !staticSelftest && !nativeOnly && !pickerOnly && process.env.ELIOT_K2_MODEL === '1';
 const requestedOrigin = staticSelftest ? 'http://127.0.0.1:5173' : process.env.ELIOT_URL || 'http://127.0.0.1:5173';
 const configuredOrigin = staticSelftest ? undefined : process.env.ELIOT_ORIGIN;
 const origin = staticSelftest ? null : assertEvalOrigin(requestedOrigin, configuredOrigin);
 const H = staticSelftest ? {} : { Origin: origin };
-if (!staticSelftest && !modelsOnly && process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
+if (!staticSelftest && !modelsOnly && !pickerOnly && process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
   H['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID;
   H['CF-Access-Client-Secret'] = process.env.CF_ACCESS_CLIENT_SECRET;
 }
-if (!staticSelftest && !modelsOnly && process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.env.ELIOT_OWNER_JWT).trim();
+if (!staticSelftest && !modelsOnly && !pickerOnly && process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.env.ELIOT_OWNER_JWT).trim();
 if (modelsOnly && !staticSelftest) {
   assertEvalBrowserOrigin(origin, configuredOrigin);
   assert(process.env.ELIOT_K2_MODEL !== '1', '--models-only forbids ELIOT_K2_MODEL opt-in.');
 }
-const resumeChat = staticSelftest || modelsOnly ? null : process.env.ELIOT_EVAL_CHAT || null;
-const evalModelOverride = staticSelftest || modelsOnly ? null : (process.env.ELIOT_EVAL_MODEL ?? '').trim() || null;
+if (pickerOnly) {
+  assert(!staticSelftest && !nativeOnly && !storedOnly && !modelsOnly && !journeyOnly, '--picker-only is standalone.');
+  assert(process.env.ELIOT_K2_MODEL !== '1', '--picker-only forbids ELIOT_K2_MODEL opt-in.');
+  assertEvalBrowserOrigin(origin, configuredOrigin);
+}
+const resumeChat = staticSelftest || modelsOnly || pickerOnly ? null : process.env.ELIOT_EVAL_CHAT || null;
+const evalModelOverride = staticSelftest || modelsOnly || pickerOnly ? null : (process.env.ELIOT_EVAL_MODEL ?? '').trim() || null;
 assert(!storedOnly || (!!resumeChat && !runModel && !modelsOnly), '--stored-only requires an existing chat and forbids model dispatch/catalogue tests.');
 assert(!journeyOnly || (!storedOnly && !modelsOnly && !nativeOnly), '--journey-only is a standalone journey mode; it cannot combine with stored-only, models-only or native-only.');
 assert(!runModel || evalModelOverride === null, 'K2 benchmark uses the frozen global configured default; ELIOT_EVAL_MODEL overrides are disabled.');
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
 const outDir = fileURLToPath(new URL('../../eval/out/k2/', import.meta.url));
-const notebookAnswersPath = staticSelftest || modelsOnly ? '' : (process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS ?? '').trim()
+const notebookAnswersPath = staticSelftest || modelsOnly || pickerOnly ? '' : (process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS ?? '').trim()
   || fileURLToPath(new URL('../../eval/out/notebooklm-20261026/answers.md', import.meta.url));
 const order = ['C1', 'C2', 'C3', 'C4', 'O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8'];
-if (!staticSelftest) await mkdir(outDir, { recursive: true });
+if (!staticSelftest && !pickerOnly) await mkdir(outDir, { recursive: true });
 async function apiJson(path, init) {
   // Finite READ default (30s observer bound); explicit caller signal (e.g. 90s POST) is preserved verbatim.
   const readSignal = init && init.signal ? init.signal : AbortSignal.timeout(30000);
@@ -60,6 +66,105 @@ async function apiBytes(path, init) {
   const readSignal = init && init.signal ? init.signal : AbortSignal.timeout(30000);
   const r = await fetchEval(origin + path, { ...init, signal: readSignal, headers: { ...H, ...((init && init.headers) || {}) } }, origin, configuredOrigin);
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
+}
+async function runPickerOnlyProof() {
+  const { chromium, expect } = await import('@playwright/test');
+  const catalogRead = await apiJson('/api/models');
+  assert.equal(catalogRead.status, 200, 'Picker proof reads the stored model catalogue only.');
+  const entries = catalogRead.body?.models;
+  assert(Array.isArray(entries), 'GET /api/models must return the live catalogue.');
+  const providerOf = (route) => route.startsWith('gateway:') ? route.slice(8).split('/')[0] : route.split(':')[0];
+  const routes = new Map(), identities = new Map();
+  for (const model of entries) if (model && typeof model.route === 'string' && typeof model.id === 'string') {
+    const provider = providerOf(model.route), key = provider.length + ':' + provider + model.id;
+    routes.set(model.route, (routes.get(model.route) || 0) + 1); identities.set(key, (identities.get(key) || 0) + 1);
+  }
+  const eligible = entries.filter((model) => model?.enabled === true && typeof model.route === 'string' && typeof model.id === 'string' && routes.get(model.route) === 1
+    && identities.get(providerOf(model.route).length + ':' + providerOf(model.route) + model.id) === 1);
+  assert(eligible.length > 0, 'Picker proof needs one enabled, uniquely identified model in the actual catalogue.');
+  const noChoiceProvider = [...new Set(entries.filter((model) => typeof model?.route === 'string').map((model) => providerOf(model.route)).filter(Boolean))].find((provider) => !eligible.some((model) => providerOf(model.route) === provider));
+  const key = randomUUID(), projectTitle = 'K2 picker QA ' + key;
+  const projectCreate = await apiJson('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: projectTitle }) });
+  assert.equal(projectCreate.status, 201, 'Create one isolated empty QA project through the public API.'); const project = projectCreate.body?.project;
+  assert(project && typeof project.id === 'string', 'QA project ID is required.');
+  const sourceRead = await apiJson('/api/projects/' + encodeURIComponent(project.id) + '/sources');
+  assert.equal(sourceRead.status, 200); assert.deepEqual(sourceRead.body?.sources, [], 'Picker QA project must remain empty.');
+  const chatCreate = await apiJson('/api/projects/' + encodeURIComponent(project.id) + '/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Picker fixture ' + key }) });
+  const chatId = chatCreate.body?.chat?.id;
+  assert.equal(chatCreate.status, 201, 'Create one storage-only fixture chat through the public API.'); assert(typeof chatId === 'string', 'Fixture chat ID is required.');
+  const chatPath = '/api/projects/' + encodeURIComponent(project.id) + '/chats/' + encodeURIComponent(chatId);
+  const before = await apiJson(chatPath);
+  assert.equal(before.status, 200); assert.deepEqual(before.body?.turns, [], 'New fixture chat must start with no turns.');
+  const browserOrigin = assertEvalBrowserOrigin(origin, configuredOrigin), turnPath = chatPath + '/turns';
+  const turnUrl = browserOrigin + turnPath, turnPayloads = [], browserPosts = [], forbiddenReads = [];
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.route(turnUrl, async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      turnPayloads.push(route.request().postDataJSON()); await route.abort('blockedbyclient');
+    });
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.origin === browserOrigin && url.pathname.startsWith('/api/')) {
+        if (url.pathname === '/api/settings' || url.pathname === '/api/models/refresh') forbiddenReads.push(url.pathname);
+        if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) browserPosts.push({ method: request.method(), path: url.pathname });
+      }
+    });
+    const read = (path) => page.waitForResponse((response) => response.url() === browserOrigin + path && response.request().method() === 'GET');
+    const emptyChat = browserOrigin + '/p/' + encodeURIComponent(project.id) + '/chat';
+    await page.goto(emptyChat);
+    const question = page.getByRole('textbox', { name: 'Question', exact: true }), send = page.getByRole('button', { name: 'Send', exact: true });
+    const provider = page.getByRole('combobox', { name: 'Model: provider', exact: true }), model = page.getByRole('combobox', { name: 'Model', exact: true });
+    await expect(page.locator('.er-chat__composer')).toBeVisible();
+    await expect(question).toBeEnabled(); await expect(provider).toBeEnabled();
+    await expect(send).toBeDisabled();
+    await question.fill('Picker readiness ' + randomUUID());
+    await expect(send).toBeEnabled();
+    await question.fill('');
+    await page.reload(); await expect(provider).toBeEnabled();
+    assert.deepEqual(browserPosts, [], 'Empty-chat navigation and reload must not POST.');
+    const chatRead = read(chatPath);
+    await page.goto(browserOrigin + '/p/' + encodeURIComponent(project.id) + '/chat/' + encodeURIComponent(chatId));
+    assert.equal((await chatRead).status(), 200);
+    assert.deepEqual(browserPosts, [], 'Opening the existing fixture chat must not POST.');
+    await expect(provider).toBeEnabled();
+    if (noChoiceProvider) {
+      const disabled = await provider.locator('option').evaluateAll((options, id) => options.some((option) => option.value === id && option.disabled), noChoiceProvider);
+      assert.equal(disabled, true, 'Provider with no enabled unique catalogue choice must be disabled.');
+    }
+    const choose = async (entry) => {
+      await provider.selectOption(providerOf(entry.route)); await expect(model).toBeEnabled();
+      const count = await model.locator('option').evaluateAll((options, route) => options.filter((option) => option.value === route && !option.disabled).length, entry.route);
+      assert.equal(count, 1, 'Selected route must be one enabled option from the actual catalogue.');
+      await model.selectOption(entry.route); await expect(model).toHaveValue(entry.route);
+    };
+    const first = eligible[0], second = eligible[1] ?? eligible[0];
+    await choose(first);
+    if (eligible.length > 1) await choose(second);
+    await question.fill('Picker payload proof ' + randomUUID()); await send.click();
+    await expect.poll(() => turnPayloads.length).toBe(1);
+    assert.equal(turnPayloads[0].model, second.route, 'Send must carry the selected live catalogue route.');
+    assert.equal(turnPayloads[0].scopeMode, 'project_default'); await expect(send).toBeEnabled();
+    await provider.selectOption(''); await expect(provider).toHaveValue(''); await expect(model).toHaveValue('');
+    await expect(provider.locator('option').first()).toHaveText('Project default'); await page.reload();
+    await expect(provider).toBeEnabled(); await expect(provider).toHaveValue(''); await expect(model).toHaveValue('');
+    assert.deepEqual(browserPosts, [{ method: 'POST', path: turnPath }], 'Reload after intercepted Send must not create another POST.');
+    await question.fill('Picker default proof ' + randomUUID()); await send.click();
+    await expect.poll(() => turnPayloads.length).toBe(2);
+    await expect(send).toBeEnabled();
+    assert.equal(Object.hasOwn(turnPayloads[1], 'model'), false, 'Project default Send must omit the model override.'); assert.equal(turnPayloads[1].scopeMode, 'project_default');
+    assert.deepEqual(browserPosts, [{ method: 'POST', path: turnPath }, { method: 'POST', path: turnPath }], 'Browser may POST only the two intercepted fixture turns.');
+    assert.deepEqual(forbiddenReads, [], 'Picker flow must not read Settings or refresh model catalogues.');
+  } finally { await browser.close().catch(() => undefined); }
+  const after = await apiJson(chatPath);
+  assert.equal(after.status, 200); assert.deepEqual(after.body.turns, before.body.turns, 'Intercepted Sends must leave fixture turn rows unchanged.');
+  const usage = (turns) => turns.map((turn) => [turn.turnId, turn.inputTokens ?? null, turn.cachedTokens ?? null, turn.outputTokens ?? null, turn.totalTokens ?? null, turn.reasoningTokens ?? null]); assert.deepEqual(usage(after.body.turns), usage(before.body.turns), 'Stored usage must remain unchanged.');
+  console.log(JSON.stringify({ scope: 'K2_PICKER_FRONTEND_ONLY', inferenceCalls: 0, fullK2Accepted: false,
+    fixture: { projectTitle, projectId: project.id, chatId, sources: 0, turnsBefore: before.body.turns.length, turnsAfter: after.body.turns.length, usageUnchanged: true },
+    catalogue: { snapshotAt: catalogRead.body.snapshot?.updatedAt ?? null, eligibleModels: eligible.length, selectedRoutes: eligible.length > 1 ? [first.route, second.route] : [first.route],
+      disabledProvider: noChoiceProvider ?? 'NOT_AVAILABLE_IN_CATALOGUE' },
+    browser: { navigationPosts: 0, interceptedTurnPosts: turnPayloads.length, selectedRoute: turnPayloads[0].model, projectDefaultOmitted: !Object.hasOwn(turnPayloads[1], 'model'), settingsReads: 0, catalogueRefreshes: 0 } }, null, 2));
 }
 const pct = (a, p) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 function assertProviderConfigs(providers, source, requireExactIds = false) {
@@ -397,6 +502,12 @@ async function writeCompare(rows, metadata) {
   console.log('K2 compare written: ' + outDir + '/compare.md (' + order.length + ' rows; hardChecksPassed=' + String(metadata.hardChecksPassed === true) + ').');
 }
 const me = journeyOnly ? null : await apiJson('/api/me');
+if (pickerOnly) {
+  assert.equal(me.status, 200, 'Picker proof must run as the owner on the isolated QA runtime.');
+  assert.equal(me.body.actor.type, 'owner');
+  await runPickerOnlyProof();
+  process.exit(0);
+}
 if (!journeyOnly) {
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
