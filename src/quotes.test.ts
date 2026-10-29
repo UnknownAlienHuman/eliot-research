@@ -133,27 +133,23 @@ describe("verifyClaims", () => {
     expect(cleared.claims[0]).toMatchObject({ valueText: null, valueNumber: null, unit: null, conditions: "test split" });
   });
 
-  it("clears an unsupported percent unit from a non-result method without dropping its evidence", () => {
-    const statement = "The method counts 50 items.";
-    const text = "Intro.\n\n" + statement + "\n";
-    const blocks = [blockFor(1, text, "Intro."), blockFor(2, text, statement)];
-    const out = verifyClaims(text, blocks, [
-      claim({ kind: "method", quote: statement, block: 2, statement, valueText: "50", unit: "%" }),
+  it("checks scalar numeric identity without requiring percent typography", () => {
+    const quote = "Validation accuracy reached 50.";
+    const statement = "Validation accuracy reached 50%.";
+    const blocks = [blockFor(1, quote, quote)];
+    const out = verifyClaims(quote, blocks, [
+      claim({ quote, block: 1, statement, metric: "validation accuracy", valueText: "50", unit: "%" }),
     ]);
     expect(out.dropped).toEqual([]);
-    expect(out.clearedNumbers).toBe(1);
+    expect(out.clearedNumbers).toBe(0);
     expect(out.claims).toHaveLength(1);
-    expect(out.claims[0]).toMatchObject({
-      kind: "method",
-      statement,
-      quote: statement,
-      block: 2,
-      start: blocks[1]?.start,
-      end: blocks[1]?.end,
-      valueText: null,
-      valueNumber: null,
-      unit: null,
-    });
+    const stored = out.claims[0];
+    if (!stored) throw new Error("The numerically supported scalar must be retained.");
+    expect(stored).toMatchObject({ quote, statement, valueText: "50", valueNumber: 50, unit: "%" });
+    expect(resultStatement(stored)).toBe(statement);
+    // Numeric presence alone grants no unit or condition entailment.
+    expect(numbersSupported("with 50% dropout", "Count 50.")).toBe(true);
+    expect(numbersSupported("with 50% dropout", "Training cost 0.50.")).toBe(false);
   });
 
   it("keeps a result whose percent unit is explicit in its own table header", () => {
@@ -310,13 +306,12 @@ describe("numbersSupported", () => {
     ["10000", "10,000dollars"],
     ["with 50% dropout", "Training cost 0.50."],
     ["with 50% dropout", "Dropout 150%."],
-    ["with 50% dropout", "Count 50."],
     ["with 50% dropout", "Dropout 0.50%."],
     ["with 50% dropout", "Change -50%."],
     ["with 50% dropout", "Change 1e50%."],
     ["dropout50%", "Training cost 0.50."],
     ["−10^8%", "10^8%"],
-  ])("rejects borrowed numeric literals and unsupported percent units: %s / %s", (text, quote) => {
+  ])("rejects borrowed numeric literals: %s / %s", (text, quote) => {
     expect(numbersSupported(text, quote)).toBe(false);
   });
 

@@ -102,12 +102,11 @@ function numericLiterals(text: string): Set<string> {
  * Require complete numeric literals, preserving signs and exponent identity.
  * Decimal commas and insignificant fractional zeros are formatting; ambiguous
  * comma grouping stays literal, and source spaces never join separate numbers.
- * A percent unit may occur elsewhere in the same quote, including a header.
- * These necessary checks do not establish row, metric or condition association.
+ * Unit, row, metric and condition association remain own-quote semantic checks;
+ * the absence of literal percent typography does not change numeric identity.
  */
 export function unsupportedNumbers(text: string, quote: string): string[] {
   if (typeof text !== "string" || typeof quote !== "string") return ["invalid-number-input"];
-  if (text.includes("%") && !quote.includes("%")) return ["%"];
   const supported = numericLiterals(quote);
   // Preserve accepted authored space-group spelling only when the quote
   // explicitly supplies that same written comma grouping; never join source tokens.

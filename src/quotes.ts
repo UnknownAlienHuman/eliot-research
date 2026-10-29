@@ -7,7 +7,7 @@ import type { Block } from "./blocks.js";
  * verifyClaims: byte-exact search in the stated block, then adjacent blocks,
  * then a conservative whitespace/quote/dash/soft-hyphen fold mapped to
  * original bytes. Drops empty/unknown/unmatched and number-unsupported
- * statements (shared numbersSupported digit-group plus decimal-token rule).
+ * statements (shared numbersSupported whole-numeric-literal check).
  * Stored quote is the canonical slice; ambiguous duplicates are kept.
  * resolveQuoteBlock maps one [S1:N] label; cleanDistillText strips only
  * declared reference tokens; splitDistillStatements keeps fenced code as one
@@ -384,11 +384,7 @@ export function verifyClaims(
     let unit = candidate.unit;
     let valueNumber: number | null = null;
     if (valueText !== null && valueText !== undefined) {
-      const scalarText = valueText.trim();
-      const scalarUnit = typeof unit === "string" && unit.trim() !== "" ? unit.trim() : null;
-      const scalar = scalarUnit === null || scalarText.endsWith(scalarUnit) ? scalarText
-        : scalarUnit === "%" ? scalarText + scalarUnit : scalarText + " " + scalarUnit;
-      if (!numbersSupported(scalar, verifiedText)) {
+      if (!numbersSupported(valueText, verifiedText)) {
         valueText = null;
         unit = null;
         clearedNumbers += 1;

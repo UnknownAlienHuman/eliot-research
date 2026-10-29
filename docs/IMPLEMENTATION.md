@@ -179,11 +179,11 @@ ambiguous duplicates, and drop unmatched claims. Numeric support compares comple
 signs and exponents, rather than digits borrowed from a fraction or another quantity. `0.50` does not support `50`;
 `41.0` and a separate `8` do not support `41.8` or `41,8`. Unambiguous decimal commas match decimal points; ambiguous
 comma-thousands retain their written grouping. This check also applies to statements, conditions, digest and glossary.
-An explicit percentage needs both its complete numeric value and percentage-unit evidence in the same verified quote.
-The unit may appear in that quote's table header; adjacency is not required and no fraction-to-percent conversion is
-performed. Value/unit occurrence does not prove which row, metric or condition they describe: the own-quote semantic
-gate remains separate. Scalar metadata is checked with its separately supplied unit for every claim kind;
-unsupported scalar/unit fields are cleared together. Numeric verification does not evaluate arbitrary mathematics.
+Code checks numeric identity without converting fractions to percentages. Unit, row, metric and condition association
+must also be supported by the same quote, but remain the model's own-quote review and the semantic acceptance gate.
+A missing literal percent sign alone does not establish a false number: a table may state its measurement in words.
+Unsupported scalar numeric metadata is cleared together with its unit. Numeric verification does not evaluate
+arbitrary mathematics or establish semantic support.
 Explicit multiplication powers such as `7.6×10⁹` and `7.6×10^9` are checked as one token. Flattened `7.6×109`,
 or a mantissa and exponent found separately elsewhere in a passage, cannot support that scientific quantity.
 The production verifier and K3 stored eval share `src/numbers.ts`; the eval does not keep a weaker numeric checker.
