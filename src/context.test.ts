@@ -212,9 +212,9 @@ describe("buildContext K2 whole scope", () => {
     expect(res.messages[0]?.role).toBe("system");
     expect(res.messages[1]).toMatchObject({ role: "user" });
     const body = res.messages.map((m) => m.content).join(NL);
-    expect(body).toContain("[S1:1] Intro A.");
-    expect(body).toContain("[S1:2] Second A.");
-    expect(body).toContain("[S2:1] Paper B body.");
+    expect(body).toContain(JSON.stringify({ label: "[S1:1]", text: "Intro A." }));
+    expect(body).toContain(JSON.stringify({ label: "[S1:2]", text: "Second A." }));
+    expect(body).toContain(JSON.stringify({ label: "[S2:1]", text: "Paper B body.\n" }));
     expect(body).not.toContain("[S9:9]");
     expect(body).not.toContain("[S9]");
     expect(body).toContain("Old answer");
@@ -245,8 +245,8 @@ describe("buildContext K2 whole scope", () => {
     expect(source).not.toContain("[S1:1]");
     expect(source).not.toContain("[S1:4]");
     expect(source).not.toContain("[S1:5]");
-    expect(source).toContain("[S1:2] ## Методы 🌿");
-    expect(source).toContain("[S1:3] Les mesures de la Page 1 sont exactes.");
+    expect(source).toContain(JSON.stringify({ label: "[S1:2]", text: "## Методы 🌿\n" }));
+    expect(source).toContain(JSON.stringify({ label: "[S1:3]", text: "Les mesures de la Page 1 sont exactes.\n" }));
     const resolved = resolveCitations("The page markers [S1:1], [S1:4] and [S1:5]; heading [S1:2].", res.sources);
     expect(resolved.citations).toMatchObject([{ block: 2, start: blocks[1]?.start, end: blocks[1]?.end }]);
     expect(resolved.invalidLabels).toBe(3);
@@ -809,7 +809,7 @@ describe("orientation from stored guides", () => {
     expect(res.messages.length).toBe(3);
     expect(res.messages[1]).toMatchObject({ role: "user" });
     expect(res.messages[2]).toMatchObject({ role: "user" });
-    expect(res.messages[1]?.content).toContain("[S1:1] Alpha.");
+    expect(res.messages[1]?.content).toContain(JSON.stringify({ label: "[S1:1]", text: "Alpha." }));
     const orient = res.messages[2]?.content ?? "";
     expect(orient).toContain("Derived orientation only");
     expect(orient).toContain("Guide text here.");
@@ -828,7 +828,7 @@ describe("orientation from stored guides", () => {
     const body = res.messages.map((m) => m.content).join(NL);
     expect(body).not.toContain("Derived orientation");
     expect(body).not.toContain("GGGGGGGG");
-    expect(body).toContain("[S1:1] Alpha.");
+    expect(body).toContain(JSON.stringify({ label: "[S1:1]", text: "Alpha." }));
   });
   it("never promotes partial gists to orientation", async () => {
     const { env } = orientEnv("partial", "Partial gist here.");
@@ -854,7 +854,7 @@ describe("bare-label header regression", () => {
     expect(res.mode).toBe("whole");
     const sourceText = res.messages[1]?.content ?? "";
     const orientText = res.messages[2]?.content ?? "";
-    expect(sourceText).toContain("[S1:1] Alpha [S1] literal.");
+    expect(sourceText).toContain(JSON.stringify({ label: "[S1:1]", text: "Alpha [S1] literal." }));
     expect(sourceText).toContain("Source S1");
     expect(sourceText).toContain("Paper A");
     expect(sourceText).not.toMatch(/^\[S\d+\] /m);
@@ -1009,6 +1009,6 @@ describe("history reference continuity", () => {
     const { env } = twoSourceEnv();
     const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
     expect(res.messages[0]?.content).toContain("conversation context, not evidence");
-    expect(res.messages[0]?.content).toContain("re-ground");
+    expect(res.messages[0]?.content).toContain("Ground new claims in current passages");
   });
 });

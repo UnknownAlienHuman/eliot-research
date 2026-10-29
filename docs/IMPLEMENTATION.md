@@ -338,6 +338,12 @@ quotes from the same block. Keep derived claim statements and conditions in a se
 non-evidence; only original quoted passages provide evidence and citation labels. Source and orientation text both
 count toward the same context budget.
 
+Whole-reading input serializes each citable block as one JSON line `{ label, text }` beneath its frozen source header.
+The label names that passage only; source newlines, quotes and control characters are escaped within its JSON text
+field. This is a model-input projection: canonical bytes, block IDs and reader ranges stay
+unchanged. Answers remain Markdown and cite each exact printed `[Sx:N]` separately, including when several passages
+support one statement; range shorthand is not part of the citation grammar.
+
 Estimate text as UTF-8 bytes / 3. Include newest in-scope history up to 10% of context. Public assistant history retains
 a citation only when the prior full ordered scope is a prefix of the current scope and its stored source, revision,
 block and exact range match a currently supplied passage. Render that citation with its current compact alias;
