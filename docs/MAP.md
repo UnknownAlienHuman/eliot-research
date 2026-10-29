@@ -149,6 +149,8 @@ stop/reconnect, reopen chat and save an answer as a page.
    Keep Command Code and add Kilo, Nous Portal and OpenCode Go through that same configuration. Go's live IDs join its
    published metadata for limits and API protocol; no model-name mapping or private donor login is copied. New provider
    rows start disabled, and saving them does not refresh catalogues or start inference.
+   OpenRouter's Data use choice defaults to `deny`; explicit `allow` applies to new admissions only. Saving preserves
+   catalogue metadata and defaults, performs no model/search work and never changes account privacy settings.
 3. Build whole-reading context from the frozen readable revisions. When it does not fit, return a clear narrow-scope
    response; claim/search modes arrive later.
 4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.

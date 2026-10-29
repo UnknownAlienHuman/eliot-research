@@ -3,6 +3,7 @@
 // the catalogue or starts a model job. Root mounts this inside Settings.
 
 import type { ModelProvider } from '../models';
+import { isOpenRouterApiBase, type DataCollectionPolicy } from '../shared/api';
 import './model-providers.css';
 
 export interface ModelProvidersProps {
@@ -23,13 +24,14 @@ export interface Draft {
   enabled: boolean;
   modelsUrl: string;
   metadataUrl: string;
+  dataCollection: DataCollectionPolicy;
 }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const PATH_RE = /^(?:[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)?$/;
 
 export function toDraft(p: ModelProvider): Draft {
-  return { isNew: false, id: p.id, type: p.type, baseUrl: p.baseUrl ?? '', gatewaySlug: p.gatewaySlug ?? '', gatewayPath: p.gatewayPath, enabled: p.enabled, modelsUrl: p.modelsUrl ?? '', metadataUrl: p.metadataUrl ?? '' };
+  return { isNew: false, id: p.id, type: p.type, baseUrl: p.baseUrl ?? '', gatewaySlug: p.gatewaySlug ?? '', gatewayPath: p.gatewayPath, enabled: p.enabled, modelsUrl: p.modelsUrl ?? '', metadataUrl: p.metadataUrl ?? '', dataCollection: p.dataCollection ?? 'deny' };
 }
 
 export function validateDrafts(drafts: Draft[]): { providers: ModelProvider[] | null; errors: Record<number, string> } {
@@ -61,6 +63,7 @@ export function validateDrafts(drafts: Draft[]): { providers: ModelProvider[] | 
     if (modelsUrl !== '') base.modelsUrl = modelsUrl;
     const metadataUrl = d.metadataUrl.trim();
     if (metadataUrl !== '') base.metadataUrl = metadataUrl;
+    if (isOpenRouterApiBase(baseUrl)) base.dataCollection = d.dataCollection;
     out.push(base);
   });
   return { providers: Object.keys(errors).length > 0 ? null : out, errors };
@@ -72,13 +75,13 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
     onChange(drafts.map((d, i) => {
       if (i !== index) return d;
       const next: Draft = { ...d, ...patch };
-      if (patch.type === 'workers-ai') { next.id = 'workers-ai'; next.baseUrl = ''; next.gatewaySlug = ''; next.gatewayPath = ''; next.modelsUrl = ''; next.metadataUrl = ''; }
+      if (patch.type === 'workers-ai') { next.id = 'workers-ai'; next.baseUrl = ''; next.gatewaySlug = ''; next.gatewayPath = ''; next.modelsUrl = ''; next.metadataUrl = ''; next.dataCollection = 'deny'; }
       return next;
     }));
   }
   function addProvider(): void {
     if (drafts === null || disabled) return;
-    onChange([...drafts, { isNew: true, id: 'new-provider', type: 'openai-compatible', baseUrl: '', gatewaySlug: '', gatewayPath: 'v1', enabled: true, modelsUrl: '', metadataUrl: '' }]);
+    onChange([...drafts, { isNew: true, id: 'new-provider', type: 'openai-compatible', baseUrl: '', gatewaySlug: '', gatewayPath: 'v1', enabled: true, modelsUrl: '', metadataUrl: '', dataCollection: 'deny' }]);
   }
   function removeProvider(index: number): void {
     if (drafts === null || disabled) return;
@@ -140,6 +143,15 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
                         <span className="er-providers__label">Path prefix<span className="er-providers__help">Optional path prefix, e.g. v1. Blank for none.</span></span>
                         <input value={d.gatewayPath} onChange={(e) => update(i, { gatewayPath: e.currentTarget.value })} placeholder="v1" autoComplete="off" disabled={disabled} aria-invalid={fieldError !== undefined} />
                       </label>
+                      {isOpenRouterApiBase(d.baseUrl) ? (
+                        <label className="er-field er-providers__row">
+                          <span className="er-providers__label">Data use<span className="er-providers__help">Allow permits providers that may retain inputs or use them for training; account settings can add restrictions.</span></span>
+                          <select value={d.dataCollection} disabled={disabled} onChange={(e) => update(i, { dataCollection: e.currentTarget.value as Draft['dataCollection'] })}>
+                            <option value="deny">Disallow collection (default)</option>
+                            <option value="allow">Allow collection</option>
+                          </select>
+                        </label>
+                      ) : null}
                     </>
                   )}
                   <div className="er-providers__actions">

@@ -562,7 +562,17 @@ does not prove live Gateway enforcement. Command Code receives the current quest
 history, avoiding a private multi-turn protocol dependency. It uses no fabricated reasoning marker, private capture,
 repair call or automatic retry. See §8 for public history and frozen source rules.
 
-OpenRouter requests currently set `provider.data_collection: "deny"`. A known structured 404 reporting no endpoints
+The official OpenRouter API configuration includes optional `dataCollection: "deny" | "allow"` in the existing
+`settings.model_providers_json`; omitted values normalize to `deny`, including old configurations. Settings exposes
+the choice only for that API root, using the existing Save action. `deny` restricts routing to providers that do not
+collect user data; owner-selected `allow` permits providers that may retain or train on inputs under their terms.
+Saving performs no discovery or inference and preserves catalogue identities, bounds and selected models. Admission
+freezes the choice in `ModelSpec.routing.provider`; every OpenRouter transport uses that frozen value, with `deny`
+for older admitted jobs that lack it. Later settings edits apply only to new admissions. Other providers reject the
+field. Account privacy settings can impose additional restrictions and are never changed by this control. This
+contract was checked against the official provider-routing documentation on 2026-10-29; no publication date was exposed.
+
+A known structured 404 reporting no endpoints
 matching the provider's data policy is shown as a fixed, actionable failure with its HTTP status. Unknown or malformed
 error bodies retain the generic status message. Raw provider text is never copied into that reason, and the failure
 does not change the selected model or data policy or start another request. Catalogue presence does not establish

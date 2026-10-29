@@ -4,6 +4,7 @@ import { discoverNativeModels } from "./native-model-catalog";
 import { z } from "zod";
 import { readNativeUsage, readProviderQuotas } from "./model-quota";
 import type { NativeUsage, NativeUsageEnvironment, ProviderQuota } from "./model-quota";
+import { isOpenRouterApiBase } from "./shared/api";
 
 export const modelProviderSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
@@ -13,10 +14,11 @@ export const modelProviderSchema = z.object({
   baseUrl: z.string().trim().url().transform((value) => value.replace(/\/+$/, "")).nullable(),
   modelsUrl: z.string().trim().url().optional(),
   metadataUrl: z.string().trim().url().optional(),
+  dataCollection: z.enum(["deny", "allow"]).optional(),
   enabled: z.boolean(),
 }).strict().superRefine((provider, ctx) => {
   if (provider.type === "workers-ai") {
-    if (provider.id !== "workers-ai" || provider.baseUrl !== null || provider.gatewaySlug !== null || provider.gatewayPath !== "" || provider.modelsUrl !== undefined || provider.metadataUrl !== undefined)
+    if (provider.id !== "workers-ai" || provider.baseUrl !== null || provider.gatewaySlug !== null || provider.gatewayPath !== "" || provider.modelsUrl !== undefined || provider.metadataUrl !== undefined || provider.dataCollection !== undefined)
       ctx.addIssue({ code: "custom", message: "Workers AI uses its native binding and no base URL." });
   } else {
     let url: URL | null = null;
@@ -30,8 +32,12 @@ export const modelProviderSchema = z.object({
       if (!parsed || parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash)
         ctx.addIssue({ code: "custom", message: "Use an HTTPS catalogue URL without credentials, query or fragment." });
     }
+    if (provider.dataCollection !== undefined && !isOpenRouterApiBase(provider.baseUrl))
+      ctx.addIssue({ code: "custom", message: "Data collection policy is supported by the OpenRouter API." });
   }
-});
+}).transform((provider) => isOpenRouterApiBase(provider.baseUrl)
+  ? { ...provider, dataCollection: provider.dataCollection ?? "deny" as const }
+  : provider);
 export const modelProvidersSchema = z.array(modelProviderSchema).superRefine((providers, ctx) => {
   if (new Set(providers.map((provider) => provider.id)).size !== providers.length)
     ctx.addIssue({ code: "custom", message: "Each provider ID must be unique." });
@@ -192,6 +198,7 @@ export function providerForRoute(providers: ModelProvider[], route: string): Mod
     ? route.startsWith("workers-ai:") : route.startsWith(`gateway:${provider.id}/`));
 }
 function sameProviderRoute(provider: ModelProvider, previous: ModelProvider | undefined): boolean {
+  // Data-use choice is frozen on admission; it does not change catalogue identity.
   return previous !== undefined && previous.type === provider.type && previous.baseUrl === provider.baseUrl &&
     previous.gatewaySlug === provider.gatewaySlug && previous.gatewayPath === provider.gatewayPath &&
     previous.modelsUrl === provider.modelsUrl && previous.metadataUrl === provider.metadataUrl;

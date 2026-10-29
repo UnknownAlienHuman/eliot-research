@@ -4,7 +4,7 @@ import type { JSONObject } from "@ai-sdk/provider";
 import { createOpenAICompatible, type OpenAICompatibleProviderSettings } from "@ai-sdk/openai-compatible";
 import { LibraryError } from "./library";
 import { isProviderApiBase, type ModelProvider, type ModelSpec } from "./models";
-import type { ProviderUsage } from "./shared/api";
+import { isOpenRouterApiBase, type DataCollectionPolicy, type ProviderUsage } from "./shared/api";
 
 const EXTERNAL_FAILURE =
   "External model request failed. Check the Gateway connection and provider status; no retry was started.";
@@ -16,10 +16,9 @@ function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
-const OFFICIAL_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 function isNativeOpenRouterRoute(model?: Pick<ModelSpec, "route" | "routing">): boolean {
   const provider = model?.routing?.provider;
-  return provider?.gatewaySlug === "openrouter" && provider?.gatewayPath === "v1" && typeof provider?.baseUrl === "string" && provider.baseUrl.trim().replace(/\/+$/, "") === OFFICIAL_OPENROUTER_BASE_URL;
+  return provider?.gatewaySlug === "openrouter" && provider?.gatewayPath === "v1" && isOpenRouterApiBase(provider?.baseUrl);
 }
 export function reportedProviderUsage(usage: LanguageModelUsage): ProviderUsage | null {
   const raw = usage.raw;
@@ -99,9 +98,9 @@ function compatibleBody(responseFormatAllowed: boolean, supportsTemperature: boo
     return out;
   };
 }
-function openRouterBody(responseFormatAllowed: boolean, options: { supportsTemperature: boolean; optionalReasoning: boolean; structuredOutput: boolean }) {
+function openRouterBody(responseFormatAllowed: boolean, options: { supportsTemperature: boolean; optionalReasoning: boolean; structuredOutput: boolean }, dataCollection: DataCollectionPolicy) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
-    const provider = { ...(args.provider as Record<string, unknown> | undefined), allow_fallbacks: false, require_parameters: true, data_collection: "deny" };
+    const provider = { ...(args.provider as Record<string, unknown> | undefined), allow_fallbacks: false, require_parameters: true, data_collection: dataCollection };
     const out: Record<string, unknown> = { ...args, provider };
     if (!responseFormatAllowed) delete out.response_format;
     if (options.supportsTemperature) out.temperature = 0;
@@ -263,7 +262,7 @@ export async function resolveModelTransport(
       baseURL: provider.baseUrl,
       includeUsage: true,
       supportsStructuredOutputs: structured,
-      transformRequestBody: openRouterBody(responseFormatAllowed, transportOptions),
+      transformRequestBody: openRouterBody(responseFormatAllowed, transportOptions, provider.dataCollection ?? "deny"),
       convertUsage: convertCompatibleUsage,
     });
     const vendor = openrouter.languageModel(model.id);
@@ -299,8 +298,8 @@ export async function resolveModelTransport(
         supportsStructuredOutputs: model.structuredOutputs === true,
         convertUsage: convertCompatibleUsage,
         transformRequestBody:
-          ownerBase === OFFICIAL_OPENROUTER_BASE_URL
-            ? openRouterBody(responseFormatAllowed, { supportsTemperature, optionalReasoning: model.optionalReasoning === true, structuredOutput: options.structuredOutput === true })
+          isOpenRouterApiBase(ownerBase)
+            ? openRouterBody(responseFormatAllowed, { supportsTemperature, optionalReasoning: model.optionalReasoning === true, structuredOutput: options.structuredOutput === true }, provider.dataCollection ?? "deny")
             : compatibleBody(responseFormatAllowed, supportsTemperature),
         fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: false }),
       }).languageModel(model.id);
@@ -332,10 +331,10 @@ export async function resolveModelTransport(
   return createOpenAICompatible({
     name: provider.id, baseURL, includeUsage: true,
     supportsStructuredOutputs: structured, convertUsage: convertCompatibleUsage,
-    transformRequestBody: baseURL === OFFICIAL_OPENROUTER_BASE_URL ? openRouterBody(responseFormatAllowed, transportOptions) : compatibleBody(responseFormatAllowed, supportsTemperature),
+    transformRequestBody: isOpenRouterApiBase(baseURL) ? openRouterBody(responseFormatAllowed, transportOptions, provider.dataCollection ?? "deny") : compatibleBody(responseFormatAllowed, supportsTemperature),
     fetch: async (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
-      if (url !== baseURL + "/chat/completions" || init?.method !== "POST" || typeof init.body !== "string")
+      if (url !== new URL(baseURL + "/chat/completions").href || init?.method !== "POST" || typeof init.body !== "string")
         throw new LibraryError("unavailable", "This provider endpoint is not supported.", 503);
       init.signal?.throwIfAborted();
       const headers = { "Content-Type": "application/json", "x-session-affinity": sessionAffinity,
