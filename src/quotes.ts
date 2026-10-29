@@ -7,7 +7,7 @@ import type { Block } from "./blocks.js";
  * verifyClaims: byte-exact search in the stated block, then adjacent blocks,
  * then a conservative whitespace/quote/dash/soft-hyphen fold mapped to
  * original bytes. Drops empty/unknown/unmatched and number-unsupported
- * statements (shared numbersSupported digit-group plus decimal-token rule).
+ * statements (shared numbersSupported whole-numeric-literal check).
  * Stored quote is the canonical slice; ambiguous duplicates are kept.
  * resolveQuoteBlock maps one [S1:N] label; cleanDistillText strips only
  * declared reference tokens; splitDistillStatements keeps fenced code as one

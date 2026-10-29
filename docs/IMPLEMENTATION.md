@@ -175,12 +175,15 @@ them. Saving an answer rewrites compact aliases to persistent labels.
 
 For each candidate quote, search exact bytes in the stated block, then adjacent blocks; only then apply conservative
 whitespace/quote/dash/soft-hyphen normalization with a map back to original bytes. Prefer the stated block, mark
-ambiguous duplicates, and drop unmatched claims. Every digit group in a structured numeric value must occur in the
-verified quote or the structured numeric field is cleared.
-Decimal values additionally require a complete matching token, including any exponent: `41.0` and a separate `8` do
-not support `41.8` or `41,8`. Unambiguous decimal commas match decimal points; ambiguous comma-thousands keep the
-existing digit-group rule. This check also applies to statements, conditions, digest and glossary; existing integer,
-thousands and scientific-value checks remain in force.
+ambiguous duplicates, and drop unmatched claims. Numeric support compares complete numeric literals, including their
+signs and exponents, rather than digits borrowed from a fraction or another quantity. `0.50` does not support `50`;
+`41.0` and a separate `8` do not support `41.8` or `41,8`. Unambiguous decimal commas match decimal points; ambiguous
+comma-thousands retain their written grouping. This check also applies to statements, conditions, digest and glossary.
+Code checks numeric identity without converting fractions to percentages. Unit, row, metric and condition association
+must also be supported by the same quote, but remain the model's own-quote review and the semantic acceptance gate.
+A missing literal percent sign alone does not establish a false number: a table may state its measurement in words.
+Unsupported scalar numeric metadata is cleared together with its unit. Numeric verification does not evaluate
+arbitrary mathematics or establish semantic support.
 Explicit multiplication powers such as `7.6×10⁹` and `7.6×10^9` are checked as one token. Flattened `7.6×109`,
 or a mantissa and exponent found separately elsewhere in a passage, cannot support that scientific quantity.
 The production verifier and K3 stored eval share `src/numbers.ts`; the eval does not keep a weaker numeric checker.
