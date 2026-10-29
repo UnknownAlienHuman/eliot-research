@@ -84,15 +84,23 @@ describe("Command Code catalogue model admission", () => {
     enrich.mockImplementation(async (candidate) => candidate.route === model.route
       ? { ...candidate, inputMicrousdPerMillion: 234000 } : candidate);
 
+    const beforeRefresh = Date.now();
     const refreshed = await refreshModelCatalog(local.env, [model.route]);
+    const afterRefresh = Date.now();
 
     expect(discover).toHaveBeenCalledTimes(1);
     expect(enrich).toHaveBeenCalledTimes(1);
     expect(enrich).toHaveBeenCalledWith(model);
     expect(local.bucket.put).toHaveBeenCalledTimes(1);
     expect(local.bucket.put.mock.calls[0]?.[0]).toBe("catalog/models.json");
+    const storedCatalog = local.bucket.stored() as { updatedAt: unknown };
+    expect(typeof storedCatalog.updatedAt).toBe("string");
+    const storedUpdatedAt = storedCatalog.updatedAt as string;
+    expect(new Date(storedUpdatedAt).toISOString()).toBe(storedUpdatedAt);
+    const storedParsedAt = Date.parse(storedUpdatedAt);
+    expect(storedParsedAt).toBeGreaterThanOrEqual(beforeRefresh);
+    expect(storedParsedAt).toBeLessThanOrEqual(afterRefresh);
     expect(local.bucket.stored()).toMatchObject({
-      updatedAt: expect.stringMatching(/^2026-10-28T/),
       models: expect.arrayContaining([expect.objectContaining({ route: model.route, inputMicrousdPerMillion: 234000 })]),
     });
     expect(local.bucket.stored()).not.toHaveProperty("gatewayId");
