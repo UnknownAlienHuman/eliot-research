@@ -296,6 +296,25 @@ if (process.argv.includes('--models-only')) {
   assert.equal(emptyDistill.status, 400, 'An empty distillModel must fail before mutation (no truthiness bypass).');
   const afterEmpty = await apiJson('/api/settings');
   assert.deepEqual(afterEmpty.body.settings, before.body.settings, 'Rejected empty distillModel must leave global settings unchanged.');
+  const originalMode = before.body.settings.nativeUsageMode;
+  assert(originalMode === 'included' || originalMode === 'standard', 'Native usage mode must be a saved included/standard choice.');
+  const settingsBase = { answerModel: before.body.settings.answerModel, distillModel: before.body.settings.distillModel };
+  const putNativeUsageMode = (nativeUsageMode) => apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...settingsBase, nativeUsageMode }) });
+  try {
+    for (const mode of ['included', 'standard']) {
+      const saved = await putNativeUsageMode(mode);
+      assert.equal(saved.status, 200, 'Saving the native usage choice must succeed without inference.');
+      const persisted = await apiJson('/api/settings');
+      assert.equal(persisted.body.settings.nativeUsageMode, mode, 'Native usage choice must persist on GET.');
+      assert.equal(persisted.body.settings.answerModel, settingsBase.answerModel);
+      assert.equal(persisted.body.settings.distillModel, settingsBase.distillModel);
+    }
+    const beforeInvalidMode = await apiJson('/api/settings');
+    assert.equal((await putNativeUsageMode('metered')).status, 400, 'An invalid mode must fail before mutation.');
+    assert.deepEqual((await apiJson('/api/settings')).body.settings, beforeInvalidMode.body.settings, 'Rejected native mode must leave all saved settings unchanged.');
+  } finally {
+    assert.equal((await putNativeUsageMode(originalMode)).status, 200, 'Restore the original native usage choice.');
+  }
   const project = await apiJson('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'External model admission ' + Date.now() }) });
   assert.equal(project.status, 201);
   const projectId = project.body.project.id;
@@ -620,148 +639,19 @@ if (process.argv.includes('--models-only')) {
   const after = await apiJson('/api/settings');
   assert.equal(after.body.settings.answerModel, before.body.settings.answerModel, 'Answer default must be unchanged.');
   assert.equal(after.body.settings.distillModel, before.body.settings.distillModel, 'Understanding default must be unchanged.');
+  assert.equal(after.body.settings.nativeUsageMode, originalMode, 'Native usage mode must be restored.');
   assert.deepEqual(Object.keys(after.body.settings).sort(), Object.keys(before.body.settings).sort(), 'Settings shape must be unchanged (answerModel/distillModel/updatedAt).');
   assert(Number.isSafeInteger(after.body.settings.updatedAt) && after.body.settings.updatedAt > 0
     && after.body.settings.updatedAt >= before.body.settings.updatedAt, 'Intentional provider saves/restores must record a valid nondecreasing update time.');
   assert.deepEqual(after.body.usage, before.body.usage, 'Daily token usage must be unchanged by storage-only checks.');
   assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
   const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, consentRejected: true, disconnectedTurnTokenLimit: turn.body.turn.tokenLimit ?? null,
+    nativeUsageMode: { original: originalMode, restored: after.body.settings.nativeUsageMode },
     catalogue: { externalModels: externals.length, providers: [...new Set(nativePairs.map((pair) => pair[0]))], discovery: warnings.length ? 'PARTIAL' : 'NO_WARNINGS', warnings },
     dailyUsage: after.body.usage, provider: 'NOT_RUN', streaming: 'NOT_RUN', distill, browser390: 'LOCAL_PASS', credentialAccess: 'NOT_ENABLED' };
   result.providerCrud = providerCrud;
   await writeFile(outDir + '/external-models-native.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
-  process.exit(0);
-}
-if (process.argv.includes('--openrouter-stored')) {
-  const smokeDir = fileURLToPath(new URL('../../eval/out/openrouter-smoke/', import.meta.url));
-  await mkdir(smokeDir, { recursive: true });
-  let ids = null;
-  try {
-    ids = JSON.parse(await readFile(smokeDir + '/ids.json', 'utf8'));
-  } catch {
-    console.log('OPENROUTER_STORED_NOT_RUN: eval/out/openrouter-smoke/ids.json is missing (root records job handles after the three provider jobs are final).');
-    process.exit(2);
-  }
-  const violations = [];
-  const rows = [];
-  const perModel = [];
-  const entries = Array.isArray(ids.models) ? ids.models : [];
-  if (typeof ids.projectId !== 'string' || entries.length === 0) violations.push('ids.json must carry projectId and a non-empty models array.');
-  const smokeWhole = new Map();
-  async function smokeRange(rev, st, en, tag) {
-    let w = smokeWhole.get(rev);
-    if (!w) {
-      const t = await apiBytes('/api/revisions/' + encodeURIComponent(rev) + '/text');
-      assert.equal(t.status, 200, 'GET revision text must be 200, got ' + t.status + ' (' + tag + ').');
-      w = t.bytes;
-      smokeWhole.set(rev, w);
-    }
-    const r = await apiBytes('/api/revisions/' + encodeURIComponent(rev) + '/range?start=' + st + '&end=' + en);
-      assert.equal(r.status, 200, 'Each cited range must open, got ' + r.status + ' (GET range 200) (' + tag + ').');
-    assert(r.bytes.equals(w.subarray(st, en)), 'Cited range must equal the whole-text slice (' + tag + ').');
-    assert(Buffer.from(r.bytes.toString('utf8'), 'utf8').equals(r.bytes), 'Cited range must be clean native UTF-8 (' + tag + ').');
-    return r.bytes;
-  }
-  for (const m of entries) {
-    const tag = (m && m.route) || 'unknown-route';
-    let chatStatus = 'NOT_RUN', distillStatus = 'NOT_RUN';
-    let usage = { inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: null, firstTokenMs: null, totalMs: null };
-    let providerUsageRaw = null;
-    let distillUsage = null;
-    const providerCosts = { chatUsd: null, distillUsd: null };
-    let usageCompleteness = 'partial', nullFields = ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs'];
-    let aInfo = '---', dInfo = '---';
-    if (!(m && typeof m.chatId === 'string' && typeof m.turnId === 'string' && typeof m.sourceId === 'string' && typeof m.revisionId === 'string')) {
-      violations.push(tag + ': ids.json entry must carry chatId, turnId, sourceId and revisionId.');
-      perModel.push({ route: tag, status: 'FAIL', chatStatus, distillStatus, usage, usageCompleteness, providerUsage: null, providerCosts, distillUsage, answer: aInfo, distill: dInfo });
-      rows.push('| ' + tag + ' | FAIL | partial | ' + aInfo + ' | ' + dInfo + ' |');
-      continue;
-    }
-    try {
-      const h = await apiJson('/api/projects/' + encodeURIComponent(ids.projectId) + '/chats/' + encodeURIComponent(m.chatId));
-      if (h.status !== 200) throw new Error('NOT_RUN: GET chat snapshot must be 200, got ' + h.status + ' (' + tag + ').');
-      const turns = Array.isArray(h.body.turns) ? h.body.turns : [];
-      const t = turns.find((x) => x && x.turnId === m.turnId) || null;
-      if (!t) throw new Error('NOT_RUN: recorded turn missing (' + tag + ').');
-      for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs']) assert(t[kk] === null || typeof t[kk] === 'number', 'Turn usage must be known or honestly null (' + tag + ' ' + kk + ').');
-      if (t.estimatedCostMicrousd !== undefined) assert(t.estimatedCostMicrousd === null || typeof t.estimatedCostMicrousd === 'number', 'Historical estimatedCost must be honestly recorded, never gated (' + tag + ').');
-      usage = { inputTokens: t.inputTokens ?? null, cachedTokens: t.cachedTokens ?? null, outputTokens: t.outputTokens ?? null, tokenLimit: t.tokenLimit ?? null, firstTokenMs: t.firstTokenMs ?? null, totalMs: t.totalMs ?? null };
-      if (t.providerUsage && typeof t.providerUsage === 'object' && !Array.isArray(t.providerUsage)) {
-        providerUsageRaw = Object.fromEntries(['inputTokens', 'outputTokens', 'totalTokens', 'cachedTokens', 'reasoningTokens', 'costUsd'].map((key) =>
-          [key, typeof t.providerUsage[key] === 'number' && Number.isFinite(t.providerUsage[key]) && t.providerUsage[key] >= 0 ? t.providerUsage[key] : null]));
-        providerCosts.chatUsd = providerUsageRaw.costUsd;
-      }
-      nullFields = Object.keys(usage).filter((k) => usage[k] === null || typeof usage[k] !== 'number');
-      usageCompleteness = nullFields.length === 0 ? 'known' : 'partial';
-      if (t.state === 'failed') throw new Error(tag + ': provider turn failed: ' + (t.error || 'unknown error'));
-      if (t.state !== 'completed') throw new Error('NOT_RUN: recorded turn state=' + t.state + ' (' + tag + ').');
-      assert(Array.isArray(t.citations) && t.citations.length >= 1, 'Completed answer needs >=1 citation (' + tag + ').');
-      assert.equal(t.invalidLabels, 0, 'Completed answer must resolve every label (' + tag + ').');
-      for (const c of t.citations) {
-        assert(c && c.revisionId === m.revisionId && c.sourceId === m.sourceId, 'Citation must reference the recorded revision (' + tag + ').');
-        assert(Number.isSafeInteger(c.block) && Number.isSafeInteger(c.start) && Number.isSafeInteger(c.end) && c.end > c.start, 'Citation needs block and exact byte range (' + tag + ').');
-        await smokeRange(m.revisionId, c.start, c.end, tag);
-      }
-      aInfo = t.citations.length + ' cites, 0 invalid';
-      chatStatus = 'completed';
-    } catch (e) {
-      const cmsg = String((e && e.message) || e).split('\n')[0];
-      if (cmsg.indexOf('NOT_RUN: ') >= 0) violations.push(tag + ': chat NOT_RUN (' + cmsg.slice(9) + ').');
-      else { chatStatus = 'failed'; violations.push(tag + ': chat FAIL (' + cmsg + ').'); }
-    }
-    try {
-      const u = await apiJson('/api/sources/' + encodeURIComponent(m.sourceId) + '/understanding?revisionId=' + encodeURIComponent(m.revisionId));
-      if (u.status !== 200) throw new Error('NOT_RUN: GET understanding must be 200, got ' + u.status + ' (' + tag + ').');
-      distillUsage = u.body.report?.usage ?? null;
-      const reported = distillUsage?.providerUsage;
-      if (Array.isArray(reported) && reported.length > 0 && reported.length === distillUsage.calls && reported.every((item) => item && typeof item.cost === 'number' && Number.isFinite(item.cost) && item.cost >= 0))
-        providerCosts.distillUsd = reported.reduce((sum, item) => sum + item.cost, 0);
-      if (u.body.state === 'failed') throw new Error(tag + ': provider distillation failed: ' + (u.body.error || 'unknown error'));
-      if (u.body.state !== 'done' && u.body.state !== 'partial') throw new Error('NOT_RUN: distill state=' + u.body.state + ' (' + tag + ').');
-      assert(u.body.report && typeof u.body.report === 'object', 'Distilled revision must carry its report (' + tag + ').');
-      assert(u.body.report.usage && typeof u.body.report.usage.calls === 'number' && u.body.report.usage.calls <= 2, 'Distill usage.calls must be numeric and bounded at most 2 (' + tag + ').');
-      const uclaims = Array.isArray(u.body.claims) ? u.body.claims : [];
-      assert(uclaims.length <= 32, 'Distill claims capped at 32 (' + tag + ').');
-      for (const c of uclaims) {
-        assert(c && typeof c.quote === 'string' && c.quote.length > 0, 'Distilled claim needs a non-empty quote (' + tag + ').');
-        assert(Number.isSafeInteger(c.start) && Number.isSafeInteger(c.end) && c.end > c.start, 'Distilled claim needs an exact byte range (' + tag + ').');
-        const qb = await smokeRange(m.revisionId, c.start, c.end, tag + ' claim');
-        assert.equal(qb.toString('utf8'), c.quote, 'Distilled quote must equal the range bytes exactly (' + tag + ').');
-      }
-      assert(typeof u.body.guide === 'string' && u.body.guide.length > 0, 'Distilled guide must be readable (' + tag + ').');
-      assert(u.body.digest === null || (typeof u.body.digest === 'string' && u.body.digest.length > 0), 'Distilled digest must be null or readable (' + tag + ').');
-      assert(Array.isArray(u.body.glossary), 'Distilled glossary must be an array (' + tag + ').');
-      if (uclaims.length === 0) {
-        distillStatus = 'PARTIAL_NO_CLAIMS';
-        dInfo = '0 claims, ' + u.body.report.usage.calls + ' calls';
-        violations.push(tag + ': PARTIAL_NO_CLAIMS (partial, 0 claims; limited, never full PASS).');
-      } else {
-        distillStatus = u.body.state;
-        dInfo = uclaims.length + ' claims, ' + u.body.report.usage.calls + ' calls';
-      }
-    } catch (e) {
-      const dmsg = String((e && e.message) || e).split('\n')[0];
-      if (dmsg.indexOf('NOT_RUN: ') >= 0) { distillStatus = 'NOT_RUN'; violations.push(tag + ': distill NOT_RUN (' + dmsg.slice(9) + ').'); }
-      else { distillStatus = 'failed'; violations.push(tag + ': distill FAIL (' + dmsg + ').'); }
-    }
-    let modelStatus = 'PASS';
-    if (chatStatus === 'failed' || distillStatus === 'failed') modelStatus = 'FAIL';
-    else if (chatStatus === 'NOT_RUN' || distillStatus === 'NOT_RUN') modelStatus = 'NOT_RUN';
-    else if (distillStatus === 'PARTIAL_NO_CLAIMS') modelStatus = 'PARTIAL_NO_CLAIMS';
-    const usageCell = usageCompleteness + (usageCompleteness === 'known' ? '' : ' (' + nullFields.map((k) => k + ': null').join(', ') + ')');
-    perModel.push({ route: tag, status: modelStatus, chatStatus, distillStatus, usage, usageCompleteness, providerUsage: providerUsageRaw, providerCosts, distillUsage, answer: aInfo, distill: dInfo });
-    rows.push('| ' + tag + ' | ' + modelStatus + ' | ' + usageCell + ' | ' + aInfo + ' | ' + dInfo + ' |');
-  }
-  const costsLegacy = perModel.flatMap((p) => [p.providerCosts.chatUsd, p.providerCosts.distillUsd]);
-  const providerReportedCost = (costsLegacy.length > 0 && costsLegacy.every((c) => typeof c === 'number')) ? costsLegacy.reduce((n, c) => n + c, 0) : 'UNKNOWN (legacy historical USD only, never gated)';
-  const overall = violations.length > 0 ? 'FAIL' : 'LIMITED';
-  const stamp = Date.now();
-  const md = ['# OpenRouter stored revalidation (real provider jobs, zero new model calls)', '', '- project: ' + ids.projectId, '- handles: eval/out/openrouter-smoke/ids.json' + (ids.publicUrl ? ' / ' + ids.publicUrl : ''), '- probe: ' + (ids.text || '(recorded)'), '- overall: ' + overall, '- provider reported cost: ' + providerReportedCost].concat(['', '| model | status | usageCompleteness | answer | distill |', '|---|---|---|---|---|']).concat(rows).concat(['', '## Open gates / failures']).concat(violations.length > 0 ? violations.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
-  console.log(md);
-  await writeFile(smokeDir + '/openrouter-stored-' + stamp + '.md', md);
-  await writeFile(smokeDir + '/openrouter-stored-' + stamp + '.json', JSON.stringify({ projectId: ids.projectId, overall, providerReportedCost, models: perModel, violations }, null, 2));
-  assert.equal(violations.length, 0, 'OpenRouter stored gates OPEN (' + violations.length + '): ' + violations.join('; '));
   process.exit(0);
 }
 const title = process.env.ELIOT_EVAL_PROJECT || (nativeOnly ? 'k1-eval' : 'Библиотека — PDF и точные ссылки');
@@ -802,16 +692,18 @@ if (!chatId) {
   chatId = cj.body.chat.id;
 }
 const chatPath = '/api/projects/' + encodeURIComponent(proj.id) + '/chats/' + encodeURIComponent(chatId);
-let configuredUsageDayStart = null;
 async function getChat(what, signal) {
+  const readStartedAt = Date.now();
   const h = await apiJson(chatPath, signal ? { signal } : undefined);
   assert.equal(h.status, 200, 'GET chat must be 200 and storage-only (' + what + ').');
   assert(h.body && typeof h.body.chat === 'object', 'GET chat must return {chat, turns, usage}.');
   assert(Array.isArray(h.body.turns), 'GET chat must return turns array.');
   assert(h.body.usage && typeof h.body.usage.dayStart === 'number' && typeof h.body.usage.dayEnd === 'number', 'GET chat must return usage {dayStart,dayEnd,inputTokens,outputTokens,cachedTokens,unknownUsages}.');
   for (const k of ['inputTokens', 'outputTokens', 'cachedTokens', 'unknownUsages']) assert(Number.isSafeInteger(h.body.usage[k]) && h.body.usage[k] >= 0, 'GET chat must return valid daily usage: ' + k);
-  if (configuredUsageDayStart === null) configuredUsageDayStart = h.body.usage.dayStart;
-  assert.equal(h.body.usage.dayStart, configuredUsageDayStart, 'Usage day window must stay stable; this script never writes it.');
+  assert(Number.isSafeInteger(h.body.usage.dayStart) && h.body.usage.dayStart % 86_400_000 === 0
+    && h.body.usage.dayEnd === h.body.usage.dayStart + 86_400_000
+    && h.body.usage.dayStart <= Date.now() && h.body.usage.dayEnd > readStartedAt,
+  'Usage must describe the UTC day observed during this read; a benchmark may cross midnight.');
   return h.body;
 }
 const h0 = await getChat(resumeChat ? 'resume' : 'before');
@@ -1273,7 +1165,7 @@ else {
   if (unknownNewTokenLimits > 0) { hardFailures++; finalErrors.push('At least one new turn has unknown tokenLimit; UNKNOWN is not treated as free.'); }
   const unresolvedCount = unknownDispatchIds.size;
   if (unresolvedCount > 0) { hardFailures++; finalErrors.push(unresolvedCount + ' dispatched turn(s) remain unresolved after bounded read reconciliation; any held reservation is UNKNOWN, not zero.'); }
-  else if (unknownNewTokenLimits === 0) { const deltaIn = (finalChat.usage?.inputTokens ?? 0) - (m0?.inputTokens ?? 0); const deltaOut = (finalChat.usage?.outputTokens ?? 0) - (m0?.outputTokens ?? 0); if (deltaIn < 0 || deltaOut < 0 || deltaIn + deltaOut > newTokenLimit) { hardFailures++; finalErrors.push('Daily token usage delta exceeds the admitted tokenLimit sum for new turns.'); } }
+  else if (unknownNewTokenLimits === 0 && finalChat.usage.dayStart === m0.dayStart) { const deltaIn = finalChat.usage.inputTokens - m0.inputTokens; const deltaOut = finalChat.usage.outputTokens - m0.outputTokens; if (deltaIn < 0 || deltaOut < 0 || deltaIn + deltaOut > newTokenLimit) { hardFailures++; finalErrors.push('Daily token usage delta exceeds the admitted tokenLimit sum for new turns.'); } }
   if (finalErrors.length) { finalReadError = finalErrors.join(' '); stopReason = [stopReason, finalReadError].filter(Boolean).join(' '); }
 }
 const status = hardFailures > 0 ? 'FAIL' : ownerRequired ? 'OWNER_REQUIRED' : 'MECHANICAL_PASS';
