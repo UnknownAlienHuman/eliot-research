@@ -378,10 +378,8 @@ describe("resultStatement", () => {
     valueNumber: 71.2,
   };
 
-  it("collapses the real TriviaQA compound to the primary scalar only", () => {
-    expect(resultStatement(triviaClaim)).toBe(
-      "Closed-book question answering, TriviaQA, few-shot: accuracy 71.2%",
-    );
+  it("rejects the TriviaQA compound instead of collapsing it", () => {
+    expect(resultStatement(triviaClaim)).toBeNull();
   });
 
   it("rejects a result without valueText", () => {
@@ -390,10 +388,18 @@ describe("resultStatement", () => {
   });
 
   it("allows an unparsed valueNumber but requires a finite one when given", () => {
-    expect(resultStatement({ ...triviaClaim, valueNumber: null })).toBe(
-      "Closed-book question answering, TriviaQA, few-shot: accuracy 71.2%",
-    );
-    expect(resultStatement({ ...triviaClaim, valueNumber: NaN })).toBeNull();
+    const atomic = {
+      ...triviaClaim,
+      statement: "Accuracy reaches 71.2% few-shot.",
+      task: "Closed-book question answering",
+      metric: "accuracy",
+      dataset: "TriviaQA",
+      conditions: "few-shot",
+      valueText: "71.2",
+      unit: "%",
+    };
+    expect(resultStatement({ ...atomic, valueNumber: null })).toBe(atomic.statement);
+    expect(resultStatement({ ...atomic, valueNumber: NaN })).toBeNull();
   });
 
   it("rejects an unsupported primary value", () => {
@@ -422,7 +428,67 @@ describe("resultStatement", () => {
       unit: "%",
       valueNumber: 65.2,
     };
-    expect(resultStatement(percent)).toBe("accuracy 65.2%");
+    expect(resultStatement(percent)).toBe(percent.statement);
+  });
+  it("rejects the real BERT two-scalar list instead of splitting it", () => {
+    // Exact sentence from arxiv-02-first-job.json card 4c78560b (LF bytes kept).
+    const bertQuote =
+      "BERTLARGE out-\nperforms the authors\u2019 baseline ESIM+ELMo sys-\ntem by +27.1% and OpenAI GPT by 8.3%.";
+    expect(
+      resultStatement({
+        ...triviaClaim,
+        task: "SWAG",
+        metric: "accuracy",
+        dataset: "SWAG",
+        conditions: null,
+        quote: bertQuote,
+        statement: "SWAG, SWAG: accuracy +27.1% / 8.3%",
+        valueText: "+27.1% / 8.3%",
+        unit: "%",
+        valueNumber: null,
+      }),
+    ).toBeNull();
+  });
+  it("keeps one scientific quantity and one scalar with unit", () => {
+    const base = { ...triviaClaim, task: null, dataset: null, conditions: null };
+    expect(
+      resultStatement({ ...base, statement: "rate 1e-8", metric: "rate", quote: "Corpus rate 1e-8.", valueText: "1e-8", unit: null, valueNumber: 1e-8 }),
+    ).toBe("rate 1e-8");
+    expect(
+      resultStatement({ ...base, statement: "decay 4.9\u00d710^\u22125", metric: "decay", quote: "Decay 4.9\u00d710^\u22125 rate.", valueText: "4.9\u00d710^\u22125", unit: null, valueNumber: null }),
+    ).toBe("decay 4.9\u00d710^\u22125");
+    expect(
+      resultStatement({ ...base, statement: "steps 3\u00d7", metric: "steps", quote: "Needs 3\u00d7 fewer steps.", valueText: "3\u00d7", unit: "\u00d7", valueNumber: null }),
+    ).toBe("steps 3\u00d7");
+    expect(
+      resultStatement({ ...base, statement: "epsilon 10^-8", metric: "epsilon", quote: "Adam epsilon 10^-8.", valueText: "10^-8", unit: null, valueNumber: null }),
+    ).toBe("epsilon 10^-8");
+  });
+  it("passes a non-result qual fact even with compound numbers", () => {
+    expect(
+      resultStatement({ ...triviaClaim, kind: "other", statement: "Qualitative note about training.", valueText: "+27.1% / 8.3%", unit: "%", valueNumber: null }),
+    ).toBe("Qualitative note about training.");
+  });
+  it("preserves the 4.6% absolute improvement with its qualifier", () => {
+    const statement = "For the largest and most widely reported GLUE task, MNLI, BERT obtains a 4.6% absolute accuracy improvement.";
+    const quote = "For the largest and most widely\nreported GLUE task, MNLI, BERT obtains a 4.6%\nabsolute accuracy improvement.";
+    expect(
+      resultStatement({ ...triviaClaim, task: "MNLI", metric: "accuracy", dataset: "MNLI", conditions: null, quote, statement, valueText: "4.6%", unit: "%", valueNumber: 4.6 }),
+    ).toBe(statement);
+  });
+  it("rejects the 1M versus 500k step conditions instead of erasing them", () => {
+    const statement = "BERTBASE achieves almost 1.0% additional accuracy on MNLI when trained on 1M steps compared to 500k steps.";
+    const quote = "Answer: Yes, BERTBASE achieves almost\n1.0% additional accuracy on MNLI when\ntrained on 1M steps compared to 500k steps.\n";
+    expect(
+      resultStatement({ ...triviaClaim, task: "MNLI", metric: "accuracy", dataset: "MNLI", conditions: null, quote, statement, valueText: "1.0%", unit: "%", valueNumber: 1 }),
+    ).toBeNull();
+  });
+  it("rejects the 80/10/10 masking mix instead of collapsing to 84.2", () => {
+    const statement = "Dev set results for MNLI fine-tuning with masking strategy 80% MASK, 10% SAME, 10% RND is 84.2.";
+    const quote = "80% 10% 10% 84.2 95.4 94.9\n";
+    expect(
+      resultStatement({ ...triviaClaim, task: "MNLI", metric: "Dev Accuracy", dataset: "MNLI", conditions: null, quote, statement, valueText: "84.2", unit: "%", valueNumber: 84.2 }),
+    ).toBeNull();
   });
 });
 

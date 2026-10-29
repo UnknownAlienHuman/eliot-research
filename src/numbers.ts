@@ -3,6 +3,10 @@ const DIGIT_RUN_RE = /[0-9]+/g;
 const NUMERIC_TOKEN_RE = /[0-9]+(?:[.,][0-9]+)*(?:[eE][+\-\u2212]?[0-9]+)?/g;
 const COMPOUND_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])(?<mantissa>[+\-\u2212]?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+))[ \t\u00a0\u2009]*(?:[×·*]|times)[ \t\u00a0\u2009]*10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
 const SINGLE_NUMBER_RE = /^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+// Bare 10^N / 10-superscript without a mantissa x (for example Adam epsilon
+// 10^-8): one unambiguous scientific quantity, not two numbers. Shares the
+// same power suffix logic as compound powers; no paper pattern is added.
+const BARE_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
 
 function quoteRuns(text: string): Set<string> {
   return new Set(text.match(DIGIT_RUN_RE) ?? []);
@@ -66,6 +70,15 @@ function withoutCompoundPowers(text: string, tokens: readonly CompoundPowerToken
   return parts.join("");
 }
 
+function barePowerTokens(text: string): CompoundPowerToken[] {
+  const tokens: CompoundPowerToken[] = [];
+  for (const match of text.matchAll(BARE_POWER_RE)) {
+    const start = match.index ?? 0;
+    tokens.push({ value: match[0], start, end: start + match[0].length });
+  }
+  return tokens;
+}
+
 /**
  * Shared maximal-digit-group rule: every digit run in text must occur as a
  * whole maximal digit run in quote. Decimal fractions additionally require
@@ -96,6 +109,26 @@ export function unsupportedNumbers(text: string, quote: string): string[] {
 
 export function numbersSupported(text: string, quote: string): boolean {
   return unsupportedNumbers(text, quote).length === 0;
+}
+
+/**
+ * Count distinct numeric quantities in a stored valueText for the K3
+ * one-scalar-per-result contract. Compound powers (for example 4.9x10^-5)
+ * and bare 10^N / 10-superscript (for example Adam epsilon 10^-8) each
+ * count as one quantity via the shared power suffix logic; remaining
+ * numeric tokens use the shared numeric tokenizer. A compound list such as
+ * +27.1% / 8.3% counts as two and must be rejected by the caller. Zero
+ * counts (non-numeric literals) are left to the caller; this helper only
+ * identifies compounds (>1). No paper-specific patterns are added.
+ */
+export function countNumericQuantities(valueText: string): number {
+  if (typeof valueText !== "string") return 0;
+  const powers = compoundPowerTokens(valueText);
+  const afterCompound = withoutCompoundPowers(valueText, powers);
+  const bare = barePowerTokens(afterCompound);
+  const remaining = withoutCompoundPowers(afterCompound, bare);
+  const tokens = remaining.match(NUMERIC_TOKEN_RE) ?? [];
+  return powers.length + bare.length + tokens.length;
 }
 
 

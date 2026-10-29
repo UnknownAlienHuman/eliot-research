@@ -1,4 +1,4 @@
-import { unsupportedNumbers, parseSingleNumber } from "../../src/numbers.ts";
+import { unsupportedNumbers, parseSingleNumber, countNumericQuantities } from "../../src/numbers.ts";
 import { assertEvalOrigin, fetchEval } from "./origin.mjs";
 // K3 Distill eval harness (docs/MAP.md K3; docs/IMPLEMENTATION.md 6, 8, 10, 11).
 // Interface assumptions (backend contract under test):
@@ -129,8 +129,17 @@ function numericsUnsupported(quote, valueText, valueNumber, ...texts) {
   }
   return [...new Set(bad)];
 }
+function compoundResultUnsupported(c) {
+  if (!c || c.kind !== 'result') return [];
+  if (typeof c.valueText !== 'string' || c.valueText.trim() === '') return [];
+  return countNumericQuantities(c.valueText) > 1 ? ['compound-result-valueText'] : [];
+}
 assert.deepEqual(numericsUnsupported('Speedup 10,000x on 8 GPUs.', '10,000', 10000, '8 GPUs'), [], 'Harness selftest: unambiguous thousands must parse, verified text stays strict.');
 assert.deepEqual(numericsUnsupported('quoted 10,000 dollars', '10,000 dollars', 10000), ['10000'], 'Harness selftest: compound valueText with a number must fail.');
+assert.equal(countNumericQuantities('+27.1% / 8.3%'), 2, 'Harness selftest: captured compound result counts two quantities.');
+assert.deepEqual(compoundResultUnsupported({ kind: 'result', valueText: '+27.1% / 8.3%', valueNumber: null }), ['compound-result-valueText'], 'Harness selftest: captured compound result card must fail.');
+assert.deepEqual(compoundResultUnsupported({ kind: 'result', valueText: '27.1%', valueNumber: null }), [], 'Harness selftest: single scalar result stays passing.');
+assert.deepEqual(compoundResultUnsupported({ kind: 'method', valueText: '+27.1% / 8.3%', valueNumber: null }), [], 'Harness selftest: non-result keeps existing semantics.');
 assert.deepEqual(numericsUnsupported('eps 1e-8 floor', '1e-8', 1e-8), [], 'Harness selftest: scientific scalar must parse exactly.');
 assert.deepEqual(numericsUnsupported('rate 95.2% agreed', '95.2%', 95.2), [], 'Harness selftest: literal percent unit is source-as-written, no conversion.');
 assert.deepEqual(numericsUnsupported('rate 95.2% agreed', '95.2%', 0.952), ['0', '952'], 'Harness selftest: percent must not convert (95.2% is 95.2, never 0.952).');
@@ -324,7 +333,7 @@ if (nativeOnly) {
         for (const c of u1.claims) {
           assert(c && typeof c.quote === 'string' && c.quote.length > 0, 'Recovered claim needs a non-empty quote.');
           await assertStoredQuote(rev, c, '(recovered)');
-          const bad = numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions);
+          const bad = [...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), ...compoundResultUnsupported(c)];
           assert.deepEqual(bad, [], 'Recovered numeric must be quote-supported: ' + bad.join(','));
         }
         assert(u1.report && typeof u1.report === 'object', 'Recovered revision must carry its report.');
@@ -372,7 +381,7 @@ if (nativeOnly) {
       assert(cseg.length >= 3 && cseg.length <= 5, 'Check guide must be 3-5 sentences, got ' + cseg.length + '.');
       for (const cc of cclaims) {
         await assertStoredQuote(crev, cc, '(check)');
-        assert.deepEqual(numericsUnsupported(cc.quote, cc.valueText, cc.valueNumber, cc.statement, cc.conditions), [], 'Check numeric must be quote-supported.');
+        assert.deepEqual([...numericsUnsupported(cc.quote, cc.valueText, cc.valueNumber, cc.statement, cc.conditions), ...compoundResultUnsupported(cc)], [], 'Check numeric must be quote-supported.');
       }
       const cmap = new Map((Array.isArray(cu.citations) ? cu.citations : []).map((b) => [b.block, b]));
       const cblocks = new Set();
@@ -627,7 +636,7 @@ if (!runModel) {
         violations.push(s.originalFilename + ': quote not byte-equal to stored range (' + (e.message || e) + ')');
         continue;
       }
-      for (const g of numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions)) violations.push(s.originalFilename + ': numeric ' + g + ' unsupported by quote');
+      for (const g of [...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), ...compoundResultUnsupported(c)]) violations.push(s.originalFilename + ': numeric ' + g + ' unsupported by quote');
       fileQuotes.push({ quote: c.quote, statement: c.statement });
     }
     byFile.set(s.originalFilename, fileQuotes);
@@ -770,7 +779,7 @@ async function distillOne(s) {
     const r = await apiBytes('/api/revisions/' + encodeURIComponent(rev) + '/range?start=' + st + '&end=' + en);
     assert.equal(r.status, 200, 'Each claim quote must open (GET range 200).');
     assert.equal(r.bytes.toString('utf8'), c.quote, 'Each claim quote must equal the range bytes exactly (' + s.originalFilename + ').');
-    assert.deepEqual(numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), [], 'Every numeric group must occur whole in its exact quote (' + s.originalFilename + ').');
+    assert.deepEqual([...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), ...compoundResultUnsupported(c)], [], 'Every numeric group must occur whole in its exact quote (' + s.originalFilename + ').');
     fileQuotes.push({ quote: c.quote, statement: c.statement });
   }
   paidByFile.set(s.originalFilename, fileQuotes);
