@@ -255,6 +255,9 @@ It remains failed and unavailable for Save unless complete compatible output exi
 `usage.providerUsage` as an array of at most two such entries for
 saved call responses; older artifacts may omit the field. This is provider usage telemetry, not request bodies,
 headers or credentials, and adds no table, ledger or model call. Missing token counts remain unknown.
+Capture the fixed safe provider-failure projection on the owning revision before crossing the Workflow step boundary.
+The final report and reader retain that cause even when Workflow serialization strips the original error class;
+provider response bodies, request headers and credentials remain excluded.
 `done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal
 filtering and remains diagnostic. `partial` records a missing required component or an interrupted/error outcome,
 not a nonzero drop percentage. The same exact-quote, numeric-support and anchor gates apply to both states.
