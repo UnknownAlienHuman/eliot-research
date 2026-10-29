@@ -68,26 +68,27 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
   if (!source) throw new LibraryError("not_found", "Source not found.", 404);
   const revisionId = input.revisionId ?? source.currentRevisionId;
   if (!revisionId) throw new LibraryError("not_found", "This source has no revision yet.", 404);
-  const row = await env.DB.prepare("SELECT r.id AS id, r.distill_state AS state, r.distill_error AS error,r.distill_calls AS attempts,r.distill_report_key AS reportKey,r.distill_model AS model"
+  const row = await env.DB.prepare("SELECT r.id AS id, r.distill_state AS state, r.distill_error AS error,r.distill_calls AS attempts,r.distill_report_key AS reportKey,r.distill_model AS model,r.distill_token_limit AS tokenLimit"
     + " FROM source_revision r JOIN source s ON s.id=r.source_id"
     + " WHERE r.id=? AND r.source_id=? AND r.deleted_at IS NULL AND s.state!='deleted'")
-    .bind(revisionId, input.sourceId).first<{ id: string; state: DistillState; error: string | null; attempts: number; reportKey: string | null; model: string | null }>();
+    .bind(revisionId, input.sourceId).first<{ id: string; state: DistillState; error: string | null; attempts: number; reportKey: string | null; model: string | null; tokenLimit: number | null }>();
   if (!row) throw new LibraryError("not_found", "Source revision not found.", 404);
   const settings = await env.DB.prepare("SELECT distill_model AS model FROM settings WHERE id=1").first<{ model: string }>();
   const configuredModel = settings?.model ?? null;
-  let maximumTokens: number | null = null;
-  if (configuredModel) {
+  const report = await r2Json<DistillReport>(env, row.reportKey ?? `source/${revisionId}/distill.json`);
+  if (row.reportKey && !report) throw new LibraryError("unavailable", "The current saved report is missing. Restore storage and reload understanding.", 503);
+  let maximumTokens = row.tokenLimit ?? report?.usage?.tokenLimit ?? null;
+  const forecastModel = row.model ?? configuredModel;
+  if (maximumTokens === null && row.attempts === 0 && ["none", "queued", "paused"].includes(row.state) && forecastModel) {
     try {
       const catalog = await readModelCatalog(env);
-      const entry = catalog.models.find((m) => m.route === configuredModel);
+      const entry = catalog.models.find((m) => m.route === forecastModel);
       if (entry && entry.enabled) {
         const bound = 2 * modelTokenLimit(entry);
         if (Number.isSafeInteger(bound)) maximumTokens = bound;
       }
     } catch { maximumTokens = null; }
   }
-  const report = await r2Json<DistillReport>(env, row.reportKey ?? `source/${revisionId}/distill.json`);
-  if (row.reportKey && !report) throw new LibraryError("unavailable", "The current saved report is missing. Restore storage and reload understanding.", 503);
   const artifact = (name: "guide" | "digest" | "glossary", file: string) => {
     if (!report?.artifacts) return `source/${revisionId}/${file}`;
     if (report.artifacts[name] !== `source/${revisionId}/checked/${file}`) throw new LibraryError("unavailable", "The current understanding artifact points outside this revision.", 503);

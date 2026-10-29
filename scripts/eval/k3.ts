@@ -235,6 +235,9 @@ function assertUnderstanding(u, what) {
   assert(Array.isArray(u.glossary), 'Understanding.glossary must be an array (' + what + ').');
   assert(Array.isArray(u.claims), 'Understanding.claims must be an array (' + what + ').');
   assert(u.report === null || typeof u.report === 'object', 'Understanding.report must be null|object (' + what + ').');
+  if (Number.isSafeInteger(u.report?.usage?.tokenLimit) && u.report.usage.tokenLimit >= 0)
+    assert.equal(u.progress?.maximumTokens, u.report.usage.tokenLimit,
+      'Understanding progress.maximumTokens must equal the retained report tokenLimit (' + what + ').');
 }
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
