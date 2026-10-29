@@ -400,6 +400,28 @@ function gatewayRetryAfterSeconds(error: unknown): number | undefined {
   return seconds >= 0 && seconds <= 86400 ? seconds : undefined;
 }
 
+const NO_ENDPOINT_DATA_POLICY_REASON =
+  "External model request failed (HTTP 404). Provider reports no endpoint matching its data policy. Review provider privacy settings or choose another model. No retry was started.";
+
+function isNoEndpointDataPolicy(error: unknown): boolean {
+  const bodies = [
+    (error as { responseBody?: unknown } | null | undefined)?.responseBody,
+    error instanceof Error ? (error.cause as { responseBody?: unknown } | null | undefined)?.responseBody : undefined,
+  ];
+  for (const body of bodies) {
+    if (typeof body !== "string" || body.length === 0 || body.length > 4096) continue;
+    let message: unknown;
+    try {
+      message = (JSON.parse(body) as { error?: { message?: unknown } | null } | null)?.error?.message;
+    } catch {
+      continue;
+    }
+    if (typeof message !== "string") continue;
+    if (/^no endpoints found (?:that match|matching) your data policy\b/i.test(message)) return true;
+  }
+  return false;
+}
+
 export function modelFailure(error: unknown, model: ModelSpec): string {
   const status = errorStatusCode(error);
   if (model.route.startsWith("gateway:")) {
@@ -407,6 +429,9 @@ export function modelFailure(error: unknown, model: ModelSpec): string {
       const wait = gatewayRetryAfterSeconds(error);
       const reset = wait === undefined ? "reset unknown" : "retry after " + wait + "s";
       return "External model request failed (HTTP 429). Limit exhausted, " + reset + ". No retry was started.";
+    }
+    if (status === 404 && isNoEndpointDataPolicy(error)) {
+      return NO_ENDPOINT_DATA_POLICY_REASON;
     }
     if (status !== undefined) {
       return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started.";

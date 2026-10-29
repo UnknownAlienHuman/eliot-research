@@ -562,6 +562,12 @@ does not prove live Gateway enforcement. Command Code receives the current quest
 history, avoiding a private multi-turn protocol dependency. It uses no fabricated reasoning marker, private capture,
 repair call or automatic retry. See §8 for public history and frozen source rules.
 
+OpenRouter requests currently set `provider.data_collection: "deny"`. A known structured 404 reporting no endpoints
+matching the provider's data policy is shown as a fixed, actionable failure with its HTTP status. Unknown or malformed
+error bodies retain the generic status message. Raw provider text is never copied into that reason, and the failure
+does not change the selected model or data policy or start another request. Catalogue presence does not establish
+that the account has an endpoint eligible under this policy.
+
 OpenRouter uses the installed Agents AI Gateway adapter and `@ai-sdk/openai-compatible`, with provider fallbacks
 disabled and the same one-attempt/no-wholesale/skip-cache/no-log intent. The gateway route contains the native model
 ID; no direct provider key or alternate route is used. Cloudflare Gateway BYOK describes Eliot's OpenRouter API
