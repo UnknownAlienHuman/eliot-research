@@ -26,7 +26,7 @@ WebSocket, MCP, Durable Object and Workflow classes. HTTP, chat, MCP and Workflo
 |---|---|
 | `src/index.ts` | routes, errors, DO/Workflow exports |
 | `src/auth.ts` | Access JWT and actors |
-| `src/cost.ts`, `src/models.ts` | dated model metadata, estimates, admission |
+| `src/cost.ts`, `src/models.ts` | usage, model bounds and provider admission |
 | `src/library.ts`, `src/ingest.ts`, `src/read.ts`, `src/blocks.ts` | Library and exact reading |
 | `src/context.ts`, `src/citations.ts`, `src/chat.ts` | cited answers |
 | `src/workflows/*.ts` | ingest, distill, project map, research |
@@ -40,14 +40,15 @@ Wrangler; never hand-write it.
 
 A paid effect is a model call, rendered Browser capture, billable AI Search use, or a Workflow that invokes one. Page
 load, list, read, citation open, reconnect and saving existing output must not start paid work. Before dispatch,
-`src/cost.ts` computes a conservative upper bound and rejects or pauses when current-month estimates plus that bound
-exceed `settings.monthly_model_budget_microusd` (default $5). Unknown input/output prices block job admission, not model selection, and are not treated as zero. Store
-actual input/cached/output tokens and estimated micro-USD on the row that owns the operation. Distillation runs once per
+`src/cost.ts` checks the job's token/call/time bounds and provider allowance. Model prices and a local
+monthly currency/token budget are not admission prerequisites. Store the token bound and actual input/cached/output
+counts on the owning row; unknown counts remain unknown. Historical currency estimates and reservations remain recorded
+without being reinterpreted as tokens or Neurons. Distillation runs once per
 immutable revision; ordinary whole/claim answers use one model call; search/tool loops and explicit jobs have hard caps.
 
 Understanding readers preserve the revision's stored model route even when it is absent from the live catalogue.
 `progress.configuredModel` separately names the current default for an explicit new/resumed job. Unknown preview
-metadata stays null; the UI never turns it into a zero price. The storage reader starts no discovery or generation.
+metadata stays null. The storage reader starts no discovery or generation.
 
 JSON lives under `/api/`, validated with zod. Error shape:
 
@@ -101,8 +102,10 @@ Migrations own schema names:
 | `0004_agents.sql` | future K4 trigram claim FTS and backfill; excluded from current selection |
 | `0005_model_gateway.sql` | nullable `settings.model_gateway_id`; existing-Gateway opt-in |
 | `0006_integrity.sql` | approved #420 guards for source/page ownership and terminal-turn/capture-identity immutability |
+| `0007_manual_understanding.sql` | explicit source understanding, removal of the automatic switch |
+| `0008_model_providers.sql` | provider configuration, owning-row token bounds and saved native usage choice; existing accounting data retained |
 
-Current `migrations/000[12356]_*.sql` selects `0001`–`0003`, `0005_model_gateway.sql` and `0006_integrity.sql`;
+Current `migrations/000[1235678]_*.sql` selects `0001`–`0003` and `0005`–`0008`;
 future K4 `0004_agents.sql` remains excluded.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:
@@ -193,8 +196,8 @@ range. K6 owns cross-source normalization; K3 must not pretend raw multilingual 
 ## 6. One-time distillation
 
 States: `none|queued|running|paused|done|partial|failed`. Ingest leaves readable revisions at `none`. Only an explicit
-Understand request queues and admits its requested revision, subject to concurrency and the monthly budget;
-insufficient budget becomes visible `paused` until another explicit request. Cron only reconciles stale `running` rows
+Understand request queues and admits its requested revision, subject to concurrency and provider allowance;
+unavailable allowance becomes visible `paused` until another explicit request. Cron only reconciles stale `running` rows
 against Workflow ID `distill-<revisionId>`; it never admits queued work. Migration `0007_manual_understanding.sql`
 removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
 resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
@@ -238,17 +241,15 @@ sentence. Its primary numeric value must occur in that statement, and every auth
 the structured primary result or context, all supported by the same exact quote. Missing numeric conditions reject
 the card instead of disappearing during formatting. Qualifiers and delta descriptions remain authored prose;
 semantic support is still a separate quality gate.
-Both existing calls request central mechanism and material qualitative claim statements when the paper states them.
-Guide text and a fact merely occurring inside a quoted block do not substitute for an owner-visible claim. When the
-unchanged 32-card bound binds, supported central explanatory/qualitative coverage takes priority over duplicate or
-secondary result rows; no per-kind quotas or paper-specific rules are introduced. Call two checks guide leads against
-the supplied original excerpts and can select a smaller supported subset to leave room for missing atomic facts.
-These request changes add no call, evidence binding, stored field or fallback claim and do not prove service quality.
-Store raw result/report in R2, compact verified claims in D1, and usage,
-cost and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
+Store raw result/report in R2, compact verified claims in D1, and usage
+and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
 Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.providerUsage` from AI SDK `usage.raw`
-as a JSON object or null. The final report retains `usage.providerUsage` as an array of at most two such entries for
+as a JSON object or null. A typed structured-output failure retains `output: null` and known usage in the same immutable
+artifact. Its safe failure cause is exposed by the owning report; request bodies, headers and private protocol fields
+are excluded.
+It remains failed and unavailable for Save unless complete compatible output exists. The final report retains
+`usage.providerUsage` as an array of at most two such entries for
 saved call responses; older artifacts may omit the field. This is provider usage telemetry, not request bodies,
 headers or credentials, and adds no table, ledger or model call. Missing token counts remain unknown.
 `done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal
@@ -266,7 +267,7 @@ in guide/digest/glossary storage, including within sentence-level validation. Co
 annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.
 
 K3 records `distill_calls` (hard maximum two), `distill_started_at` and `distill_ms` on the owning revision. Admission
-reserves both full-context call bounds in the same monthly pool as chat, with at most two revisions running. Each
+records both full-context call bounds before dispatch, with at most two revisions running. Each
 new internal `DistillInput` is `{ revisionId, model: ModelSpec }`: after admission and before Workflow creation,
 snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
 Old terminal reports and cached Save retain their recorded usage and shape. Each
@@ -306,9 +307,6 @@ are retained but excluded by readers, context and later FTS queries. No original
 Calls, tokens, estimated cost, original model wall time and retained provider usage telemetry remain unchanged.
 A repeated save of the checked head returns the same result. GET exposes `canRecover` from compatible stored output
 only; failed output is never re-queued.
-Storage-only publication is exemplified by `eval/out/openrouter-smoke/partial-save.json`; it records Save behavior only,
-not complete source understanding or K3 acceptance.
-
 ## 7. Shared tools
 
 Tools return compact Markdown with explicit pagination and a default 4,000-token cap:
@@ -332,27 +330,28 @@ Estimate text as UTF-8 bytes / 3. Include newest in-scope history up to 10% of c
 a citation only when the prior full ordered scope is a prefix of the current scope and its stored source, revision,
 block and exact range match a currently supplied passage. Render that citation with its current compact alias;
 strip unverified, stale and unavailable references. Prior assistant prose remains conversation context, not evidence.
-For the Command Code protocol path, replay the captured assistant wire message unchanged only when the prior
-turn's full ordered source scope is a prefix of the current frozen scope. The complete serialized wire message,
-including private reasoning, counts toward both history and request bounds. Historical labels are not new evidence.
-A partial prior answer is identified as incomplete without changing its protocol data. Missing or mismatched private
-wire state fails before dispatch and requires a new chat; no synthetic marker or repair call is allowed.
+The Command Code adapter sends the current question and frozen source context without previous conversation turns.
+It does not capture or synthesize private reasoning fields. Existing private wire records remain untouched; the
+ordinary chat path uses public text and verified labels only. A partial prior answer is identified as incomplete.
 
 Resolve one `ModelSpec` for each turn and freeze it across admission, context limits, request bounds and settlement.
-The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, reserve against the monthly
-dollar budget, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
-citation, token, timing, cost, invalid-label and terminal-state fields. WebSocket frames and reconnect expose
+The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, record the token bound after
+provider admission, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
+citation, token, timing, invalid-label and terminal-state fields. Historical currency columns remain unchanged.
+WebSocket frames and reconnect expose
 read-only state snapshots; they never enqueue or dispatch paid work. GET, history, reconnect and Save never start model/search work. One active turn
 and one queued submission are allowed; the next returns `409/busy`. Stop stores partial text, closing a tab does not
 cancel, and failed streams are not automatically continued. Retry is a new owner submission.
 The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
 cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
-Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the existing
-reservation and is never treated as zero cost.
+Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the recorded
+token bound and is never treated as zero usage.
 Missing-citation and unsupported-number diagnostics are advisory UTF-16 answer ranges stored in the existing
 ChatAgent turn JSON and exposed by snapshots/history. They mark affected rendered prose without rewriting the answer
 or changing a normally finished stream to partial. Truncation, stream/protocol failure and invalid resolved labels
 remain real failures. Saved output carries a concise review note when warnings exist. D1 schema and usage are unchanged.
+An answer over a nonempty whole/claim source scope with no resolved citation is incomplete; this hard citation-presence
+gate is separate from advisory spans. General answers in explicitly empty scope do not require Library citations.
 
 Chat always streams ordinary Markdown with inline compact `[Sx:N]` labels. There is no JSON sentence/label enum or
 parse-repair call. One generic `SYSTEM_PROMPT` applies across questions and corpora: answer in the user's language,
@@ -368,9 +367,9 @@ can still fail acceptance. Owner semantic review remains required. The unchanged
 are the K2 boundary in MAP; K2 is not fully accepted or deployed.
 
 Broadcast the first nonempty rendered answer immediately and measure `firstTokenMs` from that text, not the first
-network event. Keep estimated/reserved micro-USD distinct from known provider-reported USD; unknown actual cost remains
-unknown. Private turn telemetry exposes only the allowlisted `inputTokens`, `outputTokens`, `totalTokens`,
-`cachedTokens`, `reasoningTokens` and `costUsd`, each null when missing or invalid. Eval may reuse only completed turns
+network event. Keep recorded token bounds, actual token counts and any historical/provider-reported currency values
+distinct; missing usage remains unknown. Private turn telemetry exposes only the allowlisted `inputTokens`, `outputTokens`, `totalTokens`,
+`cachedTokens` and `reasoningTokens`, each null when missing or invalid. Eval may reuse only completed turns
 with exact frozen source/revision sets; a non-reusable question stays manual and resume never dispatches a replacement.
 
 ## 9. AI Search projection — K5 only
@@ -410,30 +409,123 @@ call; an in-flight call may finish.
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
-selection. Paid admission is separate: require usable context and known input and output prices. An unknown cached-input
-price is estimated at the full input rate. Reserve against the monthly dollar budget in micro-USD before dispatch,
-freeze the admitted `ModelSpec` for the job, and preserve unknown actual provider cost as unknown. The 8,192-token job
+selection. Paid admission requires usable context/output bounds and provider allowance, without a price lookup or a
+locally invented monthly allowance. Record `modelTokenLimit = contextTokens + outputLimit` before dispatch (twice for
+two-call distillation), freeze the admitted `ModelSpec`, and retain unknown usage as unknown. The 8,192-token job
 output bound is separate from published model capacity. Provider errors/limits remain visible; there is no artificial
 quota, paid fallback or model-name allowlist/banlist.
 
+**Providers.** Migration `0008_model_providers.sql` stores the editable provider configuration in
+`settings.model_providers_json`: ID, adapter type (`workers-ai` or `openai-compatible`), HTTPS API base URL, enabled
+flag and the existing Cloudflare provider slug/path prefix. ID supplies the `gateway:<id>/<native model>` identity;
+the Cloudflare slug/path supplies routing, including the required `custom-` prefix for custom providers. These values
+contain no credentials. Owner-only PUT `/api/models/providers` saves configuration; GET reads it. Neither discovers
+models or starts inference. The seeded providers preserve the existing Workers AI, OpenRouter and Command Code routes.
+
+Migration `0008_model_providers.sql` seeds Kilo, Nous Portal and OpenCode Go alongside the existing providers.
+The new provider rows start disabled. It adds settings and token bounds without rewriting existing models,
+usage or credentials; the earlier unmerged provider migrations are consolidated into this file.
+The current official endpoints were checked on 2026-10-29; the pinned donor's older Kilo URL is not reused.
+
+| Provider ID | Configured API root | Public model catalogue | Gateway prefix |
+|---|---|---|---|
+| `command-code` | `https://api.commandcode.ai/provider/v1` | API root + `/models` | `custom-command-code/v1` |
+| `kilo` | `https://ai-gateway.kilo.ai/api/v1` | API root + `/models` | `custom-kilo/v1` |
+| `nous` | `https://inference-api.nousresearch.com/v1` | API root + `/models` | `custom-nous/v1` |
+| `opencode-go` | `https://opencode.ai/inference/go` | `https://opencode.ai/inference/go/v1/models` | `custom-opencode-go` |
+
+The custom Gateway definitions retain each upstream fixed prefix: Command Code `/provider`, Kilo `/api`, Nous's
+origin and OpenCode Go `/inference/go`. Provider credentials remain in Gateway BYOK. Public catalogue reads do not
+prove authenticated inference. No private CLI login, OAuth store or provider key is imported from OpenCodex.
+
+Optional `modelsUrl` overrides the usual API-root + `/models` read. Optional `metadataUrl` reads published provider
+metadata during explicit Refresh only. OpenCode documents [models.dev](https://opencode.ai/v2/docs/models) as its
+model-data source: Go's live API remains the authority for IDs, while the `opencode-go` block of
+`https://models.dev/api.json` supplies its published limits, modalities, API package and endpoint. The join includes
+only live Go IDs and ignores prices, foreign provider blocks and extra metadata-only IDs. It contains no model-name
+table or family inference. Ordinary catalogue bounds remain 4 MiB and 2,000 rows; this optional metadata read has an
+8 MiB bound for the observed 5.94 MB feed, and only the selected provider's data enters the existing R2 snapshot.
+Unavailable or malformed metadata for the configured provider/live IDs preserves the last good provider slice with a
+warning. A missing optional live-ID entry stays unknown; foreign and metadata-only IDs are ignored. Missing usable
+limits or API metadata never authorize a call.
+
+Per-model `apiProtocol` and `apiBaseUrl` freeze the published API choice alongside normal routing metadata. Package
+metadata selects the maintained Chat Completions, Responses, Anthropic or Google SDK; absent metadata remains unknown.
+The endpoint must be HTTPS beneath the owner-approved provider API root, and is checked again before transport.
+The selected native SDK loads lazily and builds the request; receiver-bound `AI.fetch` forwards it through the configured custom Gateway route,
+stripping vendor credentials while keeping required protocol headers and streaming query parameters. Responses uses
+`store:false` without previous-response or conversation state. Calls retain their existing token, time, attempt and
+usage bounds. Editing either discovery URL invalidates old routing metadata until explicit Refresh succeeds.
+
+Provider references: [Command Code API](https://commandcode.ai/docs/provider),
+[Kilo Gateway API](https://kilo.ai/docs/gateway/api-reference), [Nous Portal](https://portal.nousresearch.com),
+[OpenCode Go](https://opencode.ai/v2/docs/console/go/) and its
+[inference APIs](https://opencode.ai/v2/docs/console/api/inference). Publication dates were not exposed; retrieval
+date is 2026-10-29. Their model lists and account access remain dynamic.
+
 **Catalogue and refresh.** R2 `catalog/models.json` is the model snapshot. GET `/api/models`, settings/model selection
 and paid admission read stored metadata only. The owner-only POST `/api/models/refresh` accepts
-`{ selectedRoutes?: string[] }` and is the only provider discovery/pricing path. Refresh stores the timestamp in the
+an empty object and is the only provider discovery path. Refresh stores the timestamp and provider configuration in the
 same R2 object; no D1/settings migration is required. A provider refresh failure preserves that provider's prior slice
 and returns a warning while available provider slices may update. On an absent snapshot, GET returns the native Flash
 fallback, `snapshot.updatedAt: null`, `snapshot.refreshNeeded: true` and a refresh-needed warning. The snapshot
 contains no credentials.
 
-During refresh, provider discovery is dynamic. Selected-route official pricing enrichment requires an exact provider,
-native-ID and published currency/unit match; missing or ambiguous facts remain unknown with a warning, with no
-cross-provider price fallback. The selected route may remain selectable, but admission blocks until required metadata
-is known. The UI filters do not run discovery or change selection.
+Provider quotas are optional display data in the same R2 snapshot. Explicit Refresh reads OpenRouter's documented
+`GET /api/v1/key` through the configured Gateway's receiver-bound `AI.fetch`, without a provider Authorization header.
+The installed Agents 0.30.1 native path preserves the method and headers; the OpenRouter GET path was verified on
+2026-10-28. The read has one attempt, a 15-second timeout and a 64-KiB body bound. Unsupported or unavailable quota
+data remains null; no unit or reset date is invented. Stored quota values are tied to their provider route and Gateway
+ID, and GET only reads those stored values. A quota-read failure does not invalidate successfully refreshed models.
+Quota data is an observation, separate from owning-row request bounds. The official endpoint is described in
+[OpenRouter's key-limit documentation](https://openrouter.ai/docs/api_reference/limits.md) and
+[OpenAPI schema](https://openrouter.ai/openapi.json), retrieved 2026-10-28; no publication date was exposed.
+
+Workers AI's native free allocation is 10,000 Neurons per UTC day, shared across that account's Workers AI usage and
+reset at 00:00 UTC. On Workers Paid, usage beyond the free allocation is billed; the included allocation alone is not
+a paid-account spending cap ([pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), updated
+2026-10-20). Tokens, Neurons and provider credit balances are separate units. Eliot does not derive one from another or
+apply the Workers AI allocation to OpenRouter/Command Code.
+
+Explicit catalogue Refresh also reads the current day's Neurons from Cloudflare GraphQL
+`aiInferenceAdaptiveGroups { sum { totalNeurons } }`, from 00:00 UTC to now. It uses public account setting
+`ELIOT_CF_ACCOUNT_ID` and a separate `ELIOT_CF_ANALYTICS_TOKEN` secret restricted to Account Analytics: Read.
+The bounded read is stored in the existing R2 snapshot; page loads and GETs use only that cached current-day value.
+A valid empty dataset is zero. Missing access, invalid data and stale-day data remain unavailable. The counter is an
+observation, not a token conversion or a guarantee that a Paid account stops at the free allocation.
+
+Migration `0008_model_providers.sql` stores the owner choice in `settings.native_usage_mode`:
+`included` (default) or `standard`. GET/PUT `/api/settings` exposes `nativeUsageMode`; saving the choice performs no
+inference, does not change the selected provider/models and applies to new admissions. `included` keeps native
+requests paused while an exact 10,000-Neuron daily cap cannot be verified/enforced for this connection. It is not a
+working usage meter or a claim that the Paid account stops at that allocation. `standard` explicitly permits normal
+Cloudflare billing, including Paid overage, while retaining each job's token/call/time bounds. Missing or unreadable
+policy fails closed for native requests. Non-native providers use their own limits independently of this setting.
+
+During refresh, each enabled compatible provider supplies its bounded JSON `/models` catalogue; Workers AI uses its
+native binding. Partial failure preserves that provider's last good metadata and its original routing configuration.
+Changing a provider's base URL or Gateway route invalidates old external metadata until an explicit refresh succeeds.
+Neither API nor HTML prices are required or parsed for new model selection/admission. Missing usable context/output
+metadata blocks dispatch. The UI filters do not run discovery or change selection.
+Catalogue and metadata URLs pass the existing public-URL guard, and redirects are rejected. If a public catalogue
+denies access with 401/403, an explicitly configured Gateway can read that same provider path using stored BYOK;
+credentials are never sent by the app or forwarded to a different origin. A refused authenticated read remains a
+provider failure and preserves its prior catalogue slice.
+The admitted external `ModelSpec` carries the provider configuration and Gateway ID from that same catalogue read;
+transport uses this frozen routing instead of reading changed settings after admission.
+Published `supported_parameters` may advertise temperature support; those requests use temperature 0 for source-faithful
+generation, while missing metadata leaves the parameter unset. OpenRouter structured jobs disable reasoning only when
+the same snapshot advertises its control and explicitly marks it non-mandatory. Chat, mandatory reasoning and unknown
+capabilities are not silently given that override. The existing output/call bounds remain unchanged; truncation is a
+failed structured result, retained for inspection without an automatic repair call.
 
 Cloudflare documents R2 object consistency in the [Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 (dateModified: 2026-07-31), supporting the single-object snapshot timestamp contract.
 
-The preserved provider choices are native Workers AI Flash (`workers-ai:@cf/zai-org/glm-5.3-flash`) as answer/distill
-default, the explicit native `workers-ai:@cf/zai-org/glm-5.3` route, Command Code through
+The factory fallback remains native Workers AI Flash (`workers-ai:@cf/zai-org/glm-5.3-flash`); the stored global answer
+and understanding defaults are owner choices. The owner currently uses OpenRouter while native allowance remains paused.
+Benchmarks freeze the configured answer and understanding models for the run; they never switch models per question
+or lower the evidence gates for a provider. Available choices include the explicit native `workers-ai:@cf/zai-org/glm-5.3` route, Command Code through
 `gateway:command-code/<native-id>`, and owner-selected OpenRouter routes
 `gateway:openrouter/dots-studio/dots-3-note-preview:free`,
 `gateway:openrouter/thinkingmachines/inkling:free`, and
@@ -441,10 +533,10 @@ default, the explicit native `workers-ai:@cf/zai-org/glm-5.3` route, Command Cod
 catalogue restriction. Provider APIs provide the selectable catalogue; no model-name allowlist or ban is introduced.
 OpenRouter embed/rerank IDs remain separate future K5 capabilities, not chat choices.
 
-Settings provider/search/free-name filters are display-only. Chat uses compact provider then model selection with
-project default available; technical route, capacity, output and price data live under Details. Refresh preserves the
-selected provider/native-ID pair. A route may remain selectable with unknown prices, but paid dispatch is blocked until
-required admission metadata is known.
+Settings uses one visible provider/search/free-name filter and catalogue, with Answers/Understanding choosing which
+default is being edited. Filters are display-only; the catalogue has no pagination or technical model-details panel.
+Chat and project settings use compact provider then model selection with the applicable default available. Refresh preserves the
+selected provider/native-ID pair. Usable model bounds and provider allowance remain required for dispatch.
 
 Migration `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; null disables external routes. Owner-only
 GET `/api/models/connection` and PUT read/save the exact existing named Gateway ID. Enabling requires
@@ -452,24 +544,17 @@ GET `/api/models/connection` and PUT read/save the exact existing named Gateway 
 consent/configuration only and does not prove Gateway or provider usability. No credential input, secret, direct
 provider Authorization header or dummy key is stored in Eliot; credentials remain in Cloudflare's default BYOK alias.
 
-Command Code uses the installed `@ai-sdk/openai-compatible` provider through the pinned Agents provider-native
+Compatible providers use the installed `@ai-sdk/openai-compatible` provider through the pinned Agents provider-native
 `AI.fetch` adapter, with one attempt, no-wholesale, skip-cache and no-log controls. Source forwarding of those controls
-does not prove live Gateway enforcement. Its multi-turn protocol uses actual assistant content and reasoning fields
-captured from raw SDK chunks in the existing private ChatAgent SQLite `assistant_wire`; replay is unchanged and
-server-only. A missing/incomplete capture fails before dispatch and requires a new chat. No fabricated protocol marker,
-provider-family allowlist, retry or additional store is used. The original wire is retained unchanged under the
-Reflection multi-turn contract (updated 2026-10-16; https://developers.reflection.ai/reasoning#reasoning-in-multi-turn-conversations).
-See §8 for frozen-scope replay rules.
+does not prove live Gateway enforcement. Command Code receives the current question and frozen source context without
+history, avoiding a private multi-turn protocol dependency. It uses no fabricated reasoning marker, private capture,
+repair call or automatic retry. See §8 for public history and frozen source rules.
 
 OpenRouter uses the installed Agents AI Gateway adapter and `@ai-sdk/openai-compatible`, with provider fallbacks
 disabled and the same one-attempt/no-wholesale/skip-cache/no-log intent. The gateway route contains the native model
 ID; no direct provider key or alternate route is used. Cloudflare Gateway BYOK describes Eliot's OpenRouter API
 credential; OpenRouter `usage.is_byok` describes an upstream provider key and does not prove Cloudflare wholesale or
 fallback behavior. Live enforcement and external provider billing acceptance remain unverified.
-
-Recorded provider evidence remains under eval/out/openrouter-smoke/, and the NotebookLM baseline remains at
-eval/out/notebooklm-20261026/answers.md. These materials do not establish all twelve K2 questions, K3 semantic
-quality, owner acceptance, no-wholesale enforcement or deployment.
 
 Official provider facts remain subject to recheck before implementation or merge. References include the [OpenRouter
 catalog](https://openrouter.ai/api/v1/models), its [provider-routing contract](https://openrouter.ai/docs/guides/routing/provider-selection),
@@ -506,9 +591,9 @@ with raw HTML disabled and resolved citation chips. Do not cache private text in
 
 The shared model picker reuses the approved legacy Material interaction and provider/native-ID identity. Settings
 provider, search and free-name filters only filter the displayed catalogue; they do not change saved routes or admission.
-Chat uses compact provider then model controls with project default available. Technical route, capacity, output and
-price information appears under Details. Unknown metadata stays visible, and model-job admission remains separate from
-selection.
+Chat uses compact provider then model controls with project default available. Settings keeps provider addresses and
+Gateway routing in collapsed provider details. Unknown metadata stays visible, and model-job admission remains separate
+from selection.
 
 ## 14. Lifecycle and export
 
@@ -540,32 +625,19 @@ Checked against official Cloudflare documentation on 2026-10-24. Recheck before 
 
 ### Unmerged proposal PR #419 (explicitly unaccepted)
 
-[PR #419](https://github.com/UnknownAlienHuman/eliot-research/pull/419) (`docs/final-contract-audit` @
-`4dfcd8eb308e84f26c6c7e42a921aec25746a19c`) is **CLOSED / UNMERGED**, superseded by #420; GitHub retains
-`mergeStateStatus: DIRTY`. Checked live 2026-10-27 against comparison main `8078e150`.
-The PR has one commit changing 18 documentation/migration files, including rewrites of
-`0001`–`0004` and new `0005_search.sql`, `0006_project.sql`, `0007_jobs.sql`; it supplies no converter runtime.
-Its proposed contracts are not accepted architecture or evidence that the current product implements them.
+[PR #419](https://github.com/UnknownAlienHuman/eliot-research/pull/419) at
+`4dfcd8eb308e84f26c6c7e42a921aec25746a19c` remains closed and unmerged (checked 2026-10-28). Its proposed converter,
+read APIs and rewritten migrations are not accepted contracts. Current K1 retains native UTF-8 text or
+`env.AI.toMarkdown().transform()` with embedded-image opt-out and PDF metadata disabled; those request options alone
+do not prove that service output contains no derived image descriptions. Existing canonical revisions and citations
+must remain intact.
 
-The PR's §5 rejects `AI.toMarkdown` as canonical evidence and proposes deterministic UTF-8/PDF/HTML extraction.
-Current K1 code on `origin/main` and local WIP still uses native text or `env.AI.toMarkdown().transform()`;
-standalone images are rejected before conversion, and embedded HTML/DOCX/PDF images request
-`convert: false, maxConvertedImages: 0`, with PDF metadata disabled. Installed `@cloudflare/workers-types`
-`5.20261024.1` exposes those embedded-image controls; that type contract does not prove service output contains
-no generated descriptions. The PR's contrary platform claim is also not established by its documentation alone.
-Existing K1 corpus evidence belongs to the recorded converter/output, not an unimplemented replacement;
-no new image-heavy PDF check or conversion was run in this reconciliation.
-
-The proposed PDF donor is already pinned: `unjs/unpdf@87c7edc43ee99a17d2aa20acf271c4889332720b`, package
-`1.9.1`, MIT, paths `src/text.ts` and `examples/cloudflare/index.ts` verified at that commit. Its text helpers
-use `Promise.all` over pages, so the PR's sequential-page requirement still needs implementation and measurement.
-Both registries retain legacy Eliot `7c034569b908d3b03a8b821b7c537477a24b10f7` and Agents
-`321814b6c13f72cff82161e7eb20312574ac9b7a`; the current registry retains
-`packages/cloudflare-markdown/src/markdown-conversion.ts`, while the PR removes that converter donor.
+The proposed `unjs/unpdf@87c7edc43ee99a17d2aa20acf271c4889332720b` (`1.9.1`, MIT, `src/text.ts` and
+`examples/cloudflare/index.ts`) is not adopted. Its parallel page extraction would need measurement before replacing K1.
 
 | Choice needing owner decision | Implication |
 |---|---|
-| Read API: current `/text`, `/range`, `/outline` or PR `/text?start=&end=` and `/blocks` | The PR endpoints are not implemented. Retain current callers until an explicit API contract change is accepted. |
-| Canonical converter: retain current K1 path or adopt deterministic extraction | Current instruction retains `toMarkdown`; adopting the pinned `unpdf`/HTML proposal requires an explicit converter change and fresh K1 acceptance. Existing canonical revisions/citations must remain intact. |
-| Image evidence: current no-OCR policy or a separately accepted OCR/description path | Keep originals and `needs_conversion`; embedded-image opt-out needs real output verification. Accepting derived image text as canonical evidence would require an explicit policy and a new revision, not a silent reinterpretation of old text. |
-| Schema: current revision-owned state or PR attempt/reservation tables | Reconcile deliberately with current callers and retained local data. PR `0001` excludes `workers_ai_markdown` and replaces `readable_size` with `canonical_size`; `0002` renames the budget field and adds `budget_month`/`budget_reservation`; `0003` adds `distill_run`/`claim.distill_run_id` and different paused states, whereas local WIP retains revision-owned `distill_started_at`, `distill_calls` and `distill_ms`. These are incompatible contracts, not append-only migrations ready to apply. |
+| Read API: `/text`, `/range`, `/outline` or PR `/text?start=&end=` and `/blocks` | Retain current callers unless an API change is explicitly accepted. |
+| Canonical converter: current K1 path or deterministic PDF/HTML extraction | A replacement needs an explicit converter decision and fresh K1 acceptance. |
+| Image evidence: no OCR or a separately accepted OCR/description path | Retain originals and `needs_conversion`; changed evidence needs a new revision and policy. |
+| Schema: revision-owned state or PR attempt/reservation tables | PR rewrites `0001`–`0004`, renames columns and adds run/reservation tables. These incompatible contracts require deliberate migration design; do not apply them to retained data. |

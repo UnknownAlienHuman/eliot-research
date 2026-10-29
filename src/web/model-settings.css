@@ -6,7 +6,9 @@
 .er-models__row { display: grid; gap: var(--eliot-space-tight); min-width: 0; margin: 0; }
 .er-models__label { display: grid; gap: var(--eliot-space-tight); font-size: var(--eliot-type-label-large-size); line-height: var(--eliot-type-label-large-line-height); font-weight: var(--eliot-type-font-weight-medium); letter-spacing: var(--eliot-type-letter-spacing-label); color: var(--md-sys-color-on-surface-variant); }
 .er-models__help { font-size: var(--eliot-type-body-small-size); line-height: var(--eliot-type-body-small-line-height); font-weight: var(--eliot-type-font-weight-regular); letter-spacing: var(--eliot-type-letter-spacing-body); color: var(--md-sys-color-on-surface-variant); }
-.er-models__row select, .er-models__row input, .er-models__row textarea { inline-size: 100%; max-inline-size: var(--eliot-type-reading-measure); }
+.er-models__row select, .er-models__row input:not([type="checkbox"]):not([type="radio"]), .er-models__row textarea { inline-size: 100%; max-inline-size: var(--eliot-type-reading-measure); }
+.er-models__target { display: grid; gap: var(--eliot-space-block-control); margin: 0; border: 0; padding: 0; min-width: 0; }
+.er-models__target legend { padding: 0; font-size: var(--eliot-type-label-large-size); line-height: var(--eliot-type-label-large-line-height); font-weight: var(--eliot-type-font-weight-medium); letter-spacing: var(--eliot-type-letter-spacing-label); color: var(--md-sys-color-on-surface-variant); }
 .er-models__check { display: flex; gap: var(--eliot-space-gutter); align-items: flex-start; min-width: 0; min-height: var(--eliot-size-control); cursor: pointer; }
 .er-models__check input { flex-shrink: 0; inline-size: var(--eliot-size-checkbox); block-size: var(--eliot-size-checkbox); margin-top: var(--eliot-space-tight); accent-color: var(--md-sys-color-primary); }
 .er-models__checktext { display: grid; gap: var(--eliot-space-tight); font-size: var(--eliot-type-body-medium-size); line-height: var(--eliot-type-body-medium-line-height); color: var(--md-sys-color-on-surface); }

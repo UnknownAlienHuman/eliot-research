@@ -17,41 +17,44 @@ vi.mock("cloudflare:workers", () => ({
     constructor(_ctx: unknown, readonly env: Env) {}
   },
 }));
-vi.mock("ai", () => ({ generateText: vi.fn(), Output: { object: vi.fn() } }));
+vi.mock("ai", async () => {
+  const actual = await vi.importActual<Record<string, unknown>>("ai");
+  return { ...actual, generateText: vi.fn(), Output: { object: vi.fn() } };
+});
 vi.mock("../model-transport", async () => ({
   ...await vi.importActual<typeof ModelTransport>("../model-transport"),
   resolveModelTransport: vi.fn(),
   modelFailure: () => "Unexpected model failure projection",
 }));
-vi.mock("../model-catalog", () => ({ discoverGatewayModels: vi.fn(), enrichSelectedModel: vi.fn() }));
+vi.mock("../model-catalog", () => ({ discoverGatewayModels: vi.fn() }));
 vi.mock("../native-model-catalog", () => ({ discoverNativeModels: vi.fn() }));
 vi.mock("../models", async () => ({
   ...await vi.importActual<typeof Models>("../models"),
   requireAvailableModel: vi.fn(), requireCatalogModel: vi.fn(), availableModels: vi.fn(),
 }));
 
-import { generateText } from "ai";
+import { NoObjectGeneratedError, generateText } from "ai";
 import { resolveModelTransport } from "../model-transport";
 import { availableModels, requireAvailableModel, requireCatalogModel } from "../models";
-import { discoverGatewayModels, enrichSelectedModel } from "../model-catalog";
+import { discoverGatewayModels } from "../model-catalog";
 import { discoverNativeModels } from "../native-model-catalog";
-import { DistillWorkflow, requestUnderstanding, scheduleDistillation } from "./distill";
+import { DistillWorkflow, hasAvailableUnderstanding, requestUnderstanding, scheduleDistillation } from "./distill";
 
 const revisionId = "d9b7d198-0dd2-4d5f-8176-e824e25bb6d0";
 const sourceId = "fb3c275a-46c0-43f6-9d49-deea18581c44";
 const prefix = `source/${revisionId}/`;
 // Deliberately not a catalogue entry: the Workflow consumes the admitted payload.
+// Token-native snapshot: no currency fields; bounds come from context/output limits.
 const snapshot: ModelSpec = Object.freeze({
   route: "gateway:command-code/fixture/admitted", id: "fixture/admitted", label: "Admitted snapshot fixture",
   contextTokens: 262144, maxOutputTokens: null, outputReserveTokens: 8192,
-  inputMicrousdPerMillion: 123456, cachedMicrousdPerMillion: 2345, outputMicrousdPerMillion: 654321,
   responseFormat: false, structuredOutputs: false, reasoning: Object.freeze({ enabled: false as const }),
   checkedOn: "2026-10-27", enabled: true,
 });
 
 function fixture(storedRoute: string, document?: { text: string; blocks: Block[] }) {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
   const text = document?.text ?? "The method uses normalization. Its source passage is retained.";
   const blocks = document?.blocks ?? [{ id: 1, type: "paragraph", start: 0, end: new TextEncoder().encode(text).byteLength, heading: null }];
@@ -97,7 +100,7 @@ const otherQueuedSourceId = "c3fd7da4-b662-4aa5-a6fc-9c84b6299940";
 
 function callerFixture() {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
 
   const insertSource = (id: string, title: string, revision: string, state: "none" | "queued", createdAt: number) => {
@@ -138,7 +141,7 @@ function documentWithBlocks(parts: Array<{ type: Block["type"]; text: string }>)
 }
 
 const forbiddenLookups = [requireAvailableModel, requireCatalogModel, availableModels,
-  discoverGatewayModels, enrichSelectedModel, discoverNativeModels];
+  discoverGatewayModels, discoverNativeModels];
 beforeEach(() => {
   vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation"));
   vi.mocked(resolveModelTransport).mockReset().mockRejectedValue(new Error("Fixture transport stopped before dispatch."));
@@ -268,22 +271,24 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
-  it("passes the exact admitted context, prices, reserve and pricing date to transport without rediscovery", async () => {
+  it("passes the exact admitted context, reserve and checked date to transport without rediscovery", async () => {
     const f = fixture(snapshot.route);
     const original = structuredClone(snapshot);
     vi.mocked(resolveModelTransport).mockImplementation(async (env, model, affinity) => {
       expect(env).toBe(f.env); expect(model).toBe(snapshot); expect(affinity).toBe(`distill-${revisionId}`);
       expect(model).toEqual(original);
       expect(model).toMatchObject({ contextTokens: 262144, maxOutputTokens: null, outputReserveTokens: 8192,
-        inputMicrousdPerMillion: 123456, cachedMicrousdPerMillion: 2345, outputMicrousdPerMillion: 654321,
         checkedOn: "2026-10-27" });
+      expect(model).not.toHaveProperty("inputMicrousdPerMillion");
+      expect(model).not.toHaveProperty("cachedMicrousdPerMillion");
+      expect(model).not.toHaveProperty("outputMicrousdPerMillion");
       expect(f.dispatchCAS).not.toHaveBeenCalled();
       throw new Error("Fixture transport stopped before dispatch.");
     });
     try {
       const steps = await run(f);
       expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
-      expect(resolveModelTransport).toHaveBeenCalledExactlyOnceWith(f.env, snapshot, `distill-${revisionId}`);
+      expect(resolveModelTransport).toHaveBeenCalledExactlyOnceWith(f.env, snapshot, `distill-${revisionId}`, { structuredOutput: true });
       expect(snapshot).toEqual(original);
       finished(f, "Source understanding failed.");
     } finally { f.db.close(); }
@@ -357,5 +362,72 @@ describe("DistillWorkflow admitted model snapshot", () => {
 
     expect(generateText).not.toHaveBeenCalled();
     expect(resolveModelTransport).not.toHaveBeenCalled();
+  });
+
+  it("retains typed structured-output failure telemetry without claiming the stored second-step cause", async () => {
+    // Does not reproduce eval/out/openrouter-20261028/resnet-trace (generic External failure, distill-call2.json 404, unrecoverable).
+    // It covers the proven pinned ai@7.0.152 shape in isolation: NoObjectGeneratedError carries usage/finishReason.
+    const f = fixture(snapshot.route);
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    const rawProviderUsage = { prompt_tokens: 1200, completion_tokens: 34, total_tokens: 1234 };
+    const sdkUsage = { inputTokens: 1200, inputTokenDetails: { noCacheTokens: 1200, cacheReadTokens: 0, cacheWriteTokens: undefined }, outputTokens: 34, outputTokenDetails: { textTokens: 34, reasoningTokens: undefined }, totalTokens: 1234, raw: rawProviderUsage };
+    const sdkError = new NoObjectGeneratedError({ message: "No object generated: response did not match schema.", text: '{"guide":', response: { id: "resp-typed-1", timestamp: new Date(), modelId: "fixture/admitted" }, usage: sdkUsage, finishReason: "length" });
+    vi.mocked(generateText).mockRejectedValueOnce(sdkError);
+    try {
+      const steps = await run(f);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      const rawBody = f.bodies.get(prefix + "distill-call1.json");
+      if (!rawBody) throw new Error("Typed failure did not retain its per-call artifact.");
+      const stored = JSON.parse(rawBody) as { output: null; usage: { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage: unknown } };
+      expect(stored.output).toBeNull();
+      expect(stored).not.toHaveProperty("error");
+      expect(JSON.stringify(stored)).not.toContain('{"guide":');
+      expect(stored.usage.inputTokens).toBe(1200);
+      expect(stored.usage.cachedTokens).toBe(0);
+      expect(stored.usage.outputTokens).toBe(34);
+      expect(stored.usage.providerUsage).toMatchObject(rawProviderUsage);
+      expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
+      const reportBody = f.bodies.get(prefix + "distill.json");
+      if (!reportBody) throw new Error("Missing distill.json for typed failure.");
+      const report = JSON.parse(reportBody) as DistillReport & { state: string };
+      expect(report.state).toBe("failed");
+      expect(report.error).toBe("model reached output bound before complete output");
+      expect(report.usage.calls).toBe(1);
+      expect(report.usage.inputTokens).toBe(1200);
+      expect(report.usage.outputTokens).toBe(34);
+      expect(report.usage.providerUsage).toHaveLength(1);
+      expect(report.kept).toBe(0);
+      expect(JSON.stringify(report)).not.toContain('{"guide":');
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
+      const row = f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId) as { state: string; calls: number };
+      expect(row).toEqual({ state: "failed", calls: 1 });
+    } finally { f.db.close(); }
+  });
+
+  it("keeps known-zero token counts and historical cost for zero-call failure", async () => {
+    const f = fixture(snapshot.route);
+    vi.mocked(resolveModelTransport).mockRejectedValueOnce(new Error("Fixture transport stopped before dispatch."));
+    try {
+      const steps = await run(f);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
+      const body = f.bodies.get(prefix + "distill.json");
+      if (!body) throw new Error("Missing distill.json for zero-call failure.");
+      const report = JSON.parse(body) as DistillReport & { state: string };
+      expect(report.usage.calls).toBe(0);
+      expect(report.usage.inputTokens).toBe(0);
+      expect(report.usage.cachedTokens).toBe(0);
+      expect(report.usage.outputTokens).toBe(0);
+      expect(report.usage.tokenLimit).toBeNull();
+      expect(report.usage).not.toHaveProperty("estimatedCostMicrousd");
+      const row = f.db.prepare("SELECT distill_input_tokens AS inputTokens, distill_cached_tokens AS cachedTokens, distill_output_tokens AS outputTokens, distill_token_limit AS tokenLimit, distill_estimated_cost_microusd AS cost FROM source_revision WHERE id=?").get(revisionId) as { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; cost: number | null };
+      expect(row.inputTokens).toBe(0);
+      expect(row.cachedTokens).toBe(0);
+      expect(row.outputTokens).toBe(0);
+      expect(row.tokenLimit).toBeNull();
+      expect(row.cost).toBe(322766);
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
   });
 });

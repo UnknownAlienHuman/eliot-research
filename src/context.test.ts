@@ -308,7 +308,7 @@ describe("buildContext K2 whole scope", () => {
       projectId: "p1", scopeMode: "empty", model: { contextTokens, maxOutputTokens },
       history: [
         { role: "user", content: "q".repeat(60), revisionIds: [] },
-        { role: "assistant", content: "a".repeat(60), turnId: "prior", wireTokens: 20 },
+        { role: "assistant", content: "a".repeat(60), turnId: "prior" },
       ],
     });
     expect(res.mode).toBe("none");
@@ -408,91 +408,6 @@ describe("buildContext K2 whole scope", () => {
     expect(body).not.toContain("MARK1");
   });
 
-  it("retains private replay identity only on the selected assistant exchange", async () => {
-    const { env } = twoSourceEnv();
-    const res = await buildContext(env, actor, {
-      projectId: "p1", scopeMode: "explicit", sourceIds: ["s1"], model: MODEL,
-      history: [
-        { role: "user", content: "Kept question", revisionIds: ["r1"] },
-        { role: "assistant", content: "Kept answer [S1:1]", revisionIds: ["r1"], turnId: "kept", wireTokens: 50 },
-        { role: "user", content: "Excluded question", revisionIds: ["r2"] },
-        { role: "assistant", content: "Excluded answer", revisionIds: ["r2"], turnId: "excluded", wireTokens: 50 },
-      ],
-    });
-    expect(res.messages.filter((message) => message.role === "assistant")).toEqual([
-      { role: "assistant", content: "Kept answer", turnId: "kept" },
-    ]);
-    expect(res.messages.some((message) => message.content.includes("Excluded question"))).toBe(false);
-  });
-
-  it("counts private protocol data against the history budget without putting it in context", async () => {
-    const { env } = twoSourceEnv();
-    const res = await buildContext(env, actor, {
-      projectId: "p1", scopeMode: "empty", model: { contextTokens: 20000, maxOutputTokens: 100 },
-      history: [
-        { role: "user", content: "Small visible question", revisionIds: [] },
-        { role: "assistant", content: "Small visible answer", turnId: "large-wire", wireTokens: 2001 },
-      ],
-    });
-    expect(res.messages.some((message) => message.role === "assistant")).toBe(false);
-    expect(res.messages.some((message) => message.content.includes("Small visible question"))).toBe(false);
-  });
-
-  it.each([
-    { name: "excludes private wire after narrowing its full scope", fullScope: ["r1", "r2"], wire: true, keep: false },
-    { name: "reuses public text whose actual citations remain in scope", fullScope: ["r1", "r2"], wire: false, keep: true },
-    { name: "excludes private wire without declared prior full scope", fullScope: undefined, wire: true, keep: false },
-  ])("$name", async ({ fullScope, wire, keep }) => {
-    const { env } = twoSourceEnv();
-    const res = await buildContext(env, actor, {
-      projectId: "p1", scopeMode: "explicit", sourceIds: ["s1"], model: MODEL,
-      history: [
-        { role: "user", content: "Prior multi-source question", ...(fullScope === undefined ? {} : { revisionIds: fullScope }) },
-        { role: "assistant", content: "Answer citing only the retained source [S1:1]", revisionIds: ["r1"], turnId: "prior",
-          ...(wire ? { wireTokens: 50 } : {}) },
-      ],
-    });
-    expect(res.mode).toBe("whole");
-    expect(res.revisionIds).toEqual(["r1"]);
-    expect(res.sources.map((source) => source.sourceId)).toEqual(["s1"]);
-    expect(res.messages.some((message) => message.content === "Prior multi-source question")).toBe(keep);
-    expect(res.messages.filter((message) => message.role === "assistant")).toEqual(keep
-      ? [{ role: "assistant", content: "Answer citing only the retained source", turnId: "prior" }]
-      : []);
-  });
-
-  it("replays private compact labels only when their prior scope is an unchanged prefix", async () => {
-    const ids = ["1", "2", "3"];
-    const { env } = makeEnv({
-      memberships: ids.map((id) => ({ projectId: "p1", sourceId: "s" + id, enabled: 1 })),
-      sources: ids.map((id) => ({ id: "s" + id, title: "Source " + id, state: "active", currentRevisionId: "r" + id, createdAt: Number(id) })),
-      revisions: ids.map((id) => ({ id: "r" + id, readableState: "readable", readableSize: 7, distillState: "done", guideSummary: null, deletedAt: null })),
-      texts: Object.fromEntries(ids.map((id) => ["r" + id, { text: "Text " + id + ".", blocks: [wholeBlock("Text " + id + ".", 1)] }])),
-    });
-    const user = { role: "user" as const, content: "Earlier two-source question", revisionIds: ["r1", "r2"] };
-    const assistant = { role: "assistant" as const, content: "Earlier result [S1:1] [S2:1]", revisionIds: ["r1", "r2"], turnId: "prior" };
-    for (const { sourceIds, keep } of [
-      { sourceIds: ["s2", "s1"], keep: false },
-      { sourceIds: ["s3", "s1", "s2"], keep: false },
-      { sourceIds: ["s1", "s2", "s3"], keep: true },
-    ]) {
-      const res = await buildContext(env, actor, {
-        projectId: "p1", scopeMode: "explicit", sourceIds, model: MODEL,
-        history: [user, { ...assistant, wireTokens: 50 }],
-      });
-      expect(res.sources.map((source) => source.revisionId)).toEqual(sourceIds.map((id) => id.replace("s", "r")));
-      expect(res.messages.some((message) => message.content === user.content)).toBe(keep);
-      expect(res.messages.filter((message) => message.role === "assistant")).toEqual(keep
-        ? [{ role: "assistant", content: "Earlier result", turnId: "prior" }]
-        : []);
-    }
-    const publicHistory = await buildContext(env, actor, {
-      projectId: "p1", scopeMode: "explicit", sourceIds: ["s2", "s1"], model: MODEL, history: [user, assistant],
-    });
-    expect(publicHistory.messages.filter((message) => message.role === "assistant")).toEqual([
-      { role: "assistant", content: "Earlier result", turnId: "prior" },
-    ]);
-  });
 
   it("admits empty and small scopes on a high-output model via outputReserveTokens", async () => {
     const dots = { contextTokens: 512000, maxOutputTokens: 460800, outputReserveTokens: 8192 };

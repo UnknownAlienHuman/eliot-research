@@ -1,5 +1,7 @@
 import type { ModelSpec } from "../models";
 
+export type NativeUsageMode = "included" | "standard";
+
 export interface DistillInput { revisionId: string; model: ModelSpec }
 
 export interface OwnerActor {
@@ -65,7 +67,6 @@ export interface ProviderUsage {
   totalTokens: number | null;
   cachedTokens: number | null;
   reasoningTokens: number | null;
-  costUsd: number | null;
 }
 
 /** Advisory UTF-16 character ranges in the answer, never source byte ranges. */
@@ -87,12 +88,14 @@ export interface TurnView {
   sourceIds: string[];
   citations: Citation[];
   invalidLabels: number;
+  /** Diagnostic-only rejected marker samples (<=8, each <=160 chars). Stored in turn JSON only. */
+  invalidLabelExamples?: string[];
   warnings?: AnswerWarning[];
   inputTokens: number | null;
   cachedTokens: number | null;
   outputTokens: number | null;
   providerUsage?: ProviderUsage | null;
-  estimatedCostMicrousd: number | null;
+  tokenLimit: number | null;
   firstTokenMs: number | null;
   totalMs: number | null;
   error: string | null;

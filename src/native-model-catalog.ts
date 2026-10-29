@@ -15,25 +15,16 @@ export function nativeModel(row: NativeRow, checkedOn: string): CatalogModel | n
   const context = property("context_window");
   const contextTokens = typeof context === "string" && /^\d+$/.test(context) &&
     Number.isSafeInteger(Number(context)) && Number(context) > 0 ? Number(context) : null;
-  const prices = property("price");
-  const rate = (unit: string): number | null => {
-    if (!Array.isArray(prices)) return null;
-    const matches = prices.filter((item: unknown) => item !== null && typeof item === "object" &&
-      "unit" in item && item.unit === unit);
-    if (!matches.length || matches.some((item) => item.currency !== "USD" ||
-      typeof item.price !== "number" || !Number.isFinite(item.price) || item.price < 0)) return null;
-    const amount = Math.ceil(Math.max(...matches.map((item) => item.price as number)) * 1_000_000);
-    return Number.isSafeInteger(amount) ? amount : null;
-  };
+  // No currency parsing: native price/rate/cost properties (including per-neuron
+  // or per-token units) are ignored. Old snapshots may retain extra rate fields;
+  // this boundary never reads them and performs no neuron conversion.
   const effort = property("reasoning_effort");
   const lowEffort = effort !== null && typeof effort === "object" && "supported_efforts" in effort &&
     Array.isArray(effort.supported_efforts) && effort.supported_efforts.includes("low");
   return { route: "workers-ai:" + row.name, id: row.name, label: row.name, enabled: true,
     contextTokens, maxOutputTokens: null, outputReserveTokens: 8192,
     ...(lowEffort ? { nativeReasoningEffort: "low" as const } : {}),
-    inputMicrousdPerMillion: rate("per M input tokens"),
-    cachedMicrousdPerMillion: rate("per M cached input tokens"),
-    outputMicrousdPerMillion: rate("per M output tokens"), checkedOn };
+    checkedOn };
 }
 
 export async function discoverNativeModels(ai: Ai): Promise<CatalogModel[]> {

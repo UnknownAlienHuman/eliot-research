@@ -6,8 +6,7 @@ import { LibraryError } from "./library";
 import type { Actor } from "./auth";
 import type { Block } from "./blocks";
 import type { JSONObject } from "@ai-sdk/provider";
-import { estimateCost } from "./cost";
-import { MODELS, modelOutputLimit } from "./models";
+import { modelTokenLimit, readModelCatalog } from "./models";
 import { hasAvailableUnderstanding } from "./workflows/distill";
 
 export type DistillState = "none" | "queued" | "running" | "paused" | "done" | "partial" | "failed";
@@ -20,7 +19,7 @@ export interface UnderstandingClaim { id: string; kind: ClaimKind; statement: st
   dataset: string | null; valueText: string | null; valueNumber: number | null; unit: string | null; conditions: string | null }
 
 export interface DistillUsage { calls: number; inputTokens: number | null; cachedTokens: number | null;
-  outputTokens: number | null; estimatedCostMicrousd: number; wallMs: number; providerUsage?: (JSONObject | null)[] }
+  outputTokens: number | null; tokenLimit?: number | null; wallMs: number; providerUsage?: (JSONObject | null)[] }
 
 export interface DistillReport { questions: string[]; usage: DistillUsage; kept: number;
   dropped: { index: number; reason: string }[]; clearedNumbers: number;
@@ -30,7 +29,7 @@ export interface DistillReport { questions: string[]; usage: DistillUsage; kept:
 export interface Understanding { sourceId: string; revisionId: string; state: DistillState; error: string | null;
   canRecover: boolean;
   authors: string; published: string | null;
-  progress: { attempts: number; limit: number; maximumCostMicrousd: number | null; model: string | null; configuredModel: string | null };
+  progress: { attempts: number; limit: number; maximumTokens: number | null; model: string | null; configuredModel: string | null };
   guide: string | null; digest: string | null; glossary: GlossaryEntry[]; claims: UnderstandingClaim[];
   report: DistillReport | null; citations: { block: number; start: number; end: number }[] }
 
@@ -76,7 +75,17 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
   if (!row) throw new LibraryError("not_found", "Source revision not found.", 404);
   const settings = await env.DB.prepare("SELECT distill_model AS model FROM settings WHERE id=1").first<{ model: string }>();
   const configuredModel = settings?.model ?? null;
-  const model = MODELS.find((m) => m.route === configuredModel && m.enabled);
+  let maximumTokens: number | null = null;
+  if (configuredModel) {
+    try {
+      const catalog = await readModelCatalog(env);
+      const entry = catalog.models.find((m) => m.route === configuredModel);
+      if (entry && entry.enabled) {
+        const bound = 2 * modelTokenLimit(entry);
+        if (Number.isSafeInteger(bound)) maximumTokens = bound;
+      }
+    } catch { maximumTokens = null; }
+  }
   const report = await r2Json<DistillReport>(env, row.reportKey ?? `source/${revisionId}/distill.json`);
   if (row.reportKey && !report) throw new LibraryError("unavailable", "The current saved report is missing. Restore storage and reload understanding.", 503);
   const artifact = (name: "guide" | "digest" | "glossary", file: string) => {
@@ -106,7 +115,7 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
     canRecover: ["done", "partial", "failed"].includes(row.state) && row.reportKey !== `source/${revisionId}/checked/distill.json` && await hasAvailableUnderstanding(env, revisionId),
     authors: source.authors,
     published: source.published,
-    progress: { attempts: row.attempts, limit: 2, maximumCostMicrousd: model ? 2 * estimateCost(model, model.contextTokens, 0, modelOutputLimit(model)) : null,
+    progress: { attempts: row.attempts, limit: 2, maximumTokens,
       model: row.model, configuredModel },
     guide,
     digest,

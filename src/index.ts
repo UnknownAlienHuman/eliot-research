@@ -8,8 +8,7 @@ import type { ApiError, MeResponse } from "./shared/api";
 import { addSource, attachSource, createProject, getProject, getSource, LibraryError, listProjects, listSources, MAX_SOURCE_BYTES, setProjectScope, updateProject } from "./library";
 import { readOriginal, readOutline, readText } from "./read";
 import { captureUrl, UrlGuardError } from "./url-guard";
-import { monthlyUsage } from "./cost";
-import { getModelConnection, readModelCatalog, refreshModelCatalog, requireCatalogModel, validGatewayId } from "./models";
+import { getModelConnection, getModelProviders, modelProvidersSchema, readModelCatalog, refreshModelCatalog, requireCatalogModel, saveModelProviders, validGatewayId } from "./models";
 import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
 import { getOverview, getUnderstanding } from "./understanding";
@@ -60,9 +59,15 @@ app.get("/api/models", async (c) => {
 });
 app.post("/api/models/refresh", async (c) => {
   if (c.get("actor").type !== "owner") throw new AuthError("invalid", "Only the owner may refresh the model catalogue.");
-  const input = z.object({ selectedRoutes: z.array(z.string().min(1).max(1100)).max(20).optional() }).strict().parse(await c.req.json());
-  const catalog = await refreshModelCatalog(c.env, input.selectedRoutes);
+  z.object({}).strict().parse(await c.req.json());
+  const catalog = await refreshModelCatalog(c.env);
   return c.json({ ...catalog, defaultModel: (await c.env.DB.prepare("SELECT answer_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model });
+});
+app.get("/api/models/providers", async (c) => c.json({ providers: await getModelProviders(c.env) }));
+app.put("/api/models/providers", async (c) => {
+  if (c.get("actor").type !== "owner") throw new AuthError("invalid", "Only the owner may edit providers.");
+  const input = z.object({ providers: modelProvidersSchema }).strict().parse(await c.req.json());
+  return c.json({ providers: await saveModelProviders(c.env, input.providers) });
 });
 app.get("/api/models/connection", async (c) => c.json({ connection: await getModelConnection(c.env) }));
 app.put("/api/models/connection", async (c) => {
@@ -73,14 +78,14 @@ app.put("/api/models/connection", async (c) => {
   await c.env.DB.prepare("UPDATE settings SET model_gateway_id=?,updated_at=? WHERE id=1").bind(input.gatewayId, Date.now()).run();
   return c.json({ connection: await getModelConnection(c.env) });
 });
-app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,monthly_model_budget_microusd AS monthlyModelBudgetMicrousd,updated_at AS updatedAt FROM settings WHERE id=1").first(), ...await monthlyUsage(c.env) }));
+app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,native_usage_mode AS nativeUsageMode,updated_at AS updatedAt FROM settings WHERE id=1").first() }));
 app.put("/api/settings", async (c) => {
-  const input = z.object({ answerModel: z.string().min(1), monthlyModelBudgetMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), distillModel: z.string().min(1).optional() }).strict().parse(await c.req.json());
+  const input = z.object({ answerModel: z.string().min(1), distillModel: z.string().min(1).optional(), nativeUsageMode: z.enum(["included", "standard"]).optional() }).strict().parse(await c.req.json());
   await requireCatalogModel(c.env, input.answerModel);
   if (input.distillModel !== undefined) await requireCatalogModel(c.env, input.distillModel);
-  await c.env.DB.prepare("UPDATE settings SET answer_model=?,monthly_model_budget_microusd=?,distill_model=COALESCE(?,distill_model),updated_at=? WHERE id=1")
-    .bind(input.answerModel, input.monthlyModelBudgetMicrousd, input.distillModel ?? null, Date.now()).run();
-  return c.json({ settings: { ...input, updatedAt: Date.now() } });
+  await c.env.DB.prepare("UPDATE settings SET answer_model=?,distill_model=COALESCE(?,distill_model),native_usage_mode=COALESCE(?,native_usage_mode),updated_at=? WHERE id=1")
+    .bind(input.answerModel, input.distillModel ?? null, input.nativeUsageMode ?? null, Date.now()).run();
+  return c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,native_usage_mode AS nativeUsageMode,updated_at AS updatedAt FROM settings WHERE id=1").first() });
 });
 app.patch("/api/projects/:id/settings", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), project = await getProject(c.env, c.get("actor"), projectId);
@@ -109,7 +114,7 @@ app.post("/api/projects/:id/chats", async (c) => {
 app.get("/api/projects/:id/chats/:chatId", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId"));
   const chat = await chatRecord(c.env, projectId, chatId), agent = await getAgentByName(c.env.CHAT, chatId);
-  return c.json({ chat, ...await agent.getSnapshot(projectId), ...await monthlyUsage(c.env) });
+  return c.json({ chat, ...await agent.getSnapshot(projectId) });
 });
 app.post("/api/projects/:id/chats/:chatId/turns", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId")); await chatRecord(c.env, projectId, chatId);

@@ -25,6 +25,20 @@ function makeSources(): LabelSource[] {
 }
 
 describe("resolveCitations", () => {
+  it("bounds rejected marker samples without changing text, counts or resolved ranges", () => {
+    const rejected = Array.from({ length: 12 }, (_, index) => `[S${index + 10}:1]`);
+    const answer = `😀 ${rejected.join(" ")} [S10:1] [S1:1]`;
+    const result = resolveCitations(answer, makeSources());
+    expect(result.invalidLabels).toBe(13);
+    expect(result.text).toBe(rejected.reduce((text, token) => text.replaceAll(token, ""), answer));
+    expect(result.citations).toHaveLength(1);
+    expect(result.citations[0]?.start).toBe(0);
+    expect(result.invalidLabelExamples).toEqual(rejected.slice(0, 8));
+    const long = resolveCitations(`[S${"9".repeat(200)}:1]`, makeSources());
+    expect(long.invalidLabels).toBe(1);
+    expect(Array.from(long.invalidLabelExamples?.[0] ?? "")).toHaveLength(160);
+    expect(resolveCitations("[S1:1]", makeSources()).invalidLabelExamples).toBeUndefined();
+  });
   it("resolves compact and persistent labels with map offsets", () => {
     const out = resolveCitations(`a [S1:2] b [R${REV_B}:1]`, makeSources());
     expect(out.invalidLabels).toBe(0);

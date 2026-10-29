@@ -141,8 +141,9 @@ if (duplicatesOnly) {
   const dqStamp = Date.now();
   const dqSettingsBefore = await apiJson('/api/settings');
   assert.equal(dqSettingsBefore.status, 200, 'GET /api/settings must be 200.');
-  const dqUsageBefore = dqSettingsBefore.body.monthlyUsedMicrousd;
-  const dqBudgetBefore = dqSettingsBefore.body.monthlyBudgetMicrousd;
+  const dqUsageBefore = dqSettingsBefore.body.usage;
+  assert(dqUsageBefore && typeof dqUsageBefore.dayStart === 'number' && typeof dqUsageBefore.dayEnd === 'number', 'GET /api/settings must return usage {dayStart,dayEnd,inputTokens,outputTokens,cachedTokens,unknownUsages}.');
+  for (const k of ['inputTokens', 'outputTokens', 'cachedTokens', 'unknownUsages']) assert(Number.isSafeInteger(dqUsageBefore[k]) && dqUsageBefore[k] >= 0, 'Invalid daily usage before: ' + k);
   const dqPjA = await apiJson('/api/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -303,8 +304,8 @@ if (duplicatesOnly) {
   } finally { await dqBrowser.close(); }
   const dqSettingsAfter = await apiJson('/api/settings');
   assert.equal(dqSettingsAfter.status, 200, 'GET /api/settings after must be 200.');
-  const dqUsageAfter = dqSettingsAfter.body.monthlyUsedMicrousd;
-  assert.equal(dqUsageAfter, dqUsageBefore, 'No paid model usage may accrue during duplicates-only.');
+  const dqUsageAfter = dqSettingsAfter.body.usage;
+  assert.deepEqual(dqUsageAfter, dqUsageBefore, 'No paid model usage may accrue during duplicates-only.');
   const dqReport = [
     '# K1 duplicates-only',
     'Origin: ' + origin + '; primary: ' + dqPrimary + '; attach-target: ' + dqSecondary,
@@ -312,7 +313,7 @@ if (duplicatesOnly) {
     'Text 409: second identical import returned 409 with sourceId ' + dqTextId + ' revision ' + dqTextRev + '; browser Attach existing reused the same source and revision with 0 conversions.',
     'URL 409: identical import returned 409 with sourceId ' + dqUrlId + ' revision ' + dqUrlRev + ' (converter ' + dqUrlConverter + ', calls ' + dqUrlCalls + '); browser Attach existing reused the same source and revision.',
     'Viewports captured: 390 k1-duplicates-390.png and 1440 k1-duplicates-1440.png; no route mocking; no Access headers in the browser.',
-    'Usage microUSD before/after: ' + dqUsageBefore + '/' + dqUsageAfter + ' (budget ' + dqBudgetBefore + '); settings unchanged.',
+    'Daily token usage before/after unchanged: ' + JSON.stringify(dqUsageAfter) + '; settings unchanged.',
     'No PDF downloads, no retries, no model inference or Understand POSTs; stable-URL bytes-vary or unavailable would fail honestly without adjustment.',
   ].join(String.fromCharCode(10)) + String.fromCharCode(10);
   await writeFile(outDir + '/k1-duplicates-' + new Date().toISOString().slice(0, 10) + '.md', dqReport);

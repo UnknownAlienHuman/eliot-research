@@ -21,15 +21,15 @@ function outputCapOf(m: Pick<ModelOption, 'outputReserveTokens' | 'maxOutputToke
 }
 function twoCallBound(m: ModelOption): number | null {
   const context = m.contextTokens;
-  if (!Number.isSafeInteger(context) || (context ?? 0) <= 0) return null;
   const cap = outputCapOf(m);
-  if (!Number.isSafeInteger(cap) || (cap ?? 0) <= 0) return null;
-  const input = m.inputMicrousdPerMillion;
-  const output = m.outputMicrousdPerMillion;
-  if (input === null || output === null) return null;
-  if (![input, output].every((n) => Number.isFinite(n) && n >= 0)) return null;
   if (context === null || cap === null) return null;
-  return 2 * Math.ceil((context * input + cap * output) / 1000000);
+  if (!Number.isSafeInteger(context) || context <= 0) return null;
+  if (!Number.isSafeInteger(cap) || cap <= 0) return null;
+  const perCall = context + cap;
+  if (!Number.isSafeInteger(perCall)) return null;
+  const bound = 2 * perCall;
+  if (!Number.isSafeInteger(bound)) return null;
+  return bound;
 }
 async function apiErrorMessage(res: Response): Promise<string> {
   try { const b = (await res.json()) as { error?: { message?: string } }; if (b.error && b.error.message) return b.error.message; } catch { /* status text */ }
@@ -131,8 +131,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     );
   }
   const canRecover = view.canRecover === true;
-  const understandingError = view.error === 'Monthly model budget cannot admit two bounded calls. Resume explicitly after changing the budget or month.'
-    ? 'The monthly model budget is insufficient. Check Settings before starting source understanding again.' : view.error;
+  const understandingError = view.error;
   const active = view.state === 'queued' || view.state === 'running';
   const canStart = !active && (view.state === 'none' || view.state === 'paused');
   const references = view.citations.map((c, index) => ({
@@ -153,7 +152,8 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const revisionModel = view.progress.model;
   const revisionSpec = typeof revisionModel === 'string' ? models.find((m) => m.route === revisionModel) : undefined;
   const revisionLabel = revisionSpec?.label ?? revisionModel;
-  const configuredBound = configuredSpec !== undefined ? (configuredSpec.enabled ? twoCallBound(configuredSpec) : null) : view.progress.maximumCostMicrousd;
+  const progressTokens = view.progress.maximumTokens ?? null;
+  const configuredBound = configuredSpec !== undefined ? (configuredSpec.enabled ? twoCallBound(configuredSpec) : null) : progressTokens;
   const pickerEmptyLabel = 'Use configured default' + (configuredLabel !== null ? ' (' + configuredLabel + ')' : '');
   const understandDisabled = busy || modelRoutePending || (modelChoice === '' ? configuredBound === null : chosenDisabled || chosenBound === null);
   const reloadSnapshot = () => { setCatalogError(''); setCatalogWarnings([]); setCatalogVersion((v) => v + 1); };
