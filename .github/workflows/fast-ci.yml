@@ -54,6 +54,7 @@ jobs:
           pnpm eval k0
           pnpm eval k1 --native-only
           pnpm eval k2 --native-only
+          pnpm eval k2 --picker-only
           pnpm eval k2 --models-only
           pnpm eval k3 --native-only
       - name: Upload checked build

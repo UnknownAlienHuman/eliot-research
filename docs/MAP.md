@@ -175,6 +175,8 @@ still fail the quality gate; diagnostics do not waive citation, expected-fact or
 The composer remains visible while reading long answers. Citation details retain exact passage links; runtime counters
 and internal processing terminology stay in API/eval output rather than the owner reading interface.
 Provider data-policy rejection shows a safe reason and leaves the chosen model and policy unchanged.
+Model selection applies to the next Send, and each stored answer names the model that produced it. A new chat in an
+empty project can Send; it must not wait for a source to exist. Choosing a provider or model starts no inference.
 
 **Hard acceptance — `pnpm eval k2`**
 

@@ -152,7 +152,13 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
                 <option value=''>{emptyLabel ?? 'Choose a provider'}</option>
                 {compactProvider !== '' && !providers.has(compactProvider)
                   ? <option value={compactProvider} disabled>Current provider unavailable</option> : null}
-                {[...providers].map(([key, name]) => <option key={key} value={key}>{name}</option>)}
+                {[...providers].map(([key, name]) => {
+                  const available = choices.some((model) => providerId(model) === key && model.enabled && !identityIssue(model));
+                  return <option key={key} value={key} disabled={!available}
+                    title={available ? name : 'No available models from this provider.'}>
+                    {available ? name : name + ' — unavailable'}
+                  </option>;
+                })}
               </select>
             </label>
             <label className='er-model-picker__control' htmlFor={id + '-compact-model-select'}>
