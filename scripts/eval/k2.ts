@@ -112,7 +112,7 @@ function normMath(s) {
   for (let i = 1; i + 1 < chars.length; i++) {
     if (chars[i] === MIDDOT && SUPER_DIGITS.has(chars[i - 1]) && SUPER_DIGITS.has(chars[i + 1])) chars[i] = '.';
   }
-  let n = chars.join('').normalize('NFKC').replace(/\[(?:S\d+|R[0-9a-f-]{36}):\d+\]/gi, ' ').toLowerCase().split(',').join('.');
+  let n = chars.join('').normalize('NFKC').replace(/\[(?:S\d+|R[0-9a-f-]{36}):\d+\]/gi, ' ').toLowerCase().replace(/\bstep_num\b/g, 'step').replace(/\bwarmup_steps\b/g, 'warmup').split(',').join('.');
   n = n.split(UNIMINUS).join('-');
   n = n.split('=').join(' = ');
   const strip = ['$', '*', '_', BT, BACKSLASH, '{', '}', '^', '(', ')', '[', ']', ':', ';', SQ, DQ, MIDDOT];
@@ -167,9 +167,19 @@ function assertC2StaticSelftests() {
   assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step/warmup^1.4), warmup 4000'), false, 'Wrong warmup exponent in the square-root form must fail.');
   assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step · warmup^1.5), warmup 4000'), false, 'Warmup to a positive exponent must be in the denominator.');
   assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 2000'), false, 'Wrong warmup value must fail.');
+  assert.equal(c2('lrate = d_model⁻⁰·⁵ × min(step_num⁻⁰·⁵, step_num × warmup_steps⁻¹·⁵), warmup_steps 4000'), true, 'Original-paper step_num/warmup_steps identifiers must pass.');
+  assert.equal(c2('d_model⁻⁰·⁵ · min(step_num⁻⁰·⁶, step_num · warmup_steps⁻¹·⁵), warmup_steps 4000'), false, 'Wrong step exponent must fail for step_num aliases.');
+  assert.equal(c2('d_model⁻⁰·⁵ · min(step_num⁻⁰·⁵, step_num · warmup_steps⁻¹·⁵), warmup_steps 2000'), false, 'Wrong warmup value must fail for warmup_steps aliases.');
+  assert.equal(c2('d_model⁻⁰·⁵ · min(previous_step_num⁻⁰·⁵, step_num · warmup_steps⁻¹·⁵), warmup_steps 4000'), false, 'previous_step_num must not count as the schedule step.');
   assert(!normMath('2·3').includes('2.3'), 'An ordinary middle dot must not become a decimal point.');
 }
+function assertDispatchStopStaticSelftests() {
+  assert.equal(dispatchUnavailable(404, { error: { code: 'not_found', message: 'External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.' } }, null), true, 'HTTP 404 response status must stop the batch.');
+  assert.equal(dispatchUnavailable(200, { turn: { error: 'External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.' } }, null), true, 'Embedded HTTP 404 turn error must stop the batch.');
+  assert.equal(dispatchUnavailable(200, null, { error: 'Partial answer stored; 2 unsupported numeric statements remain' }), false, 'Ordinary quality partial must not stop the batch.');
+}
 assertC2StaticSelftests();
+assertDispatchStopStaticSelftests();
 if (staticSelftest) {
   console.log('K2 evaluator static selftests passed.');
   process.exit(0);
@@ -274,6 +284,7 @@ async function writeCompare(rows, metadata) {
     '- Questions and gold facts: `eval/arxiv-10/questions.md` (read-only).',
     '- NotebookLM answer source: ' + mdCell(notebookAnswerSource) + '.',
     '- Eliot mode: ' + mdCell(metadata.mode) + '.',
+    '- Effective eval target: ' + mdCell(metadata.target ?? origin ?? 'UNKNOWN') + '.',
     '- Configured global answer model: ' + mdCell(metadata.defaultModel ?? 'UNKNOWN') + '.',
     '- Project answer-model override: ' + mdCell(metadata.projectModelOverride ?? 'none') + '.',
     '- Chat: ' + mdCell(metadata.chatId ?? 'UNKNOWN') + '.',
@@ -1081,7 +1092,7 @@ function dispatchUnavailable(status, body, turn) {
   const error = body?.error ?? body?.turn?.error ?? turn?.error ?? null;
   const code = String(error?.code ?? body?.code ?? '').toLowerCase();
   const message = String(error?.message ?? error ?? body?.message ?? '');
-  if ([401, 402, 403, 408, 429, 500, 502, 503, 504].includes(status)) return true;
+  if ([401, 402, 403, 404, 408, 429, 500, 502, 503, 504].includes(status)) return true;
   if (['auth', 'unauthorized', 'forbidden', 'budget', 'unavailable', 'busy', 'rate_limited'].includes(code)) return true;
   if (/credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|\bprovider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|\bgateway.{0,24}(?:unavailable|error|failed)/i.test(message)) return true;
   // Own 90 s deadline stays continuable: the next distinct question may dispatch.
@@ -1090,7 +1101,7 @@ function dispatchUnavailable(status, body, turn) {
   // the failure embedded in turn.error (model-transport.ts modelFailure shapes).
   // Stop on the same codes when embedded as HTTP; an explicit non-stop HTTP
   // code (e.g. 400 validation) keeps the prior continue behavior.
-  if (/\bHTTP\s+(401|402|403|408|429|500|502|503|504)\b/i.test(message)) return true;
+  if (/\bHTTP\s+(401|402|403|404|408|429|500|502|503|504)\b/i.test(message)) return true;
   if (/\bHTTP\s+\d{3}\b/i.test(message)) return false;
   // Per-question validation stays continuable in either existing failure
   // format: predispatch AI_Invalid* and in-band invalid_request_error.
@@ -1140,18 +1151,19 @@ if (storedOnly) {
     if (!row.passed) storedFailures++;
   }
   let finalChat = null;
+  let storedRecordsPreserved = false;
   try { finalChat = await getChat('stored-final'); }
   catch (error) { stopReason = 'Final storage-only chat read failed: ' + (error instanceof Error ? error.message : String(error)); }
   if (!finalChat) storedFailures++;
   else {
-    try { assertTurnSnapshotDelta(h0.turns, finalChat.turns, 0, 'Stored-only revalidation'); }
+    try { assertTurnSnapshotDelta(h0.turns, finalChat.turns, 0, 'Stored-only revalidation'); storedRecordsPreserved = true; }
     catch (error) { storedFailures++; stopReason = error instanceof Error ? error.message : String(error); }
   }
   await writeCompare(compareRows, { mode: 'stored-only diagnostic; zero model calls/POSTs; recorded turn route shown per row',
-    defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId,
+    target: origin, defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId,
     hardChecksPassed: storedFailures === 0, ownerReviewRequired: ownerRequired, stopReason,
     turnCountBefore: h0.turns.length, turnCountAfter: finalChat?.turns.length ?? 'unknown',
-    originalTurnRecordsPreserved: !!finalChat && storedFailures === 0 });
+    originalTurnRecordsPreserved: storedRecordsPreserved });
   if (storedFailures > 0) process.exit(1);
   if (ownerRequired) process.exit(2);
   process.exit(0);
