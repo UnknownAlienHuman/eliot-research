@@ -56,8 +56,8 @@ function normMath(s) {
   let n = chars.join('').normalize('NFKC').replace(/\[(?:S\d+|R[0-9a-f-]{36}):\d+\]/gi, ' ').toLowerCase().split(',').join('.');
   n = n.split(UNIMINUS).join('-');
   n = n.split('=').join(' = ');
-  n = n.split('step_num').join('step');
-  n = n.split('warmup_steps').join('warmup');
+  n = n.replace(/\bstep_num\b/g, 'step');
+  n = n.replace(/\bwarmup_steps\b/g, 'warmup');
   const strip = ['$', '*', '_', BT, BACKSLASH, '{', '}', '^', '(', ')', '[', ']', ':', ';', SQ, DQ, MIDDOT];
   for (const ch of strip) n = n.split(ch).join(' ');
   n = n.split(EOL).join(' ').split(TAB).join(' ');
@@ -104,6 +104,7 @@ assert(!normMath('2·3').includes('2.3'), 'C2 ordinary middle dot must not becom
 assert.equal(c2FormulaPass(normMath('lrate = d_model^-0.5 * min(step_num^-0.5, step_num * warmup_steps^-1.5), warmup 4000')), true, 'C2 full-symbol alias formula must pass.');
 assert.equal(c2FormulaPass(normMath('d_model^-0.5 * min(step_num^-0.6, step_num * warmup_steps^-1.5), warmup 4000')), false, 'C2 wrong step_num exponent must fail.');
 assert.equal(c2FormulaPass(normMath('d_model^-0.5 * min(step_num^-0.5, step_num * warmup_steps^-1.4), warmup 4000')), false, 'C2 wrong warmup_steps exponent must fail.');
+assert.equal(c2FormulaPass(normMath('lrate = d_model^-0.5 * min(previous_step_num^-0.5, step_num * warmup_steps^-1.5), warmup 4000')), false, 'C2 previous_step_num must not pass as step.');
 async function assertClaimTurnReadOnly(t, tag, revIdSet, revKey) {
   assert.equal(t.contextMode, 'claims', 'TurnView.contextMode must be claims (' + tag + ').');
   assert(typeof SELECTED_ANSWER_MODEL === 'string' && SELECTED_ANSWER_MODEL.length > 0, 'Selected answerModel must be frozen before claim checks (' + tag + ').');

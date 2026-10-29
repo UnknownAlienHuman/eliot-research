@@ -170,6 +170,7 @@ function assertC2StaticSelftests() {
   assert.equal(c2('lrate = d_model⁻⁰·⁵ × min(step_num⁻⁰·⁵, step_num × warmup_steps⁻¹·⁵), warmup_steps 4000'), true, 'Original-paper step_num/warmup_steps identifiers must pass.');
   assert.equal(c2('d_model⁻⁰·⁵ · min(step_num⁻⁰·⁶, step_num · warmup_steps⁻¹·⁵), warmup_steps 4000'), false, 'Wrong step exponent must fail for step_num aliases.');
   assert.equal(c2('d_model⁻⁰·⁵ · min(step_num⁻⁰·⁵, step_num · warmup_steps⁻¹·⁵), warmup_steps 2000'), false, 'Wrong warmup value must fail for warmup_steps aliases.');
+  assert.equal(c2('d_model⁻⁰·⁵ · min(previous_step_num⁻⁰·⁵, step_num · warmup_steps⁻¹·⁵), warmup_steps 4000'), false, 'previous_step_num must not count as the schedule step.');
   assert(!normMath('2·3').includes('2.3'), 'An ordinary middle dot must not become a decimal point.');
 }
 function assertDispatchStopStaticSelftests() {
