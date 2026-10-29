@@ -435,6 +435,34 @@ describe("go provider metadata catalogue", () => {
     await expect(requireAvailableModel(env, "gateway:opencode-go/sibling")).rejects.toMatchObject({ code: "unavailable", status: 503 });
     await expect(requireAvailableModel(env, "gateway:opencode-go/foreign")).rejects.toMatchObject({ code: "unavailable", status: 503 });
   });
+
+  it("preserves the last good provider slice when an HTTP 200 feed has a malformed live model entry", async () => {
+    const providers = goProviders();
+    const bucket = fakeBucket();
+    const env = fixtureEnv(bucket.binding, { providers });
+    vi.stubGlobal("fetch", stubFeed(liveRows(), feedDoc()));
+    const before = await refreshModelCatalog(env);
+    const prior = before.models.find((model) => model.route === "gateway:opencode-go/hy3");
+    expect(prior).toMatchObject({ contextTokens: 192000, apiProtocol: "openai-chat", apiBaseUrl: "https://opencode.ai/inference/go/openai/v1" });
+    if (!prior) throw new Error("Expected the initial refreshed model slice.");
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === GO_MODELS) return Response.json({ object: "list", data: liveRows() }, { status: 200 });
+      if (url === GO_FEED) return Response.json({
+        "opencode-go": {
+          npm: "@ai-sdk/openai-compatible",
+          api: "https://opencode.ai/inference/go/openai/v1",
+          models: { hy3: null },
+        },
+      }, { status: 200 });
+      throw new Error("Unexpected metadata endpoint");
+    }));
+
+    const after = await refreshModelCatalog(env);
+    expect(after.warnings).toContain("opencode-go model metadata is unavailable or malformed.");
+    expect(after.models.find((model) => model.route === "gateway:opencode-go/hy3")).toEqual(prior);
+  });
 });
 
 describe("native contradictory catalogue entries", () => {

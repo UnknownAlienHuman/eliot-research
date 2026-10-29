@@ -54,9 +54,23 @@ interface ProviderMetadata {
 function parseMetadataEntry(value: unknown): ProviderMetadataEntry | null {
   const row = record(value);
   if (!row) return null;
-  const vendor: RecordValue = record(row.provider) ?? {};
-  const limit: RecordValue = record(row.limit) ?? {};
-  const modalities: RecordValue = record(row.modalities) ?? {};
+  const vendor = row.provider === undefined || row.provider === null ? {} : record(row.provider);
+  const limit = row.limit === undefined || row.limit === null ? {} : record(row.limit);
+  const modalities = row.modalities === undefined || row.modalities === null ? {} : record(row.modalities);
+  if (vendor === null || limit === null || modalities === null) return null;
+  for (const key of ["context", "input", "output"] as const) {
+    const value = limit[key];
+    if (value !== undefined && value !== null && positiveInteger(value) === null) return null;
+  }
+  for (const key of ["input", "output"] as const) {
+    const value = modalities[key];
+    if (value !== undefined && value !== null &&
+      (!Array.isArray(value) || value.some((item) => typeof item !== "string"))) return null;
+  }
+  if (row.temperature !== undefined && row.temperature !== null && typeof row.temperature !== "boolean") return null;
+  if (row.structured_output !== undefined && row.structured_output !== null && typeof row.structured_output !== "boolean") return null;
+  if ((vendor.npm !== undefined && vendor.npm !== null && typeof vendor.npm !== "string") ||
+    (vendor.api !== undefined && vendor.api !== null && typeof vendor.api !== "string")) return null;
   const inputModalities = Array.isArray(modalities.input) ? modalities.input : null;
   const outputModalities = Array.isArray(modalities.output) ? modalities.output : null;
   const entry: ProviderMetadataEntry = {
@@ -74,7 +88,7 @@ function parseMetadataEntry(value: unknown): ProviderMetadataEntry | null {
   return entry;
 }
 
-async function readProviderMetadata(feedUrl: string, providerId: string): Promise<ProviderMetadata> {
+async function readProviderMetadata(feedUrl: string, providerId: string, liveModelIds: ReadonlySet<string>): Promise<ProviderMetadata> {
   try {
     validateSourceUrl(feedUrl);
   } catch (error) {
@@ -93,13 +107,18 @@ async function readProviderMetadata(feedUrl: string, providerId: string): Promis
   const block = body !== null ? record(body[providerId]) : null;
   if (!block) throw new Error("The provider metadata is malformed.");
   const models = record(block.models);
+  if (models === null) throw new Error("The provider metadata is malformed.");
+  for (const key of ["npm", "api"] as const) {
+    const value = block[key];
+    if (value !== undefined && value !== null && typeof value !== "string")
+      throw new Error("The provider metadata is malformed.");
+  }
   const entries = new Map<string, ProviderMetadataEntry>();
-  if (models !== null) {
-    for (const [id, value] of Object.entries(models)) {
-      if (!id || id !== id.trim()) continue;
-      const entry = parseMetadataEntry(value);
-      if (entry !== null) entries.set(id, entry);
-    }
+  for (const id of liveModelIds) {
+    if (!Object.hasOwn(models, id)) continue; // Per-model metadata is optional for a live API ID.
+    const entry = parseMetadataEntry(models[id]);
+    if (entry === null) throw new Error("The provider metadata is malformed for a live model ID.");
+    entries.set(id, entry);
   }
   const metadata: ProviderMetadata = { entries };
   if (typeof block.npm === "string" && block.npm !== "") metadata.npm = block.npm;
@@ -300,7 +319,7 @@ export async function discoverGatewayModels(
     if (!metadataUrl || base.length === 0) return base;
     let metadata: ProviderMetadata;
     try {
-      metadata = await readProviderMetadata(metadataUrl, provider.id);
+      metadata = await readProviderMetadata(metadataUrl, provider.id, new Set(base.map((model) => model.id)));
     } catch (error) {
       throw new Error("The " + provider.id + " model metadata is unavailable or malformed.", { cause: error });
     }

@@ -40,7 +40,9 @@ function providerLabel(model: ModelRoute): string {
   return provider || 'Unknown provider';
 }
 function optionLabel(model: ModelRoute): string {
-  return model.label + (model.enabled ? '' : ' — unavailable');
+  return model.label
+    + (model.mayTrainOnYourPrompts === true ? ' — may train on your prompts' : '')
+    + (model.enabled ? '' : ' — unavailable');
 }
 export function modelCatalogEntryKey(model: ModelRoute): string {
   const provider = providerId(model);

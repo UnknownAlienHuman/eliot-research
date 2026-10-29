@@ -48,7 +48,7 @@ immutable revision; ordinary whole/claim answers use one model call; search/tool
 
 Understanding readers preserve the revision's stored model route even when it is absent from the live catalogue.
 `progress.configuredModel` separately names the current default for an explicit new/resumed job. Unknown preview
-metadata stays null; the UI never turns it into a zero price. The storage reader starts no discovery or generation.
+metadata stays null. The storage reader starts no discovery or generation.
 
 JSON lives under `/api/`, validated with zod. Error shape:
 
@@ -337,7 +337,8 @@ ordinary chat path uses public text and verified labels only. A partial prior an
 Resolve one `ModelSpec` for each turn and freeze it across admission, context limits, request bounds and settlement.
 The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, record the token bound after
 provider admission, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
-citation, token, timing, cost, invalid-label and terminal-state fields. WebSocket frames and reconnect expose
+citation, token, timing, invalid-label and terminal-state fields. Historical currency columns remain unchanged.
+WebSocket frames and reconnect expose
 read-only state snapshots; they never enqueue or dispatch paid work. GET, history, reconnect and Save never start model/search work. One active turn
 and one queued submission are allowed; the next returns `409/busy`. Stop stores partial text, closing a tab does not
 cancel, and failed streams are not automatically continued. Retry is a new owner submission.
@@ -442,7 +443,9 @@ model-data source: Go's live API remains the authority for IDs, while the `openc
 only live Go IDs and ignores prices, foreign provider blocks and extra metadata-only IDs. It contains no model-name
 table or family inference. Ordinary catalogue bounds remain 4 MiB and 2,000 rows; this optional metadata read has an
 8 MiB bound for the observed 5.94 MB feed, and only the selected provider's data enters the existing R2 snapshot.
-Unavailable metadata preserves the last good provider slice; missing limits or API metadata never authorize a call.
+Unavailable or malformed metadata for the configured provider/live IDs preserves the last good provider slice with a
+warning. A missing optional live-ID entry stays unknown; foreign and metadata-only IDs are ignored. Missing usable
+limits or API metadata never authorize a call.
 
 Per-model `apiProtocol` and `apiBaseUrl` freeze the published API choice alongside normal routing metadata. Package
 metadata selects the maintained Chat Completions, Responses, Anthropic or Google SDK; absent metadata remains unknown.
@@ -531,8 +534,7 @@ OpenRouter embed/rerank IDs remain separate future K5 capabilities, not chat cho
 Settings uses one visible provider/search/free-name filter and catalogue, with Answers/Understanding choosing which
 default is being edited. Filters are display-only; the catalogue has no pagination or technical model-details panel.
 Chat and project settings use compact provider then model selection with the applicable default available. Refresh preserves the
-selected provider/native-ID pair. Unknown prices never block selection or dispatch; usable model bounds and provider
-allowance remain required.
+selected provider/native-ID pair. Usable model bounds and provider allowance remain required for dispatch.
 
 Migration `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; null disables external routes. Owner-only
 GET `/api/models/connection` and PUT read/save the exact existing named Gateway ID. Enabling requires
@@ -587,9 +589,9 @@ with raw HTML disabled and resolved citation chips. Do not cache private text in
 
 The shared model picker reuses the approved legacy Material interaction and provider/native-ID identity. Settings
 provider, search and free-name filters only filter the displayed catalogue; they do not change saved routes or admission.
-Chat uses compact provider then model controls with project default available. Technical route, capacity, output and
-price information appears under Details. Unknown metadata stays visible, and model-job admission remains separate from
-selection.
+Chat uses compact provider then model controls with project default available. Settings keeps provider addresses and
+Gateway routing in collapsed provider details. Unknown metadata stays visible, and model-job admission remains separate
+from selection.
 
 ## 14. Lifecycle and export
 

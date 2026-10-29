@@ -31,9 +31,7 @@ if (!staticSelftest && !modelsOnly && process.env.CF_ACCESS_CLIENT_ID && process
 }
 if (!staticSelftest && !modelsOnly && process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.env.ELIOT_OWNER_JWT).trim();
 if (modelsOnly && !staticSelftest) {
-  const targetOrigin = new URL(origin);
-  assert(targetOrigin.protocol === 'http:' && ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(targetOrigin.hostname) && targetOrigin.port === '5216',
-    '--models-only is restricted to the isolated no-AI loopback runtime on port 5216.');
+  assertEvalBrowserOrigin(origin, configuredOrigin);
   assert(process.env.ELIOT_K2_MODEL !== '1', '--models-only forbids ELIOT_K2_MODEL opt-in.');
 }
 const resumeChat = staticSelftest || modelsOnly ? null : process.env.ELIOT_EVAL_CHAT || null;
