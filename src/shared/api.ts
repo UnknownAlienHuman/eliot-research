@@ -1,6 +1,16 @@
 import type { ModelSpec } from "../models";
 
 export type NativeUsageMode = "included" | "standard";
+export type DataCollectionPolicy = "deny" | "allow";
+
+export function isOpenRouterApiBase(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value.trim());
+    return url.origin === "https://openrouter.ai" && url.pathname.replace(/\/+$/, "") === "/api/v1"
+      && !url.username && !url.password && !url.search && !url.hash;
+  } catch { return false; }
+}
 
 export interface DistillInput { revisionId: string; model: ModelSpec }
 

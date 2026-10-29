@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { discoverGatewayModels } from "./model-catalog";
-import { getModelProviders, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel } from "./models";
+import { getModelProviders, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, saveModelProviders } from "./models";
 import type { ModelProvider } from "./models";
 import { nativeModel } from "./native-model-catalog";
 import { resolveModelTransport } from "./model-transport";
@@ -14,7 +14,7 @@ const textChat = { input_modalities: ["text"], output_modalities: ["text"] };
 function defaultProviders(): ModelProvider[] {
   return [
     { id: "workers-ai", type: "workers-ai", gatewaySlug: null, gatewayPath: "", baseUrl: null, enabled: true },
-    { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1", baseUrl: "https://openrouter.ai/api/v1", enabled: true },
+    { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1", baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true },
     { id: "command-code", type: "openai-compatible", gatewaySlug: "custom-command-code", gatewayPath: "v1", baseUrl: "https://api.commandcode.ai/provider/v1", enabled: true },
   ];
 }
@@ -44,7 +44,7 @@ function fakeBucket(initial: unknown | null = null) {
 }
 
 function fixtureEnv(bucket: R2Bucket, opts: { providers?: ModelProvider[]; providersRaw?: string; gatewayId?: string | null; aiModels?: () => Promise<never[]> } = {}): Env {
-  const providersJson = opts.providersRaw !== undefined ? opts.providersRaw : JSON.stringify(opts.providers !== undefined ? opts.providers : defaultProviders());
+  let providersJson = opts.providersRaw !== undefined ? opts.providersRaw : JSON.stringify(opts.providers !== undefined ? opts.providers : defaultProviders());
   const gatewayId = opts.gatewayId === undefined ? "fixture-gateway" : opts.gatewayId;
   const aiModels = opts.aiModels !== undefined ? opts.aiModels : async () => [];
   return {
@@ -55,6 +55,11 @@ function fixtureEnv(bucket: R2Bucket, opts: { providers?: ModelProvider[]; provi
           if (sql.indexOf("model_gateway_id") >= 0) return { gatewayId: gatewayId };
           return null;
         },
+        bind: (value: unknown) => ({ run: async () => {
+          if (!sql.startsWith("UPDATE settings SET model_providers_json=")) throw new Error("Unexpected fixture write");
+          providersJson = String(value);
+          return { meta: { changes: 1 } };
+        } }),
       }),
     } as unknown as Env["DB"],
     BUCKET: bucket,
@@ -530,6 +535,71 @@ describe("frozen gateway protocol transports", () => {
     if (protocol === "google") { expect(url).toContain(":streamGenerateContent"); expect(url).toContain("alt=sse"); }
     expect(prepared).toEqual([]);
   });
+
+  it("sends deny, allow and legacy default-deny through every OpenRouter Chat transport", async () => {
+    const network = vi.fn(async () => { throw new Error("Only the fake AI binding may receive requests"); });
+    vi.stubGlobal("fetch", network);
+    for (const baseUrl of ["https://openrouter.ai/api/v1", "https://OPENROUTER.AI/api/v1/"]) {
+      for (const path of ["native", "compatible", "protocol-chat"] as const) {
+        for (const policy of [undefined, "deny", "allow"] as const) {
+          const provider: ModelProvider = { id: "openrouter", type: "openai-compatible", enabled: true,
+            baseUrl, gatewaySlug: path === "native" ? "openrouter" : "custom-router",
+            gatewayPath: "v1", ...(policy === undefined ? {} : { dataCollection: policy }) };
+          const model: ModelSpec = { route: "gateway:openrouter/fixture/model", id: "fixture/model", label: "Fixture",
+            contextTokens: 64000, maxOutputTokens: 8192, checkedOn: "2026-10-29", enabled: true,
+            ...(path === "protocol-chat" ? { apiProtocol: "openai-chat", apiBaseUrl: baseUrl } : {}),
+            routing: { provider, gatewayId: "test-gw" } };
+          const { fetch: fetchStub, binding } = stubGateway();
+          const { DB, prepared } = testDb();
+          const transport = await resolveModelTransport({ AI: binding, DB }, model, "policy-fixture");
+          await expect(generateText({ model: transport, prompt: "synthetic", maxRetries: 0 })).rejects.toThrow();
+          expect(fetchStub, baseUrl + " " + path + " " + String(policy)).toHaveBeenCalledTimes(1);
+          const request = fetchStub.mock.calls[0];
+          if (!request) throw new Error("Expected the fake Gateway request");
+          const sent = JSON.parse(String(request[1]?.body)) as Record<string, unknown>;
+          expect(sent.provider, baseUrl + " " + path + " " + String(policy)).toMatchObject({
+            data_collection: policy ?? "deny", allow_fallbacks: false, require_parameters: true,
+          });
+          expect(prepared).toEqual([]);
+        }
+      }
+    }
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("keeps cached models ready after a policy-only save and dispatches the frozen admission choice", async () => {
+    const providers = defaultProviders();
+    const route = "gateway:openrouter/fixture/cached";
+    const bucket = fakeBucket({ updatedAt: "2026-10-29T00:00:00.000Z", warnings: [], providers,
+      models: [{ route, id: "fixture/cached", label: "Cached", contextTokens: 64000, maxOutputTokens: 8192, checkedOn: "2026-10-29", enabled: true }] });
+    const env = fixtureEnv(bucket.binding, { providers });
+    const network = vi.fn(async () => { throw new Error("Policy saves must not discover or infer"); });
+    vi.stubGlobal("fetch", network);
+    const before = await readModelCatalog(env);
+    const snapshot = JSON.stringify(bucket.stored());
+    await saveModelProviders(env, providers.map((p) => p.id === "openrouter" ? { ...p, dataCollection: "allow" as const } : p));
+    const after = await readModelCatalog(env);
+    expect(after.models).toEqual(before.models);
+    expect(after.models.find((model) => model.route === route)).toMatchObject({ enabled: true, contextTokens: 64000 });
+    expect(after.snapshot.refreshNeeded).toBe(false);
+    const frozen = await requireAvailableModel(env, route);
+    expect(frozen.routing?.provider.dataCollection).toBe("allow");
+    await saveModelProviders(env, providers);
+    expect((await requireAvailableModel(env, route)).routing?.provider.dataCollection).toBe("deny");
+    expect(frozen.routing?.provider.dataCollection).toBe("allow");
+    const prepare = vi.spyOn(env.DB, "prepare");
+    const { fetch: fetchStub, binding } = stubGateway();
+    const transport = await resolveModelTransport({ AI: binding, DB: env.DB }, frozen, "frozen-policy");
+    await expect(generateText({ model: transport, prompt: "synthetic", maxRetries: 0 })).rejects.toThrow();
+    expect(fetchStub).toHaveBeenCalledTimes(1);
+    const request = fetchStub.mock.calls[0];
+    if (!request) throw new Error("Expected the frozen-policy fake Gateway request");
+    expect(JSON.parse(String(request[1]?.body))).toMatchObject({ provider: { data_collection: "allow" } });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(network).not.toHaveBeenCalled();
+    expect(bucket.put).not.toHaveBeenCalled();
+    expect(JSON.stringify(bucket.stored())).toBe(snapshot);
+  });
 });
 
 describe("provider configuration loader", () => {
@@ -546,6 +616,18 @@ describe("provider configuration loader", () => {
     expect(stored).toEqual(providers);
   });
 
+  it("defaults a legacy missing OpenRouter policy to deny without saving and accepts explicit allow", async () => {
+    const providers = defaultProviders();
+    const legacy = providers.map((p) => { const copy = { ...p }; delete copy.dataCollection; return copy; });
+    const env = fixtureEnv(fakeBucket().binding, { providers: legacy });
+    const prepare = vi.spyOn(env.DB, "prepare");
+    expect((await getModelProviders(env)).find((p) => p.id === "openrouter")?.dataCollection).toBe("deny");
+    expect(prepare).toHaveBeenCalledExactlyOnceWith("SELECT model_providers_json AS providers FROM settings WHERE id=1");
+    const allow = fixtureEnv(fakeBucket().binding, { providers: providers.map((p) => p.id === "openrouter"
+      ? { ...p, baseUrl: "https://OPENROUTER.AI/api/v1/", dataCollection: "allow" as const } : p) });
+    expect((await getModelProviders(allow)).find((p) => p.id === "openrouter")?.dataCollection).toBe("allow");
+  });
+
   it("rejects missing, malformed, duplicate and non-https provider settings without inventing defaults", async () => {
     const bucket = fakeBucket();
     const dup = defaultProviders()[1] as ModelProvider;
@@ -554,6 +636,10 @@ describe("provider configuration loader", () => {
       JSON.stringify(null),
       JSON.stringify(defaultProviders().concat([dup])),
       JSON.stringify(defaultProviders().map((p) => p.id === "openrouter" ? { id: p.id, type: p.type, gatewaySlug: p.gatewaySlug, gatewayPath: p.gatewayPath, baseUrl: "http://openrouter.ai/api/v1", enabled: true } : p)),
+      JSON.stringify(defaultProviders().map((p) => p.id === "openrouter" ? { ...p, dataCollection: "invalid" } : p)),
+      JSON.stringify(defaultProviders().map((p) => p.id === "workers-ai" ? { ...p, dataCollection: "allow" } : p)),
+      JSON.stringify(defaultProviders().map((p) => p.id === "command-code" ? { ...p, dataCollection: "allow" } : p)),
+      JSON.stringify(defaultProviders().map((p) => p.id === "openrouter" ? { ...p, baseUrl: "https://openrouter.ai.evil.example/api/v1" } : p)),
     ];
     for (const raw of bad) {
       const env = fixtureEnv(bucket.binding, { providersRaw: raw });
