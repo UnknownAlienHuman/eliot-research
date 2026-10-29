@@ -237,7 +237,7 @@ async function loadSourceText(env: Env, frozen: Frozen, index: number): Promise<
     if (isCitableBlock(block, slice)) {
       citableBlocks.push(block);
       lines.push("[" + alias + ":" + block.id + "] " + slice);
-    } else lines.push(slice);
+    }
   }
   if (lines.length === 1) throw new LibraryError("unavailable", UNAVAILABLE, 503);
   const source: LabelSource = { sourceId: frozen.sourceId, revisionId: frozen.revisionId, title: frozen.title, blocks: citableBlocks, alias };
