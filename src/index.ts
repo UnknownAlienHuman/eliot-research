@@ -8,7 +8,6 @@ import type { ApiError, MeResponse } from "./shared/api";
 import { addSource, attachSource, createProject, getProject, getSource, LibraryError, listProjects, listSources, MAX_SOURCE_BYTES, setProjectScope, updateProject } from "./library";
 import { readOriginal, readOutline, readText } from "./read";
 import { captureUrl, UrlGuardError } from "./url-guard";
-import { usageSummary } from "./cost";
 import { getModelConnection, getModelProviders, modelProvidersSchema, readModelCatalog, refreshModelCatalog, requireCatalogModel, saveModelProviders, validGatewayId } from "./models";
 import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
@@ -79,7 +78,7 @@ app.put("/api/models/connection", async (c) => {
   await c.env.DB.prepare("UPDATE settings SET model_gateway_id=?,updated_at=? WHERE id=1").bind(input.gatewayId, Date.now()).run();
   return c.json({ connection: await getModelConnection(c.env) });
 });
-app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,native_usage_mode AS nativeUsageMode,updated_at AS updatedAt FROM settings WHERE id=1").first(), usage: await usageSummary(c.env) }));
+app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,native_usage_mode AS nativeUsageMode,updated_at AS updatedAt FROM settings WHERE id=1").first() }));
 app.put("/api/settings", async (c) => {
   const input = z.object({ answerModel: z.string().min(1), distillModel: z.string().min(1).optional(), nativeUsageMode: z.enum(["included", "standard"]).optional() }).strict().parse(await c.req.json());
   await requireCatalogModel(c.env, input.answerModel);
@@ -115,7 +114,7 @@ app.post("/api/projects/:id/chats", async (c) => {
 app.get("/api/projects/:id/chats/:chatId", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId"));
   const chat = await chatRecord(c.env, projectId, chatId), agent = await getAgentByName(c.env.CHAT, chatId);
-  return c.json({ chat, ...await agent.getSnapshot(projectId), usage: await usageSummary(c.env) });
+  return c.json({ chat, ...await agent.getSnapshot(projectId) });
 });
 app.post("/api/projects/:id/chats/:chatId/turns", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId")); await chatRecord(c.env, projectId, chatId);

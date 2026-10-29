@@ -17,6 +17,7 @@ export interface ModelRoute {
   readonly provider?: string;
   readonly contextTokens: number | null;
   readonly maxOutputTokens: number | null;
+  readonly mayTrainOnYourPrompts?: boolean;
   readonly outputReserveTokens?: number;
   readonly checkedOn: string | null;
 }
@@ -84,7 +85,7 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
     providers.set(providerId(model), providerLabel(model));
   }
   const identityIssue = (model: ModelRoute) => keyCounts.get(modelCatalogEntryKey(model)) !== 1 || matches(model.route).length !== 1;
-  const selectedIssue = selected && identityIssue(selected) ? 'Catalogue identity is ambiguous.'
+  const selectedIssue = selected && identityIssue(selected) ? 'Not uniquely identified in the current catalogue.'
     : selected && !selected.enabled ? selected.unavailableReason || 'Model is unavailable.' : null;
   const terms = search.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
   const filtered = choices.filter((model) => {
@@ -165,7 +166,7 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
                 {compactModels.map((model, index) => <option
                   key={identityIssue(model) ? modelCatalogEntryKey(model) + ':' + index : modelCatalogEntryKey(model)}
                   value={model.route} disabled={!model.enabled || identityIssue(model)}
-                  title={identityIssue(model) ? 'Catalogue identity is ambiguous.' : model.unavailableReason || model.route}>
+                  title={identityIssue(model) ? 'Not uniquely identified in the current catalogue.' : model.unavailableReason || optionLabel(model)}>
                   {optionLabel(model)}
                 </option>)}
               </select>
@@ -192,13 +193,12 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
                 <input id={id + '-search'} type='search' aria-label={label + ': search models'} value={search} maxLength={512}
                   onChange={(event) => setSearch(event.currentTarget.value)} />
               </label>
-              <p className='er-model-picker__note'>Filters display text only.</p>
               <p className='er-status' role='status'><span>{filtered.length === 0 ? 'No models match your search.' : filtered.length.toLocaleString('en-US') + ' matching models.'}</span></p>
             </div>
             <div className='er-model-picker__chip'>
               <MaterialSymbol name='spark' />
               <select id={id + '-select'} aria-label={label} value={value}
-                title={selected ? selected.label + ' · ' + providerLabel(selected) : value || emptyLabel || 'Choose a model'}
+                title={selected ? selected.label + ' · ' + providerLabel(selected) : emptyLabel || 'Choose a model'}
                 disabled={loading || error !== '' || (choices.length === 0 && value === '')}
                 onChange={(event) => chooseModel(event.currentTarget.value)}>
                 <option value='' disabled={emptyLabel === undefined}>{emptyLabel ?? 'Choose a model'}</option>
@@ -208,13 +208,14 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
                 {[...groups].map(([name, rows]) => <optgroup key={name} label={name}>
                   {rows.map((model, index) => <option key={identityIssue(model) ? modelCatalogEntryKey(model) + ':' + index : modelCatalogEntryKey(model)} value={model.route}
                     disabled={!model.enabled || identityIssue(model)}
-                    title={identityIssue(model) ? 'Catalogue identity is ambiguous.' : model.unavailableReason || model.route}>{optionLabel(model)}</option>)}
+                    title={identityIssue(model) ? 'Not uniquely identified in the current catalogue.' : model.unavailableReason || optionLabel(model)}>{optionLabel(model)}</option>)}
                 </optgroup>)}
               </select>
             </div>
           </>
         )}
         {routePending ? <p className='er-status' role='status'><span>Choose a model from this provider to use it.</span></p> : null}
+        {selected?.mayTrainOnYourPrompts === true ? <p className='er-status' role='note'><span>Warning: this provider may train on your prompts.</span></p> : null}
         {warnings.length > 0 ? <details className='er-model-picker__warnings'>
           <summary>Provider availability</summary>
           <ul>{warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>

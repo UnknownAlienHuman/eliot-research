@@ -146,6 +146,9 @@ stop/reconnect, reopen chat and save an answer as a page.
    `POST /api/models/refresh` discovers JSON models and available provider quota data; a partial provider failure preserves that provider's prior slice and
    returns a warning. If no snapshot exists, use the native Flash fallback. Paid admission remains separate and
    requires usable context/output bounds and provider allowance, without per-model price prerequisites.
+   Keep Command Code and add Kilo, Nous Portal and OpenCode Go through that same configuration. Go's live IDs join its
+   published metadata for limits and API protocol; no model-name mapping or private donor login is copied. New provider
+   rows start disabled, and saving them does not refresh catalogues or start inference.
 3. Build whole-reading context from the frozen readable revisions. When it does not fit, return a clear narrow-scope
    response; claim/search modes arrive later.
 4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.

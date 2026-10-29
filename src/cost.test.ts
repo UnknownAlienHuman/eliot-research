@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { admitDistill, admitTurn, failUndispatchedDistill, usageSummary } from "./cost.js";
+import { admitDistill, admitTurn, failUndispatchedDistill } from "./cost.js";
 import { LibraryError } from "./library.js";
 import { assertProviderAllowance } from "./model-quota.js";
+import type * as ModelQuota from "./model-quota.js";
 import type { ModelSpec } from "./models.js";
 
 // Provider allowance is mocked: the real model-quota module currently holds
 // a closed native placeholder, so admission tests pin allow/deny directly
 // instead of depending on registry or provider state.
-vi.mock("./model-quota", () => ({ assertProviderAllowance: vi.fn() }));
+vi.mock("./model-quota", async (importOriginal) => {
+  const actual = await importOriginal<typeof ModelQuota>();
+  return { ...actual, assertProviderAllowance: vi.fn() };
+});
 const allowance = vi.mocked(assertProviderAllowance);
 
 const FLASH_ROUTE = "workers-ai:@cf/zai-org/glm-5.3-flash";
@@ -69,10 +73,6 @@ function testEnv() {
   };
   return { db, env: { DB: shim } as unknown as Env };
 }
-function utcDayStart(now: number): number {
-  const current = new Date(now);
-  return Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate());
-}
 function chatRow(db: DatabaseSync, chatId: string, turnId: string) {
   return db.prepare("SELECT state, token_limit AS tokenLimit FROM chat_turn WHERE chat_id = ? AND turn_id = ?").get(chatId, turnId) as { state: string; tokenLimit: number | null };
 }
@@ -87,44 +87,6 @@ function distillRow(db: DatabaseSync, id: string) {
 beforeEach(() => {
   allowance.mockReset();
   allowance.mockResolvedValue(undefined);
-});
-
-describe("usageSummary", () => {
-  it("sums known chat and distill tokens for the current UTC day only", async () => {
-    const fixed = testEnv();
-    const dayStart = utcDayStart(Date.now());
-    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, input_tokens, cached_tokens, output_tokens, created_at) VALUES (?, ?, 'completed', 100, 10, 50, ?)").run("c1", "t1", dayStart + 1000);
-    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, input_tokens, cached_tokens, output_tokens, created_at) VALUES (?, ?, 'completed', 200, 0, 30, ?)").run("c1", "t-old", dayStart - 1000);
-    fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_started_at, distill_input_tokens, distill_cached_tokens, distill_output_tokens) VALUES (?, 'done', ?, 1000, 200, 500)").run("r1", dayStart + 2000);
-    fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_started_at, distill_input_tokens, distill_cached_tokens, distill_output_tokens) VALUES (?, 'done', ?, 999, 999, 999)").run("r-old", dayStart - 2000);
-    const summary = await usageSummary(fixed.env);
-    expect(summary.dayEnd - summary.dayStart).toBe(86400000);
-    expect(summary.dayStart % 86400000).toBe(0);
-    expect(summary.inputTokens).toBe(1100);
-    expect(summary.cachedTokens).toBe(210);
-    expect(summary.outputTokens).toBe(550);
-    expect(summary.unknownUsages).toBe(0);
-  });
-  it("counts null-usage rows as unknown without zeroing them into the sums", async () => {
-    const fixed = testEnv();
-    const dayStart = utcDayStart(Date.now());
-    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, input_tokens, cached_tokens, output_tokens, created_at) VALUES (?, ?, 'started', NULL, NULL, NULL, ?)").run("c1", "pending", dayStart + 1000);
-    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, input_tokens, cached_tokens, output_tokens, created_at) VALUES (?, ?, 'completed', 200, NULL, 30, ?)").run("c1", "known", dayStart + 1000);
-    fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_started_at) VALUES (?, 'running', ?)").run("r-running", dayStart + 1000);
-    const summary = await usageSummary(fixed.env);
-    expect(summary.inputTokens).toBe(200);
-    expect(summary.cachedTokens).toBe(0);
-    expect(summary.outputTokens).toBe(30);
-    expect(summary.unknownUsages).toBe(2);
-  });
-  it("returns zeros with no unknown rows when the day has no usage", async () => {
-    const fixed = testEnv();
-    const summary = await usageSummary(fixed.env);
-    expect(summary.inputTokens).toBe(0);
-    expect(summary.cachedTokens).toBe(0);
-    expect(summary.outputTokens).toBe(0);
-    expect(summary.unknownUsages).toBe(0);
-  });
 });
 
 describe("admitTurn", () => {

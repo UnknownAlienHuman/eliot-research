@@ -102,6 +102,26 @@ discard their separate plain-select implementations. No model-name policy or add
 `src/native-model-catalog.ts` consumes the installed AI binding's `models()` metadata API, keeping discovery separate
 from inference and native metadata separate from per-job output bounds. No other donor architecture is adopted.
 
+The additional providers retain that same bounded discovery mechanism. Command Code, Kilo and Nous publish compatible
+JSON catalogues. OpenCode Go's ID-only list joins the provider's published `models.dev/api.json` data, as documented by
+OpenCode. [models.dev](https://github.com/anomalyco/models.dev) is MIT-licensed, copyright 2025 models.dev
+(`LICENSE` blob `9ef000844a07a1a97ff56b74e4cd9af12776a7a6`); no source code or static model table is vendored.
+Only that provider's live IDs, limits, capabilities and native API metadata are retained. The donor's
+`src/providers/registry/entries-{core,extended}.ts` and `src/types/opencode-go.ts` were inspected at the same pin for
+transport boundaries, but their model seeds, hardcoded wire maps, OAuth/CLI stores and protocol repair machinery are
+discarded. No donor registry, pricing data or second backend is imported.
+The directly installed maintained packages `@ai-sdk/openai@4.0.104`, `@ai-sdk/anthropic@4.0.91` and
+`@ai-sdk/google@4.0.107` (Apache-2.0) supply native protocol encoding and stream handling through the existing Gateway
+transport, loaded lazily for the selected enabled protocol. Their installed public declarations and generated SDK requests are the validation boundary; no manual SSE
+parser or private reasoning replay is added. Callers remain explicit catalogue Refresh and the existing chat/distill
+functions. Verification covers actual public catalogues, native SDK request routing, preserved migration data and the
+existing Material provider editor; catalogue availability alone does not establish provider credentials or quality.
+
+Workers AI usage reuses only the UTC window, bounded GraphQL query and Neurons-response parsing from legacy Eliot
+`7c034569b908d3b03a8b821b7c537477a24b10f7`, `apps/eliotr-core/src/ai-usage-http.ts:23–133` (MIT). It discards the legacy
+pricing DTO and contract package. The caller is explicit model Refresh, the reader is the Settings usage line, and
+unavailable analytics remains unknown. No admission ledger, token conversion or background polling is introduced.
+
 ### Agents SDK and examples
 
 Repository pin: [`cloudflare/agents@321814b6c13f72cff82161e7eb20312574ac9b7a`](https://github.com/cloudflare/agents/tree/321814b6c13f72cff82161e7eb20312574ac9b7a),

@@ -28,9 +28,9 @@ understanding requires an explicit request. Page loads, reconnects and saves nev
    functions: list, outline, read, find claims, search, get page and propose page.
 5. **Code controls risk.** Scope, permissions, byte ranges, citation resolution, quote verification, call limits and
    spend admission are deterministic code. Models decide prose and semantic classification, not authority.
-6. **Paid effects are explicit and bounded.** Every model/search job has a caller, an upper bound, recorded usage and a
-   visible failure state. When a budget is exhausted, the system pauses before the call rather than completing it and
-   reporting the bill later.
+6. **Paid effects are explicit and bounded.** Every model/search job has a caller, hard call/token/time bounds,
+   recorded usage and a visible failure state. Provider allowances and billing remain provider-owned. A failed or
+   rejected call stops the job; continuation requires another explicit owner action.
 7. **Cloudflare-native first; optional services behind gates.** Use one Worker, D1, R2, Durable Objects, Workflows and
    Workers AI directly. AI Search and Browser Run arrive only after their contour proves a need and a cost/quality win.
    Do not add KV, Queues, Vectorize, a graph database or another backend without a measured requirement.

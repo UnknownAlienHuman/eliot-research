@@ -103,11 +103,9 @@ Migrations own schema names:
 | `0005_model_gateway.sql` | nullable `settings.model_gateway_id`; existing-Gateway opt-in |
 | `0006_integrity.sql` | approved #420 guards for source/page ownership and terminal-turn/capture-identity immutability |
 | `0007_manual_understanding.sql` | explicit source understanding, removal of the automatic switch |
-| `0008_model_providers.sql` | editable provider configuration without credentials |
-| `0009_provider_usage.sql` | token bounds on the existing owning rows; historical currency data retained |
-| `0010_native_usage_mode.sql` | saved included-only or standard Cloudflare usage choice |
+| `0008_model_providers.sql` | provider configuration, owning-row token bounds and saved native usage choice; existing accounting data retained |
 
-Current `migrations/{000[12356789],0010}_*.sql` selects `0001`–`0003` and `0005`–`0010`;
+Current `migrations/000[1235678]_*.sql` selects `0001`–`0003` and `0005`–`0008`;
 future K4 `0004_agents.sql` remains excluded.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:
@@ -243,18 +241,13 @@ sentence. Its primary numeric value must occur in that statement, and every auth
 the structured primary result or context, all supported by the same exact quote. Missing numeric conditions reject
 the card instead of disappearing during formatting. Qualifiers and delta descriptions remain authored prose;
 semantic support is still a separate quality gate.
-Both existing calls request central mechanism and material qualitative claim statements when the paper states them.
-Guide text and a fact merely occurring inside a quoted block do not substitute for an owner-visible claim. When the
-unchanged 32-card bound binds, supported central explanatory/qualitative coverage takes priority over duplicate or
-secondary result rows; no per-kind quotas or paper-specific rules are introduced. Call two checks guide leads against
-the supplied original excerpts and can select a smaller supported subset to leave room for missing atomic facts.
-These request changes add no call, evidence binding, stored field or fallback claim and do not prove service quality.
-Store raw result/report in R2, compact verified claims in D1, and usage,
-cost and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
+Store raw result/report in R2, compact verified claims in D1, and usage
+and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
 Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.providerUsage` from AI SDK `usage.raw`
-as a JSON object or null. A typed structured-output failure retains `output: null`, known usage, generated text and
-finish reason in that same immutable private artifact; request bodies, headers and private protocol fields are excluded.
+as a JSON object or null. A typed structured-output failure retains `output: null` and known usage in the same immutable
+artifact. Its safe failure cause is exposed by the owning report; request bodies, headers and private protocol fields
+are excluded.
 It remains failed and unavailable for Save unless complete compatible output exists. The final report retains
 `usage.providerUsage` as an array of at most two such entries for
 saved call responses; older artifacts may omit the field. This is provider usage telemetry, not request bodies,
@@ -373,7 +366,7 @@ are the K2 boundary in MAP; K2 is not fully accepted or deployed.
 Broadcast the first nonempty rendered answer immediately and measure `firstTokenMs` from that text, not the first
 network event. Keep recorded token bounds, actual token counts and any historical/provider-reported currency values
 distinct; missing usage remains unknown. Private turn telemetry exposes only the allowlisted `inputTokens`, `outputTokens`, `totalTokens`,
-`cachedTokens`, `reasoningTokens` and `costUsd`, each null when missing or invalid. Eval may reuse only completed turns
+`cachedTokens` and `reasoningTokens`, each null when missing or invalid. Eval may reuse only completed turns
 with exact frozen source/revision sets; a non-reusable question stays manual and resume never dispatches a replacement.
 
 ## 9. AI Search projection — K5 only
@@ -426,6 +419,45 @@ the Cloudflare slug/path supplies routing, including the required `custom-` pref
 contain no credentials. Owner-only PUT `/api/models/providers` saves configuration; GET reads it. Neither discovers
 models or starts inference. The seeded providers preserve the existing Workers AI, OpenRouter and Command Code routes.
 
+Migration `0008_model_providers.sql` seeds Kilo, Nous Portal and OpenCode Go alongside the existing providers.
+The new provider rows start disabled. It adds settings and token bounds without rewriting existing models,
+usage or credentials; the earlier unmerged provider migrations are consolidated into this file.
+The current official endpoints were checked on 2026-10-29; the pinned donor's older Kilo URL is not reused.
+
+| Provider ID | Configured API root | Public model catalogue | Gateway prefix |
+|---|---|---|---|
+| `command-code` | `https://api.commandcode.ai/provider/v1` | API root + `/models` | `custom-command-code/v1` |
+| `kilo` | `https://ai-gateway.kilo.ai/api/v1` | API root + `/models` | `custom-kilo/v1` |
+| `nous` | `https://inference-api.nousresearch.com/v1` | API root + `/models` | `custom-nous/v1` |
+| `opencode-go` | `https://opencode.ai/inference/go` | `https://opencode.ai/inference/go/v1/models` | `custom-opencode-go` |
+
+The custom Gateway definitions retain each upstream fixed prefix: Command Code `/provider`, Kilo `/api`, Nous's
+origin and OpenCode Go `/inference/go`. Provider credentials remain in Gateway BYOK. Public catalogue reads do not
+prove authenticated inference. No private CLI login, OAuth store or provider key is imported from OpenCodex.
+
+Optional `modelsUrl` overrides the usual API-root + `/models` read. Optional `metadataUrl` reads published provider
+metadata during explicit Refresh only. OpenCode documents [models.dev](https://opencode.ai/v2/docs/models) as its
+model-data source: Go's live API remains the authority for IDs, while the `opencode-go` block of
+`https://models.dev/api.json` supplies its published limits, modalities, API package and endpoint. The join includes
+only live Go IDs and ignores prices, foreign provider blocks and extra metadata-only IDs. It contains no model-name
+table or family inference. Ordinary catalogue bounds remain 4 MiB and 2,000 rows; this optional metadata read has an
+8 MiB bound for the observed 5.94 MB feed, and only the selected provider's data enters the existing R2 snapshot.
+Unavailable metadata preserves the last good provider slice; missing limits or API metadata never authorize a call.
+
+Per-model `apiProtocol` and `apiBaseUrl` freeze the published API choice alongside normal routing metadata. Package
+metadata selects the maintained Chat Completions, Responses, Anthropic or Google SDK; absent metadata remains unknown.
+The endpoint must be HTTPS beneath the owner-approved provider API root, and is checked again before transport.
+The selected native SDK loads lazily and builds the request; receiver-bound `AI.fetch` forwards it through the configured custom Gateway route,
+stripping vendor credentials while keeping required protocol headers and streaming query parameters. Responses uses
+`store:false` without previous-response or conversation state. Calls retain their existing token, time, attempt and
+usage bounds. Editing either discovery URL invalidates old routing metadata until explicit Refresh succeeds.
+
+Provider references: [Command Code API](https://commandcode.ai/docs/provider),
+[Kilo Gateway API](https://kilo.ai/docs/gateway/api-reference), [Nous Portal](https://portal.nousresearch.com),
+[OpenCode Go](https://opencode.ai/v2/docs/console/go/) and its
+[inference APIs](https://opencode.ai/v2/docs/console/api/inference). Publication dates were not exposed; retrieval
+date is 2026-10-29. Their model lists and account access remain dynamic.
+
 **Catalogue and refresh.** R2 `catalog/models.json` is the model snapshot. GET `/api/models`, settings/model selection
 and paid admission read stored metadata only. The owner-only POST `/api/models/refresh` accepts
 an empty object and is the only provider discovery path. Refresh stores the timestamp and provider configuration in the
@@ -440,7 +472,7 @@ The installed Agents 0.30.1 native path preserves the method and headers; the Op
 2026-10-28. The read has one attempt, a 15-second timeout and a 64-KiB body bound. Unsupported or unavailable quota
 data remains null; no unit or reset date is invented. Stored quota values are tied to their provider route and Gateway
 ID, and GET only reads those stored values. A quota-read failure does not invalidate successfully refreshed models.
-Quota data is separate from Eliot's admission budget. The official endpoint is described in
+Quota data is an observation, separate from owning-row request bounds. The official endpoint is described in
 [OpenRouter's key-limit documentation](https://openrouter.ai/docs/api_reference/limits.md) and
 [OpenAPI schema](https://openrouter.ai/openapi.json), retrieved 2026-10-28; no publication date was exposed.
 
@@ -450,7 +482,14 @@ a paid-account spending cap ([pricing](https://developers.cloudflare.com/workers
 2026-10-20). Tokens, Neurons and provider credit balances are separate units. Eliot does not derive one from another or
 apply the Workers AI allocation to OpenRouter/Command Code.
 
-Migration `0010_native_usage_mode.sql` stores the owner choice in `settings.native_usage_mode`:
+Explicit catalogue Refresh also reads the current day's Neurons from Cloudflare GraphQL
+`aiInferenceAdaptiveGroups { sum { totalNeurons } }`, from 00:00 UTC to now. It uses public account setting
+`ELIOT_CF_ACCOUNT_ID` and a separate `ELIOT_CF_ANALYTICS_TOKEN` secret restricted to Account Analytics: Read.
+The bounded read is stored in the existing R2 snapshot; page loads and GETs use only that cached current-day value.
+A valid empty dataset is zero. Missing access, invalid data and stale-day data remain unavailable. The counter is an
+observation, not a token conversion or a guarantee that a Paid account stops at the free allocation.
+
+Migration `0008_model_providers.sql` stores the owner choice in `settings.native_usage_mode`:
 `included` (default) or `standard`. GET/PUT `/api/settings` exposes `nativeUsageMode`; saving the choice performs no
 inference, does not change the selected provider/models and applies to new admissions. `included` keeps native
 requests paused while an exact 10,000-Neuron daily cap cannot be verified/enforced for this connection. It is not a
@@ -463,6 +502,10 @@ native binding. Partial failure preserves that provider's last good metadata and
 Changing a provider's base URL or Gateway route invalidates old external metadata until an explicit refresh succeeds.
 Neither API nor HTML prices are required or parsed for new model selection/admission. Missing usable context/output
 metadata blocks dispatch. The UI filters do not run discovery or change selection.
+Catalogue and metadata URLs pass the existing public-URL guard, and redirects are rejected. If a public catalogue
+denies access with 401/403, an explicitly configured Gateway can read that same provider path using stored BYOK;
+credentials are never sent by the app or forwarded to a different origin. A refused authenticated read remains a
+provider failure and preserves its prior catalogue slice.
 The admitted external `ModelSpec` carries the provider configuration and Gateway ID from that same catalogue read;
 transport uses this frozen routing instead of reading changed settings after admission.
 Published `supported_parameters` may advertise temperature support; those requests use temperature 0 for source-faithful

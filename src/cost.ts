@@ -3,69 +3,8 @@ import { assertProviderAllowance } from "./model-quota";
 import type { ModelSpec } from "./models";
 import { modelTokenLimit } from "./models";
 
-// Native paid-effect admission: per-call token bounds plus provider allowance.
-//
-// Cloudflare native policy (platform facts checked 2026-10-28):
-// the free allowance is 10,000 neurons/day resetting at 00:00 UTC;
-// paid usage beyond the free allowance is billed per the official pricing
-// (updated 2026-10-20). The saved native mode selects included-only
-// (paused without a verified cap) or standard billing. This module performs NO
-// neuron<->token conversion: neuron accounting lives with the provider, and
-// unknown allowance is never treated as zero. Token bounds here are
-// request-shape limits only (usable context + output), enforced before
-// dispatch. Provider allowance is owned by src/model-quota.ts.
-//
-// Historical currency columns (chat_turn.estimated_cost_microusd and its
-// pricing snapshot, source_revision.distill_estimated_cost_microusd and its
-// pricing snapshot, and the monthly budget setting) are legacy records only.
-// This module neither reads nor writes them; recorded USD values stay exactly
-// as stored and are never converted, reset, or used for new estimates.
-
-export interface DayUsageSummary {
-  dayStart: number;
-  dayEnd: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  unknownUsages: number;
-}
-
-// Sum each known token count for jobs started in the current UTC day. Rows
-// missing input or output are also counted as unknownUsages, never as known
-// zero usage. A missing cached count does not hide known input/output counts.
-export async function usageSummary(env: Env): Promise<DayUsageSummary> {
-  const now = new Date();
-  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const dayEnd = dayStart + 24 * 60 * 60 * 1000;
-  interface UsageRow {
-    inputTokens: number | null;
-    cachedTokens: number | null;
-    outputTokens: number | null;
-    unknownUsages: number | null;
-  }
-  const chat = await env.DB.prepare(
-    "SELECT COALESCE(SUM(input_tokens), 0) AS inputTokens," +
-    " COALESCE(SUM(cached_tokens), 0) AS cachedTokens," +
-    " COALESCE(SUM(output_tokens), 0) AS outputTokens," +
-    " COALESCE(SUM(CASE WHEN input_tokens IS NULL OR output_tokens IS NULL THEN 1 ELSE 0 END), 0) AS unknownUsages" +
-    " FROM chat_turn WHERE created_at >= ? AND created_at < ?"
-  ).bind(dayStart, dayEnd).first<UsageRow>();
-  const distill = await env.DB.prepare(
-    "SELECT COALESCE(SUM(distill_input_tokens), 0) AS inputTokens," +
-    " COALESCE(SUM(distill_cached_tokens), 0) AS cachedTokens," +
-    " COALESCE(SUM(distill_output_tokens), 0) AS outputTokens," +
-    " COALESCE(SUM(CASE WHEN distill_input_tokens IS NULL OR distill_output_tokens IS NULL THEN 1 ELSE 0 END), 0) AS unknownUsages" +
-    " FROM source_revision WHERE distill_started_at >= ? AND distill_started_at < ?"
-  ).bind(dayStart, dayEnd).first<UsageRow>();
-  return {
-    dayStart,
-    dayEnd,
-    inputTokens: (chat?.inputTokens ?? 0) + (distill?.inputTokens ?? 0),
-    outputTokens: (chat?.outputTokens ?? 0) + (distill?.outputTokens ?? 0),
-    cachedTokens: (chat?.cachedTokens ?? 0) + (distill?.cachedTokens ?? 0),
-    unknownUsages: (chat?.unknownUsages ?? 0) + (distill?.unknownUsages ?? 0),
-  };
-}
+// Each explicit job records its token bound on its owning row before dispatch.
+// Historical stored accounting values are not rewritten.
 
 // Admit one chat turn: reserve the model's full context+output token bound on
 // the owning turn row. Provider allowance is checked before the reservation;

@@ -2,8 +2,8 @@ import { LibraryError } from "./library";
 import { discoverGatewayModels } from "./model-catalog";
 import { discoverNativeModels } from "./native-model-catalog";
 import { z } from "zod";
-import { readProviderQuotas } from "./model-quota";
-import type { ProviderQuota } from "./model-quota";
+import { readNativeUsage, readProviderQuotas } from "./model-quota";
+import type { NativeUsage, NativeUsageEnvironment, ProviderQuota } from "./model-quota";
 
 export const modelProviderSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
@@ -11,16 +11,25 @@ export const modelProviderSchema = z.object({
   gatewaySlug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).nullable(),
   gatewayPath: z.string().regex(/^(?:[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)?$/),
   baseUrl: z.string().trim().url().transform((value) => value.replace(/\/+$/, "")).nullable(),
+  modelsUrl: z.string().trim().url().optional(),
+  metadataUrl: z.string().trim().url().optional(),
   enabled: z.boolean(),
 }).strict().superRefine((provider, ctx) => {
   if (provider.type === "workers-ai") {
-    if (provider.id !== "workers-ai" || provider.baseUrl !== null || provider.gatewaySlug !== null || provider.gatewayPath !== "")
+    if (provider.id !== "workers-ai" || provider.baseUrl !== null || provider.gatewaySlug !== null || provider.gatewayPath !== "" || provider.modelsUrl !== undefined || provider.metadataUrl !== undefined)
       ctx.addIssue({ code: "custom", message: "Workers AI uses its native binding and no base URL." });
   } else {
     let url: URL | null = null;
     try { url = provider.baseUrl ? new URL(provider.baseUrl) : null; } catch { /* Input validation reports malformed URLs below. */ }
     if (!url || url.protocol !== "https:" || url.username || url.password || url.search || url.hash || provider.id === "workers-ai" || !provider.gatewaySlug)
       ctx.addIssue({ code: "custom", message: "Use a provider HTTPS base URL without credentials, query or fragment." });
+    for (const endpoint of [provider.modelsUrl, provider.metadataUrl]) {
+      if (endpoint === undefined) continue;
+      let parsed: URL | null = null;
+      try { parsed = new URL(endpoint); } catch { /* URL validation reports the malformed value. */ }
+      if (!parsed || parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash)
+        ctx.addIssue({ code: "custom", message: "Use an HTTPS catalogue URL without credentials, query or fragment." });
+    }
   }
 });
 export const modelProvidersSchema = z.array(modelProviderSchema).superRefine((providers, ctx) => {
@@ -28,6 +37,18 @@ export const modelProvidersSchema = z.array(modelProviderSchema).superRefine((pr
     ctx.addIssue({ code: "custom", message: "Each provider ID must be unique." });
 });
 export type ModelProvider = z.infer<typeof modelProviderSchema>;
+
+/** Published model endpoints may select a protocol beneath the owner-approved API root. */
+export function isProviderApiBase(provider: ModelProvider, apiBaseUrl: string): boolean {
+  if (!provider.baseUrl) return false;
+  try {
+    const root = new URL(provider.baseUrl), api = new URL(apiBaseUrl);
+    if (api.protocol !== "https:" || api.username || api.password || api.search || api.hash || api.origin !== root.origin) return false;
+    const prefix = root.pathname.replace(/\/+$/, ""), path = api.pathname.replace(/\/+$/, "");
+    if (path === prefix) return true;
+    return !path.includes("%") && path.startsWith(prefix + "/");
+  } catch { return false; }
+}
 
 export async function getModelProviders(env: Pick<Env, "DB">): Promise<ModelProvider[]> {
   const row = await env.DB.prepare("SELECT model_providers_json AS providers FROM settings WHERE id=1").first<{ providers: string }>();
@@ -55,6 +76,9 @@ export interface CatalogModel {
   structuredOutputs?: boolean;
   supportsTemperature?: boolean;
   optionalReasoning?: boolean;
+  apiProtocol?: "openai-chat" | "openai-responses" | "anthropic" | "google";
+  apiBaseUrl?: string;
+  mayTrainOnYourPrompts?: boolean;
   nativeReasoningEffort?: "low";
   checkedOn: string;
   enabled: boolean;
@@ -99,7 +123,7 @@ export async function getModelConnection(env: Pick<Env, "DB">) {
   return { gatewayId: row?.gatewayId && validGatewayId(row.gatewayId) ? row.gatewayId : null,
     provider: "ai-gateway" as const, alias: "default" as const };
 }
-type ModelEnvironment = Pick<Env, "DB" | "BUCKET"> & Partial<Pick<Env, "AI">>;
+type ModelEnvironment = Pick<Env, "DB" | "BUCKET"> & Partial<Pick<Env, "AI">> & NativeUsageEnvironment;
 interface StoredModelCatalog {
   updatedAt: string;
   warnings: string[];
@@ -107,6 +131,7 @@ interface StoredModelCatalog {
   providers?: ModelProvider[];
   quotas?: ProviderQuota[];
   quotaGatewayId?: string | null;
+  nativeUsage?: NativeUsage;
 }
 export interface ModelCatalogView {
   models: CatalogModel[];
@@ -114,6 +139,7 @@ export interface ModelCatalogView {
   providers: ModelProvider[];
   gatewayId: string | null;
   quotas: ProviderQuota[];
+  nativeUsage?: NativeUsage;
   snapshot: { updatedAt: string | null; refreshNeeded: boolean };
 }
 type StoredCatalogRead = { ok: true; snapshot: StoredModelCatalog | null } | { ok: false; snapshot: null };
@@ -139,6 +165,9 @@ function isCatalogModel(value: unknown): value is CatalogModel {
   if (value.supportsTemperature !== undefined && typeof value.supportsTemperature !== "boolean") return false;
   if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
   if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low") return false;
+  if (value.apiProtocol !== undefined && !["openai-chat", "openai-responses", "anthropic", "google"].includes(String(value.apiProtocol))) return false;
+  if (value.apiBaseUrl !== undefined && typeof value.apiBaseUrl !== "string") return false;
+  if (value.mayTrainOnYourPrompts !== undefined && typeof value.mayTrainOnYourPrompts !== "boolean") return false;
   return value.unavailableReason === undefined || typeof value.unavailableReason === "string";
 }
 function isStoredModelCatalog(value: unknown): value is StoredModelCatalog {
@@ -164,21 +193,31 @@ export function providerForRoute(providers: ModelProvider[], route: string): Mod
 }
 function sameProviderRoute(provider: ModelProvider, previous: ModelProvider | undefined): boolean {
   return previous !== undefined && previous.type === provider.type && previous.baseUrl === provider.baseUrl &&
-    previous.gatewaySlug === provider.gatewaySlug && previous.gatewayPath === provider.gatewayPath;
+    previous.gatewaySlug === provider.gatewaySlug && previous.gatewayPath === provider.gatewayPath &&
+    previous.modelsUrl === provider.modelsUrl && previous.metadataUrl === provider.metadataUrl;
 }
 function isProviderQuota(value: unknown): value is ProviderQuota {
   return isRecord(value) && typeof value.providerId === "string" &&
     [value.usage, value.limit].every((amount) => amount === null || (typeof amount === "number" && Number.isFinite(amount) && amount >= 0)) &&
-    (value.resetAt === null || typeof value.resetAt === "string") && (value.unit === null || value.unit === "USD") &&
+    (value.error === null || typeof value.error === "string");
+}
+function isNativeUsage(value: unknown): value is NativeUsage {
+  return isRecord(value) && value.allowanceNeurons === 10_000 &&
+    (value.neurons === null || (typeof value.neurons === "number" && Number.isFinite(value.neurons) && value.neurons >= 0)) &&
+    typeof value.dayStart === "string" && Number.isFinite(Date.parse(value.dayStart)) &&
+    typeof value.resetAt === "string" && Number.isFinite(Date.parse(value.resetAt)) &&
     (value.error === null || typeof value.error === "string");
 }
 function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string | null, providers: ModelProvider[]): CatalogModel[] {
   const models = new Map<string, CatalogModel>(MODELS.map((model) => [model.route, { ...model }]));
   for (const model of snapshot?.models ?? []) {
     const fallback = models.get(model.route);
-    const visible = { ...model };
-    for (const field of ["inputMicrousdPerMillion", "cachedMicrousdPerMillion", "outputMicrousdPerMillion"])
-      Reflect.deleteProperty(visible, field);
+    const visible: CatalogModel = { route: model.route, id: model.id, label: model.label, contextTokens: model.contextTokens,
+      maxOutputTokens: model.maxOutputTokens, checkedOn: model.checkedOn, enabled: model.enabled };
+    for (const field of ["outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "optionalReasoning",
+      "nativeReasoningEffort", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
+      if (model[field] !== undefined) Object.assign(visible, { [field]: model[field] });
+    }
     models.set(model.route, { ...visible, label: fallback?.label ?? model.label,
       maxOutputTokens: model.maxOutputTokens ?? fallback?.maxOutputTokens ?? null });
   }
@@ -205,7 +244,8 @@ export async function readModelCatalog(env: ModelEnvironment): Promise<ModelCata
     const prior = snapshot?.providers?.find((entry) => entry.id === provider.id);
     const quota = storedQuotas.find((entry) => entry.providerId === provider.id);
     return provider.enabled && snapshot?.quotaGatewayId === connection.gatewayId && sameProviderRoute(provider, prior) && quota
-      ? quota : { providerId: provider.id, usage: null, limit: null, resetAt: null, unit: null, error: "quota-unknown" };
+      ? { providerId: quota.providerId, usage: quota.usage, limit: quota.limit, error: quota.error }
+      : { providerId: provider.id, usage: null, limit: null, error: "quota-unknown" };
   });
   return {
     models: snapshotModels(stored.ok ? stored.snapshot : null, connection.gatewayId, providers),
@@ -213,6 +253,8 @@ export async function readModelCatalog(env: ModelEnvironment): Promise<ModelCata
     providers,
     gatewayId: connection.gatewayId,
     quotas,
+    ...(isNativeUsage(snapshot?.nativeUsage) && snapshot.nativeUsage.dayStart.slice(0, 10) === new Date().toISOString().slice(0, 10)
+      ? { nativeUsage: snapshot.nativeUsage } : {}),
     snapshot: { updatedAt: stored.ok ? stored.snapshot?.updatedAt ?? null : null,
       refreshNeeded: !stored.ok || stored.snapshot === null || warnings.length > 0 },
   };
@@ -228,10 +270,13 @@ export async function refreshModelCatalog(env: ModelEnvironment): Promise<ModelC
   const [providers, connection] = await Promise.all([getModelProviders(env), getModelConnection(env)]);
   const failedProviders = new Set<string>();
   const nativeEnabled = providers.some((provider) => provider.type === "workers-ai" && provider.enabled);
-  const [gateway, native, quotas] = await Promise.allSettled([
-    discoverGatewayModels(providers, (id, warning) => { failedProviders.add(id); warnings.push(warning); }),
+  const ai = env.AI as unknown as Pick<Fetcher, "fetch"> | undefined;
+  const gatewayAccess = connection.gatewayId && ai && typeof ai.fetch === "function" ? { id: connection.gatewayId, ai } : undefined;
+  const [gateway, native, quotas, nativeUsage] = await Promise.allSettled([
+    discoverGatewayModels(providers, (id, warning) => { failedProviders.add(id); warnings.push(warning); }, gatewayAccess),
     nativeEnabled ? env.AI ? discoverNativeModels(env.AI) : Promise.resolve(null) : Promise.resolve([]),
     readProviderQuotas(env, providers, connection),
+    readNativeUsage(env),
   ]);
   if (gateway.status === "rejected") {
     for (const provider of providers) if (provider.type === "openai-compatible" && provider.enabled) failedProviders.add(provider.id);
@@ -256,9 +301,10 @@ export async function refreshModelCatalog(env: ModelEnvironment): Promise<ModelC
     return failed ? prior ? [{ ...prior, enabled: provider.enabled }] : [] : [provider];
   });
   const quotaValues = quotas.status === "fulfilled" ? quotas.value : providers.map<ProviderQuota>((provider) =>
-    ({ providerId: provider.id, usage: null, limit: null, resetAt: null, unit: null, error: "quota-unavailable" }));
+    ({ providerId: provider.id, usage: null, limit: null, error: "quota-unavailable" }));
   const snapshot: StoredModelCatalog = { updatedAt: new Date().toISOString(), warnings, models: [...models.values()], providers: refreshedProviders,
-    quotas: quotaValues, quotaGatewayId: connection.gatewayId };
+    quotas: quotaValues, quotaGatewayId: connection.gatewayId,
+    ...(nativeUsage.status === "fulfilled" ? { nativeUsage: nativeUsage.value } : {}) };
   const serialized = JSON.stringify(snapshot);
   if (new TextEncoder().encode(serialized).byteLength > MAX_MODEL_CATALOG_BYTES)
     throw new LibraryError("unavailable", "The model catalogue exceeds its storage bound; the previous snapshot was kept.", 503);
@@ -281,5 +327,8 @@ export async function requireAvailableModel(env: ModelEnvironment, route: string
   if (!route.startsWith("gateway:")) return model;
   const provider = providerForRoute(catalog.providers, route);
   if (!provider || !provider.enabled || !catalog.gatewayId) throw new LibraryError("unavailable", "The provider connection is unavailable.", 503);
+  if ((provider.metadataUrl && (!model.apiProtocol || !model.apiBaseUrl)) ||
+    (model.apiBaseUrl !== undefined && !isProviderApiBase(provider, model.apiBaseUrl)))
+    throw new LibraryError("unavailable", "Refresh the provider's published model API metadata before starting a request.", 503);
   return { ...model, routing: { provider: { ...provider }, gatewayId: catalog.gatewayId } };
 }

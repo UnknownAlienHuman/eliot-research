@@ -54,7 +54,7 @@ const snapshot: ModelSpec = Object.freeze({
 
 function fixture(storedRoute: string, document?: { text: string; blocks: Block[] }) {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0009_provider_usage.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
   const text = document?.text ?? "The method uses normalization. Its source passage is retained.";
   const blocks = document?.blocks ?? [{ id: 1, type: "paragraph", start: 0, end: new TextEncoder().encode(text).byteLength, heading: null }];
@@ -100,7 +100,7 @@ const otherQueuedSourceId = "c3fd7da4-b662-4aa5-a6fc-9c84b6299940";
 
 function callerFixture() {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0009_provider_usage.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
 
   const insertSource = (id: string, title: string, revision: string, state: "none" | "queued", createdAt: number) => {
@@ -366,12 +366,12 @@ describe("DistillWorkflow admitted model snapshot", () => {
 
   it("retains typed structured-output failure telemetry without claiming the stored second-step cause", async () => {
     // Does not reproduce eval/out/openrouter-20261028/resnet-trace (generic External failure, distill-call2.json 404, unrecoverable).
-    // It covers the proven pinned ai@7.0.152 shape in isolation: NoObjectGeneratedError carries usage/text/finishReason.
+    // It covers the proven pinned ai@7.0.152 shape in isolation: NoObjectGeneratedError carries usage/finishReason.
     const f = fixture(snapshot.route);
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
     const rawProviderUsage = { prompt_tokens: 1200, completion_tokens: 34, total_tokens: 1234 };
     const sdkUsage = { inputTokens: 1200, inputTokenDetails: { noCacheTokens: 1200, cacheReadTokens: 0, cacheWriteTokens: undefined }, outputTokens: 34, outputTokenDetails: { textTokens: 34, reasoningTokens: undefined }, totalTokens: 1234, raw: rawProviderUsage };
-    const sdkError = new NoObjectGeneratedError({ message: "No object generated: response did not match schema.", text: '{"guide":', response: { id: "resp-typed-1", timestamp: new Date(), modelId: "fixture/admitted" }, usage: sdkUsage, finishReason: "stop" });
+    const sdkError = new NoObjectGeneratedError({ message: "No object generated: response did not match schema.", text: '{"guide":', response: { id: "resp-typed-1", timestamp: new Date(), modelId: "fixture/admitted" }, usage: sdkUsage, finishReason: "length" });
     vi.mocked(generateText).mockRejectedValueOnce(sdkError);
     try {
       const steps = await run(f);
@@ -380,11 +380,10 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
       const rawBody = f.bodies.get(prefix + "distill-call1.json");
       if (!rawBody) throw new Error("Typed failure did not retain its per-call artifact.");
-      const stored = JSON.parse(rawBody) as { output: null; usage: { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage: unknown }; error: { kind: string; finishReason: string | null; text: string | null } };
+      const stored = JSON.parse(rawBody) as { output: null; usage: { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage: unknown } };
       expect(stored.output).toBeNull();
-      expect(stored.error.kind).toBe("invalid-structured-output");
-      expect(stored.error.finishReason).toBe("stop");
-      expect(stored.error.text).toBe('{"guide":');
+      expect(stored).not.toHaveProperty("error");
+      expect(JSON.stringify(stored)).not.toContain('{"guide":');
       expect(stored.usage.inputTokens).toBe(1200);
       expect(stored.usage.cachedTokens).toBe(0);
       expect(stored.usage.outputTokens).toBe(34);
@@ -394,6 +393,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       if (!reportBody) throw new Error("Missing distill.json for typed failure.");
       const report = JSON.parse(reportBody) as DistillReport & { state: string };
       expect(report.state).toBe("failed");
+      expect(report.error).toBe("model reached output bound before complete output");
       expect(report.usage.calls).toBe(1);
       expect(report.usage.inputTokens).toBe(1200);
       expect(report.usage.outputTokens).toBe(34);
@@ -420,7 +420,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(report.usage.cachedTokens).toBe(0);
       expect(report.usage.outputTokens).toBe(0);
       expect(report.usage.tokenLimit).toBeNull();
-      expect(report.usage.estimatedCostMicrousd).toBe(322766);
+      expect(report.usage).not.toHaveProperty("estimatedCostMicrousd");
       const row = f.db.prepare("SELECT distill_input_tokens AS inputTokens, distill_cached_tokens AS cachedTokens, distill_output_tokens AS outputTokens, distill_token_limit AS tokenLimit, distill_estimated_cost_microusd AS cost FROM source_revision WHERE id=?").get(revisionId) as { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; cost: number | null };
       expect(row.inputTokens).toBe(0);
       expect(row.cachedTokens).toBe(0);

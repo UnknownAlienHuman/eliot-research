@@ -67,7 +67,6 @@ export interface ProviderUsage {
   totalTokens: number | null;
   cachedTokens: number | null;
   reasoningTokens: number | null;
-  costUsd: number | null;
 }
 
 /** Advisory UTF-16 character ranges in the answer, never source byte ranges. */
@@ -97,8 +96,6 @@ export interface TurnView {
   outputTokens: number | null;
   providerUsage?: ProviderUsage | null;
   tokenLimit: number | null;
-  /** Historical recorded estimate only; new jobs do not calculate currency. */
-  estimatedCostMicrousd?: number | null;
   firstTokenMs: number | null;
   totalMs: number | null;
   error: string | null;

@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { discoverGatewayModels } from "./model-catalog";
 import { getModelProviders, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel } from "./models";
 import type { ModelProvider } from "./models";
+import { nativeModel } from "./native-model-catalog";
+import { resolveModelTransport } from "./model-transport";
+import type { ModelSpec } from "./models";
+import { generateText, streamText } from "ai";
 
 const CC = "https://api.commandcode.ai/provider/v1/models";
 const OR = "https://openrouter.ai/api/v1/models";
@@ -327,6 +331,177 @@ describe("provider model catalogue discovery", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(String(fetcher.mock.calls[0] && fetcher.mock.calls[0][0])).toBe(OR);
   });
+  // Verified live shape 2026-10-29: Opencode Go returns minimal public OpenAI rows.
+  it("keeps verified minimal OpenAI rows selectable with unknown bounds until admission", async () => {
+    const goBase = "https://opencode.ai/zen/go/v1";
+    const providers: ModelProvider[] = [
+      { id: "opencode-go", type: "openai-compatible", gatewaySlug: "custom-opencode-go", gatewayPath: "v1", baseUrl: goBase, enabled: true },
+    ];
+    const rows = [
+      { id: "hy3", object: "model", created: 1793240171, owned_by: "opencode" },
+      { id: "muse-spark-1.3-contributor", object: "model", created: 1793240171, owned_by: "opencode" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === goBase + "/models") return Response.json({ object: "list", data: rows });
+      throw new Error("Unexpected metadata endpoint");
+    }));
+    const models = await discoverGatewayModels(providers);
+    expect(models).toEqual([
+      expect.objectContaining({ route: "gateway:opencode-go/hy3", id: "hy3", label: "hy3", contextTokens: null, maxOutputTokens: null, enabled: true }),
+      expect.objectContaining({ route: "gateway:opencode-go/muse-spark-1.3-contributor", contextTokens: null, enabled: true }),
+    ]);
+    const bucket = fakeBucket();
+    const env = fixtureEnv(bucket.binding, { providers });
+    await refreshModelCatalog(env);
+    await expect(requireAvailableModel(env, "gateway:opencode-go/hy3")).rejects.toMatchObject({ code: "unavailable", status: 503 });
+  });
+});
+
+describe("go provider metadata catalogue", () => {
+  const GO_BASE = "https://opencode.ai/inference/go";
+  const GO_MODELS = "https://opencode.ai/inference/go/v1/models";
+  const GO_FEED = "https://models.dev/api.json";
+  function goProviders(): ModelProvider[] {
+    return [{ id: "opencode-go", type: "openai-compatible", gatewaySlug: "custom-opencode-go", gatewayPath: "v1", baseUrl: GO_BASE, modelsUrl: GO_MODELS, metadataUrl: GO_FEED, enabled: true }];
+  }
+  function liveRows(): unknown[] {
+    return [
+      { id: "hy3", object: "model", created: 1793240171, owned_by: "opencode" },
+      { id: "muse-spark-1.3-contributor", object: "model", created: 1793240171, owned_by: "opencode" },
+      { id: "claude-haiku-5-5", object: "model", created: 1793240171, owned_by: "opencode" },
+      { id: "brand-new/live-model", object: "model", created: 1793240171, owned_by: "opencode" },
+    ];
+  }
+  function feedDoc(): unknown {
+    return {
+      "opencode-go": {
+        npm: "@ai-sdk/openai-compatible",
+        api: "https://opencode.ai/inference/go/openai/v1",
+        models: {
+          hy3: { limit: { context: 256000, input: 192000, output: 128000 }, modalities: { input: ["text"], output: ["text"] }, temperature: true, structured_output: true },
+          "muse-spark-1.3-contributor": { limit: { context: 1048576, output: 65536 }, modalities: { input: ["text", "image"], output: ["text"] }, temperature: true, provider: { npm: "@ai-sdk/openai", api: "https://opencode.ai/inference/go/openai/v1" } },
+          "claude-haiku-5-5": { limit: { context: 1000000, output: 128000 }, modalities: { input: ["text", "image", "pdf"], output: ["text"] }, temperature: false, structured_output: true, provider: { npm: "@ai-sdk/anthropic", api: "https://opencode.ai/inference/go/anthropic/v1" } },
+          "ghost-only/meta-model": { limit: { context: 1000, output: 100 }, modalities: { input: ["text"], output: ["text"] }, temperature: true },
+        },
+      },
+      kilo: { npm: "@ai-sdk/openai-compatible", api: "https://ai-gateway.kilo.ai/api/v1", models: {} },
+    };
+  }
+  function stubFeed(rows: unknown[], doc: unknown) {
+    return vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === GO_MODELS) return Response.json({ object: "list", data: rows });
+      if (url === GO_FEED) return Response.json(doc);
+      throw new Error("Unexpected metadata endpoint");
+    });
+  }
+
+  it("joins published bounds, wire and api base for live rows only", async () => {
+    vi.stubGlobal("fetch", stubFeed(liveRows(), feedDoc()));
+    const warnings: string[] = [];
+    const models = await discoverGatewayModels(goProviders(), (pid, message) => { warnings.push(message); void pid; });
+    expect(models).toHaveLength(4);
+    const byId = new Map(models.map((model) => [model.id, model]));
+    expect(byId.get("hy3")).toMatchObject({ contextTokens: 192000, maxOutputTokens: 128000, apiProtocol: "openai-chat", apiBaseUrl: "https://opencode.ai/inference/go/openai/v1", supportsTemperature: true, responseFormat: true, structuredOutputs: true, enabled: true });
+    expect(byId.get("muse-spark-1.3-contributor")).toMatchObject({ contextTokens: 1048576, maxOutputTokens: 65536, apiProtocol: "openai-responses", apiBaseUrl: "https://opencode.ai/inference/go/openai/v1", enabled: true });
+    expect(byId.get("claude-haiku-5-5")).toMatchObject({ contextTokens: 1000000, maxOutputTokens: 128000, apiProtocol: "anthropic", apiBaseUrl: "https://opencode.ai/inference/go/anthropic/v1", enabled: true });
+    expect(byId.get("claude-haiku-5-5")).not.toHaveProperty("supportsTemperature");
+    expect(byId.get("brand-new/live-model")).toMatchObject({ contextTokens: null, maxOutputTokens: null, enabled: true });
+    expect(byId.get("brand-new/live-model")).not.toHaveProperty("apiProtocol");
+    expect(byId.get("brand-new/live-model")).not.toHaveProperty("apiBaseUrl");
+    expect(models.some((model) => model.id === "ghost-only/meta-model")).toBe(false);
+    expect(warnings).toEqual([]);
+  });
+
+
+
+
+  it("admits only same-origin descendant api bases before dispatch", async () => {
+    const providers = goProviders();
+    const stored = {
+      updatedAt: new Date().toISOString(),
+      warnings: [],
+      providers,
+      models: [
+        { route: "gateway:opencode-go/hy3", id: "hy3", label: "hy3", contextTokens: 192000, maxOutputTokens: 128000, checkedOn: "2026-10-29", enabled: true, apiProtocol: "openai-chat", apiBaseUrl: "https://opencode.ai/inference/go/openai/v1" },
+        { route: "gateway:opencode-go/sibling", id: "sibling", label: "sibling", contextTokens: 192000, maxOutputTokens: 128000, checkedOn: "2026-10-29", enabled: true, apiProtocol: "openai-chat", apiBaseUrl: "https://opencode.ai/inference/go-other/openai/v1" },
+        { route: "gateway:opencode-go/foreign", id: "foreign", label: "foreign", contextTokens: 192000, maxOutputTokens: 128000, checkedOn: "2026-10-29", enabled: true, apiProtocol: "openai-chat", apiBaseUrl: "https://evil.example.com/v1" },
+      ],
+    };
+    const bucket = fakeBucket(stored);
+    const env = fixtureEnv(bucket.binding, { providers });
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("admission must not discover"); }));
+    await expect(requireAvailableModel(env, "gateway:opencode-go/hy3")).resolves.toMatchObject({ route: "gateway:opencode-go/hy3" });
+    await expect(requireAvailableModel(env, "gateway:opencode-go/sibling")).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    await expect(requireAvailableModel(env, "gateway:opencode-go/foreign")).rejects.toMatchObject({ code: "unavailable", status: 503 });
+  });
+});
+
+describe("native contradictory catalogue entries", () => {
+  it("does not choose one of contradictory property entries", () => {
+    type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
+    const row = (properties: unknown[]): NativeRow => ({ id: "catalogue-uuid", name: "@cf/vendor/new-chat-model",
+      task: { name: "Text Generation" }, properties } as unknown as NativeRow);
+    expect(nativeModel(row([
+      { property_id: "context_window", value: "1048576" },
+      { property_id: "context_window", value: "128000" },
+    ]), "2026-10-27")?.contextTokens).toBeNull();
+  });
+});
+
+describe("frozen gateway protocol transports", () => {
+  const GO_PROVIDER = { id: "opencode-go", type: "openai-compatible", gatewaySlug: "custom-opencode-go", gatewayPath: "", baseUrl: "https://opencode.ai/inference/go", enabled: true };
+  function goModel(nativeId: string, apiProtocol: NonNullable<ModelSpec["apiProtocol"]>, apiBaseUrl: string): ModelSpec {
+    return { contextTokens: 1048576, maxOutputTokens: 8192, outputReserveTokens: 8192, checkedOn: "2026-10-26", enabled: true,
+      route: "gateway:opencode-go/" + nativeId, id: nativeId, label: nativeId, apiProtocol, apiBaseUrl,
+      routing: { provider: { ...GO_PROVIDER }, gatewayId: "test-gw" } } as unknown as ModelSpec;
+  }
+  function stubGateway() {
+    const fetchStub = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({ error: { message: "stubbed" } }), { status: 400, headers: { "Content-Type": "application/json" } }));
+    return { fetch: fetchStub, binding: { fetch: fetchStub } as unknown as Env["AI"] };
+  }
+  function testDb() {
+    const prepared: string[] = [];
+    const DB = { prepare(sql: string) { prepared.push(sql); return { first: async () => ({ gatewayId: "test-gw" }) }; } } as unknown as Env["DB"];
+    return { DB, prepared };
+  }
+  const cases = [
+    { protocol: "openai-chat", ownerBase: "https://opencode.ai/inference/go/openai/v1", suffix: "/openai/v1/chat/completions" },
+    { protocol: "openai-responses", ownerBase: "https://opencode.ai/inference/go/openai/v1", suffix: "/openai/v1/responses" },
+    { protocol: "anthropic", ownerBase: "https://opencode.ai/inference/go/anthropic/v1", suffix: "/anthropic/v1/messages" },
+    { protocol: "google", ownerBase: "https://opencode.ai/inference/go/google/v1beta", suffix: "/google/v1beta/models/" },
+  ] as const;
+  it.each(cases)("routes $protocol onto the frozen custom Gateway path without credentials", async ({ protocol, ownerBase, suffix }) => {
+    const { fetch: fetchStub, binding } = stubGateway();
+    const { DB, prepared } = testDb();
+    const nativeId = "probe-" + protocol;
+    const languageModel = await resolveModelTransport({ AI: binding, DB }, goModel(nativeId, protocol, ownerBase), "sess-" + protocol);
+    const controller = new AbortController();
+    if (protocol === "google") {
+      try { await (await streamText({ model: languageModel, prompt: "hi", maxRetries: 0, abortSignal: controller.signal })).text; } catch { /* stubbed 400 surfaces here */ }
+    } else {
+      await expect(generateText({ model: languageModel, prompt: "hi", maxRetries: 0, abortSignal: controller.signal })).rejects.toThrow();
+    }
+    expect(fetchStub).toHaveBeenCalledTimes(1);
+    const call = fetchStub.mock.calls[0];
+    expect(call).toBeDefined();
+    if (call === undefined) throw new Error("expected Gateway call");
+    const url = String(call[0]);
+    const init = call[1] as { method?: unknown; headers?: Record<string, string>; body?: unknown; signal?: unknown };
+    expect(url.startsWith("https://workers-binding.ai/ai-gateway/gateways/test-gw/custom-opencode-go" + suffix)).toBe(true);
+    expect(init.method).toBe("POST");
+    expect(init.signal).toBe(controller.signal);
+    expect(init.headers).toMatchObject({ "Content-Type": "application/json", "x-session-affinity": "sess-" + protocol, "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" });
+    expect(JSON.stringify({ url, headers: init.headers }).toLowerCase()).not.toMatch(/authorization|bearer|x-api-key|x-goog-api-key|sk-/);
+    expect(url).not.toMatch(/[?&](key|apikey|api_key|x-goog-api-key)=/i);
+    const sent = JSON.parse(String(init.body)) as { model?: unknown; store?: unknown; previous_response_id?: unknown };
+    if (protocol === "google") { expect(url).toContain(nativeId); }
+    else { expect(sent.model).toBe(nativeId); }
+    if (protocol === "openai-responses") { expect(sent.store).toBe(false); expect(sent.previous_response_id).toBeUndefined(); }
+    if (protocol === "anthropic") { expect(init.headers?.["anthropic-version"]).toBe("2023-06-01"); }
+    if (protocol === "google") { expect(url).toContain(":streamGenerateContent"); expect(url).toContain("alt=sse"); }
+    expect(prepared).toEqual([]);
+  });
 });
 
 describe("provider configuration loader", () => {
@@ -451,6 +626,8 @@ describe("stored catalogue with provider snapshot", () => {
     { field: "baseUrl", value: "https://api.commandcode.ai/provider/v2" },
     { field: "gatewaySlug", value: "renamed-command-code" },
     { field: "gatewayPath", value: "v2" },
+    { field: "modelsUrl", value: "https://api.commandcode.ai/provider/v2/models" },
+    { field: "metadataUrl", value: "https://models.dev/api.json" },
   ])("invalidates stored models when the same provider id changes $field until explicit refresh", async ({ field, value }) => {
     const bucket = fakeBucket();
     const env = fixtureEnv(bucket.binding);

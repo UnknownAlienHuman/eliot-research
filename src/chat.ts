@@ -13,11 +13,6 @@ import { LibraryError } from "./library";
 import { readText } from "./read";
 import type { RunTurnInput, TurnView } from "./shared/api";
 
-function normalizeStoredTurn(value: TurnView & { tokenLimit?: number | null }): TurnView {
-  if (value.tokenLimit === undefined) value.tokenLimit = null;
-  return value as TurnView;
-}
-
 interface ChatState { active: string | null; queued: RunTurnInput | null; stopRequested: boolean }
 const PARTIAL_HISTORY_NOTICE = "An earlier assistant answer was partial. Its unfinished text and omissions are not conclusions; ground this answer in the current frozen evidence.";
 function sameTurnRequest(a: RunTurnInput, b: RunTurnInput): boolean {
@@ -55,8 +50,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
   private readTurn(id: string): TurnView | undefined {
     const row = this.sql<{ payload: string }>`SELECT payload FROM turns WHERE id=${id}`[0];
     if (!row) return undefined;
-    const parsed = JSON.parse(row.payload) as TurnView & { tokenLimit?: number | null };
-    return normalizeStoredTurn(parsed);
+    const parsed = JSON.parse(row.payload) as TurnView & { tokenLimit?: unknown };
+    if (parsed.tokenLimit === undefined) parsed.tokenLimit = null;
+    return parsed as TurnView;
   }
   private writeTurn(turn: TurnView) {
     void this.sql`INSERT INTO turns(id,payload,created_at) VALUES(${turn.turnId},${JSON.stringify(turn)},${Date.now()})
@@ -70,7 +66,11 @@ export class ChatAgent extends Agent<Env, ChatState> {
   async getTurns(projectId: string): Promise<TurnView[]> {
     await this.ensureProject(projectId);
     return this.sql<{ payload: string }>`SELECT payload FROM turns ORDER BY created_at DESC,id DESC LIMIT 50`
-      .reverse().map((row) => normalizeStoredTurn(JSON.parse(row.payload) as TurnView));
+      .reverse().map((row) => {
+        const parsed = JSON.parse(row.payload) as TurnView & { tokenLimit?: unknown };
+        if (parsed.tokenLimit === undefined) parsed.tokenLimit = null;
+        return parsed as TurnView;
+      });
   }
   async getSnapshot(projectId: string) {
     return { turns: await this.getTurns(projectId), queued: this.state.queued ? { turnId: this.state.queued.turnId, question: this.state.queued.question } : null };
@@ -201,7 +201,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       if (controller.signal.aborted) throw new Error(this.state.stopRequested && !timedOut ? "Stopped before dispatch." : "Time bound exceeded before dispatch.");
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
-        maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: controller.signal,
+        maxOutputTokens: modelOutputLimit(model), maxRetries: 0, ...(selectedModel?.supportsTemperature ? { temperature: 0 } : {}), abortSignal: controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
       let lastWrite = 0;
@@ -282,7 +282,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       delete turn.warnings;
     }
     if (usage) {
-      turn.providerUsage = reportedProviderUsage(usage, selectedModel);
+      turn.providerUsage = reportedProviderUsage(usage);
       turn.inputTokens = usage.inputTokens ?? null; turn.cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null; turn.outputTokens = usage.outputTokens ?? null;
     }
     // Undispatched means no model call happened: actual counts are known zero and

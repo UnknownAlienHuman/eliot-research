@@ -232,7 +232,6 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.citations).toHaveLength(1);
       expect(fetchCalls).toBe(1);
       expect(turn.tokenLimit).toBe(TOKEN_BOUND);
-      expect(turn.estimatedCostMicrousd).toBeUndefined();
       expect(turn.inputTokens).toBe(20);
       expect(turn.outputTokens).toBe(18);
       expect(vi.mocked(assertProviderAllowance)).not.toHaveBeenCalled();
@@ -340,7 +339,6 @@ describe("chat-stream K2 wire regression", () => {
       expect(r1.answer).toBe("Held [S1:1] ");
       expect(r1.error).toBe("External model request failed. Check the Gateway connection and provider status; no retry was started.");
       expect(r1.tokenLimit).toBe(TOKEN_BOUND);
-      expect(r1.estimatedCostMicrousd).toBeUndefined();
       expect(r1.inputTokens).toBeNull();
       expect(r1.cachedTokens).toBeNull();
       expect(r1.outputTokens).toBeNull();
@@ -453,7 +451,6 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.state).toBe("cancelled");
       expect(turn.error).toBe("Stopped. A new Send starts a new turn.");
       expect(turn.tokenLimit).toBe(TOKEN_BOUND);
-      expect(turn.estimatedCostMicrousd).toBeUndefined();
       expect(turn.inputTokens).toBeNull();
     } finally { h.db.close(); }
   });
@@ -483,7 +480,6 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.error ?? "").toContain("time bound");
       expect(turn.error ?? "").not.toContain("Stopped.");
       expect(turn.tokenLimit).toBe(TOKEN_BOUND);
-      expect(turn.estimatedCostMicrousd).toBeUndefined();
       expect(turn.inputTokens).toBeNull();
     } finally { h.db.close(); vi.useRealTimers(); }
   });
@@ -530,7 +526,6 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.error).toBe("Stopped. A new Send starts a new turn.");
       expect(turn.error ?? "").not.toContain("time bound");
       expect(turn.tokenLimit).toBe(TOKEN_BOUND);
-      expect(turn.estimatedCostMicrousd).toBeUndefined();
       expect(turn.inputTokens).toBeNull();
     } finally { h.db.close(); vi.useRealTimers(); }
   });
@@ -544,7 +539,6 @@ describe("chat-stream K2 wire regression", () => {
       const first = requireTurn(await h.agent.submitTurn(input, true));
       expect(first.state).toBe("completed");
       expect(first.tokenLimit).toBe(TOKEN_BOUND);
-      expect(first.estimatedCostMicrousd).toBeUndefined();
       expect(fetchCalls).toBe(1);
       nextSSE = sse([chunk({ content: "Second should not dispatch [S1:1]" }, "stop", { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
       const second = requireTurn(await h.agent.submitTurn(input, true));
@@ -592,7 +586,6 @@ describe("chat-stream K2 wire regression", () => {
       expect(r1.inputTokens).toBe(0);
       expect(r1.cachedTokens).toBe(0);
       expect(r1.outputTokens).toBe(0);
-      expect(r1.estimatedCostMicrousd).toBeUndefined();
       expect(fetchCalls).toBe(0);
       const row = h.d1.prepare("SELECT token_limit AS tokenLimit FROM chat_turn WHERE chat_id=? AND turn_id=?").get(chatId, t1) as unknown as { tokenLimit: number };
       expect(row.tokenLimit).toBe(0);
@@ -610,7 +603,6 @@ describe("chat-stream K2 wire regression", () => {
       expect(r1.inputTokens).toBe(0);
       expect(r1.cachedTokens).toBe(0);
       expect(r1.outputTokens).toBe(0);
-      expect(r1.estimatedCostMicrousd).toBeUndefined();
       expect(r1.error ?? "").toMatch(/allowance|budget|configured/i);
       expect(fetchCalls).toBe(0);
       expect(vi.mocked(assertProviderAllowance)).not.toHaveBeenCalled();

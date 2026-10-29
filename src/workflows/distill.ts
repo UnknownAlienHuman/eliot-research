@@ -33,8 +33,8 @@ function extractionSchema(labels: [string, ...string[]]) {
     authors: z.string().max(1000), published: z.string().max(100).nullable() });
 }
 type Extraction = z.infer<ReturnType<typeof extractionSchema>>;
-interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; estimatedCostMicrousd?: number | null; providerUsage?: JSONObject | null }
-interface Raw<T> { output: T | null; usage: Usage; validation?: { dropped: { index: number; reason: string }[] }; error?: { kind: "invalid-structured-output"; finishReason: string | null; text: string | null } }
+interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage?: JSONObject | null }
+interface Raw<T> { output: T | null; usage: Usage; validation?: { dropped: { index: number; reason: string }[] } }
 interface Evidence { label: string; block: number; quote: string }
 interface GuideItem { labels: string[]; text: string }
 interface Verified { claims: VerifiedClaim[]; guide: GuideItem[]; evidence: Evidence[]; questions: string[]; dropped: { index: number; reason: string }[]; clearedNumbers: number }
@@ -85,12 +85,12 @@ function toStoredUsage(usage: GeneratedUsage | null | undefined, model: ModelSpe
   const raw = usage?.raw;
   return { inputTokens, cachedTokens, outputTokens, tokenLimit: modelTokenLimit(model), providerUsage: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as JSONObject) : null };
 }
-function structuredFailureDetail(error: unknown, result: { text: string; finishReason: string; totalUsage: GeneratedUsage } | undefined): { usage: GeneratedUsage | undefined; finishReason: string | null; text: string | null } | null {
+function structuredFailureDetail(error: unknown, result: { finishReason: string; totalUsage: GeneratedUsage } | undefined): { usage: GeneratedUsage | undefined; finishReason: string | null } | null {
   if (NoObjectGeneratedError.isInstance(error)) {
-    return { usage: error.usage, finishReason: error.finishReason ?? null, text: error.text ?? null };
+    return { usage: error.usage, finishReason: error.finishReason ?? null };
   }
   if (result && NoOutputGeneratedError.isInstance(error)) {
-    return { usage: result.totalUsage, finishReason: result.finishReason, text: result.text };
+    return { usage: result.totalUsage, finishReason: result.finishReason };
   }
   return null;
 }
@@ -125,7 +125,7 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   try {
     result = await generateText({ model: transport,
       instructions: modelInstructions, messages: [{ role: "user", content }, { role: "user", content: `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }], output: Output.object({ schema }),
-      maxOutputTokens: modelOutputLimit(model), maxRetries: 0, abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
+      maxOutputTokens: modelOutputLimit(model), maxRetries: 0, ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
     const output = result.output as T;
     const usage = result.totalUsage;
     const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
@@ -134,8 +134,12 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   } catch (error) {
     const detail = structuredFailureDetail(error, result);
     if (detail) {
-      const failed = { output: null, usage: toStoredUsage(detail.usage, model), error: { kind: "invalid-structured-output" as const, finishReason: detail.finishReason, text: detail.text } };
+      const failed = { output: null, usage: toStoredUsage(detail.usage, model) };
       try { await put(env, revisionId, artifactName, failed); } catch { /* Preserve the failure without repeating inference if storage is unavailable. */ }
+      if (detail.finishReason === "length") {
+        throw new LibraryError("unavailable", "model reached output bound before complete output", 503);
+      }
+      throw new LibraryError("unavailable", "model returned incomplete or invalid structured output", 503);
     }
     // Provider errors can contain credentials; retain only the fixed safe projection.
     throw new LibraryError("unavailable", modelFailure(error, model), 503);
@@ -337,8 +341,8 @@ async function commitSynthesis(env: Env, revisionId: string): Promise<Projection
   return { kept: prepared.kept, guideSentences: prepared.guideSentences, dropped: prepared.dropped, clearedNumbers: prepared.clearedNumbers };
 }
 async function finish(env: Env, revisionId: string, error?: unknown, projection?: Projection) {
-  const row = await env.DB.prepare("SELECT distill_state,distill_started_at,distill_calls,guide_summary,distill_token_limit,distill_estimated_cost_microusd FROM source_revision WHERE id=?")
-    .bind(revisionId).first<{ distill_state: string; distill_started_at: number; distill_calls: number; guide_summary: string | null; distill_token_limit: number | null; distill_estimated_cost_microusd: number | null }>();
+  const row = await env.DB.prepare("SELECT distill_state,distill_started_at,distill_calls,guide_summary,distill_token_limit FROM source_revision WHERE id=?")
+    .bind(revisionId).first<{ distill_state: string; distill_started_at: number; distill_calls: number; guide_summary: string | null; distill_token_limit: number | null }>();
   if (!row || row.distill_state !== "running") return;
   const saved = await env.BUCKET.get(key(revisionId, "distill.json"));
   let report = saved ? await saved.json<FinalReport>() : null;
@@ -351,9 +355,6 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
     ? measured.reduce((n, item) => n + (item.usage[field] ?? 0), 0) : null;
   const firstBound = measured.length > 0 ? measured[0]?.usage.tokenLimit ?? null : null;
   const tokenLimit = row.distill_token_limit ?? (firstBound !== null ? 2 * firstBound : null);
-  const hasLegacyCost = (item: Raw<unknown>) => item.usage.estimatedCostMicrousd !== null && item.usage.estimatedCostMicrousd !== undefined;
-  const legacyCost = completeUsage && measured.length > 0 && measured.every(hasLegacyCost)
-    ? measured.reduce((n, item) => n + (item.usage.estimatedCostMicrousd ?? 0), 0) : row.distill_estimated_cost_microusd;
   const verifiedObject = await env.BUCKET.get(key(revisionId, "distill-verified.json"));
   const verified = verifiedObject ? await verifiedObject.json<Verified>() : null;
   const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM claim c JOIN source_revision r ON r.id=c.source_revision_id WHERE r.id=? AND c.ordinal<r.claim_count").bind(revisionId).first<{ n: number }>();
@@ -364,7 +365,7 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
   const wallMs = Date.now() - row.distill_started_at;
   await put(env, revisionId, "distill.json", { state, questions: verified?.questions ?? [],
     usage: { calls: row.distill_calls, inputTokens: completeUsage ? sumTokens("inputTokens") : null, cachedTokens: completeUsage ? sumTokens("cachedTokens") : null,
-      outputTokens: completeUsage ? sumTokens("outputTokens") : null, tokenLimit, estimatedCostMicrousd: legacyCost ?? null, wallMs,
+      outputTokens: completeUsage ? sumTokens("outputTokens") : null, tokenLimit, wallMs,
       providerUsage: measured.map((item) => item.usage.providerUsage ?? null) },
     kept, dropped, clearedNumbers: projection?.clearedNumbers ?? verified?.clearedNumbers ?? 0,
     raw: { first: first ? key(revisionId, "distill-call1.json") : null, second: second ? key(revisionId, "distill-call2.json") : null }, error: error ? message(error) : null } satisfies FinalReport);

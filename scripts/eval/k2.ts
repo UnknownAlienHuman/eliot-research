@@ -15,27 +15,34 @@ const MIDDOT = String.fromCodePoint(0x00B7);
 const SUPER_DIGITS = new Set(Array.from('⁰¹²³⁴⁵⁶⁷⁸⁹'));
 const REQUIRED_PROVIDER_IDS = ['workers-ai', 'openrouter', 'command-code', 'kilo', 'nous', 'opencode-go'];
 const ADDED_PROVIDER_IDS = ['command-code', 'kilo', 'nous', 'opencode-go'];
+const DISABLED_DEFAULT_PROVIDER_IDS = ['kilo', 'nous', 'opencode-go'];
 const staticSelftest = process.argv.includes('--static-selftest');
+const nativeOnly = process.argv.includes('--native-only');
+const storedOnly = process.argv.includes('--stored-only');
+const modelsOnly = process.argv.includes('--models-only');
+const runModel = !staticSelftest && !nativeOnly && process.env.ELIOT_K2_MODEL === '1';
 const requestedOrigin = staticSelftest ? 'http://127.0.0.1:5173' : process.env.ELIOT_URL || 'http://127.0.0.1:5173';
 const configuredOrigin = staticSelftest ? undefined : process.env.ELIOT_ORIGIN;
 const origin = staticSelftest ? null : assertEvalOrigin(requestedOrigin, configuredOrigin);
 const H = staticSelftest ? {} : { Origin: origin };
-if (!staticSelftest && process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
+if (!staticSelftest && !modelsOnly && process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
   H['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID;
   H['CF-Access-Client-Secret'] = process.env.CF_ACCESS_CLIENT_SECRET;
 }
-if (!staticSelftest && process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.env.ELIOT_OWNER_JWT).trim();
-const nativeOnly = process.argv.includes('--native-only');
-const runModel = !staticSelftest && !nativeOnly && process.env.ELIOT_K2_MODEL === '1';
-const storedOnly = process.argv.includes('--stored-only');
-const modelsOnly = process.argv.includes('--models-only');
-const resumeChat = staticSelftest ? null : process.env.ELIOT_EVAL_CHAT || null;
-const evalModelOverride = staticSelftest ? null : (process.env.ELIOT_EVAL_MODEL ?? '').trim() || null;
+if (!staticSelftest && !modelsOnly && process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.env.ELIOT_OWNER_JWT).trim();
+if (modelsOnly && !staticSelftest) {
+  const targetOrigin = new URL(origin);
+  assert(targetOrigin.protocol === 'http:' && ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(targetOrigin.hostname) && targetOrigin.port === '5216',
+    '--models-only is restricted to the isolated no-AI loopback runtime on port 5216.');
+  assert(process.env.ELIOT_K2_MODEL !== '1', '--models-only forbids ELIOT_K2_MODEL opt-in.');
+}
+const resumeChat = staticSelftest || modelsOnly ? null : process.env.ELIOT_EVAL_CHAT || null;
+const evalModelOverride = staticSelftest || modelsOnly ? null : (process.env.ELIOT_EVAL_MODEL ?? '').trim() || null;
 assert(!storedOnly || (!!resumeChat && !runModel && !modelsOnly), '--stored-only requires an existing chat and forbids model dispatch/catalogue tests.');
 assert(!runModel || evalModelOverride === null, 'K2 benchmark uses the frozen global configured default; ELIOT_EVAL_MODEL overrides are disabled.');
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
 const outDir = fileURLToPath(new URL('../../eval/out/k2/', import.meta.url));
-const notebookAnswersPath = staticSelftest ? '' : (process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS ?? '').trim()
+const notebookAnswersPath = staticSelftest || modelsOnly ? '' : (process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS ?? '').trim()
   || fileURLToPath(new URL('../../eval/out/notebooklm-20261026/answers.md', import.meta.url));
 const order = ['C1', 'C2', 'C3', 'C4', 'O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8'];
 if (!staticSelftest) await mkdir(outDir, { recursive: true });
@@ -120,8 +127,8 @@ function checkAnswer(qid, ans) {
   const m = normMath(ans);
   const has = (...ss) => ss.every((s) => m.includes(s));
   const checks = [];
-  const add = (name, passed, detail) => checks.push({ name, status: passed ? 'PASS' : 'FAIL', detail });
-  if (typeof ans !== 'string' || !ans.trim()) return [{ name: 'answer present', status: 'FAIL', detail: 'No answer text was stored.' }];
+  const add = (name, passed, detail) => checks.push({ name, passed: Boolean(passed), hard: true, detail });
+  if (typeof ans !== 'string' || !ans.trim()) return [{ name: 'answer present', passed: false, hard: true, detail: 'No answer text was stored.' }];
   if (qid === 'C1') {
     add('d_model=512', m.includes('512'), 'Expected Transformer base model d_model 512.');
     const w = m.split(' ');
@@ -146,22 +153,22 @@ function checkAnswer(qid, ans) {
   if (qid === 'C4') add('positional encoding contrast', (m.includes('синус') || m.includes('sinus')) && (m.includes('обуч') || m.includes('learn')), 'Expected sinusoidal versus learned positional encodings.');
   if (qid === 'O8') add('honest abstention', /нет в корпусе|в корпусе нет|не решают|не содержат|ни одн(?:а|ой|ого|у)|abstain|not in (the )?corpus|no paper/i.test(ans), 'Expected an answer that the corpus does not solve hallucinations.');
   if (['O1', 'O2', 'O3', 'O8'].includes(qid))
-    checks.push({ name: 'semantic quality', status: 'OWNER_REVIEW_REQUIRED', detail: 'Gold facts are shown for owner review; the evaluator does not judge entailment or usefulness.' });
+    checks.push({ name: 'semantic quality', ownerReviewRequired: true, detail: 'Gold facts are shown for owner review; the evaluator does not judge entailment or usefulness.' });
   else if (['O4', 'O5', 'O6', 'O7'].includes(qid))
-    checks.push({ name: 'semantic coverage', status: 'NOT_AUTOMATED', detail: 'Gold facts are shown; no automatic semantic pass is claimed.' });
+    checks.push({ name: 'semantic coverage', passed: false, skipped: 'not automated', detail: 'Gold facts are shown; no automatic semantic judgment is made.' });
   return checks;
 }
 function assertC2StaticSelftests() {
-  const c2 = (answer) => checkAnswer('C2', answer).find((check) => check.name === 'learning-rate formula and warmup=4000')?.status;
-  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 4000'), 'PASS', 'Unicode superscript learning-rate formula must pass.');
-  assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step/warmup^1.5), warmup 4000'), 'PASS', 'Equivalent square-root learning-rate formula must pass.');
-  assert.equal(c2('d_model⁻⁰·⁶ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 4000'), 'FAIL', 'Wrong d_model exponent must fail.');
-  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁶, step · warmup⁻¹·⁵), warmup 4000'), 'FAIL', 'Wrong step exponent must fail.');
-  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁴), warmup 4000'), 'FAIL', 'Wrong warmup exponent must fail.');
-  assert.equal(c2('d_model⁻⁰·⁶ · min(1/sqrt(step), step/warmup^1.5), warmup 4000'), 'FAIL', 'Wrong model exponent in the square-root form must fail.');
-  assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step/warmup^1.4), warmup 4000'), 'FAIL', 'Wrong warmup exponent in the square-root form must fail.');
-  assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step · warmup^1.5), warmup 4000'), 'FAIL', 'Warmup to a positive exponent must be in the denominator.');
-  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 2000'), 'FAIL', 'Wrong warmup value must fail.');
+  const c2 = (answer) => checkAnswer('C2', answer).find((check) => check.name === 'learning-rate formula and warmup=4000')?.passed;
+  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 4000'), true, 'Unicode superscript learning-rate formula must pass.');
+  assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step/warmup^1.5), warmup 4000'), true, 'Equivalent square-root learning-rate formula must pass.');
+  assert.equal(c2('d_model⁻⁰·⁶ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 4000'), false, 'Wrong d_model exponent must fail.');
+  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁶, step · warmup⁻¹·⁵), warmup 4000'), false, 'Wrong step exponent must fail.');
+  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁴), warmup 4000'), false, 'Wrong warmup exponent must fail.');
+  assert.equal(c2('d_model⁻⁰·⁶ · min(1/sqrt(step), step/warmup^1.5), warmup 4000'), false, 'Wrong model exponent in the square-root form must fail.');
+  assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step/warmup^1.4), warmup 4000'), false, 'Wrong warmup exponent in the square-root form must fail.');
+  assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step · warmup^1.5), warmup 4000'), false, 'Warmup to a positive exponent must be in the denominator.');
+  assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 2000'), false, 'Wrong warmup value must fail.');
   assert(!normMath('2·3').includes('2.3'), 'An ordinary middle dot must not become a decimal point.');
 }
 assertC2StaticSelftests();
@@ -223,32 +230,33 @@ const compareRows = new Map(order.map((qid) => [qid, {
   qid,
   answer: null,
   model: null,
-  turnState: 'NOT_RUN',
-  status: 'NOT_RUN',
+  turnState: 'skipped',
+  passed: false,
+  ownerReviewRequired: false,
+  skipped: 'no exact stored turn has been selected',
   factChecks: [],
   citationRanges: [],
-  citationSummary: 'NOT_RUN',
+  citationSummary: 'skipped',
   timing: null,
   usage: null,
   reason: null,
 } ]));
-function markQuestionNotRun(qid, reason, status = 'NOT_RUN') {
-  compareRows.set(qid, { ...compareRows.get(qid), status, reason, turnState: status });
+function markQuestionSkipped(qid, reason, turnState = 'skipped') {
+  compareRows.set(qid, { ...compareRows.get(qid), passed: false, ownerReviewRequired: false, skipped: reason, reason, turnState });
 }
 function mdCell(value) {
   return String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/\|/g, '&#124;').replace(/\r?\n/g, '<br>');
 }
 async function writeCompare(rows, metadata) {
-  const turnRows = order.map((qid) => rows.get(qid)).filter((row) => row && row.turnState !== 'NOT_RUN'
-    && row.turnState !== 'NOT_REVALIDATED' && row.turnState !== 'DISPATCH_FAILED' && row.turnState !== 'DISPATCH_UNKNOWN');
+  const turnRows = order.map((qid) => rows.get(qid)).filter((row) => row && row.usage);
   const sumKnown = (field) => {
     const values = turnRows.map((row) => row.usage?.[field]).filter((value) => typeof value === 'number' && Number.isFinite(value));
     return { sum: values.reduce((total, value) => total + value, 0), unknown: turnRows.length - values.length, count: values.length };
   };
   const percentile = (values, p) => {
     const sorted = values.filter((value) => typeof value === 'number' && Number.isFinite(value)).sort((a, b) => a - b);
-    if (!sorted.length) return 'NOT_RUN';
+    if (!sorted.length) return 'skipped';
     return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))];
   };
   const firstTimes = turnRows.map((row) => row.timing?.firstTokenMs);
@@ -261,7 +269,7 @@ async function writeCompare(rows, metadata) {
     .filter((check) => check.name === 'uncited factual statements').map((check) => check.detail || '');
   const uncitedAdvisoryCount = uncitedCheckDetails.reduce((total, detail) => total + (Number(/([0-9]+) found/.exec(detail)?.[1]) || 0), 0);
   const inputs = sumKnown('inputTokens'), cached = sumKnown('cachedTokens'), outputs = sumKnown('outputTokens');
-  const limits = sumKnown('tokenLimit'), actualCosts = sumKnown('actualProviderCostUsd');
+  const limits = sumKnown('tokenLimit');
   const lines = [
     '# K2 — Eliot / NotebookLM comparison',
     '',
@@ -271,54 +279,58 @@ async function writeCompare(rows, metadata) {
     '- Configured global answer model: ' + mdCell(metadata.defaultModel ?? 'UNKNOWN') + '.',
     '- Project answer-model override: ' + mdCell(metadata.projectModelOverride ?? 'none') + '.',
     '- Chat: ' + mdCell(metadata.chatId ?? 'UNKNOWN') + '.',
-    '- Daily token usage before/after: ' + mdCell(JSON.stringify(metadata.usageBefore ?? 'NOT_RECORDED')) + ' / ' + mdCell(JSON.stringify(metadata.usageAfter ?? 'NOT_RECORDED')) + ' (dayStart/dayEnd/inputTokens/outputTokens/cachedTokens/unknownUsages).',
-    '- Turn count before/after: ' + mdCell(metadata.turnCountBefore ?? 'NOT_RECORDED') + '/' + mdCell(metadata.turnCountAfter ?? 'NOT_RECORDED') + '.',
-    '- Diagnostic turn rows with stored usage: ' + turnRows.length + ' / 12.',
-    '- Usage totals (known values only): input ' + inputs.sum + ' (' + inputs.unknown + ' unknown), cached ' + cached.sum + ' (' + cached.unknown + ' unknown), output ' + outputs.sum + ' (' + outputs.unknown + ' unknown), tokenLimit ' + limits.sum + ' (' + limits.unknown + ' unknown; no currency, no neuron conversion).',
-    '- Provider-reported actual cost (legacy historical only, never gated): ' + (actualCosts.unknown > 0 ? 'UNKNOWN (known subtotal ' + actualCosts.sum + ' USD; ' + actualCosts.unknown + ' turn(s) unknown, not zero).' : actualCosts.sum + ' USD across ' + actualCosts.count + ' turn(s).'),
+    '- Stored turn rows before/after: ' + (metadata.turnCountBefore ?? 'unknown') + '/' + (metadata.turnCountAfter ?? 'unknown') + '; original records preserved: ' + String(metadata.originalTurnRecordsPreserved === true) + '.',
+    '- Turn records with usage: ' + turnRows.length + ' / 12.',
+    '- Per-turn usage totals: input ' + inputs.sum + ' (' + inputs.unknown + ' unknown), cached ' + cached.sum + ' (' + cached.unknown + ' unknown), output ' + outputs.sum + ' (' + outputs.unknown + ' unknown), tokenLimit ' + limits.sum + ' (' + limits.unknown + ' unknown).',
     '- Latency sample n=' + turnRows.filter((row) => typeof row.timing?.firstTokenMs === 'number' && typeof row.timing?.totalMs === 'number').length + ' ms: first p50/p95 ' + percentile(firstTimes, 0.50) + '/' + percentile(firstTimes, 0.95) + '; total p50/p95 ' + percentile(totalTimes, 0.50) + '/' + percentile(totalTimes, 0.95) + '.',
-    '- Exact citation ranges: ' + ranges.filter((range) => range.status === 'PASS').length + '/' + ranges.length + ' opened and matched; failed ' + ranges.filter((range) => range.status !== 'PASS').length + '.',
+    '- Exact citation ranges checked: ' + ranges.filter((range) => range.passed === true).length + '/' + ranges.length + '; failed ' + ranges.filter((range) => range.passed === false).length + '.',
     '- Unsupported numeric statements (advisory WARN, not a hard gate): ' + unsupportedNumericCount + '.',
     '- Uncited factual statements (advisory WARN, not a hard gate): ' + uncitedAdvisoryCount + '.',
     '- Actual Eliot turn model is shown per row; non-default stored answers are diagnostic only.',
-    '- Owner semantic gate: O1/O2/O3/O8 remain `OWNER_REQUIRED`; this report does not judge meaning.',
-    '- Result: ' + mdCell(metadata.status) + (metadata.stopReason ? ' — ' + mdCell(metadata.stopReason) : ''),
+    '- Owner semantic gate required: ' + String(metadata.ownerReviewRequired === true) + '; this report does not judge meaning.',
+    '- Hard checks passed: ' + String(metadata.hardChecksPassed === true) + (metadata.stopReason ? ' — ' + mdCell(metadata.stopReason) : ''),
+    '- Full K2 accepted: false (this report is scoped evidence only).',
     '',
-    '| # | Turn ID | Question | Gold facts | NotebookLM answer | Eliot answer | Model / state | Status | Fact checks | Citation ranges / quotes | Time / usage |',
-    '|---|---|---|---|---|---|---|---|---|---|---|',
+    '| # | Turn ID | Question | Gold facts | NotebookLM answer | Eliot answer | Model / state | Checks passed | ownerReviewRequired | Fact checks | Citation ranges / quotes | Time / usage |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|',
   ];
   for (const qid of order) {
     const row = rows.get(qid) || {};
-    const checkParts = Array.isArray(row.factChecks) ? row.factChecks.map((check) => check.name + ': ' + check.status + (check.detail ? ' (' + check.detail + ')' : '')) : [];
+    const checkParts = Array.isArray(row.factChecks) ? row.factChecks.map((check) => {
+      const value = check.ownerReviewRequired ? 'ownerReviewRequired' : check.skipped ? 'skipped' : String(check.passed === true);
+      return check.name + ': ' + value + (check.detail ? ' (' + check.detail + ')' : '');
+    }) : [];
     if (Array.isArray(row.hardFailures)) checkParts.push(...row.hardFailures);
-    if (row.reason) checkParts.push(row.reason);
-    const factText = checkParts.length ? checkParts.join('; ') : 'NOT_RUN';
+    if (row.reason && !row.skipped) checkParts.push(row.reason);
+    if (row.skipped) checkParts.push('skipped: ' + row.skipped);
+    const factText = checkParts.length ? checkParts.join('; ') : 'skipped';
     const rangeText = Array.isArray(row.citationRanges) && row.citationRanges.length
-      ? row.citationRanges.map((r) => r.label + ' ' + r.revisionId + ':' + r.block + '[' + r.start + ',' + r.end + ') ' + r.status + (r.reason ? ' (' + r.reason + ')' : '') + (r.quote ? ' quote=' + r.quote : '')).join('<br>')
-      : row.citationSummary ?? 'NOT_RUN';
+      ? row.citationRanges.map((r) => r.label + ' ' + r.revisionId + ':' + r.block + '[' + r.start + ',' + r.end + ') ' + String(r.passed === true) + (r.skipped ? ' skipped' : '') + (r.reason ? ' (' + r.reason + ')' : '') + (r.quote ? ' quote=' + r.quote : '')).join('<br>')
+      : row.citationSummary ?? 'skipped';
     const usage = row.usage ? [row.usage.inputTokens, row.usage.cachedTokens, row.usage.outputTokens].map((v) => v ?? 'UNKNOWN').join('/')
-      + ' tok; limit ' + (row.usage.tokenLimit ?? 'UNKNOWN') + '; actual(legacy) ' + (row.usage.actualProviderCostUsd ?? 'UNKNOWN') + ' USD'
-      : 'NOT_RUN';
+      + ' tok; limit ' + (row.usage.tokenLimit ?? 'UNKNOWN')
+      : 'skipped';
     const time = row.timing ? 'first ' + (row.timing.firstTokenMs ?? 'UNKNOWN') + ' ms / total ' + (row.timing.totalMs ?? 'UNKNOWN') + ' ms'
-      + (row.timing.wallMs === null || row.timing.wallMs === undefined ? '' : ' / wall ' + row.timing.wallMs + ' ms') : 'NOT_RUN';
-    lines.push('| ' + [qid, row.turnId ?? 'NOT_RUN', Q.get(qid), goldFacts.get(qid), notebookAnswers.get(qid), row.answer ?? 'NOT_RUN',
-      (row.model ?? 'UNKNOWN') + ' [' + (row.routeStatus ?? 'UNKNOWN_ROUTE') + '] / ' + (row.turnState ?? 'NOT_RUN'), row.status ?? 'NOT_RUN', factText, rangeText, time + '; ' + usage]
+      + (row.timing.wallMs === null || row.timing.wallMs === undefined ? '' : ' / wall ' + row.timing.wallMs + ' ms') : 'skipped';
+    lines.push('| ' + [qid, row.turnId ?? 'skipped', Q.get(qid), goldFacts.get(qid), notebookAnswers.get(qid), row.answer ?? 'skipped',
+      (row.model ?? 'unknown') + ' [' + (row.routeStatus ?? 'unknown-route') + '] / ' + (row.turnState ?? 'skipped'), String(row.passed === true), String(row.ownerReviewRequired === true), factText, rangeText, time + '; ' + usage]
       .map(mdCell).join(' | ') + ' |');
   }
   lines.push('');
   await writeFile(outDir + '/compare.md', lines.join(EOL) + EOL);
-  console.log('K2 compare written: ' + outDir + '/compare.md (' + order.length + ' rows, ' + metadata.status + ').');
+  console.log('K2 compare written: ' + outDir + '/compare.md (' + order.length + ' rows; hardChecksPassed=' + String(metadata.hardChecksPassed === true) + ').');
 }
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
 if (process.argv.includes('--models-only')) {
-  // Connection/admission checks only. Never enables a Gateway, submits a provider call or changes defaults/budget.
+  // Catalog/storage checks only. Never dispatches a model turn; the isolated UI Gateway roundtrip restores blank.
   const before = await apiJson('/api/settings');
   const providersBefore = await apiJson('/api/models/providers');
   assert.equal(providersBefore.status, 200, 'GET /api/models/providers must be 200.');
   const providerConfigs = assertProviderConfigs(providersBefore.body?.providers, 'Stored provider configuration', true);
-  let providerCrud = { status: 'NOT_RUN' };
+  for (const id of DISABLED_DEFAULT_PROVIDER_IDS) assert.equal(providerConfigs.get(id).enabled, false, 'New provider defaults stay disabled pending explicit Gateway setup (' + id + ').');
+  let providerCrud = { skipped: true };
   const connection = await apiJson('/api/models/connection');
   assert.equal(before.status, 200);
   assert.equal(connection.status, 200);
@@ -377,8 +389,11 @@ if (process.argv.includes('--models-only')) {
   const flash = models.body.models.find((m) => m.route === 'workers-ai:@cf/zai-org/glm-5.3-flash');
   assert(flash && flash.enabled, 'Native Flash default must stay enabled.');
   assert.equal(before.body.settings.answerModel, flash.route, 'Default answer model stays Flash.');
-  const denied = await apiJson('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gatewayId: 'unconfigured-eval-gateway' }) });
+  const denied = await apiJson('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gatewayId: 'eliotr-reasoning' }) });
   assert.equal(denied.status, 400, 'Saving a Gateway without explicit credential consent must fail before mutation.');
+  const connectionAfterDenied = await apiJson('/api/models/connection');
+  assert.equal(connectionAfterDenied.status, 200);
+  assert.equal(connectionAfterDenied.body.connection.gatewayId, null, 'Server must preserve the blank Gateway setting after rejecting missing consent.');
   const invalid = await apiJson('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gatewayId: 'default' }) });
   assert.equal(invalid.status, 400, 'The auto-created default Gateway is not an allowed connection.');
   const changed = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: external.route }) });
@@ -416,15 +431,28 @@ if (process.argv.includes('--models-only')) {
   const created = await apiJson('/api/projects/' + projectId + '/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(created.status, 201);
   const chatId = created.body.chat.id;
-  const turn = await apiJson('/api/projects/' + projectId + '/chats/' + chatId + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnId: randomUUID(), question: 'Disconnected model check', scopeMode: 'empty', model: external.route }) });
+  const admissionChatPath = '/api/projects/' + encodeURIComponent(projectId) + '/chats/' + encodeURIComponent(chatId);
+  const chatBeforeTurn = await apiJson(admissionChatPath);
+  assert.equal(chatBeforeTurn.status, 200);
+  assert(Array.isArray(chatBeforeTurn.body.turns), 'Chat snapshot must expose its stored turn rows.');
+  const disconnectedTurnId = randomUUID();
+  const turn = await apiJson(admissionChatPath + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnId: disconnectedTurnId, question: 'Disconnected model check', scopeMode: 'empty', model: external.route }) });
   assert.equal(turn.status, 200);
   assert.equal(turn.body.turn.state, 'failed');
+  assert.equal(turn.body.turn.turnId, disconnectedTurnId);
   assert.strictEqual(turn.body.turn.tokenLimit, 0, 'Undispatched disconnected failure must carry tokenLimit 0 (no reservation, no paid call).');
-  if (turn.body.turn.estimatedCostMicrousd !== undefined) assert(turn.body.turn.estimatedCostMicrousd === null || typeof turn.body.turn.estimatedCostMicrousd === 'number', 'Historical estimatedCost must be honestly recorded, never gated.');
   assert.equal(turn.body.turn.inputTokens, 0);
+  assert.equal(turn.body.turn.cachedTokens, 0);
   assert.equal(turn.body.turn.outputTokens, 0);
   assert.match(turn.body.turn.error, /disconnected|Gateway|credential/i);
-  let distill = 'NOT_RUN: storage fixture not attempted';
+  const chatAfterTurn = await apiJson(admissionChatPath);
+  assert.equal(chatAfterTurn.status, 200);
+  assert(Array.isArray(chatAfterTurn.body.turns), 'Post-turn chat snapshot must return stored turn rows.');
+  assert.equal(chatAfterTurn.body.turns.length, chatBeforeTurn.body.turns.length + 1, 'Only the rejected turn record may be added.');
+  const storedRejectedTurns = chatAfterTurn.body.turns.filter((stored) => stored && stored.turnId === disconnectedTurnId);
+  assert.equal(storedRejectedTurns.length, 1, 'The rejected turn must have exactly one stored row.');
+  assert.deepEqual(storedRejectedTurns[0], turn.body.turn, 'The exact stored rejected-turn record must equal the owning POST result.');
+  let distill = { skipped: true, reason: 'storage fixture not attempted' };
   let sourceId = null;
   {
     const added = await apiJson('/api/projects/' + projectId + '/sources/text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'External connection gate', text: 'Storage-only connection fixture ' + randomUUID() + '. This source has no model-derived knowledge.' }) });
@@ -447,7 +475,9 @@ if (process.argv.includes('--models-only')) {
     const next = await apiJson(path + '?revisionId=' + revisionId);
     assert.equal(next.body.state, 'none');
     assert.equal(next.body.progress.attempts, 0);
-    distill = 'LOCAL_DISCONNECTED_BEFORE_ADMISSION_PASS';
+    assert.deepEqual(next.body, prior.body, 'Rejected disconnected distillation must preserve the exact owning revision record.');
+    distill = { skipped: false, rejectedBeforeAdmission: true, attemptsBefore: prior.body.progress.attempts,
+      attemptsAfter: next.body.progress.attempts, revisionRecordPreserved: true };
   }
   const { chromium, expect } = await import('@playwright/test');
   const accessHeaderNames = ['CF-Access-Client-Id', 'CF-Access-Client-Secret', 'cf-access-jwt-assertion'];
@@ -455,14 +485,22 @@ if (process.argv.includes('--models-only')) {
     'Browser eval refuses Access credential headers; use the bare loopback development path.');
   const browserOrigin = assertEvalBrowserOrigin(origin, configuredOrigin);
   const browser = await chromium.launch();
+  let gatewayConsentChecks = { skipped: true };
   try {
     const context = await browser.newContext();
     let settingsPuts = 0;
     const mutations = [];
+    const gatewayConsentRequests = [];
     await context.route('**/api/**', async (route) => {
       const request = route.request();
+      const requestUrl = new URL(request.url());
+      if (request.method() === 'PUT' && requestUrl.pathname === '/api/models/connection') {
+        gatewayConsentRequests.push(request.postDataJSON());
+        await route.continue();
+        return;
+      }
       if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
-        if (new URL(request.url()).pathname === '/api/settings' && request.method() === 'PUT') settingsPuts += 1;
+        if (requestUrl.pathname === '/api/settings' && request.method() === 'PUT') settingsPuts += 1;
         mutations.push({ method: request.method(), url: request.url() });
         await route.abort('blockedbyclient');
         return;
@@ -471,11 +509,11 @@ if (process.argv.includes('--models-only')) {
     });
     const errors = [];
     async function setAdvancedGateway(page, open) {
-      const region = page.getByRole('region', { name: 'AI Gateway connection', exact: true });
-      const details = region.locator('details.er-models__details');
+      const details = page.locator('details.er-models__details').filter({ hasText: 'Advanced provider settings' });
+      assert.equal(await details.count(), 1, 'Models card must expose one Advanced provider settings disclosure.');
       const isOpen = (await details.getAttribute('open')) !== null;
-      if (open && !isOpen) await region.locator('details.er-models__details > summary').click();
-      if (!open && isOpen) await region.locator('details.er-models__details > summary').click();
+      if (open && !isOpen) await details.locator('summary').click();
+      if (!open && isOpen) await details.locator('summary').click();
     }
     async function openSettings(page) {
       const reads = ['/api/settings', '/api/models/connection', '/api/models'].map(async (path) => {
@@ -484,7 +522,9 @@ if (process.argv.includes('--models-only')) {
         await response.finished();
       });
       await Promise.all([page.goto(browserOrigin + '/settings'), ...reads]);
-      await expect(page.getByRole('region', { name: 'Models', exact: true })).toBeVisible();
+      const modelsRegion = page.getByRole('region', { name: 'Models', exact: true });
+      await expect(modelsRegion).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
       const answersRadio = page.locator('input[type="radio"][value="answer"]');
       const understandingRadio = page.locator('input[type="radio"][value="distill"]');
       await expect(answersRadio).toBeVisible();
@@ -507,12 +547,10 @@ if (process.argv.includes('--models-only')) {
       await expect(page.getByRole('combobox', { name: 'Understanding model: provider', exact: true })).toBeVisible();
       await expect(page.getByRole('searchbox', { name: 'Understanding model: search models', exact: true })).toBeVisible();
       await answersRadio.check();
-      // No monthly USD budget input: Settings Save carries only answer/distill models. No price gate here.
-      const gateway = page.getByRole('region', { name: 'AI Gateway connection', exact: true });
-      await expect(gateway).toBeVisible();
+      // Opening Settings is read-only; the Models Save button is not used here.
       await setAdvancedGateway(page, true);
-      await expect(gateway.getByRole('textbox', { name: 'Gateway ID Blank disables external routing.', exact: true })).toHaveValue('');
-      await expect(gateway.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true })).not.toBeChecked();
+      await expect(modelsRegion.getByRole('textbox', { name: 'Gateway ID Blank disables external routing.', exact: true })).toHaveValue('');
+      await expect(modelsRegion.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true })).not.toBeChecked();
       await setAdvancedGateway(page, false);
     }
     async function activePicker(page, mode) {
@@ -540,11 +578,15 @@ if (process.argv.includes('--models-only')) {
       for (const route of routes) {
         const parts = /^gateway:([^/]+)\/.+/.exec(route);
         assert(parts, 'Browser check requires a complete provider/native route.');
+        await free.uncheck();
+        await search.fill('');
+        await provider.selectOption(parts[1]);
         assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter((option) => option.value === value).length, route), 1,
           'Expanded catalogue must attach the exact provider/native route without paging (' + parts[1] + ', ' + label + ').');
-        await provider.selectOption(parts[1]);
         await expect(select).toHaveValue(expected);
-        await search.fill(route);
+        const choice = models.body.models.find((entry) => entry.route === route);
+        assert(choice, 'The native model must exist in the frozen catalogue.');
+        await search.fill(choice.id);
         await expect(select).toHaveValue(expected);
         await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
           .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([true]);
@@ -570,12 +612,60 @@ if (process.argv.includes('--models-only')) {
     await page.setViewportSize({ width: 390, height: 844 });
     page.on('pageerror', (error) => errors.push(error.message));
     await openSettings(page);
-    const gateway = page.getByRole('region', { name: 'AI Gateway connection', exact: true });
-    const consent = gateway.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true });
-    const gatewayId = gateway.getByRole('textbox', { name: 'Gateway ID Blank disables external routing.', exact: true });
+    const modelsSection = page.getByRole('region', { name: 'Models', exact: true });
+    const consent = modelsSection.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true });
+    const gatewayId = modelsSection.getByRole('textbox', { name: 'Gateway ID Blank disables external routing.', exact: true });
+    const saveModels = modelsSection.getByRole('button', { name: 'Save', exact: true });
+    assert.equal(await saveModels.count(), 1, 'Models card must have one Save button for defaults, providers, and Gateway connection.');
     await setAdvancedGateway(page, true);
-    await gatewayId.fill('unconfigured-eval-gateway');
-    await expect(gateway.getByRole('button', { name: 'Save connection', exact: true })).toBeDisabled();
+    await gatewayId.fill('eliotr-reasoning');
+    await expect(consent).not.toBeChecked();
+    await saveModels.click();
+    await expect(page.getByText(/check the box to connect a Gateway/i)).toBeVisible();
+    assert.deepEqual(gatewayConsentRequests, [], 'Unconsented Gateway-only Save must not send a connection request.');
+    assert.deepEqual(mutations, [], 'Gateway-only edit without consent must be rejected before an API write.');
+    const connectionAfterUnconsentedSave = await apiJson('/api/models/connection');
+    assert.equal(connectionAfterUnconsentedSave.status, 200);
+    assert.equal(connectionAfterUnconsentedSave.body.connection.gatewayId, null, 'Unconsented Gateway-only Save must leave the stored connection blank.');
+    await consent.check();
+    await expect(consent).toBeChecked();
+    const consentedConnectionResponse = page.waitForResponse((response) =>
+      response.url() === browserOrigin + '/api/models/connection' && response.request().method() === 'PUT', { timeout: 30000 });
+    await saveModels.click();
+    assert.equal((await consentedConnectionResponse).status(), 200, 'Consent-enabled Gateway Save must persist the existing named Gateway.');
+    await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
+    assert.deepEqual(gatewayConsentRequests, [{ gatewayId: 'eliotr-reasoning', confirmCredentialAccess: true }],
+      'Gateway consent must be explicit in the connection request body.');
+    const connectionAfterConsentSave = await apiJson('/api/models/connection');
+    assert.equal(connectionAfterConsentSave.status, 200);
+    assert.equal(connectionAfterConsentSave.body.connection.gatewayId, 'eliotr-reasoning',
+      'Readback must show the actual stored Gateway setting; this does not prove provider usability.');
+    await expect(consent).not.toBeChecked();
+    await gatewayId.fill('');
+    const restoreConnectionResponse = page.waitForResponse((response) =>
+      response.url() === browserOrigin + '/api/models/connection' && response.request().method() === 'PUT', { timeout: 30000 });
+    await saveModels.click();
+    assert.equal((await restoreConnectionResponse).status(), 200, 'The same Models Save must restore the Gateway setting to blank.');
+    await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
+    const connectionAfterRestore = await apiJson('/api/models/connection');
+    assert.equal(connectionAfterRestore.status, 200);
+    assert.equal(connectionAfterRestore.body.connection.gatewayId, null,
+      'Readback must confirm the original blank Gateway setting was restored.');
+    await saveModels.click();
+    await expect(page.getByText('No changes.', { exact: true })).toBeVisible();
+    assert.deepEqual(gatewayConsentRequests, [
+      { gatewayId: 'eliotr-reasoning', confirmCredentialAccess: true },
+      { gatewayId: null },
+    ], 'Gateway roundtrip must persist only the consented ID and restore blank through the UI.');
+    gatewayConsentChecks = {
+      unconsentedSaveRejected: true,
+      unconsentedStoredGatewayId: connectionAfterUnconsentedSave.body.connection.gatewayId,
+      consentedStoredGatewayId: connectionAfterConsentSave.body.connection.gatewayId,
+      restoredGatewayId: connectionAfterRestore.body.connection.gatewayId,
+      connectionPutCount: gatewayConsentRequests.length,
+      blankOnlySaveNoOp: true,
+      providerUsabilityProven: false,
+    };
     await setAdvancedGateway(page, false);
     assert((await page.locator('#workspace-main details.er-models__details').count()) >= 1, 'Gateway technical details stay collapsed separately from the expanded picker.');
     assert.strictEqual(await page.locator('#workspace-main details.er-models__details[open]').count(), 0, 'Gateway technical details must start collapsed.');
@@ -595,19 +685,15 @@ if (process.argv.includes('--models-only')) {
     assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Display-only filters must not introduce pagination.');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Settings must fit the 390px Material layout.');
     await setAdvancedGateway(page, true);
-    await gateway.getByRole('button', { name: 'Save connection' }).scrollIntoViewIfNeeded();
-    await expect(gateway.getByRole('button', { name: 'Save connection' })).toBeVisible();
+    await saveModels.scrollIntoViewIfNeeded();
+    await expect(saveModels).toBeVisible();
     await page.screenshot({ path: outDir + '/external-models-390.png', fullPage: true });
     await page.setViewportSize({ width: 389, height: 844 });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Settings must fit the 389px Material layout.');
     await page.setViewportSize({ width: 390, height: 844 });
-    const modelsSection = page.getByRole('region', { name: 'Models', exact: true });
-    // No USD budget input or decimal-place gate: Settings Save carries only answer/distill models. Storage-only browser must not PUT.
+    // The single Models Save must not write when the Gateway-only edit was rejected and reset.
     assert.strictEqual(settingsPuts, 0, 'Storage-only browser must not PUT /api/settings.');
     await expect(consent).not.toBeChecked();
-    await expect(gateway.getByRole('button', { name: 'Save connection', exact: true })).toBeDisabled();
-    await gatewayId.fill('');
-    await setAdvancedGateway(page, false);
     if (sourceId) {
       const modelsRead = page.waitForResponse((r) => r.url() === browserOrigin + '/api/models' && r.request().method() === 'GET', { timeout: 30000 });
       await page.goto(browserOrigin + '/p/' + projectId + '/source/' + sourceId);
@@ -616,20 +702,25 @@ if (process.argv.includes('--models-only')) {
       const details = understanding.locator('details.er-und__details');
       if (await details.getAttribute('open') === null) await understanding.locator('details.er-und__details > summary').click();
       const select = understanding.getByRole('combobox', { name: 'Understanding model', exact: true });
-      await expect(select).toBeEnabled({ timeout: 30000 });
       const sourceProvider = understanding.getByRole('combobox', { name: 'Understanding model: provider', exact: true });
+      await expect(sourceProvider).toBeEnabled({ timeout: 30000 });
       for (const route of browserModelRoutes) {
         const parts = /^gateway:([^/]+)\/.+/.exec(route);
         assert(parts, 'Understanding browser check requires a complete provider/native route.');
+        await sourceProvider.selectOption(parts[1]);
+        await expect(select).toBeEnabled();
         assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter((option) => option.value === value).length, route), 1,
           'Understanding catalogue must attach the exact provider/native route (' + parts[1] + ').');
-        await sourceProvider.selectOption(parts[1]);
         await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
           .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([true]);
       }
     }
     assert.strictEqual(settingsPuts, 0, 'The entire browser journey must attempt zero settings PUTs.');
-    assert.deepEqual(mutations, [], 'The browser journey must attempt no API mutation, including Gateway/model requests.');
+    assert.deepEqual(mutations, [], 'The browser journey must make no model/provider/settings mutation beyond the explicitly consented Gateway roundtrip.');
+    assert.deepEqual(gatewayConsentRequests, [
+      { gatewayId: 'eliotr-reasoning', confirmCredentialAccess: true },
+      { gatewayId: null },
+    ], 'The Gateway roundtrip must persist the explicit consented ID, then restore blank.');
     assert.deepEqual(errors, [], 'Settings/understanding must not throw browser errors.');
     const evalProviderId = 'eval-provider-' + Date.now().toString(36);
     let providerPuts = 0;
@@ -698,16 +789,17 @@ if (process.argv.includes('--models-only')) {
       await expect(draft.locator('select')).toHaveValue('openai-compatible');
       await draft.locator('.er-providers__fields input').first().fill(evalProviderId);
       assert.equal(await draft.locator('details.er-providers__details').evaluate((el) => el.open), true, 'Editing the provider ID must keep Connection details open.');
-      await draft.locator('input[placeholder="https://"]').fill('https://example.invalid/v1/');
+      await draft.locator('input[placeholder="https://"]').fill('https://api.example.com/v1/');
       await draft.locator('input[placeholder="custom-command-code"]').fill('custom-eval-provider');
       await draft.locator('input[placeholder="v1"]').fill('v1');
       await draft.getByRole('checkbox', { name: 'Enabled' }).uncheck();
       await expect(draft.getByRole('checkbox', { name: 'Enabled' })).not.toBeChecked();
-      const saveProviders = ppage.getByRole('button', { name: 'Save providers', exact: true });
-      await saveProviders.scrollIntoViewIfNeeded();
+      const saveModels = ppage.getByRole('button', { name: 'Save', exact: true });
+      await saveModels.scrollIntoViewIfNeeded();
       const putResponse = ppage.waitForResponse((r) => r.url() === browserOrigin + '/api/models/providers' && r.request().method() === 'PUT', { timeout: 30000 });
-      await saveProviders.click();
-      assert.equal((await putResponse).status(), 200, 'Explicit Save providers must PUT 200.');
+      await saveModels.click();
+      assert.equal((await putResponse).status(), 200, 'Combined Models Save must persist the edited provider array.');
+      assert.equal(providerPuts, 1, 'The single Models Save must send exactly one provider-array PUT.');
       await expect(ppage.getByText('Saved.', { exact: true })).toBeVisible();
       const saved = await apiJson('/api/models/providers');
       assert.equal(saved.status, 200);
@@ -719,7 +811,7 @@ if (process.argv.includes('--models-only')) {
       const evalRow = savedProviderConfigs.get(evalProviderId);
       assert(evalRow, 'Saved providers must contain the eval provider ID.');
       assert.equal(evalRow.type, 'openai-compatible');
-      assert.equal(evalRow.baseUrl, 'https://example.invalid/v1', 'Base URL must normalize without a trailing slash.');
+      assert.equal(evalRow.baseUrl, 'https://api.example.com/v1', 'Base URL must normalize without a trailing slash.');
       assert.equal(evalRow.gatewaySlug, 'custom-eval-provider');
       assert.equal(evalRow.gatewayPath, 'v1');
       assert.equal(evalRow.enabled, false, 'Eval provider must stay disabled so no discovery or inference runs.');
@@ -766,15 +858,15 @@ if (process.argv.includes('--models-only')) {
   assert.deepEqual(Object.keys(after.body.settings).sort(), Object.keys(before.body.settings).sort(), 'Settings shape must be unchanged (answerModel/distillModel/updatedAt).');
   assert(Number.isSafeInteger(after.body.settings.updatedAt) && after.body.settings.updatedAt > 0
     && after.body.settings.updatedAt >= before.body.settings.updatedAt, 'Intentional provider saves/restores must record a valid nondecreasing update time.');
-  assert.deepEqual(after.body.usage, before.body.usage, 'Daily token usage must be unchanged by storage-only checks.');
   assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
-  const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, consentRejected: true, disconnectedTurnTokenLimit: turn.body.turn.tokenLimit ?? null,
+  const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, fullK2Accepted: false, consentRejected: true, disconnectedTurnTokenLimit: turn.body.turn.tokenLimit ?? null,
+    disconnectedTurnRows: { before: chatBeforeTurn.body.turns.length, after: chatAfterTurn.body.turns.length, persistedMatches: storedRejectedTurns.length },
     nativeUsageMode: { original: originalMode, restored: after.body.settings.nativeUsageMode },
     catalogue: { externalModels: externals.length, providers: [...new Set(nativePairs.map((pair) => pair[0]))],
       providerBrowserChecks: [...new Set(browserModelRoutes.map((route) => /^gateway:([^/]+)\/.+/.exec(route)?.[1]).filter(Boolean))],
       providerSettingsBrowserChecks: providersBefore.body.providers.map((provider) => provider.id),
-      discovery: warnings.length ? 'PARTIAL' : 'NO_WARNINGS', warnings },
-    dailyUsage: after.body.usage, provider: 'NOT_RUN', streaming: 'NOT_RUN', distill, browser390: 'LOCAL_PASS', credentialAccess: 'NOT_ENABLED' };
+      discoveryHasWarnings: warnings.length > 0, warnings },
+    provider: 'skipped', streaming: 'skipped', distill, browser390: true, credentialAccessEnabled: false, gatewayConsentChecks };
   result.providerCrud = providerCrud;
   await writeFile(outDir + '/external-models-native.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
@@ -790,7 +882,7 @@ for (let i = 0; i < 5; i++) {
   if (!cursor) break;
 }
 const proj = projects.find((p) => p.title === title);
-if (!proj) { console.log('PREP_K1_NOT_READY: project ' + JSON.stringify(title) + ' not found; prep K1 corpus first, do not upload/convert again.'); process.exit(2); }
+if (!proj) { console.log('K2 skipped: project ' + JSON.stringify(title) + ' not found; prep K1 corpus first, do not upload/convert again.'); process.exit(2); }
 const settingsSnapshot = await apiJson('/api/settings');
 assert.equal(settingsSnapshot.status, 200, 'GET /api/settings must be 200; benchmark model comes from the stored global default.');
 const benchmarkModel = settingsSnapshot.body?.settings?.answerModel;
@@ -806,7 +898,7 @@ for (let i = 0; i < 10; i++) {
 }
 const want = new Set(Array.from({ length: 10 }, (_, i) => 'arxiv-' + String(i + 1).padStart(2, '0') + '.pdf'));
 const scoped = sources.filter((s) => want.has(s.originalFilename) && s.currentRevisionId && (s.readableState === 'readable' || s.readableState === 'readable_with_warnings'));
-if (!nativeOnly && scoped.length < 10) { console.log('PREP_K1_NOT_READY: found ' + scoped.length + '/10 arxiv readable; prep K1 first, do not upload/convert again.'); process.exit(2); }
+if (!nativeOnly && scoped.length < 10) { console.log('K2 skipped: found ' + scoped.length + '/10 arxiv readable; prep K1 first, do not upload/convert again.'); process.exit(2); }
 const sourceIds = scoped.map((s) => s.id);
 const revSet = new Set(scoped.map((s) => s.currentRevisionId));
 let chatId = resumeChat;
@@ -819,22 +911,14 @@ if (!chatId) {
 }
 const chatPath = '/api/projects/' + encodeURIComponent(proj.id) + '/chats/' + encodeURIComponent(chatId);
 async function getChat(what, signal) {
-  const readStartedAt = Date.now();
   const h = await apiJson(chatPath, signal ? { signal } : undefined);
   assert.equal(h.status, 200, 'GET chat must be 200 and storage-only (' + what + ').');
-  assert(h.body && typeof h.body.chat === 'object', 'GET chat must return {chat, turns, usage}.');
-  assert(Array.isArray(h.body.turns), 'GET chat must return turns array.');
-  assert(h.body.usage && typeof h.body.usage.dayStart === 'number' && typeof h.body.usage.dayEnd === 'number', 'GET chat must return usage {dayStart,dayEnd,inputTokens,outputTokens,cachedTokens,unknownUsages}.');
-  for (const k of ['inputTokens', 'outputTokens', 'cachedTokens', 'unknownUsages']) assert(Number.isSafeInteger(h.body.usage[k]) && h.body.usage[k] >= 0, 'GET chat must return valid daily usage: ' + k);
-  assert(Number.isSafeInteger(h.body.usage.dayStart) && h.body.usage.dayStart % 86_400_000 === 0
-    && h.body.usage.dayEnd === h.body.usage.dayStart + 86_400_000
-    && h.body.usage.dayStart <= Date.now() && h.body.usage.dayEnd > readStartedAt,
-  'Usage must describe the UTC day observed during this read; a benchmark may cross midnight.');
+  assert(h.body && typeof h.body.chat === 'object', 'GET chat must return {chat, turns}.');
+  indexTurnRecords(h.body.turns, 'GET chat (' + what + ')');
   return h.body;
 }
 const h0 = await getChat(resumeChat ? 'resume' : 'before');
 if (resumeChat) assert.equal(h0.chat.id, resumeChat, 'Resumed chat id must match ELIOT_EVAL_CHAT.');
-const m0 = h0.usage;
 const whole = new Map();
 async function checkRange(rev, st, en) {
   let w = whole.get(rev);
@@ -846,6 +930,28 @@ async function checkRange(rev, st, en) {
 }
 function sameSet(actual, expected) {
   return Array.isArray(actual) && actual.length === expected.length && expected.every((id) => actual.includes(id));
+}
+function indexTurnRecords(turns, source) {
+  assert(Array.isArray(turns), source + ' must return stored turn rows.');
+  const byId = new Map();
+  for (const turn of turns) {
+    assert(turn && typeof turn.turnId === 'string' && turn.turnId.length > 0, source + ' turn rows need an exact turnId.');
+    assert(!byId.has(turn.turnId), source + ' must not duplicate turnId ' + turn.turnId + '.');
+    byId.set(turn.turnId, turn);
+  }
+  return byId;
+}
+function assertTurnSnapshotDelta(beforeTurns, afterTurns, expectedAddedRows, source) {
+  const before = indexTurnRecords(beforeTurns, source + ' before');
+  const after = indexTurnRecords(afterTurns, source + ' after');
+  for (const [turnId, record] of before) {
+    assert(after.has(turnId), source + ' must preserve pre-existing turn row ' + turnId + '.');
+    assert.deepEqual(after.get(turnId), record, source + ' must preserve the exact pre-existing turn record ' + turnId + '.');
+  }
+  const added = [...after.keys()].filter((turnId) => !before.has(turnId));
+  assert.equal(added.length, expectedAddedRows, source + ' stored turn row count delta must match this run.');
+  assert.equal(after.size, before.size + expectedAddedRows, source + ' stored turn row count must be exact.');
+  return added.map((turnId) => after.get(turnId));
 }
 function exactStoredTurn(qid, turns, used) {
   const matches = turns.filter((turn) => turn && typeof turn.turnId === 'string' && !used.has(turn.turnId)
@@ -859,18 +965,17 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
     turnId: typeof turn?.turnId === 'string' ? turn.turnId : null,
     answer: typeof turn?.answer === 'string' ? turn.answer : null,
     model: typeof turn?.model === 'string' ? turn.model : null,
-    turnState: typeof turn?.state === 'string' ? turn.state : 'UNKNOWN',
+    turnState: typeof turn?.state === 'string' ? turn.state : 'unknown',
     routeStatus: turn?.model === defaultModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
     factChecks: [],
     citationRanges: [],
-    citationSummary: 'NOT_RUN',
+    citationSummary: 'skipped',
     timing: { firstTokenMs: turn?.firstTokenMs ?? null, totalMs: turn?.totalMs ?? null, wallMs: wall ?? null },
     usage: {
       inputTokens: turn?.inputTokens ?? null,
       cachedTokens: turn?.cachedTokens ?? null,
       outputTokens: turn?.outputTokens ?? null,
       tokenLimit: turn?.tokenLimit ?? null,
-      actualProviderCostUsd: actualProviderCostUsd(turn),
     },
     invalidLabelExamples: Array.isArray(turn?.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [],
     failures: [],
@@ -889,7 +994,6 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs']) {
     if (typeof turn?.[field] !== 'number' || !Number.isFinite(turn[field])) failures.push('turn.' + field + ' is unknown');
   }
-  if (turn?.estimatedCostMicrousd !== undefined && turn?.estimatedCostMicrousd !== null && typeof turn?.estimatedCostMicrousd !== 'number') failures.push('historical estimatedCost must be numeric when present');
   if (typeof turn?.totalMs === 'number' && turn.totalMs > 90000) failures.push('completed turn exceeded the 90 second K2 ceiling');
 
   const citationQuotes = new Map();
@@ -904,7 +1008,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
       block: citation?.block ?? 'UNKNOWN',
       start: citation?.start ?? 'UNKNOWN',
       end: citation?.end ?? 'UNKNOWN',
-      status: 'FAIL',
+      passed: false,
       reason: null,
     };
     const validRange = citation && typeof citation.revisionId === 'string' && typeof citation.sourceId === 'string'
@@ -918,12 +1022,12 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
         const quote = await checkRange(citation.revisionId, citation.start, citation.end);
         citationQuotes.set(citation.label, quote);
         check.quote = quote;
-        check.status = 'PASS';
+        check.passed = true;
       } catch (error) {
         check.reason = error instanceof Error ? error.message : String(error);
       }
     }
-    if (check.status !== 'PASS') failures.push(check.label + ': ' + check.reason);
+    if (!check.passed) failures.push(check.label + ': ' + check.reason);
     row.citationRanges.push(check);
   }
   let uncited = null;
@@ -938,32 +1042,28 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   }
   row.uncitedStatements = uncited;
   row.unsupportedNumericStatements = unsupportedNumeric;
-  if (uncited === null) failures.push('uncited-statement check NOT_RUN (answer/citations unavailable)');
+  if (uncited === null) failures.push('uncited-statement check skipped (answer/citations unavailable)');
   // MAP Behavioral contract + IMPLEMENTATION 8: missing-citation spans are advisory marks,
-  // not stream-state transitions. Retained visible as WARN; only NOT_RUN remains HARD.
-  if (unsupportedNumeric === null) failures.push('numeric grounding check NOT_RUN (answer/citations unavailable)');
+  // not stream-state transitions. A skipped verifier remains a hard check failure.
+  if (unsupportedNumeric === null) failures.push('numeric grounding check skipped (answer/citations unavailable)');
   // MAP + IMPLEMENTATION 8: unsupported-number spans are advisory marks,
-  // not stream-state transitions. Retained visible as WARN; only NOT_RUN remains HARD.
-  if (citations.length) row.citationSummary = citations.length + ' citation(s); ' + row.citationRanges.filter((range) => range.status === 'PASS').length + '/' + citations.length + ' ranges open';
+  // not stream-state transitions.
+  if (citations.length) row.citationSummary = citations.length + ' citation(s); ' + row.citationRanges.filter((range) => range.passed).length + '/' + citations.length + ' ranges open';
   else row.citationSummary = '0 citations';
   const factChecks = checkAnswer(qid, answer);
-  factChecks.push({ name: 'citation byte ranges', status: row.citationRanges.length > 0 && row.citationRanges.every((range) => range.status === 'PASS') ? 'PASS' : 'FAIL', detail: row.citationSummary });
-  factChecks.push({ name: 'uncited factual statements', status: uncited === 0 ? 'PASS' : uncited === null ? 'NOT_RUN' : 'WARN', detail: uncited === null ? 'Unavailable.' : String(uncited) + ' found (advisory; MAP hard gate is >=1 citation, invalidLabels=0, ranges open).' });
-  factChecks.push({ name: 'numeric citation support', status: unsupportedNumeric === 0 ? 'PASS' : unsupportedNumeric === null ? 'NOT_RUN' : 'WARN', detail: unsupportedNumeric === null ? 'Unavailable.' : String(unsupportedNumeric) + ' unsupported (advisory; MAP hard gates are C1-C4 facts/conditions, O8 abstention, ranges open).' });
+  factChecks.push({ name: 'citation byte ranges', passed: row.citationRanges.length > 0 && row.citationRanges.every((range) => range.passed), hard: true, detail: row.citationSummary });
+  factChecks.push({ name: 'uncited factual statements', passed: uncited === 0, ...(uncited === null ? { skipped: 'answer/citations unavailable' } : {}), advisory: uncited !== null, hard: uncited === null, detail: uncited === null ? 'skipped' : String(uncited) + ' found (advisory; MAP hard gate is >=1 citation, invalidLabels=0, ranges open).' });
+  factChecks.push({ name: 'numeric citation support', passed: unsupportedNumeric === 0, ...(unsupportedNumeric === null ? { skipped: 'answer/citations unavailable' } : {}), advisory: unsupportedNumeric !== null, hard: unsupportedNumeric === null, detail: unsupportedNumeric === null ? 'skipped' : String(unsupportedNumeric) + ' unsupported (advisory; MAP hard gates are C1-C4 facts/conditions, O8 abstention, ranges open).' });
   for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs']) {
-    factChecks.push({ name: field, status: typeof turn?.[field] === 'number' && Number.isFinite(turn[field]) ? 'PASS' : 'FAIL', detail: String(turn?.[field] ?? 'UNKNOWN') });
+    factChecks.push({ name: field, passed: typeof turn?.[field] === 'number' && Number.isFinite(turn[field]), hard: true, detail: String(turn?.[field] ?? 'UNKNOWN') });
   }
   row.factChecks = factChecks;
-  for (const check of factChecks) if (check.status === 'FAIL') failures.push(check.name + ' failed');
+  for (const check of factChecks) if (check.hard && !check.passed && !check.skipped) failures.push(check.name + ' failed');
   row.hardFailures = [...failures];
-  row.ownerReview = ['O1', 'O2', 'O3', 'O8'].includes(qid) ? 'OWNER_REQUIRED' : 'NOT_A_SEMANTIC_AUTO_GATE';
+  row.diagnosticOnly = storedDiagnostic && row.routeStatus !== 'GLOBAL_DEFAULT';
+  row.ownerReviewRequired = ['O1', 'O2', 'O3', 'O8'].includes(qid) && !row.diagnosticOnly;
   row.source = source;
-  if (!failures.length && row.ownerReview === 'OWNER_REQUIRED') row.status = 'OWNER_REVIEW_REQUIRED';
-  else if (!failures.length) row.status = 'MECHANICAL_PASS';
-  else if (turn?.state === 'partial') row.status = 'PARTIAL';
-  else if (turn?.state === 'failed') row.status = 'FAILED';
-  else row.status = 'QUALITY_FAIL';
-  if (storedDiagnostic && row.routeStatus !== 'GLOBAL_DEFAULT') row.status = 'NON_DEFAULT_DIAGNOSTIC_' + row.status;
+  row.passed = failures.length === 0 && !row.diagnosticOnly;
   return row;
 }
 {
@@ -976,12 +1076,8 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   await checkRange(s0.currentRevisionId, 0, end);
 }
 async function saveTurn(qid, turn, extra) {
-  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, invalidLabelExamples: Array.isArray(turn.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [], inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, tokenLimit: turn.tokenLimit ?? null, actualProviderCostUsd: actualProviderCostUsd(turn), firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
+  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, invalidLabelExamples: Array.isArray(turn.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [], inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, tokenLimit: turn.tokenLimit ?? null, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
   await writeFile(outDir + '/k2-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
-}
-function actualProviderCostUsd(turn) {
-  const v = turn && turn.providerUsage ? turn.providerUsage.costUsd : null;
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 }
 function dispatchUnavailable(status, body, turn) {
   const error = body?.error ?? body?.turn?.error ?? turn?.error ?? null;
@@ -1012,8 +1108,8 @@ function dispatchUnavailable(status, body, turn) {
 if (!runModel && !storedOnly) {
   const h1 = await getChat('re-read');
   assert.equal(h1.turns.length, h0.turns.length, 'History re-read must not add turns.');
-  assert.deepEqual(h1.usage, m0, 'Pure history re-read must not change usage.');
-  const md = ['# K2 native-only (storage, zero model calls)', '', '- project: ' + title, '- chat: ' + chatId + (resumeChat ? ' (resumed)' : ''), '- history: ' + h0.turns.length + ' turns, daily usage stable across re-reads', '- reader range self-check: 1 exact range', '- MODEL_NOT_RUN: set ELIOT_K2_MODEL=1 (root signal) for C1-4/O1-8 paid turns.', '- Stop/reconnect/Save: NOT_RUN here (root browser journey).', ''].join(EOL);
+  assertTurnSnapshotDelta(h0.turns, h1.turns, 0, 'Storage-only history re-read');
+  const md = ['# K2 native-only (storage, zero model calls)', '', '- project: ' + title, '- chat: ' + chatId + (resumeChat ? ' (resumed)' : ''), '- exact stored turn rows before/after: ' + h0.turns.length + '/' + h1.turns.length + ' (unchanged)', '- reader range self-check: 1 exact range', '- Paid answer turns: skipped (root signal required).', '- Stop/reconnect/Save: skipped (root browser journey).', '- fullK2Accepted: false', ''].join(EOL);
   await writeFile(outDir + '/k2-native-' + Date.now() + '.md', md);
   console.log(md);
   process.exit(0);
@@ -1027,7 +1123,7 @@ if (storedOnly) {
     const turn = exactStoredTurn(qid, h0.turns, sUsed);
     if (!turn) {
       storedFailures++;
-      markQuestionNotRun(qid, 'No stored turn has this exact question and exact frozen ten-source revision set.', 'NOT_REVALIDATED');
+      markQuestionSkipped(qid, 'No stored turn has this exact question and exact frozen ten-source revision set.');
       continue;
     }
     sUsed.add(turn.turnId);
@@ -1035,36 +1131,35 @@ if (storedOnly) {
     try { row = await inspectTurn(qid, turn, 'stored-only', null, benchmarkModel, true); }
     catch (error) {
       row = { qid, answer: typeof turn.answer === 'string' ? turn.answer : null, model: turn.model ?? null,
-        turnState: turn.state ?? 'UNKNOWN', routeStatus: turn.model === benchmarkModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
-        status: 'QUALITY_FAIL', reason: error instanceof Error ? error.message : String(error), factChecks: [], hardFailures: [], citationRanges: [],
-        citationSummary: 'CHECK_FAILED', timing: { firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: null },
+        turnState: turn.state ?? 'unknown', routeStatus: turn.model === benchmarkModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
+        passed: false, ownerReviewRequired: false, reason: error instanceof Error ? error.message : String(error), factChecks: [], hardFailures: [], citationRanges: [],
+        citationSummary: 'skipped', timing: { firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: null },
         usage: { inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null,
-          tokenLimit: turn.tokenLimit ?? null, actualProviderCostUsd: actualProviderCostUsd(turn) } };
+          tokenLimit: turn.tokenLimit ?? null } };
     }
     compareRows.set(qid, row);
-    if (row.status === 'OWNER_REVIEW_REQUIRED') ownerRequired = true;
-    else if (row.status !== 'MECHANICAL_PASS') storedFailures++;
+    if (row.ownerReviewRequired) ownerRequired = true;
+    if (!row.passed) storedFailures++;
   }
   let finalChat = null;
   try { finalChat = await getChat('stored-final'); }
-  catch (error) { stopReason = 'Final storage-only chat/usage read failed: ' + (error instanceof Error ? error.message : String(error)); }
+  catch (error) { stopReason = 'Final storage-only chat read failed: ' + (error instanceof Error ? error.message : String(error)); }
   if (!finalChat) storedFailures++;
   else {
-    if (finalChat.turns.length !== h0.turns.length) { storedFailures++; stopReason = 'Stored-only revalidation changed the chat turn count.'; }
-    if (JSON.stringify(finalChat.usage) !== JSON.stringify(m0)) { storedFailures++; stopReason = 'Stored-only revalidation changed daily token usage.'; }
+    try { assertTurnSnapshotDelta(h0.turns, finalChat.turns, 0, 'Stored-only revalidation'); }
+    catch (error) { storedFailures++; stopReason = error instanceof Error ? error.message : String(error); }
   }
-  const status = storedFailures > 0 ? 'FAIL' : ownerRequired ? 'OWNER_REQUIRED' : 'MECHANICAL_PASS';
   await writeCompare(compareRows, { mode: 'stored-only diagnostic; zero model calls/POSTs; recorded turn route shown per row',
-    defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId, status, stopReason,
-    usageBefore: m0, usageAfter: finalChat?.usage ?? 'UNKNOWN',
-    turnCountBefore: h0.turns.length, turnCountAfter: finalChat?.turns.length ?? 'UNKNOWN' });
+    defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId,
+    hardChecksPassed: storedFailures === 0, ownerReviewRequired: ownerRequired, stopReason,
+    turnCountBefore: h0.turns.length, turnCountAfter: finalChat?.turns.length ?? 'unknown',
+    originalTurnRecordsPreserved: !!finalChat && storedFailures === 0 });
   if (storedFailures > 0) process.exit(1);
   if (ownerRequired) process.exit(2);
   process.exit(0);
 }
 const firstMs = [], totalMs = [];
 let newTokenLimit = 0, reportedTokenLimit = 0, unknownTokenLimits = 0, unknownNewTokenLimits = 0;
-let actualKnownUsd = 0, actualKnownCount = 0, actualUnknown = 0, actualUnknownNew = 0;
 let newCount = 0, hardFailures = 0, ownerRequired = false, manual = 0;
 let dispatchStopped = false, stopReason = null;
 const used = new Set();
@@ -1101,23 +1196,23 @@ async function adoptReconciledTurn(qid, stored, wall, via) {
   try { await saveTurn(qid, stored, { src: via, wall, question: Q.get(qid) }); }
   catch (error) { persistenceError = error instanceof Error ? error.message : String(error); }
   let row;
-  try { row = await inspectTurn(qid, stored, via, wall, benchmarkModel, false); }
+  try { row = await inspectTurn(qid, stored, via, wall, benchmarkModel); }
   catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     row = { qid, answer: typeof stored?.answer === 'string' ? stored.answer : null, model: stored?.model ?? null,
-      turnState: stored?.state ?? 'UNKNOWN', routeStatus: stored?.model === benchmarkModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
-      status: 'QUALITY_FAIL', reason, factChecks: [], hardFailures: [reason], citationRanges: [], citationSummary: 'CHECK_FAILED',
+      turnState: stored?.state ?? 'unknown', routeStatus: stored?.model === benchmarkModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
+      passed: false, ownerReviewRequired: false, reason, factChecks: [], hardFailures: [reason], citationRanges: [], citationSummary: 'skipped',
       timing: { firstTokenMs: stored?.firstTokenMs ?? null, totalMs: stored?.totalMs ?? null, wallMs: wall },
       usage: { inputTokens: stored?.inputTokens ?? null, cachedTokens: stored?.cachedTokens ?? null, outputTokens: stored?.outputTokens ?? null,
-        tokenLimit: stored?.tokenLimit ?? null, actualProviderCostUsd: actualProviderCostUsd(stored) } };
+        tokenLimit: stored?.tokenLimit ?? null } };
   }
   row.hardFailures = [...(row.hardFailures ?? []), 'Dispatch wait timed out; this accepted turn was reconciled by bounded storage-only read of the submitted turn id (' + via + '). No retry was sent and the question was not repeated.'];
   if (persistenceError) row.hardFailures = [...row.hardFailures, 'Could not preserve the new raw turn artifact: ' + persistenceError];
   compareRows.set(qid, row);
   unknownDispatchIds.delete(qid);
   newCount++;
-  if (row.status === 'OWNER_REVIEW_REQUIRED') ownerRequired = true;
-  else if (row.status !== 'MECHANICAL_PASS') hardFailures++;
+  if (row.ownerReviewRequired) ownerRequired = true;
+  if (!row.passed) hardFailures++;
   const reconciledLimit = stored.tokenLimit;
   if (typeof reconciledLimit === 'number' && Number.isSafeInteger(reconciledLimit) && reconciledLimit >= 0) {
     reportedTokenLimit += reconciledLimit;
@@ -1125,9 +1220,6 @@ async function adoptReconciledTurn(qid, stored, wall, via) {
   } else {
     unknownNewTokenLimits++;
   }
-  const reconciledActual = actualProviderCostUsd(stored);
-  if (reconciledActual === null) { actualUnknown++; }
-  else { actualKnownUsd += reconciledActual; actualKnownCount++; }
   if (typeof stored.firstTokenMs === 'number') firstMs.push(stored.firstTokenMs);
   if (typeof stored.totalMs === 'number') totalMs.push(stored.totalMs);
   return row;
@@ -1135,7 +1227,7 @@ async function adoptReconciledTurn(qid, stored, wall, via) {
 for (const qid of order) {
   if (dispatchStopped) {
     hardFailures++;
-    markQuestionNotRun(qid, 'Dispatch stopped after provider/auth/budget unavailability: ' + (stopReason || 'unknown cause'), 'NOT_RUN');
+    markQuestionSkipped(qid, 'Dispatch stopped after provider/auth/budget unavailability: ' + (stopReason || 'unknown cause'));
     continue;
   }
   let turn = null, src = 'new', wall = null, requestTurnId = null;
@@ -1144,7 +1236,7 @@ for (const qid of order) {
     if (candidate) { turn = candidate; src = 'reused'; used.add(candidate.turnId); }
     else if (h0.turns.some((existing) => existing && existing.question === Q.get(qid))) {
       hardFailures++; manual++;
-      markQuestionNotRun(qid, 'A same-question turn already exists but does not match the exact source scope; no repeat was sent.', 'PENDING_MANUAL');
+        markQuestionSkipped(qid, 'A same-question turn already exists but does not match the exact source scope; no repeat was sent.');
       continue;
     }
   }
@@ -1181,10 +1273,10 @@ for (const qid of order) {
         continue;
       }
       const reason = 'Turn dispatch outcome unknown after bounded read reconciliation; no retry: ' + requestError;
-      compareRows.set(qid, { qid, answer: null, model: benchmarkModel, turnState: 'DISPATCH_UNKNOWN', routeStatus: 'GLOBAL_DEFAULT',
-        status: 'DISPATCH_UNAVAILABLE', reason, factChecks: [{ name: 'dispatch', status: 'FAIL', detail: reason }], hardFailures: [reason],
-        citationRanges: [], citationSummary: 'NOT_RUN', timing: { firstTokenMs: null, totalMs: null, wallMs: wall },
-        usage: { inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: null, actualProviderCostUsd: null } });
+      compareRows.set(qid, { qid, answer: null, model: benchmarkModel, turnState: 'unknown', routeStatus: 'GLOBAL_DEFAULT',
+        passed: false, ownerReviewRequired: false, skipped: 'dispatch outcome unknown', reason, factChecks: [{ name: 'dispatch', passed: false, hard: true, detail: reason }], hardFailures: [reason],
+        citationRanges: [], citationSummary: 'skipped', timing: { firstTokenMs: null, totalMs: null, wallMs: wall },
+        usage: { inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: null } });
       unknownDispatchIds.set(qid, requestTurnId);
       hardFailures++; dispatchStopped = true; stopReason = reason;
       continue;
@@ -1196,10 +1288,10 @@ for (const qid of order) {
       const errorText = String(response?.body?.error?.message ?? response?.body?.message ?? 'response did not include the owning turn');
       const reason = 'POST turn failed with status ' + status + ': ' + errorText + '; no retry.';
       const stop = dispatchUnavailable(response?.status ?? 0, response?.body, null) || !response || !response.body || !responseTurnValid;
-      compareRows.set(qid, { qid, answer: null, model: benchmarkModel, turnState: 'DISPATCH_FAILED', routeStatus: 'GLOBAL_DEFAULT',
-        status: stop ? 'DISPATCH_UNAVAILABLE' : 'DISPATCH_FAILED', reason, factChecks: [{ name: 'dispatch', status: 'FAIL', detail: reason }], hardFailures: [reason],
-        citationRanges: [], citationSummary: 'NOT_RUN', timing: { firstTokenMs: null, totalMs: null, wallMs: wall },
-        usage: { inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: null, actualProviderCostUsd: null } });
+      compareRows.set(qid, { qid, answer: null, model: benchmarkModel, turnState: 'failed', routeStatus: 'GLOBAL_DEFAULT',
+        passed: false, ownerReviewRequired: false, reason, factChecks: [{ name: 'dispatch', passed: false, hard: true, detail: reason }], hardFailures: [reason],
+        citationRanges: [], citationSummary: 'skipped', timing: { firstTokenMs: null, totalMs: null, wallMs: wall },
+        usage: { inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: null } });
       hardFailures++;
       if (stop) { dispatchStopped = true; stopReason = reason; }
       continue;
@@ -1213,30 +1305,30 @@ for (const qid of order) {
     catch (error) { persistenceError = error instanceof Error ? error.message : String(error); }
   }
   let row;
-  try { row = await inspectTurn(qid, turn, src, wall, benchmarkModel, false); }
+  try { row = await inspectTurn(qid, turn, src, wall, benchmarkModel); }
   catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     row = { qid, answer: typeof turn?.answer === 'string' ? turn.answer : null, model: turn?.model ?? null,
-      turnState: turn?.state ?? 'UNKNOWN', routeStatus: turn?.model === benchmarkModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
-      status: 'QUALITY_FAIL', reason, factChecks: [], hardFailures: [reason], citationRanges: [], citationSummary: 'CHECK_FAILED',
+      turnState: turn?.state ?? 'unknown', routeStatus: turn?.model === benchmarkModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
+      passed: false, ownerReviewRequired: false, reason, factChecks: [], hardFailures: [reason], citationRanges: [], citationSummary: 'skipped',
       timing: { firstTokenMs: turn?.firstTokenMs ?? null, totalMs: turn?.totalMs ?? null, wallMs: wall },
       usage: { inputTokens: turn?.inputTokens ?? null, cachedTokens: turn?.cachedTokens ?? null, outputTokens: turn?.outputTokens ?? null,
-        tokenLimit: turn?.tokenLimit ?? null, actualProviderCostUsd: actualProviderCostUsd(turn) } };
+        tokenLimit: turn?.tokenLimit ?? null } };
   }
   if (src === 'new' && turn.turnId !== requestTurnId) {
     const reason = 'Returned turnId does not match the one submitted; no replacement request was sent.';
     row.hardFailures = [...(row.hardFailures ?? []), reason];
-    row.status = 'QUALITY_FAIL';
+    row.passed = false;
     dispatchStopped = true; stopReason = reason;
   }
   if (persistenceError) {
     const reason = 'Could not preserve the new raw turn artifact: ' + persistenceError;
     row.hardFailures = [...(row.hardFailures ?? []), reason];
-    row.status = 'QUALITY_FAIL';
+    row.passed = false;
   }
   compareRows.set(qid, row);
-  if (row.status === 'OWNER_REVIEW_REQUIRED') ownerRequired = true;
-  else if (row.status !== 'MECHANICAL_PASS') hardFailures++;
+  if (row.ownerReviewRequired) ownerRequired = true;
+  if (!row.passed) hardFailures++;
   const limit = turn.tokenLimit;
   if (typeof limit === 'number' && Number.isSafeInteger(limit) && limit >= 0) {
     reportedTokenLimit += limit;
@@ -1245,9 +1337,6 @@ for (const qid of order) {
     unknownTokenLimits++;
     if (src === 'new') unknownNewTokenLimits++;
   }
-  const actual = actualProviderCostUsd(turn);
-  if (actual === null) { actualUnknown++; if (src === 'new') actualUnknownNew++; }
-  else { actualKnownUsd += actual; actualKnownCount++; }
   if (typeof turn.firstTokenMs === 'number') firstMs.push(turn.firstTokenMs);
   if (typeof turn.totalMs === 'number') totalMs.push(turn.totalMs);
   if (turn.state === 'running') {
@@ -1258,16 +1347,15 @@ for (const qid of order) {
     stopReason = 'The stored turn reports provider/auth/budget unavailability; no further questions were dispatched.';
   }
 }
-for (const qid of order) if (!compareRows.has(qid)) { hardFailures++; markQuestionNotRun(qid, 'No diagnostic row was produced.', 'NOT_RUN'); }
+for (const qid of order) if (!compareRows.has(qid)) { hardFailures++; markQuestionSkipped(qid, 'No diagnostic row was produced.'); }
 let finalChat = null, finalReadError = null;
 try {
   finalChat = await getChat('after turns');
   const reread = await getChat('final re-read');
-  if (JSON.stringify(reread.usage) !== JSON.stringify(finalChat.usage)) {
-    hardFailures++; finalReadError = 'Daily token usage changed between final storage reads.';
-  }
+  assert.deepEqual(reread.turns, finalChat.turns, 'Exact stored turn records must be stable across the final GET-only reread.');
 } catch (error) { hardFailures++; finalReadError = error instanceof Error ? error.message : String(error); }
-if (!finalChat) stopReason = 'Final storage/usage re-read failed: ' + (finalReadError || 'unknown error');
+let originalTurnRecordsPreserved = false;
+if (!finalChat) stopReason = 'Final storage re-read failed: ' + (finalReadError || 'unknown error');
 else {
   // Final-read reconciliation: any still-unresolved dispatched id is looked up
   // once more in the final storage snapshot. Only an accepted matching terminal
@@ -1287,20 +1375,25 @@ else {
     await adoptReconciledTurn(pendingQid, stored, pendingRow && pendingRow.timing ? pendingRow.timing.wallMs : null, 'reconciled-final-read');
   }
   const finalErrors = [];
-  if (finalChat.turns.length !== h0.turns.length + newCount) { hardFailures++; finalErrors.push('Chat turn count does not match the pre-existing turns plus exactly one request per new question.'); }
+  try {
+    const addedTurns = assertTurnSnapshotDelta(h0.turns, finalChat.turns,
+      finalChat.turns.length - h0.turns.length, 'Final chat snapshot');
+    originalTurnRecordsPreserved = true;
+    if (unknownDispatchIds.size === 0 && addedTurns.length !== newCount) finalErrors.push('Stored new turn row count does not match the dispatched request count.');
+  } catch (error) {
+    finalErrors.push(error instanceof Error ? error.message : String(error));
+  }
   if (unknownNewTokenLimits > 0) { hardFailures++; finalErrors.push('At least one new turn has unknown tokenLimit; UNKNOWN is not treated as free.'); }
   const unresolvedCount = unknownDispatchIds.size;
   if (unresolvedCount > 0) { hardFailures++; finalErrors.push(unresolvedCount + ' dispatched turn(s) remain unresolved after bounded read reconciliation; any held reservation is UNKNOWN, not zero.'); }
-  else if (unknownNewTokenLimits === 0 && finalChat.usage.dayStart === m0.dayStart) { const deltaIn = finalChat.usage.inputTokens - m0.inputTokens; const deltaOut = finalChat.usage.outputTokens - m0.outputTokens; if (deltaIn < 0 || deltaOut < 0 || deltaIn + deltaOut > newTokenLimit) { hardFailures++; finalErrors.push('Daily token usage delta exceeds the admitted tokenLimit sum for new turns.'); } }
   if (finalErrors.length) { finalReadError = finalErrors.join(' '); stopReason = [stopReason, finalReadError].filter(Boolean).join(' '); }
 }
-const status = hardFailures > 0 ? 'FAIL' : ownerRequired ? 'OWNER_REQUIRED' : 'MECHANICAL_PASS';
 await writeCompare(compareRows, { mode: 'default-model benchmark; frozen global route; one request per unanswered question; no retry',
-  defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId, status, stopReason,
-  usageBefore: m0, usageAfter: finalChat?.usage ?? 'UNKNOWN',
+  defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId,
+  hardChecksPassed: hardFailures === 0, ownerReviewRequired: ownerRequired, stopReason,
+  originalTurnRecordsPreserved,
   turnCountBefore: h0.turns.length, turnCountAfter: finalChat?.turns.length ?? 'UNKNOWN',
   newTokenLimit: newTokenLimit, reportedTokenLimit: reportedTokenLimit,
-  actualProviderUsd: actualKnownCount ? actualKnownUsd : 'UNKNOWN', actualUnknownCount: actualUnknown,
   firstTokenP50P95: [pct(firstMs, 0.5), pct(firstMs, 0.95)], totalP50P95: [pct(totalMs, 0.5), pct(totalMs, 0.95)] });
 if (hardFailures > 0) process.exit(1);
 if (ownerRequired) process.exit(2);
