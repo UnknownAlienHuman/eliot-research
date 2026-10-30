@@ -360,7 +360,12 @@ gaps and are never page numbers; the inventory is included in the existing input
 
 Freeze readable revision IDs at turn start. Context modes are whole labelled text, verified K3 guides/claims when whole
 text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. Whole-text capacity is
-`min(0.6 × model context, 400k)` after history/output reserve. In claims mode, include the stored guide with its exact
+`min(0.6 × model context, 400k)` after history/output reserve. If the complete scope does not fit, choose whole or
+compact evidence per source within that same budget, compressing eligible sources with the greatest savings first.
+Readable sources without usable knowledge remain whole when they fit; no source is dropped or reordered. Mixed
+requests retain `claims` mode whenever any source is compressed. Recompute history against the final label inventory
+and reject the full request before inference if no representation fits. No source understanding or search is started.
+For compressed sources, include the stored guide with its exact
 quoted source passages. Deduplicate identical (block, quote) pairs within each frozen revision while retaining distinct
 quotes from the same block. Keep derived claim statements and conditions in a separate orientation message marked as
 non-evidence; only original quoted passages provide evidence and citation labels. Source and orientation text both

@@ -1075,7 +1075,6 @@ async function preflightClaimScope() {
   let priorExtraCalls = 0;
   for (const source of rows.slice(FROZEN_BASELINE.length)) {
     const u = await getUnderstanding(source.id, source.currentRevisionId);
-    assert(['done', 'partial'].includes(u.state) && u.claims.length > 0, 'Frozen overflow extra must be understood with usable claims before baseline paid work: ' + source.originalFilename + ' is ' + u.state);
     const record = storedRevisionSnapshot(u, 'K3 overflow preflight ' + source.originalFilename);
     assert(record.calls !== null && record.calls <= 2, 'Frozen overflow extra must have known owning calls within the two-call bound: ' + source.originalFilename);
     priorExtraCalls += record.calls;
@@ -1105,7 +1104,8 @@ async function preflightClaimScope() {
 }
 async function assertClaimSourcesReady(preflight) {
   const rows = exactSourceRows(await readClaimSources(preflight.project.id, 'K3 claim readiness'), [...FROZEN_BASELINE, ...FROZEN_OVERFLOW], 'K3 claim readiness');
-  for (const source of rows) {
+  // Extras remain their original readable sources; mixed-context admission enforces their representation before inference.
+  for (const source of rows.slice(0, FROZEN_BASELINE.length)) {
     const u = await getUnderstanding(source.id, source.currentRevisionId);
     assert(['done', 'partial'].includes(u.state) && u.claims.length > 0, 'K3 claim source must be understood with usable claims before answer POST: ' + source.originalFilename + ' is ' + u.state);
   }

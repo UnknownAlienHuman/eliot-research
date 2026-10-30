@@ -186,6 +186,76 @@ function twoSourceEnv() {
   });
 }
 
+function mixedScopeEnv(firstText = "Небольшой читаемый источник.\n") {
+  const encoder = new TextEncoder();
+  const sourceIds = Array.from({ length: 12 }, (_value, index) => "s" + (index + 1));
+  const revisionIds = Array.from({ length: 12 }, (_value, index) =>
+    "00000000-0000-4000-8000-" + String(index + 1).padStart(12, "0"));
+  const sources: MemSource[] = [];
+  const revisions: MemRevision[] = [];
+  const memberships: MemMembership[] = [];
+  const texts: Record<string, MemText> = {};
+  const claims: Record<string, MemClaim[]> = {};
+  const largeBlocks = new Map<string, MemBlock[]>();
+  const largeTexts = new Map<string, string>();
+  const firstBlock = scanBlocks(firstText)[0];
+  const lastText = "Заключительный читаемый источник.\n";
+  const lastBlocks = scanBlocks(lastText);
+  const lastBlock = lastBlocks[0];
+  if (!firstBlock || !lastBlock) throw new Error("Mixed-context fixtures require citable original blocks.");
+  for (let index = 0; index < 12; index++) {
+    const sourceId = sourceIds[index], revisionId = revisionIds[index];
+    if (sourceId === undefined || revisionId === undefined) throw new Error("Mixed-context fixture source identity is missing.");
+    const title = index === 0 ? "Readable failed source" : index === 11 ? "Readable unstarted source" : "Paper " + (index + 1);
+    sources.push({ id: sourceId, title, state: "active", currentRevisionId: revisionId, createdAt: index + 1 });
+    memberships.push({ projectId: "p1", sourceId, enabled: 1 });
+    if (index === 0) {
+      const blocks = scanBlocks(firstText);
+      revisions.push({ id: revisionId, readableState: "readable", readableSize: encoder.encode(firstText).byteLength, distillState: "failed", guideSummary: null, deletedAt: null });
+      texts[revisionId] = { text: firstText, blocks };
+    } else if (index === 11) {
+      revisions.push({ id: revisionId, readableState: "readable", readableSize: encoder.encode(lastText).byteLength, distillState: "none", guideSummary: null, deletedAt: null });
+      texts[revisionId] = { text: lastText, blocks: lastBlocks };
+    } else {
+      const quote = "Paper " + (index + 1) + " reports 8.4 QScore.";
+      const background = "Background " + "x".repeat(148_000);
+      const tail = "Supplementary text." + NL;
+      const text = background + NL + NL + quote + NL + NL + tail;
+      const backgroundEnd = encoder.encode(background).byteLength;
+      const quoteStart = backgroundEnd + encoder.encode(NL + NL).byteLength;
+      const quoteEnd = quoteStart + encoder.encode(quote).byteLength;
+      const tailStart = quoteEnd + encoder.encode(NL + NL).byteLength;
+      const blocks: MemBlock[] = [
+        { id: 1, type: "paragraph", start: 0, end: backgroundEnd, heading: null },
+        { id: 2, type: "paragraph", start: quoteStart, end: quoteEnd, heading: null },
+        { id: 3, type: "paragraph", start: tailStart, end: encoder.encode(text).byteLength, heading: null },
+      ];
+      const quoteBlock = blocks[1];
+      if (!quoteBlock) throw new Error("Expected a compactable quote block.");
+      const exactQuote = sliceUtf8(text, quoteBlock.start, quoteBlock.end);
+      largeBlocks.set(sourceId, blocks);
+      largeTexts.set(sourceId, text);
+      revisions.push({ id: revisionId, readableState: "readable", readableSize: encoder.encode(text).byteLength,
+        distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 });
+      texts[revisionId] = { text, blocks, guide: "Guide [R" + revisionId + ":" + quoteBlock.id + "]." };
+      claims[revisionId] = [{ ordinal: 0, statement: exactQuote, quote: exactQuote, conditions: null,
+        blockIndex: quoteBlock.id, ambiguous: 0 }];
+    }
+  }
+  const fixture = makeEnv({ memberships, sources, revisions, texts, claims });
+  return {
+    ...fixture,
+    sourceIds,
+    revisionIds,
+    firstText,
+    firstBlock,
+    lastText,
+    lastBlock,
+    largeBlocks,
+    largeTexts,
+  };
+}
+
 describe("buildContext K2 whole scope", () => {
   it("freezes enabled readable revisions with per-block labels and sourceIds", async () => {
     const { env } = twoSourceEnv();
@@ -506,6 +576,118 @@ describe("buildContext K3 claims fallback", () => {
     expect(resolved.citations.length).toBe(1);
     expect(resolved.citations[0]?.sourceId).toBe("s1");
     expect(resolved.invalidLabels).toBe(1);
+  });
+
+  it("keeps readable failed and unstarted sources whole while compacting large eligible sources", async () => {
+    const fixture = mixedScopeEnv();
+    const model = { contextTokens: 1048576, maxOutputTokens: 8192 };
+    const res = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model });
+    const compactSourceId = fixture.sourceIds[1];
+    if (compactSourceId === undefined) throw new Error("Expected a second frozen source.");
+    const compactBlock = fixture.largeBlocks.get(compactSourceId)?.[1];
+    const firstLargeBlock = fixture.largeBlocks.get(compactSourceId)?.[0];
+    const largeText = fixture.largeTexts.get(compactSourceId);
+    if (!compactBlock || !firstLargeBlock || !largeText) throw new Error("Expected the second frozen source to have original blocks.");
+    const compactQuote = sliceUtf8(largeText, compactBlock.start, compactBlock.end);
+    const smallQuote = sliceUtf8(fixture.firstText, fixture.firstBlock.start, fixture.firstBlock.end);
+    const lastQuote = sliceUtf8(fixture.lastText, fixture.lastBlock.start, fixture.lastBlock.end);
+    expect(res.mode).toBe("claims");
+    expect(res.revisionIds).toEqual(fixture.revisionIds);
+    expect(res.sources.map((source) => source.sourceId)).toEqual(fixture.sourceIds);
+    expect(res.sources.map((source) => source.alias)).toEqual(Array.from({ length: 12 }, (_value, i) => "S" + (i + 1)));
+    expect(res.sources[0]?.blocks).toEqual([fixture.firstBlock]);
+    expect(res.sources[1]?.blocks).toEqual([compactBlock]);
+    expect(res.sources[11]?.blocks).toEqual([fixture.lastBlock]);
+    const sourceText = res.messages[1]?.content ?? "";
+    expect(sourceText).toContain("[S1:" + fixture.firstBlock.id + "] " + smallQuote);
+    expect(sourceText).toContain("[S2:" + compactBlock.id + "] " + compactQuote);
+    expect(sourceText).toContain("[S12:" + fixture.lastBlock.id + "] " + lastQuote);
+    const s2 = sourceText.slice(sourceText.indexOf("Paper 2"), sourceText.indexOf("Paper 3"));
+    expect(s2).not.toContain("x".repeat(1000));
+    const resolved = resolveCitations(
+      "First [S1:" + fixture.firstBlock.id + "], compact [S2:" + compactBlock.id + "], final [S12:" + fixture.lastBlock.id + "].",
+      res.sources,
+    );
+    expect(resolved.invalidLabels).toBe(0);
+    expect(resolved.citations.map((citation) => [citation.sourceId, citation.revisionId, citation.block, citation.start, citation.end])).toEqual([
+      [fixture.sourceIds[0], fixture.revisionIds[0], fixture.firstBlock.id, fixture.firstBlock.start, fixture.firstBlock.end],
+      [fixture.sourceIds[1], fixture.revisionIds[1], compactBlock.id, compactBlock.start, compactBlock.end],
+      [fixture.sourceIds[11], fixture.revisionIds[11], fixture.lastBlock.id, fixture.lastBlock.start, fixture.lastBlock.end],
+    ]);
+    expect(fixture.requested).toContain("source/" + fixture.revisionIds[0] + "/text.md");
+    expect(fixture.requested).toContain("source/" + fixture.revisionIds[11] + "/text.md");
+    expect(fixture.requested).not.toContain("source/" + fixture.revisionIds[1] + "/text.md");
+    expect(fixture.requested.some((key) => key.startsWith("source/" + fixture.revisionIds[1] + "/text.md#r"))).toBe(true);
+    expect(res.estimatedInputTokens + modelOutputLimit(model)).toBeLessThanOrEqual(400000);
+  });
+
+  it("rejects an over-budget mixed scope without reading whole text for an impossible source", async () => {
+    const impossibleText = "u".repeat(1_300_000) + NL;
+    const fixture = mixedScopeEnv(impossibleText);
+    let err: unknown;
+    try {
+      await buildContext(fixture.env, actor, {
+        projectId: "p1", scopeMode: "project_default", model: { contextTokens: 1048576, maxOutputTokens: 8192 },
+      });
+      expect.unreachable();
+    } catch (error) {
+      err = error;
+    }
+    expect(err).toBeInstanceOf(LibraryError);
+    expect((err as LibraryError).code).toBe("invalid");
+    expect((err as LibraryError).status).toBe(400);
+    expect(fixture.requested).not.toContain("source/" + fixture.revisionIds[0] + "/text.md");
+    for (const revisionId of fixture.revisionIds) {
+      expect(fixture.requested).not.toContain("source/" + revisionId + "/text.md");
+    }
+  });
+
+  it("recomputes retained history and enforces the existing output and caller budget for mixed context", async () => {
+    const fixture = mixedScopeEnv();
+    const model = { contextTokens: 1048576, maxOutputTokens: 8192 };
+    const smallBlock = fixture.firstBlock;
+    const smallSourceId = fixture.sourceIds[0], compactSourceId = fixture.sourceIds[1];
+    const smallRevisionId = fixture.revisionIds[0], compactRevisionId = fixture.revisionIds[1];
+    if (smallSourceId === undefined || compactSourceId === undefined || smallRevisionId === undefined || compactRevisionId === undefined) {
+      throw new Error("Expected the first two frozen source identities.");
+    }
+    const largeBlocks = fixture.largeBlocks.get(compactSourceId);
+    if (!largeBlocks) throw new Error("Expected original blocks for Paper 2.");
+    const compactBlock = largeBlocks[1], absentBlock = largeBlocks[0];
+    if (!compactBlock || !absentBlock) throw new Error("Expected compact and unselected blocks for Paper 2.");
+    const priorCitations = [
+      { sourceId: smallSourceId, revisionId: smallRevisionId, block: smallBlock.id, start: smallBlock.start, end: smallBlock.end,
+        sourceTitle: "Readable failed source", deleted: false, label: "[S1:" + smallBlock.id + "]" },
+      { sourceId: compactSourceId, revisionId: compactRevisionId, block: compactBlock.id, start: compactBlock.start, end: compactBlock.end,
+        sourceTitle: "Paper 2", deleted: false, label: "[S2:" + compactBlock.id + "]" },
+      { sourceId: compactSourceId, revisionId: compactRevisionId, block: absentBlock.id, start: absentBlock.start, end: absentBlock.end,
+        sourceTitle: "Paper 2", deleted: false, label: "[S2:" + absentBlock.id + "]" },
+    ];
+    const question = "Q".repeat(30000), instructions = "I".repeat(30000);
+    const history = [
+      { role: "user" as const, content: "Old oversized question", revisionIds: fixture.revisionIds },
+      { role: "assistant" as const, content: "Old oversized answer " + "o".repeat(320000), revisionIds: fixture.revisionIds, citations: [] },
+      { role: "user" as const, content: "Recent scope-preserving question", revisionIds: fixture.revisionIds },
+      { role: "assistant" as const, content: "Retain [S1:" + smallBlock.id + "] and [S2:" + compactBlock.id + "]; remove [S2:" + absentBlock.id + "].",
+        revisionIds: [smallRevisionId, compactRevisionId], citations: priorCitations },
+    ];
+    const res = await buildContext(fixture.env, actor, {
+      projectId: "p1", scopeMode: "project_default", model, history, question, instructions,
+    });
+    expect(res.mode).toBe("claims");
+    expect(res.revisionIds).toEqual(fixture.revisionIds);
+    const body = res.messages.map((message) => message.content).join(NL);
+    expect(body).toContain("Recent scope-preserving question");
+    expect(body).toContain("Retain [S1:" + smallBlock.id + "] and [S2:" + compactBlock.id + "]");
+    expect(body).not.toContain("Old oversized answer");
+    expect(body).not.toContain("[S2:" + absentBlock.id + "]");
+    const estimate = (value: string) => Math.ceil(new TextEncoder().encode(value).byteLength / 3);
+    const callerTokens = estimate(question) + estimate(instructions);
+    const historyTokens = res.messages.slice(3).reduce((sum, message) => sum + estimate(message.content), 0);
+    const cap = Math.min(Math.floor(model.contextTokens * 0.6), 400000);
+    expect(historyTokens).toBeLessThanOrEqual(Math.floor(model.contextTokens * 0.1));
+    expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + estimate(message.content), 0));
+    expect(res.estimatedInputTokens + callerTokens + modelOutputLimit(model)).toBeLessThanOrEqual(cap);
   });
 
   it("filters structural page markers from hydrated claim and guide passages", async () => {

@@ -231,7 +231,8 @@ re-distilled automatically.
    Preserve a safe failure reason for the reader without retaining raw provider errors or credentials.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
    an extra overview model call.
-6. Add claim context mode. The same answer prompt and citation resolver are used.
+6. Add claim context mode. Preserve whole originals where the shared budget permits; compress eligible sources only
+   as needed, retaining the complete frozen scope and aliases. The same answer prompt and citation resolver are used.
 7. Add reader guide/claims UI, quote cases and `pnpm eval k3`. Reader metadata shows availability and verification
    caveats; quote links retain exact identities without displaying UUIDs or call/token/time/reservation counters.
    API progress retains the admitted job bound independently of later model-default or catalogue changes.
@@ -239,11 +240,14 @@ re-distilled automatically.
 **Hard acceptance — `pnpm eval k3`**
 
 - Before model work, verify the exact ten baseline source/revision identities and original/canonical bytes, the
-  separate twelve-source overflow scope, its already-understood extras and its prepared claim chat. Missing or
+  separate twelve-source readable overflow scope and its prepared claim chat. Missing or
   ambiguous inputs stop the run before any paid call; duplicate stored answers are never silently reused. Check the
   extras' own recorded call counts separately. An admission or unfinished/failed answer stops later eval submissions;
   completed answers that fail a quality check remain failed checks while the remaining fixed controls may run.
   Already accepted jobs retain their results; queued revisions keep their stored model selection.
+- Before claim answers, verify the ten baseline understanding results. Extra sources can remain whole in the mixed
+  context if readable; only sources chosen for compression require usable knowledge. Context admission still enforces
+  the complete frozen scope and existing budget before a paid answer.
 - All ten papers reach `done` or a documented `partial` state; a second eval run performs no re-distillation of unchanged revisions.
   `pnpm eval k3 --unchanged-only` preflights all ten terminal revisions, submits each exact revision ID once and compares
   the stored reports, claims, call counts and usage. This reuse check does not waive the semantic or claim-mode gates.
