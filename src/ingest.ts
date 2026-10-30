@@ -1,5 +1,5 @@
-// K1 ingest conversion helpers. Production use only: imported by
-// src/workflows/ingest.ts. No test-only exports.
+// K1 ingest conversion and readable-text helpers shared by workflows and reader.
+// No test-only exports.
 
 export type IngestConverter = "local_text" | "owner_markdown" | "workers_ai_markdown";
 
@@ -12,6 +12,15 @@ let supportedCache: SupportedFormat[] | undefined;
 
 export function stripBomOnce(text: string): string {
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+export function readableTextWarning(text: string): string | null {
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code !== 127 && (code >= 32 || code === 9 || code === 10 || code === 12 || code === 13)) continue;
+    return "Readable text contains non-printing characters. Compare it with the original.";
+  }
+  return null;
 }
 
 // Strict UTF-8 decode of the stored original with exactly one leading BOM

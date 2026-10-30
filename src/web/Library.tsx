@@ -5,6 +5,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import type { Project, Revision, Source, SourceSelection } from "../shared/api";
+import { readableTextWarning } from "../ingest";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
 import { SourceUnderstanding } from "./Understanding";
 export interface OutlineItem { label: string; start: number; end: number; }
@@ -514,6 +515,7 @@ export function Reader() {
   const currentId = source?.currentRevisionId ?? source?.revisionId ?? revisions[0]?.id ?? "";
   const activeState = revisionId ? (rev?.readableState ?? "") : (rev?.readableState ?? source?.readableState ?? "");
   const textReady = loadedRev !== "" && loadedRev === activeRevision;
+  const readableWarning = useMemo(() => rev?.warningSummary ?? (textReady ? readableTextWarning(text) : null), [rev?.warningSummary, textReady, text]);
   const hasRange = textReady && Number.isSafeInteger(rangeStart) && Number.isSafeInteger(rangeEnd) && rangeStart >= 0 && rangeEnd > rangeStart;
   async function refreshMeta(signal?: AbortSignal) {
     const q = revisionId ? "?revisionId=" + encodeURIComponent(revisionId) : "";
@@ -586,7 +588,7 @@ export function Reader() {
       <header className="er-lib__head"><Link className="er-button er-button--text" to={"/p/" + encodeURIComponent(projectId ?? "") + "/sources"}>Sources</Link><h1 className="er-lib__title" id="er-lib-reader">{source.title}</h1><p className="er-lib__hint"><span className="er-chip er-lib__badge" data-tone={tone(activeState)}>{stateLabel(activeState)}</span></p></header>
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
       {revisionId && !rev ? <p className="er-lib__error" role="alert">This revision is not available for this source. Open its current revision from the Library.</p> : null}
-      {rev?.warningSummary ? <p className="er-lib__row-meta">{rev.warningSummary}</p> : null}
+      {readableWarning ? <p className="er-lib__row-meta">{readableWarning}</p> : null}
       <details className="er-lib__facts"><summary>Details</summary><div className="er-lib__facts-content">
         <p>{sourceKindLabels[source.kind]}</p>
         {source.originalFilename ? <p>Original file: {source.originalFilename}</p> : null}

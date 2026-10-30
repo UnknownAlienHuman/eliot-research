@@ -5,7 +5,7 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { decodeOriginal, getSupportedFormats, hasUtf8Bom, isImageInput, isSupportedFormat } from "../ingest";
-import { nativeConverter, stripBomOnce, withTimeout } from "../ingest";
+import { nativeConverter, readableTextWarning, stripBomOnce, withTimeout } from "../ingest";
 import { scanBlocks } from "../blocks";
 import type { Block } from "../blocks";
 import { safeErrorLogProjection } from "../model-transport";
@@ -145,6 +145,7 @@ async function storeReadable(env: Env, loaded: LoadedRevision, text: string, con
   if (loaded.mime === "application/pdf" && (blocks.length === 0 || blocks.every((block) => block.type === "heading"))) {
     return { outcome: "needs_conversion", warning: "No extractable text was found in this file; the original is kept.", tokens, calls, ms: Date.now() - started };
   }
+  warning ??= readableTextWarning(text);
   // A Uint8Array view over the stored bytes: zero-copy reuse for BOM-free
   // 25 MiB natives instead of a second full-size allocation.
   const body: Uint8Array = reuseBytes !== null ? new Uint8Array(reuseBytes) : new TextEncoder().encode(text);
