@@ -388,7 +388,7 @@ if (unchangedOnly) {
     const r = await apiJson('/api/sources/' + encodeURIComponent(f.sourceId) + '/understanding?revisionId=' + encodeURIComponent(f.revisionId));
     if (r.status !== 200) { reuseViolations.push(f.filename + ': re-GET ' + r.status); continue; }
     if (r.body.revisionId !== f.revisionId) reuseViolations.push(f.filename + ': revisionId moved');
-    if (r.body.state !== f.state) reuseViolations.push(f.filename + ': state moved ' + f.state + ' -> ' + r.body.state);
+    if (r.body.state !== f.record.body.state) reuseViolations.push(f.filename + ': state moved ' + f.record.body.state + ' -> ' + r.body.state);
     const recordAfter = storedRevisionSnapshot(r.body, 'unchanged re-read ' + f.filename);
     revisionRowsReadAfter++;
     if (JSON.stringify(recordAfter.body) !== JSON.stringify(f.record.body)) reuseViolations.push(f.filename + ': exact stored revision record changed');
