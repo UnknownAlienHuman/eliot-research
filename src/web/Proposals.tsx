@@ -77,7 +77,7 @@ export function ProposalsInbox({ projectId, onAccepted }: { readonly projectId: 
   }, [projectId]);
 
   const loadProposal = useCallback(async (revisionId: string): Promise<void> => {
-    if (!projectId) return;
+    if (!projectId || decisionLock.current) return;
     const seq = ++detailSeq.current;
     setSelectedId(revisionId); setProposal(null); setDetailError(''); setDecisionError(''); setNotice(''); setDetailBusy(true);
     try {
@@ -116,6 +116,7 @@ export function ProposalsInbox({ projectId, onAccepted }: { readonly projectId: 
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof ProposalRequestError && error.status === 409) {
+        decisionLock.current = false;
         await Promise.all([loadList(), loadProposal(reviewed.revisionId)]);
         if (!mounted.current) return;
         setDecisionError('The page head changed. Review the latest proposal before deciding again.');
@@ -177,6 +178,7 @@ export function ProposalsInbox({ projectId, onAccepted }: { readonly projectId: 
                       <button
                         className="er-button er-button--text er-proposals__open"
                         type="button"
+                        disabled={decisionBusy !== ''}
                         aria-pressed={selectedId === item.revisionId}
                         onClick={() => void loadProposal(item.revisionId)}
                       >
