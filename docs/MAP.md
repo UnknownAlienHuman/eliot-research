@@ -104,6 +104,8 @@ open any readable source with outline and exact passage links.
 5. Convert native UTF-8 text locally. Use cached `env.AI.toMarkdown().supported()` only for document formats that
    require it. Do not opt into model-assisted image/OCR conversion in K1; scans retain the original and show
    `needs_conversion`. Write canonical `text.md`, exact `blocks.json`, state/warnings and current readable revision.
+   Flag unexpected non-printing text characters without rewriting evidence; older readable revisions show the same
+   reader warning on load without mutating their metadata or starting conversion.
 6. Implement outline, whole text, exact UTF-8 range and original download. Reading must not call a model.
 7. Move the project/source/import/reader UI features and replace legacy adapters with `src/shared/api.ts` +
    `src/web/api.ts`. Show filenames, readable states and human revision labels; keep immutable IDs and exact ranges in

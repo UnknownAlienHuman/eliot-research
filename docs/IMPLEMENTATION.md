@@ -163,6 +163,11 @@ local native-text work and CI; the production bindings and Access checks are unc
 the superseded `0004` draft stays excluded.
 Remote D1/R2 provisioning and deployment are not run.
 
+Unexpected C0/DEL characters, excluding ordinary text whitespace, produce a readable-text warning without changing
+canonical bytes or ranges. New conversions persist `readable_with_warnings`; the reader applies the same check to
+the loaded active text of older revisions without a D1 write. This detects non-printing characters, not mathematical
+fidelity or every conversion loss; the original remains available for inspection.
+
 ## 5. Blocks, labels, citations and quote verification
 
 `blocks.json` stores ordered heading/paragraph/list/table/code/quote blocks with nearest heading and exact UTF-8 byte
