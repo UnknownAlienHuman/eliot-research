@@ -1,7 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import type { OwnerActor } from "./shared/api";
+import type { AgentActor, OwnerActor } from "./shared/api";
 
-export type Actor = OwnerActor;
+export type Actor = OwnerActor | AgentActor;
 
 export class AuthError extends Error {
   readonly status: 403 | 503;
@@ -15,7 +15,7 @@ export class AuthError extends Error {
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 let cachedKeys: { issuer: string; keys: ReturnType<typeof createRemoteJWKSet> } | undefined;
 
-export async function authenticate(request: Request, env: Env): Promise<Actor> {
+export async function authenticate(request: Request, env: Env, allowAgent = false): Promise<Actor> {
   if (env.ELIOT_LOCAL_DEV === "1") {
     // Local workerd also populates request.cf; cf-ray is added at the Cloudflare edge.
     if (!LOOPBACK.has(new URL(request.url).hostname) || request.headers.has("cf-ray")) {
@@ -60,6 +60,11 @@ export async function authenticate(request: Request, env: Env): Promise<Actor> {
   }
   if (ownerToken && payload.common_name === ownerToken) {
     return { type: "owner", id: ownerToken, authentication: "service-token" };
+  }
+  if (allowAgent && payload.type === "app" && payload.sub === "" && payload.email === undefined
+    && typeof payload.common_name === "string" && payload.common_name.length > 0
+    && payload.common_name.length <= 256 && payload.common_name === payload.common_name.trim()) {
+    return { type: "agent", id: payload.common_name, authentication: "service-token" };
   }
   throw new AuthError("invalid", "This account is not the Eliot owner.");
 }

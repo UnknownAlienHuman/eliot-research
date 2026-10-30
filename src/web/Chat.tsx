@@ -17,6 +17,7 @@ import type { Source } from '../shared/api';
 import { ModelSettings } from './ModelSettings';
 import { ModelPicker } from './ModelPicker';
 import type { ModelRoute } from './ModelPicker';
+import { ProposalsInbox } from './Proposals';
 import './chat.css';
 type ScopeMode = 'project_default' | 'explicit' | 'empty';
 interface ChatRow { readonly id: string; readonly title: string; readonly updatedAt: number; }
@@ -337,12 +338,13 @@ export function StudioView() {
   const [openId, setOpenId] = useState('');
   const [body, setBody] = useState('');
   const [cites, setCites] = useState<Citation[]>([]);
+  const [proposalRefresh, setProposalRefresh] = useState(0);
   useEffect(() => {
     if (pid === '') return;
     let live = true;
     void apiJson<{ pages: PageRow[] }>('/api/projects/' + encodeURIComponent(pid) + '/pages').then((d) => { if (live) { setPages(d.pages); setFailure(''); } }).catch((err: unknown) => { if (live) setFailure(err instanceof Error ? err.message : 'Could not load pages.'); });
     return () => { live = false; };
-  }, [pid]);
+  }, [pid, proposalRefresh]);
   useEffect(() => {
     if (pid === '' || openId === '') { setBody(''); setCites([]); return; }
     let live = true;
@@ -354,6 +356,7 @@ export function StudioView() {
     <section className='er-chat' aria-label='Studio'>
       <header className='er-chat__head'><h1 className='er-chat__title'>Studio</h1>
       <p className='er-chat__hint'>Answers you saved from chat.</p></header>
+      <ProposalsInbox projectId={pid} onAccepted={() => setProposalRefresh(value => value + 1)} />
       {failure !== '' ? <p className='er-chat__error' role='alert'>{failure}</p> : null}
       {pages === undefined ? <p className='er-chat__hint' role='status'>Loading pages…</p> : pages.length === 0 ? <p className='er-chat__hint'>Nothing saved yet. Save an answer from chat.</p> : (<ul className='er-chat__pages'>
         {pages.map((p) => (<li key={p.id}><button className='er-button er-button--text' type='button' onClick={() => setOpenId(p.id)} aria-current={p.id === openId ? 'page' : undefined}>{p.title}</button></li>))}

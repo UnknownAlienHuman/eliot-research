@@ -13,6 +13,8 @@ import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
 import { getOverview, getUnderstanding } from "./understanding";
 import { safeErrorLogProjection } from "./model-transport";
+import { handleMcp } from "./mcp";
+import { decideProposal, getProposal, listProposals } from "./proposals";
 
 export { IngestWorkflow } from "./workflows/ingest";
 export { ChatAgent } from "./chat";
@@ -33,12 +35,27 @@ app.use("*", async (c, next) => {
 });
 
 app.use("*", async (c, next) => {
-  c.set("actor", await authenticate(c.req.raw, c.env));
-  assertOrigin(c.req.raw, c.env);
+  const isMcp = c.req.path === "/mcp";
+  if (isMcp) {
+    let origin: string;
+    try { origin = new URL(c.env.ELIOT_MCP_ORIGIN).origin; }
+    catch { throw new AuthError("unavailable", "Agent access is not configured."); }
+    if (new URL(c.req.url).origin !== origin || (c.req.header("origin") !== undefined && c.req.header("origin") !== origin)) {
+      throw new AuthError("invalid", "Agent access is not available on this origin.");
+    }
+  }
+  const actor = await authenticate(c.req.raw, c.env, isMcp);
+  if (!isMcp && actor.type !== "owner") throw new AuthError("invalid", "Only the owner may use this interface.");
+  c.set("actor", actor);
+  if (!isMcp) assertOrigin(c.req.raw, c.env);
   await next();
 });
 
-app.get("/api/me", (c) => c.json({ actor: c.get("actor") } satisfies MeResponse));
+app.get("/api/me", (c) => {
+  const actor = c.get("actor");
+  if (actor.type !== "owner") throw new AuthError("invalid", "Only the owner may use this interface.");
+  return c.json({ actor } satisfies MeResponse);
+});
 app.get("/api/health", (c) => c.json({ service: "eliot-research", status: "ok", contour: "k3" }));
 app.use("/api/*", bodyLimit({ maxSize: MAX_SOURCE_BYTES + 65_536,
   onError: (c) => c.json({ error: { code: "invalid", message: "Upload one file of at most 25 MiB per request." } } satisfies ApiError, 413),
@@ -199,8 +216,20 @@ app.get("/api/revisions/:id/range", async (c) => readText(c.env, c.get("actor"),
 }));
 app.get("/api/revisions/:id/outline", async (c) => c.json(await readOutline(c.env, c.get("actor"), uuid.parse(c.req.param("id")))));
 app.get("/api/revisions/:id/original", async (c) => readOriginal(c.env, c.get("actor"), uuid.parse(c.req.param("id"))));
+app.get("/api/projects/:id/proposals", async (c) => c.json(await listProposals(c.env, c.get("actor"), {
+  projectId: uuid.parse(c.req.param("id")), cursor: uuid.optional().parse(c.req.query("cursor")),
+})));
+app.get("/api/projects/:id/proposals/:revisionId", async (c) => c.json({ proposal: await getProposal(c.env, c.get("actor"), {
+  projectId: uuid.parse(c.req.param("id")), revisionId: uuid.parse(c.req.param("revisionId")),
+}) }));
+app.post("/api/projects/:id/proposals/:revisionId/decision", async (c) => {
+  const input = z.object({ decision: z.enum(["accept", "reject"]), expectedHeadRevisionId: uuid.nullable() }).strict().parse(await c.req.json());
+  return c.json({ proposal: await decideProposal(c.env, c.get("actor"), {
+    projectId: uuid.parse(c.req.param("id")), revisionId: uuid.parse(c.req.param("revisionId")), ...input,
+  }) });
+});
 app.all("/api/*", (c) => c.json({ error: { code: "not_found", message: "This API route does not exist." } } satisfies ApiError, 404));
-app.all("/mcp", (c) => c.json({ error: { code: "not_found", message: "This route does not exist." } } satisfies ApiError, 404));
+app.all("/mcp", (c) => handleMcp(c.req.raw, c.env, c.get("actor")));
 app.all("*", async (c) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
     return c.json({ error: { code: "invalid", message: "This route only accepts reading." } } satisfies ApiError, 405);

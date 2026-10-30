@@ -29,8 +29,8 @@ async function token(payload: Record<string, unknown> = { email: OWNER }, option
   if (options.expiration !== null) jwt.setExpirationTime(options.expiration ?? Math.floor(Date.now() / 1000) + 600);
   return jwt.sign(options.signingKey ?? key);
 }
-async function denied(jwt?: string, vars = env()): Promise<void> {
-  await expect(authenticate(request(jwt), vars)).rejects.toMatchObject({ status: 403, code: "invalid" });
+async function denied(jwt?: string, vars = env(), allowAgent?: boolean): Promise<void> {
+  await expect(authenticate(request(jwt), vars, allowAgent)).rejects.toMatchObject({ status: 403, code: "invalid" });
 }
 
 beforeAll(async () => {
@@ -54,9 +54,12 @@ describe("Access JWT and owner resolution", () => {
     });
   });
   it("accepts only the configured signed service-token common_name", async () => {
-    expect(await authenticate(request(await token({ common_name: TOKEN_NAME, sub: "" })), env())).toEqual({
+    const jwt = await token({ type: "app", common_name: TOKEN_NAME, sub: "" });
+    const owner = {
       type: "owner", id: TOKEN_NAME, authentication: "service-token",
-    });
+    };
+    expect(await authenticate(request(jwt), env())).toEqual(owner);
+    expect(await authenticate(request(jwt), env(), true)).toEqual(owner);
     await denied(await token({ common_name: "foreign.access" }));
   });
   it("rejects another owner email", async () => { await denied(await token({ email: "other@example.com" })); });
@@ -81,6 +84,25 @@ describe("Access JWT and owner resolution", () => {
   });
   it("fails closed when production configuration is missing", async () => {
     await expect(authenticate(request(), env({ ELIOT_ACCESS_TEAM_DOMAIN: "" }))).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+describe("explicit agent Access", () => {
+  const agent = { type: "app", common_name: "research-agent.access", sub: "" };
+  it("requires caller opt-in for a valid signed agent assertion", async () => {
+    const jwt = await token(agent);
+    await denied(jwt);
+    expect(await authenticate(request(jwt), env(), true)).toEqual({
+      type: "agent", id: agent.common_name, authentication: "service-token",
+    });
+  });
+  it("retains audience, type and expiry validation when agents are allowed", async () => {
+    await denied(await token(agent, { audience: "wrong" }), env(), true);
+    await denied(await token({ ...agent, type: "user" }), env(), true);
+    await denied(await token(agent, { expiration: Math.floor(Date.now() / 1000) - 1 }), env(), true);
+  });
+  it("does not reclassify an unknown human email as an agent", async () => {
+    await denied(await token({ ...agent, email: "other@example.com" }), env(), true);
   });
 });
 

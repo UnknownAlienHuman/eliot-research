@@ -6,6 +6,7 @@ ELIOT_ACCESS_AUD=
 ELIOT_OWNER_EMAIL=
 ELIOT_OWNER_SERVICE_TOKEN=
 ELIOT_ORIGIN=http://127.0.0.1:5173
+ELIOT_MCP_ORIGIN=
 ELIOT_LOCAL_DEV=1
 # Production values live in wrangler vars/secrets (root-owned), not in this file:
 # ELIOT_LOCAL_DEV=0, ELIOT_ORIGIN=https://research.<domain>,
