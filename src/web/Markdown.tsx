@@ -2,7 +2,6 @@ import { Link } from 'react-router';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './markdown.css';
-import type { AnswerWarning } from '../shared/api';
 
 export interface MarkdownReference { readonly text: string; readonly href: string; readonly label?: string; }
 interface MarkdownNode {
@@ -13,33 +12,7 @@ interface MarkdownNode {
   children?: MarkdownNode[];
 }
 
-export function Markdown({ text, references = [], warnings = [] }: { readonly text: string; readonly references?: readonly MarkdownReference[]; readonly warnings?: readonly AnswerWarning[] }) {
-  // Advisory-only flags: UTF-16 [start, end) ranges in the answer text.
-  // Mark the overlapping paragraph/list item/table row; do not pretend to
-  // map exact words through Markdown entities. Malformed or out-of-range
-  // spans are ignored so rendering never crashes.
-  const clean = (warnings ?? []).filter((w): w is AnswerWarning =>
-    !!w && typeof w.start === 'number' && typeof w.end === 'number'
-    && Number.isFinite(w.start) && Number.isFinite(w.end)
-    && w.start >= 0 && w.end > w.start && w.start < text.length && w.end <= text.length
-    && (w.kind === 'missing-citation' || w.kind === 'unsupported-number'));
-  function warningTitleFor(start: number | null | undefined, end: number | null | undefined): string | null {
-    if (typeof start !== 'number' || typeof end !== 'number') return null;
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) return null;
-    let missing = false;
-    let number = false;
-    for (const w of clean) {
-      if (w.start < end && start < w.end) {
-        if (w.kind === 'missing-citation') missing = true;
-        else if (w.kind === 'unsupported-number') number = true;
-      }
-    }
-    if (!missing && !number) return null;
-    const parts: string[] = [];
-    if (missing) parts.push('Advisory: this passage may lack a citation');
-    if (number) parts.push('Advisory: a number here may lack cited support');
-    return parts.join('; ');
-  }
+export function Markdown({ text, references = [] }: { readonly text: string; readonly references?: readonly MarkdownReference[] }) {
   function linkify(value: string): MarkdownNode[] {
     const hits = references.filter((ref) => ref.text !== '').flatMap((ref) => {
       const found: { at: number; ref: MarkdownReference }[] = [];
@@ -77,23 +50,5 @@ export function Markdown({ text, references = [], warnings = [] }: { readonly te
     a: ({ href, children, title }) => references.some((ref) => ref.href === href)
       ? <Link className='er-citation' to={href ?? ''} title={title}>{children}</Link>
       : <a href={href} title={title}>{children}</a>,
-    p: ({ node, children, ...rest }) => {
-      const title = warningTitleFor(node?.position?.start?.offset, node?.position?.end?.offset);
-      if (title == null) return <p {...rest}>{children}</p>;
-      const prev = (rest as { className?: string }).className;
-      return <p {...rest} className={prev ? prev + ' er-answer-warn' : 'er-answer-warn'} title={title}>{children}</p>;
-    },
-    li: ({ node, children, ...rest }) => {
-      const title = warningTitleFor(node?.position?.start?.offset, node?.position?.end?.offset);
-      if (title == null) return <li {...rest}>{children}</li>;
-      const prev = (rest as { className?: string }).className;
-      return <li {...rest} className={prev ? prev + ' er-answer-warn' : 'er-answer-warn'} title={title}>{children}</li>;
-    },
-    tr: ({ node, children, ...rest }) => {
-      const title = warningTitleFor(node?.position?.start?.offset, node?.position?.end?.offset);
-      if (title == null) return <tr {...rest}>{children}</tr>;
-      const prev = (rest as { className?: string }).className;
-      return <tr {...rest} className={prev ? prev + ' er-answer-warn' : 'er-answer-warn'} title={title}>{children}</tr>;
-    },
   }}>{text}</ReactMarkdown>;
 }

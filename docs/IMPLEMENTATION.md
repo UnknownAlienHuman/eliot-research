@@ -395,8 +395,9 @@ cancelled. A timed-out eval wait is reconciled by bounded reads of that same sub
 Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the recorded
 token bound and is never treated as zero usage.
 Missing-citation and unsupported-number diagnostics are advisory UTF-16 answer ranges stored in the existing
-ChatAgent turn JSON and exposed by snapshots/history. They mark affected rendered prose without rewriting the answer
-or changing a normally finished stream to partial. Truncation, stream/protocol failure and invalid resolved labels
+ChatAgent turn JSON and exposed by snapshots/history for API and eval readers. The owner Markdown view renders the
+answer without diagnostic frames or rewriting it. These diagnostics do not change a normally finished stream to
+partial. Truncation, stream/protocol failure and invalid resolved labels
 remain real failures. Saved output carries a concise review note when warnings exist. D1 schema and usage are unchanged.
 An answer over a nonempty whole/claim source scope with no resolved citation is incomplete; this hard citation-presence
 gate is separate from advisory spans. General answers in explicitly empty scope do not require Library citations.

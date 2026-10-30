@@ -170,7 +170,8 @@ frozen-scope validation; unknown identities and shorthand remain failures.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
 canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
 never retried automatically.
-Missing citation/numeric-support spans are advisory marks, not stream-state transitions. A completed generation can
+Missing citation/numeric-support spans remain API/eval diagnostics without frames in the owner answer. They do not
+change stream state. A completed generation can
 still fail the quality gate; diagnostics do not waive citation, expected-fact or owner-review requirements.
 The composer remains visible while reading long answers. Citation details retain exact passage links; runtime counters
 and internal processing terminology stay in API/eval output rather than the owner reading interface.

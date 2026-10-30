@@ -19,6 +19,7 @@
 }
 
 .er-chat__head {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -76,7 +77,7 @@
 }
 
 .er-chat__history {
-  position: relative;
+  position: static;
   min-inline-size: 0;
 }
 
@@ -95,7 +96,8 @@
   z-index: var(--eliot-z-raised);
   display: grid;
   gap: var(--eliot-space-block-control);
-  inline-size: min(var(--eliot-layout-reading-max), calc(100vw - 2 * var(--eliot-space-panel)));
+  inline-size: min(var(--eliot-layout-reading-max), 100%);
+  max-inline-size: 100%;
   max-block-size: min(70dvh, var(--eliot-layout-reading-max));
   overflow: auto;
   overscroll-behavior: contain;
@@ -104,6 +106,15 @@
   border-radius: var(--eliot-shape-large);
   background: var(--md-sys-color-surface-container-high);
   box-shadow: var(--eliot-elevation-2);
+}
+
+@media (max-width: 600px) {
+  .er-chat__history-menu {
+    max-block-size: min(70dvh, calc(100dvh - 2 * var(--eliot-space-panel)));
+    box-sizing: border-box;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
 }
 
 .er-chat__history-menu nav {
