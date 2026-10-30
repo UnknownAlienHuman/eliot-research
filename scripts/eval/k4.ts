@@ -1095,6 +1095,7 @@ async function runSignedAgent(): Promise<void> {
   const localSeed = localRuntime ? await seedLocalSignedProject() : null;
   const localStateBefore = localSeed ? await localSideEffectSnapshot(localSeed) : null;
   let outlineMinimumRetry: { advertisedTokens: number; firstBlockId: number; nextCursor: number } | null = null;
+  let multiBlockRead: { sourceBytes: number; segments: number; labeledSegments: number } | null = null;
   if (localRuntime) {
     const forgedOrigin = await localRuntime.fetch(new URL("/mcp", localRuntime.uiOrigin), {
       method: "POST",
@@ -1174,6 +1175,38 @@ async function runSignedAgent(): Promise<void> {
   assert(candidate && candidate.end > candidate.start, "MCP outline did not return a current source range for the proposal.");
   const read = await callTool("read", { projectId: project.id, revisionId, start: candidate.start, end: candidate.end, maxTokens: 4000 });
   assert(read.text.includes(candidate.label), "MCP read did not preserve the source citation label.");
+  if (localSeed) {
+    assert(localRuntime);
+    const canonicalBytes = await apiBytes(`/api/revisions/${localSeed.revisionId}/text`, localRuntime.ownerHeaders);
+    const canonicalOutline = await apiJson(`/api/revisions/${localSeed.revisionId}/outline`, "GET", undefined, localRuntime.ownerHeaders);
+    const sourceText = decoder.decode(canonicalBytes);
+    assert(sourceText.includes("точность") && sourceText.includes("🌍"), "Multi-block read fixture lost its Cyrillic or emoji text.");
+    const blocks = parseOutline(outline.text).filter((row) => row.revisionId === localSeed.revisionId);
+    assert(blocks.length > 1 && canonicalOutline.blocks.length > 1, "Multi-block read fixture needs multiple citable and canonical blocks.");
+    const multi = await callTool("read", { projectId: localSeed.projectId, revisionId: localSeed.revisionId,
+      start: 0, end: canonicalBytes.byteLength, maxTokens: 4000 });
+    const segments = [...multi.text.matchAll(/^Source segment (.+?) — source bytes \[(\d+),(\d+)\)$/gmu)];
+    let sourceOffset = 0, labeledSegments = 0;
+    for (const match of segments) {
+      const label = match[1], start = Number(match[2]), end = Number(match[3]);
+      assert(label !== undefined && end > start && start === sourceOffset, "Read segments must preserve the complete source byte order.");
+      const exact = decoder.decode(canonicalBytes.subarray(start, end));
+      const contentStart = (match.index ?? -1) + match[0].length + 1;
+      assert.equal(multi.text.slice(contentStart, contentStart + exact.length), exact, "Read segment text differs from its canonical source bytes.");
+      if (label !== "unlabelled") {
+        const block = blocks.find((row) => row.label === label);
+        assert(block, "Read segment label must be an exact citable outline label.");
+        const canonicalBlock = canonicalOutline.blocks.find((row: any) => row.id === block.block);
+        assert(canonicalBlock && start === canonicalBlock.start && end === canonicalBlock.end,
+          "Read segment label does not map to its exact canonical block range.");
+        labeledSegments++;
+      }
+      sourceOffset = end;
+    }
+    assert.equal(sourceOffset, canonicalBytes.byteLength, "Read output must preserve trailing partial bytes and wrappers.");
+    assert(labeledSegments > 1, "Multi-block read must label each complete citable source segment.");
+    multiBlockRead = { sourceBytes: sourceOffset, segments: segments.length, labeledSegments };
+  }
 
   const proposalBody = `${candidate.label}\n\nSigned-agent K4 boundary check ${runId}.`;
   const proposalTitle = `K4 signed-agent eval ${runId}`;
@@ -1227,6 +1260,7 @@ async function runSignedAgent(): Promise<void> {
   report.checks = { ownerApiDeniedStatus: apiDeniedStatus, proposalDecisionDeniedStatus: decisionStatus,
     mcpProposePageHttpStatus: proposal.httpStatus, refreshModelsDenied: true, requestUnderstandingDenied: true,
     outlineMinimumRetry: outlineMinimumRetry ?? "NOT_RUN",
+    multiBlockRead: multiBlockRead ?? "NOT_RUN",
     modelCallsIssued: 0, aiSearchCallsIssued: 0 };
   report.signedAgent = {
     status: localRuntime ? "PASS_TEST_JWKS_LOCAL_MCP" : "PASS",
@@ -1256,6 +1290,7 @@ async function main(): Promise<void> {
 function markdown(): string {
   const checks = report.checks ?? {};
   const outlineRetry = checks.outlineMinimumRetry && typeof checks.outlineMinimumRetry === "object" ? checks.outlineMinimumRetry : null;
+  const readSegments = checks.multiBlockRead && typeof checks.multiBlockRead === "object" ? checks.multiBlockRead : null;
   const literal = report.literalSearch ?? {};
   const proposal = typeof report.proposalFlow === "object" ? report.proposalFlow : null;
   const lines = [
@@ -1270,6 +1305,7 @@ function markdown(): string {
     `- Scope: LOCAL_REAL_MCP_PROTOCOL=${report.scope.LOCAL_REAL_MCP_PROTOCOL}; LIVE_ACCESS_NOT_RUN=${report.scope.LIVE_ACCESS_NOT_RUN}`,
     `- Signed MCP forged-Origin probe: ${report.originProbe?.status ?? "NOT_RUN"}; rejected before protocol handler=${report.originProbe?.rejectedBeforeMcpHandler ?? "NOT_RUN"}`,
     `- Outline minimum-budget retry: ${outlineRetry ? `PASS at ${outlineRetry.advertisedTokens} tokens; first block ${outlineRetry.firstBlockId}; next cursor ${outlineRetry.nextCursor}` : "NOT_RUN"}`,
+    `- Multi-block read mapping: ${readSegments ? `PASS; ${readSegments.labeledSegments} labeled segments across ${readSegments.segments} source segments / ${readSegments.sourceBytes} bytes` : "NOT_RUN"}`,
     `- Full K4 acceptance: ${report.scope.FULL_K4_ACCEPTANCE}; actual BYO-agent O2/O5 quality: ${report.scope.O2_O5_BYO_AGENT_QUALITY}`,
     "- Fixture: " + (report.fixture ?? report.scope.FIXTURE ?? "NOT_SELECTED") + " (LOCAL_FUNCTIONAL=fresh native namespace without distillation; FULL_BASELINE_CORPUS=original ten-paper material)",
     `- Project: ${report.project?.title ?? "NOT_SELECTED"} (${report.project?.id ?? "NOT_SELECTED"})`,
