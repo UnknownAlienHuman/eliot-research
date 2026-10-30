@@ -1094,6 +1094,7 @@ async function runSignedAgent(): Promise<void> {
 
   const localSeed = localRuntime ? await seedLocalSignedProject() : null;
   const localStateBefore = localSeed ? await localSideEffectSnapshot(localSeed) : null;
+  let outlineMinimumRetry: { advertisedTokens: number; firstBlockId: number; nextCursor: number } | null = null;
   if (localRuntime) {
     const forgedOrigin = await localRuntime.fetch(new URL("/mcp", localRuntime.uiOrigin), {
       method: "POST",
@@ -1128,6 +1129,28 @@ async function runSignedAgent(): Promise<void> {
   const names = listed.tools.map((tool) => tool.name).sort();
   assert.deepEqual(names, [...TOOL_NAMES].sort(), "The MCP server must expose exactly the eleven K4 tools.");
   assert(!names.some((name) => /accept|approve|decision|owner|publish/iu.test(name)), "An owner-only mutator is exposed as an agent tool.");
+  if (localSeed) {
+    assert(localRuntime);
+    const canonical = await apiJson(`/api/revisions/${localSeed.revisionId}/outline`, "GET", undefined, localRuntime.ownerHeaders);
+    assert(Array.isArray(canonical.blocks) && canonical.blocks.length > 1, "Outline minimum-budget regression needs the native fixture's multiple blocks.");
+    const tooSmall = await callTool("outline", {
+      projectId: localSeed.projectId, sourceId: localSeed.sourceId, revisionId: localSeed.revisionId, maxTokens: 1,
+    });
+    const minimum = /^Minimum maxTokens: (\d+) to fit one complete result\.$/u.exec(tooSmall.text)?.[1];
+    assert(minimum, "One-token outline must advertise the minimum complete first result.");
+    const advertisedTokens = Number(minimum);
+    const retried = await callTool("outline", {
+      projectId: localSeed.projectId, sourceId: localSeed.sourceId, revisionId: localSeed.revisionId, maxTokens: advertisedTokens,
+    });
+    const first = canonical.blocks[0], next = canonical.blocks[1];
+    assert(first && next, "The native outline fixture must include a first block and continuation block.");
+    assert(!retried.text.startsWith("Minimum maxTokens:"), "Retrying the advertised outline minimum must return the first complete block.");
+    const rows = retried.text.split(/\r?\n/u).filter((line: string) => line.startsWith("- "));
+    assert.equal(rows.length, 1, "The minimum outline retry must return exactly the first complete block row.");
+    assert(rows[0]?.includes(`bytes [${first.start},${first.end})`), "The minimum outline retry omitted the first block's full byte range.");
+    assert(retried.text.includes(`Continue at block ${next.id} with integer cursor ${next.id}.`), "The minimum outline retry omitted its continuation cursor.");
+    outlineMinimumRetry = { advertisedTokens, firstBlockId: first.id, nextCursor: next.id };
+  }
   const refreshDenied = await callTool("refresh_models", {}, true);
   const understandingDenied = await callTool("request_understanding", {
     sourceId: localSeed?.sourceId ?? randomUUID(), ...(localSeed ? { revisionId: localSeed.revisionId } : {}),
@@ -1203,6 +1226,7 @@ async function runSignedAgent(): Promise<void> {
   report.server = { toolNames: names, toolCount: names.length, noOwnerDecisionTools: true, ownerOnlySideEffectsDenied: true };
   report.checks = { ownerApiDeniedStatus: apiDeniedStatus, proposalDecisionDeniedStatus: decisionStatus,
     mcpProposePageHttpStatus: proposal.httpStatus, refreshModelsDenied: true, requestUnderstandingDenied: true,
+    outlineMinimumRetry: outlineMinimumRetry ?? "NOT_RUN",
     modelCallsIssued: 0, aiSearchCallsIssued: 0 };
   report.signedAgent = {
     status: localRuntime ? "PASS_TEST_JWKS_LOCAL_MCP" : "PASS",
@@ -1231,6 +1255,7 @@ async function main(): Promise<void> {
 
 function markdown(): string {
   const checks = report.checks ?? {};
+  const outlineRetry = checks.outlineMinimumRetry && typeof checks.outlineMinimumRetry === "object" ? checks.outlineMinimumRetry : null;
   const literal = report.literalSearch ?? {};
   const proposal = typeof report.proposalFlow === "object" ? report.proposalFlow : null;
   const lines = [
@@ -1244,6 +1269,7 @@ function markdown(): string {
     `- Client: ${report.client.package} ${report.client.version} with ${report.client.transport}; SDK protocol defaults` ,
     `- Scope: LOCAL_REAL_MCP_PROTOCOL=${report.scope.LOCAL_REAL_MCP_PROTOCOL}; LIVE_ACCESS_NOT_RUN=${report.scope.LIVE_ACCESS_NOT_RUN}`,
     `- Signed MCP forged-Origin probe: ${report.originProbe?.status ?? "NOT_RUN"}; rejected before protocol handler=${report.originProbe?.rejectedBeforeMcpHandler ?? "NOT_RUN"}`,
+    `- Outline minimum-budget retry: ${outlineRetry ? `PASS at ${outlineRetry.advertisedTokens} tokens; first block ${outlineRetry.firstBlockId}; next cursor ${outlineRetry.nextCursor}` : "NOT_RUN"}`,
     `- Full K4 acceptance: ${report.scope.FULL_K4_ACCEPTANCE}; actual BYO-agent O2/O5 quality: ${report.scope.O2_O5_BYO_AGENT_QUALITY}`,
     "- Fixture: " + (report.fixture ?? report.scope.FIXTURE ?? "NOT_SELECTED") + " (LOCAL_FUNCTIONAL=fresh native namespace without distillation; FULL_BASELINE_CORPUS=original ten-paper material)",
     `- Project: ${report.project?.title ?? "NOT_SELECTED"} (${report.project?.id ?? "NOT_SELECTED"})`,

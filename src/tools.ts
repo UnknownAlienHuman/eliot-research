@@ -240,7 +240,10 @@ export async function listProjectsTool(env: Env, actor: Actor, input: ListProjec
     const body = "## Projects\n\n" + detail + (cursor ? "\n\n" + displayCursor(cursor) : "");
     if (fits(body, limit)) return body;
   }
-  return minimumBudgetMessage("## Projects\n\n" + (rows[0] ?? "No active projects."), "one complete result");
+  const firstCursor = rows.length > 1 ? page.projects[0]?.id : page.nextCursor;
+  const firstBody = "## Projects\n\n" + (rows[0] ?? "No active projects.") +
+    (firstCursor ? "\n\n" + displayCursor(firstCursor) : "");
+  return minimumBudgetMessage(firstBody, "one complete result");
 }
 export async function listSourcesTool(env: Env, actor: Actor, input: ListSourcesInput): Promise<string> {
   const limit = outputBudget(input.maxTokens);
@@ -304,7 +307,10 @@ export async function listSourcesTool(env: Env, actor: Actor, input: ListSources
     const body = "## Sources in project " + input.projectId + "\n\n" + detail + (cursor ? "\n\n" + displayCursor(cursor) : "");
     if (fits(body, limit)) return body;
   }
-  return minimumBudgetMessage("## Sources in project " + input.projectId + "\n\n" + (lines[0] ?? "No attached sources."), "one complete result");
+  const firstCursor = lines.length > 1 ? rows[0]?.id : nextCursor;
+  const firstBody = "## Sources in project " + input.projectId + "\n\n" + (lines[0] ?? "No attached sources.") +
+    (firstCursor ? "\n\n" + displayCursor(firstCursor) : "");
+  return minimumBudgetMessage(firstBody, "one complete result");
 }
 export async function getGuideTool(env: Env, actor: Actor, input: RevisionInput): Promise<string> {
   const limit = outputBudget(input.maxTokens);
@@ -340,7 +346,9 @@ export async function outlineTool(env: Env, actor: Actor, input: OutlineInput): 
     const body = title + "\n\n" + detail + footer;
     if (fits(body, limit)) return body;
   }
-  return minimumBudgetMessage(title + "\n\n" + (rows[0] ?? "No further blocks."), "one complete result");
+  const firstNext = blocks[1];
+  const firstFooter = firstNext ? "\n\nContinue at block " + firstNext.id + " with integer cursor " + firstNext.id + "." : "";
+  return minimumBudgetMessage(title + "\n\n" + (rows[0] ?? "No further blocks.") + firstFooter, "one complete result");
 }
 export async function readTool(env: Env, actor: Actor, input: ReadInput): Promise<string> {
   const limit = outputBudget(input.maxTokens), selected = await attachedReadableRevision(env, actor, input.projectId, input.revisionId);
@@ -385,7 +393,11 @@ export async function findClaimsTool(env: Env, actor: Actor, input: SearchInput)
     const body = "## Verified claim matches\n\n" + note + "\n\n" + detail + (cursor ? "\n\n" + displayCursor(cursor) : "");
     if (fits(body, limit)) return body;
   }
-  return minimumBudgetMessage("## Verified claim matches\n\n" + note + "\n\n" + (rows[0] ?? "No verified claims matched."), "one complete result");
+  const firstCursor = hits.length > 1 ? hits[0]?.id : null;
+  const firstDetail = rows[0] ?? (spec.terms.length === 0 ? "No searchable keywords were found." : "No verified claims matched.");
+  const firstBody = "## Verified claim matches\n\n" + note + "\n\n" + firstDetail +
+    (firstCursor ? "\n\n" + displayCursor(firstCursor) : "");
+  return minimumBudgetMessage(firstBody, "one complete result");
 }
 export async function searchTool(env: Env, actor: Actor, input: SearchInput): Promise<string> {
   const limit = outputBudget(input.maxTokens);
@@ -459,7 +471,11 @@ export async function searchTool(env: Env, actor: Actor, input: SearchInput): Pr
     const body = "## Search results\n\n" + note + "\n\n" + detail + (cursor ? "\n\n" + displayCursor(cursor) : "");
     if (fits(body, limit)) return body;
   }
-  return minimumBudgetMessage("## Search results\n\n" + note + "\n\n" + (rows[0]?.markdown ?? "No guide or verified claim matched."), "one complete result");
+  const first = hits[0];
+  const firstCursor = hits.length > 1 && first ? formatSearchCursor(first) : null;
+  const firstBody = "## Search results\n\n" + note + "\n\n" + (first?.markdown ?? "No guide or verified claim matched every literal keyword.") +
+    (firstCursor ? "\n\n" + displayCursor(firstCursor) : "");
+  return minimumBudgetMessage(firstBody, "one complete result");
 }
 export async function getPageTool(env: Env, actor: Actor, input: PageInput): Promise<string> {
   const limit = outputBudget(input.maxTokens);
