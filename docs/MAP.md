@@ -177,6 +177,8 @@ and internal processing terminology stay in API/eval output rather than the owne
 Provider data-policy rejection shows a safe reason and leaves the chosen model and policy unchanged.
 Model selection applies to the next Send, and each stored answer names the model that produced it. A new chat in an
 empty project can Send; it must not wait for a source to exist. Choosing a provider or model starts no inference.
+Sources, Chat and Studio share one project screen on desktop and use three bottom destinations on phone. Source
+selection stays in the source pane; Add, history and project settings do not fill the conversation with forms.
 
 **Hard acceptance — `pnpm eval k2`**
 

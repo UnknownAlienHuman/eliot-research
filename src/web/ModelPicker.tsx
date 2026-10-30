@@ -49,13 +49,14 @@ export function modelCatalogEntryKey(model: ModelRoute): string {
   return `${provider.length}:${provider}${model.id}`;
 }
 
-export function ModelPicker({ label, choices, value, onChange, emptyLabel, loading = false, error = '',
+export function ModelPicker({ label, choices, value, onChange, emptyLabel, defaultRoute, loading = false, error = '',
   compact = false, warnings = [], onRoutePendingChange }: {
   readonly label: string;
   readonly choices: readonly ModelRoute[];
   readonly value: string;
   readonly onChange: (route: string) => void;
   readonly emptyLabel?: string;
+  readonly defaultRoute?: string;
   readonly loading?: boolean;
   readonly error?: string;
   readonly compact?: boolean;
@@ -79,6 +80,8 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
   const matches = (route: string) => choices.filter((model) => model.route === route);
   const selectedMatches = value === '' ? [] : matches(value);
   const selected = selectedMatches.length === 1 ? selectedMatches[0] : undefined;
+  const defaultMatches = defaultRoute ? matches(defaultRoute) : [];
+  const inherited = defaultMatches.length === 1 ? defaultMatches[0] : undefined;
   const keyCounts = new Map<string, number>();
   const providers = new Map<string, string>();
   for (const model of choices) {
@@ -103,7 +106,8 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
     if (group) group.push(model); else groups.set(name, [model]);
   }
   const selectedVisible = filtered.some((model) => model.route === value);
-  const compactModels = choices.filter((model) => providerId(model) === compactProvider);
+  const effectiveProvider = compactProvider || (value === '' && defaultRoute ? routeProviderId(defaultRoute) : '');
+  const compactModels = choices.filter((model) => providerId(model) === effectiveProvider);
   const currentProvider = selected ? providerId(selected) : routeProviderId(value);
   const displayedCompactValue = value !== '' && currentProvider === compactProvider ? value : '';
 
@@ -164,9 +168,10 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
             <label className='er-model-picker__control' htmlFor={id + '-compact-model-select'}>
               <span>Model</span>
               <select id={id + '-compact-model-select'} aria-label={label}
-                value={displayedCompactValue} disabled={loading || error !== '' || compactProvider === ''}
+                title={selected?.label ?? inherited?.label}
+                value={displayedCompactValue} disabled={loading || error !== '' || effectiveProvider === ''}
                 onChange={(event) => chooseModel(event.currentTarget.value)}>
-                <option value='' disabled>{compactProvider === '' ? 'Choose a provider first' : 'Choose a model'}</option>
+                <option value='' disabled={compactProvider !== '' || defaultRoute === undefined}>{compactProvider === '' ? inherited?.label ?? (defaultRoute ? 'Project default model' : 'Choose a provider first') : 'Choose a model'}</option>
                 {value !== '' && compactProvider === currentProvider && !compactModels.some((model) => model.route === value)
                   ? <option value={value} disabled={!selected || selectedIssue !== null}>
                     {selected ? optionLabel(selected) + ' — saved selection' : 'Saved selection unavailable'}

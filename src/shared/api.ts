@@ -1,4 +1,5 @@
 import type { ModelSpec } from "../models";
+import type { DistillState } from "../understanding";
 
 export type NativeUsageMode = "included" | "standard";
 export type DataCollectionPolicy = "deny" | "allow";
@@ -49,6 +50,8 @@ export interface Source {
   currentRevisionId: string | null;
   revisionId: string;
   readableState: "pending" | "readable" | "readable_with_warnings" | "needs_conversion" | "failed";
+  distillState: DistillState;
+  claimCount: number;
   originalFilename: string | null;
   originalSize: number;
   readableSize: number | null;
@@ -124,6 +127,10 @@ export interface RunTurnInput {
   scopeMode: TurnView["scopeMode"];
   sourceIds?: string[];
   model?: string;
+}
+export interface SourceSelection {
+  scopeMode: TurnView["scopeMode"];
+  sourceIds: readonly string[];
 }
 import type { Citation } from "../citations";
 

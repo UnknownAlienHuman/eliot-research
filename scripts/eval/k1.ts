@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 // K1 Read eval: exact API transport only, no fallbacks.
 // H (Origin + owner credentials) goes only to ELIOT_URL. External PDF downloads send no headers.
@@ -56,6 +57,19 @@ if (process.env.ELIOT_OWNER_JWT) {
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
 const cacheDir = fileURLToPath(new URL('../../eval/cache/', import.meta.url));
 const outDir = fileURLToPath(new URL('../../eval/out/k1/', import.meta.url));
+async function openSources(page: Page) {
+  await page.getByRole('navigation', { name: 'Primary', exact: true }).getByRole('link', { name: 'Sources', exact: true }).click();
+  const sources = page.getByRole('complementary', { name: 'Project sources', exact: true });
+  await expect(sources).toBeVisible();
+  return sources;
+}
+async function openAddSources(page: Page) {
+  const sources = await openSources(page);
+  await sources.getByRole('button', { name: 'Add', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add sources', exact: true });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
 await mkdir(cacheDir, { recursive: true });
 await mkdir(outDir, { recursive: true });
 async function apiJson(path: string, init?: any): Promise<any> {
@@ -253,18 +267,19 @@ if (duplicatesOnly) {
       if (dqReq.url().indexOf('/understanding') >= 0 && dqReq.method() !== 'GET') { dqUndPosts.push(dqReq.method() + ' ' + dqReq.url()); }
     });
     await dqPage.goto(origin + '/p/' + dqSecondary + '/sources');
-    await expect(dqPage.locator('#er-lib-text-title')).toBeVisible({ timeout: 15000 });
+    let dqDialog = await openAddSources(dqPage);
     const dqEmpty = await apiJson('/api/projects/' + encodeURIComponent(dqSecondary) + '/sources');
     assert.equal(dqEmpty.status, 200, 'GET attach-target sources must be 200.');
     assert.equal(dqEmpty.body.sources.length, 0, 'Attach target must start empty; duplicates must not attach silently.');
-    await dqPage.locator('#er-lib-text-title').fill(dqTextTitle);
-    await dqPage.locator('#er-lib-text-body').fill(dqTextBody);
-    await dqPage.getByRole('button', { name: 'Save text', exact: true }).click();
-    const dqTextRow = dqPage.locator('.er-lib__progress li', { hasText: dqTextTitle });
-    await expect(dqTextRow.getByRole('button', { name: /^Attach existing/ })).toBeVisible({ timeout: 30000 });
+    await dqDialog.getByLabel('Pasted text title', { exact: true }).fill(dqTextTitle);
+    await dqDialog.getByLabel('Text', { exact: true }).fill(dqTextBody);
+    await dqDialog.getByRole('button', { name: 'Add text', exact: true }).click();
+    const dqTextRow = dqDialog.locator('.er-lib__progress li', { hasText: dqTextTitle });
+    await expect(dqTextRow.getByRole('button', { name: /^Attach from Library/ })).toBeVisible({ timeout: 30000 });
     const dqMid = await apiJson('/api/projects/' + encodeURIComponent(dqSecondary) + '/sources');
     assert.equal(dqMid.body.sources.length, 0, 'A text duplicate must not attach silently.');
-    await dqTextRow.getByRole('button', { name: /^Attach existing/ }).click();
+    await dqTextRow.getByRole('button', { name: /^Attach from Library/ }).click();
+    await dqDialog.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(dqPage.getByRole('link', { name: dqTextTitle, exact: true })).toBeVisible({ timeout: 15000 });
     const dqAfterText = await apiJson('/api/projects/' + encodeURIComponent(dqSecondary) + '/sources');
     const dqAttachedText = dqAfterText.body.sources.find(function (dqS) { return dqS.title === dqTextTitle; });
@@ -272,13 +287,15 @@ if (duplicatesOnly) {
     assert.equal(dqAttachedText.id, dqTextId, 'Attached text must reuse the original source.');
     assert.equal(dqAttachedText.revisionId, dqTextRev, 'Attached text must reuse the original revision.');
     assert.equal(dqAttachedText.conversionCalls, 0, 'Attached text must perform zero conversions.');
-    await dqPage.locator('#er-lib-url').fill(dqUrl);
-    await dqPage.getByRole('button', { name: 'Add URL', exact: true }).click();
-    const dqUrlRow = dqPage.locator('.er-lib__progress li', { hasText: dqUrl });
-    await expect(dqUrlRow.getByRole('button', { name: /^Attach existing/ })).toBeVisible({ timeout: 30000 });
+    dqDialog = await openAddSources(dqPage);
+    await dqDialog.getByLabel('Page URL (https only)', { exact: true }).fill(dqUrl);
+    await dqDialog.getByRole('button', { name: 'Add URL', exact: true }).click();
+    const dqUrlRow = dqDialog.locator('.er-lib__progress li', { hasText: dqUrl });
+    await expect(dqUrlRow.getByRole('button', { name: /^Attach from Library/ })).toBeVisible({ timeout: 30000 });
     const dqMidUrl = await apiJson('/api/projects/' + encodeURIComponent(dqSecondary) + '/sources');
     assert.equal(dqMidUrl.body.sources.length, 1, 'A URL duplicate must not attach silently.');
-    await dqUrlRow.getByRole('button', { name: /^Attach existing/ }).click();
+    await dqUrlRow.getByRole('button', { name: /^Attach from Library/ }).click();
+    await dqDialog.getByRole('button', { name: 'Close', exact: true }).click();
     let dqAttachedUrl = null;
     for (let dqK = 0; dqK < 20; dqK++) {
       const dqL = await apiJson('/api/projects/' + encodeURIComponent(dqSecondary) + '/sources');
@@ -564,7 +581,9 @@ try {
   page.on('response', (response) => { if (response.request().method() === 'POST' && response.url().endsWith('/sources/file')) activeUploads--; });
   const text = '# Источник\n\nТочный русский текст и emoji 🙂.\n\n## Второй раздел\n\nВторой абзац.\n\n## Третий раздел\n\nТретий абзац.\n';
   const batchFiles = [0, 1, 2].map((i) => ({ name: name + '-' + i + '.md', mimeType: 'text/markdown', buffer: Buffer.from(text + '\nФайл ' + i + '\n' + name) }));
-  await page.locator('#er-lib-files').setInputFiles(batchFiles);
+  let addDialog = await openAddSources(page);
+  await addDialog.getByLabel('Choose files', { exact: true }).setInputFiles(batchFiles);
+  await addDialog.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('link', { name: name + '-0.md', exact: true }).click({ timeout: 10000 });
   await expect(page.locator('.er-lib__text')).toContainText('Точный русский текст', { timeout: 10000 });
   const reader = new URL(page.url()), revisionId = reader.searchParams.get('revisionId');
@@ -583,7 +602,7 @@ try {
     const head = await page.locator('.er-lib__head').innerText();
     assert(head.includes('Readable') || head.includes('Converting') || head.includes('Needs') || head.includes('failed'), 'Reader header must show status, got: ' + head.slice(0, 200));
     assertNoUiTelemetry('reader head', head);
-    const title = await page.locator('.er-lib__title').innerText();
+    const title = await page.locator('#er-lib-reader').innerText();
     assert(title.trim().length > 0, 'Reader must show filename/title.');
     const facts = page.locator('.er-lib__facts');
     if (await facts.count() > 0) assertNoUiTelemetry('reader facts', await facts.innerText());
@@ -664,13 +683,13 @@ try {
     timeout: 15000, message: 'Revision switch must GET understanding for the new exact revision.',
   }).toBe(true);
   assert.deepEqual(undPosts, [], 'Revision switch must never POST understanding.');
-  await page.locator('#workspace-main').getByRole('link', { name: 'Sources', exact: true }).click();
-  await expect(page.locator('#er-lib-files')).toBeVisible();
+  addDialog = await openAddSources(page);
   await context.setOffline(true);
-  await page.locator('#er-lib-files').setInputFiles({ name: 'offline.md', mimeType: 'text/markdown', buffer: Buffer.from('offline case') });
-  await expect(page.getByText(/Failed to fetch|NetworkError|fetch failed/i).first()).toBeVisible();
-  await expect(page.locator('#er-lib-files')).toBeEnabled();
+  await addDialog.getByLabel('Choose files', { exact: true }).setInputFiles({ name: 'offline.md', mimeType: 'text/markdown', buffer: Buffer.from('offline case') });
+  await expect(addDialog.getByText(/Failed to fetch|NetworkError|fetch failed/i).first()).toBeVisible();
+  await expect(addDialog.getByLabel('Choose files', { exact: true })).toBeEnabled();
   await context.setOffline(false);
+  await addDialog.getByRole('button', { name: 'Close', exact: true }).click();
   await page.goto(copied);
   await expect(page.locator('.er-lib__excerpt pre')).toHaveText('Точный русский текст');
   const mainPid = new URL(copied).pathname.split('/')[2] as string;
@@ -681,17 +700,18 @@ try {
   await page.goto(origin + '/p/' + mainPid + '/sources');
   // Source list chrome: title/status visible, no storage/telemetry. No paper body here.
   {
-    const rows = page.locator('.er-lib__list');
-    if (await rows.count() > 0) {
-      const listText = await rows.innerText();
-      assert(listText.includes('Readable') || listText.includes('Converting') || listText.includes('Needs') || listText.includes('failed'), 'Source list must show status.');
-      assertNoUiTelemetry('source list', listText);
-    }
+    const sources = await openSources(page);
+    const rows = sources.locator('.er-sources-pane__rows');
+    await expect(rows).toBeVisible();
+    const listText = await rows.innerText();
+    assert(listText.includes('Not analyzed') || listText.includes('Converting') || listText.includes('Needs') || listText.includes('Failed'), 'Source list must show status.');
+    assertNoUiTelemetry('source list', listText);
   }
-  await expect(page.locator('#er-lib-files')).toBeVisible();
-  await page.locator('#er-lib-text-title').fill(dupeTextTitle);
-  await page.locator('#er-lib-text-body').fill(dupeTextBody);
-  await page.getByRole('button', { name: 'Save text', exact: true }).click();
+  addDialog = await openAddSources(page);
+  await addDialog.getByLabel('Pasted text title', { exact: true }).fill(dupeTextTitle);
+  await addDialog.getByLabel('Text', { exact: true }).fill(dupeTextBody);
+  await addDialog.getByRole('button', { name: 'Add text', exact: true }).click();
+  await addDialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.getByRole('link', { name: dupeTextTitle, exact: true })).toBeVisible({ timeout: 15000 });
   const dupeTextSrc = (await apiJson('/api/projects/' + mainPid + '/sources')).body.sources.find((s: any) => s.title === dupeTextTitle);
   assert(dupeTextSrc, 'Text source must exist in the main project.');
@@ -712,19 +732,22 @@ try {
   }
   const other = await apiJson('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: name + ' attached' }) });
   await page.goto(origin + '/p/' + other.body.project.id + '/sources');
-  await expect(page.locator('#er-lib-files')).toBeVisible();
-  await page.locator('#er-lib-files').setInputFiles(batchFiles[1]);
-  await expect(page.getByRole('button', { name: /^Attach existing/ })).toBeVisible();
+  addDialog = await openAddSources(page);
+  await addDialog.getByLabel('Choose files', { exact: true }).setInputFiles(batchFiles[1]);
+  await expect(addDialog.getByRole('button', { name: /^Attach from Library/ })).toBeVisible();
   assert.equal((await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources.length, 0, 'A duplicate must not attach silently.');
-  await page.getByRole('button', { name: /^Attach existing/ }).click();
+  await addDialog.getByRole('button', { name: /^Attach from Library/ }).click();
+  await addDialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.getByRole('link', { name: name + '-1.md', exact: true })).toBeVisible();
-  await page.locator('#er-lib-text-title').fill(dupeTextTitle);
-  await page.locator('#er-lib-text-body').fill(dupeTextBody);
-  await page.getByRole('button', { name: 'Save text', exact: true }).click();
-  const textRow = page.locator('.er-lib__progress li', { hasText: dupeTextTitle });
-  await expect(textRow.getByRole('button', { name: /^Attach existing/ })).toBeVisible({ timeout: 15000 });
+  addDialog = await openAddSources(page);
+  await addDialog.getByLabel('Pasted text title', { exact: true }).fill(dupeTextTitle);
+  await addDialog.getByLabel('Text', { exact: true }).fill(dupeTextBody);
+  await addDialog.getByRole('button', { name: 'Add text', exact: true }).click();
+  const textRow = addDialog.locator('.er-lib__progress li', { hasText: dupeTextTitle });
+  await expect(textRow.getByRole('button', { name: /^Attach from Library/ })).toBeVisible({ timeout: 15000 });
   assert.equal((await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources.length, 1, 'A text duplicate must not attach silently.');
-  await textRow.getByRole('button', { name: /^Attach existing/ }).click();
+  await textRow.getByRole('button', { name: /^Attach from Library/ }).click();
+  await addDialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.getByRole('link', { name: dupeTextTitle, exact: true })).toBeVisible();
   const attachedText = (await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources.find((s: any) => s.title === dupeTextTitle);
   assert(attachedText, 'Attached text must be listed.');
@@ -732,12 +755,14 @@ try {
   assert.equal(attachedText.conversionCalls, 0, 'Attached text must perform zero conversions.');
   if (allowNetUrl) {
     const otherBefore = new Set(((await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources).map((s: any) => s.id));
-    await page.locator('#er-lib-url').fill(dupeUrl);
-    await page.getByRole('button', { name: 'Add URL', exact: true }).click();
-    const urlRow = page.locator('.er-lib__progress li', { hasText: dupeUrl });
-    await expect(urlRow.getByRole('button', { name: /^Attach existing/ })).toBeVisible({ timeout: 30000 });
+    addDialog = await openAddSources(page);
+    await addDialog.getByLabel('Page URL (https only)', { exact: true }).fill(dupeUrl);
+    await addDialog.getByRole('button', { name: 'Add URL', exact: true }).click();
+    const urlRow = addDialog.locator('.er-lib__progress li', { hasText: dupeUrl });
+    await expect(urlRow.getByRole('button', { name: /^Attach from Library/ })).toBeVisible({ timeout: 30000 });
     assert.equal((await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources.length, 2, 'A URL duplicate must not attach silently.');
-    await urlRow.getByRole('button', { name: /^Attach existing/ }).click();
+    await urlRow.getByRole('button', { name: /^Attach from Library/ }).click();
+    await addDialog.getByRole('button', { name: 'Close', exact: true }).click();
     for (let attempt = 0; attempt < 20; attempt++) {
       const listed = (await apiJson('/api/projects/' + other.body.project.id + '/sources')).body.sources;
       if (listed.length === 3) break;

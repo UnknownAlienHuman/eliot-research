@@ -11,10 +11,12 @@ export class LibraryError extends Error {
 const PROJECT_FIELDS = "id,title,description,archived_at AS archivedAt,created_at AS createdAt,updated_at AS updatedAt,instructions,answer_model AS answerModel";
 const SOURCE_FIELDS = `s.id,s.title,s.kind,s.current_revision_id AS currentRevisionId,r.id AS revisionId,
   r.readable_state AS readableState,r.original_filename AS originalFilename,r.original_size AS originalSize,
-  r.readable_size AS readableSize,r.block_count AS blockCount,r.warning_summary AS warningSummary,r.error,
+  r.readable_size AS readableSize,r.block_count AS blockCount,coalesce(k.distill_state,'none') AS distillState,
+  coalesce(k.claim_count,0) AS claimCount,
+  r.warning_summary AS warningSummary,r.error,
   r.converter,r.conversion_tokens AS conversionTokens,r.conversion_calls AS conversionCalls,
   r.conversion_ms AS conversionMs,s.created_at AS createdAt`;
-const LATEST_REVISION = "JOIN source_revision r ON r.source_id=s.id AND r.revision_no=(SELECT MAX(revision_no) FROM source_revision WHERE source_id=s.id AND deleted_at IS NULL)";
+const LATEST_REVISION = "JOIN source_revision r ON r.source_id=s.id AND r.revision_no=(SELECT MAX(revision_no) FROM source_revision WHERE source_id=s.id AND deleted_at IS NULL) LEFT JOIN source_revision k ON k.id=s.current_revision_id";
 
 export async function getProject(env: Env, _actor: Actor, id: string): Promise<Project> {
   const project = await env.DB.prepare(`SELECT ${PROJECT_FIELDS} FROM project WHERE id=?`).bind(id).first<Project>();

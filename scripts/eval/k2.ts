@@ -513,6 +513,14 @@ assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
 }
 if (process.argv.includes('--models-only')) {
+  const providerDisplayName = (id) => ({
+    'workers-ai': 'Workers AI',
+    openrouter: 'OpenRouter',
+    'command-code': 'Command Code',
+    kilo: 'Kilo',
+    nous: 'Nous Portal',
+    'opencode-go': 'OpenCode Go',
+  })[id] ?? id;
   // Catalog/storage checks only. Never dispatches a model turn; the isolated UI Gateway roundtrip restores blank.
   const before = await apiJson('/api/settings');
   const providersBefore = await apiJson('/api/models/providers');
@@ -698,11 +706,12 @@ if (process.argv.includes('--models-only')) {
     });
     const errors = [];
     async function setAdvancedGateway(page, open) {
-      const details = page.locator('details.er-models__details').filter({ hasText: 'Advanced provider settings' });
-      assert.equal(await details.count(), 1, 'Models card must expose one Advanced provider settings disclosure.');
-      const isOpen = (await details.getAttribute('open')) !== null;
-      if (open && !isOpen) await details.locator('summary').click();
-      if (!open && isOpen) await details.locator('summary').click();
+      const dialog = page.locator('dialog.er-models__dialog');
+      assert.equal(await dialog.count(), 1, 'Models card must expose one AI Gateway connection dialog.');
+      const isOpen = await dialog.evaluate((element) => (element as HTMLDialogElement).open);
+      if (open && !isOpen) await page.getByRole('button', { name: 'AI Gateway connection', exact: true }).click();
+      if (!open && isOpen) await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+      assert.equal(await dialog.evaluate((element) => (element as HTMLDialogElement).open), open, 'AI Gateway connection dialog open state must match the requested state.');
     }
     async function openSettings(page) {
       const reads = ['/api/settings', '/api/models/connection', '/api/models'].map(async (path) => {
@@ -738,8 +747,9 @@ if (process.argv.includes('--models-only')) {
       await answersRadio.check();
       // Opening Settings is read-only; the Models Save button is not used here.
       await setAdvancedGateway(page, true);
-      await expect(modelsRegion.getByRole('textbox', { name: 'Gateway ID Blank disables external routing.', exact: true })).toHaveValue('');
-      await expect(modelsRegion.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true })).not.toBeChecked();
+      const gatewayDialog = modelsRegion.locator('dialog.er-models__dialog');
+      await expect(gatewayDialog.getByRole('textbox', { name: 'Gateway ID', exact: true })).toHaveValue('');
+      await expect(gatewayDialog.getByRole('checkbox', { name: 'Allow external model requests from this workspace', exact: true })).not.toBeChecked();
       await setAdvancedGateway(page, false);
     }
     async function activePicker(page, mode) {
@@ -802,13 +812,15 @@ if (process.argv.includes('--models-only')) {
     page.on('pageerror', (error) => errors.push(error.message));
     await openSettings(page);
     const modelsSection = page.getByRole('region', { name: 'Models', exact: true });
-    const consent = modelsSection.getByRole('checkbox', { name: 'Allow external model requests from this workspace.', exact: true });
-    const gatewayId = modelsSection.getByRole('textbox', { name: 'Gateway ID Blank disables external routing.', exact: true });
+    const gatewayDialog = modelsSection.locator('dialog.er-models__dialog');
+    const consent = gatewayDialog.getByRole('checkbox', { name: 'Allow external model requests from this workspace', exact: true });
+    const gatewayId = gatewayDialog.getByRole('textbox', { name: 'Gateway ID', exact: true });
     const saveModels = modelsSection.getByRole('button', { name: 'Save', exact: true });
     assert.equal(await saveModels.count(), 1, 'Models card must have one Save button for defaults, providers, and Gateway connection.');
     await setAdvancedGateway(page, true);
     await gatewayId.fill('eliotr-reasoning');
     await expect(consent).not.toBeChecked();
+    await setAdvancedGateway(page, false);
     await saveModels.click();
     await expect(page.getByText(/check the box to connect a Gateway/i)).toBeVisible();
     assert.deepEqual(gatewayConsentRequests, [], 'Unconsented Gateway-only Save must not send a connection request.');
@@ -816,10 +828,12 @@ if (process.argv.includes('--models-only')) {
     const connectionAfterUnconsentedSave = await apiJson('/api/models/connection');
     assert.equal(connectionAfterUnconsentedSave.status, 200);
     assert.equal(connectionAfterUnconsentedSave.body.connection.gatewayId, null, 'Unconsented Gateway-only Save must leave the stored connection blank.');
+    await setAdvancedGateway(page, true);
     await consent.check();
     await expect(consent).toBeChecked();
     const consentedConnectionResponse = page.waitForResponse((response) =>
       response.url() === browserOrigin + '/api/models/connection' && response.request().method() === 'PUT', { timeout: 30000 });
+    await setAdvancedGateway(page, false);
     await saveModels.click();
     assert.equal((await consentedConnectionResponse).status(), 200, 'Consent-enabled Gateway Save must persist the existing named Gateway.');
     await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
@@ -829,10 +843,12 @@ if (process.argv.includes('--models-only')) {
     assert.equal(connectionAfterConsentSave.status, 200);
     assert.equal(connectionAfterConsentSave.body.connection.gatewayId, 'eliotr-reasoning',
       'Readback must show the actual stored Gateway setting; this does not prove provider usability.');
+    await setAdvancedGateway(page, true);
     await expect(consent).not.toBeChecked();
     await gatewayId.fill('');
     const restoreConnectionResponse = page.waitForResponse((response) =>
       response.url() === browserOrigin + '/api/models/connection' && response.request().method() === 'PUT', { timeout: 30000 });
+    await setAdvancedGateway(page, false);
     await saveModels.click();
     assert.equal((await restoreConnectionResponse).status(), 200, 'The same Models Save must restore the Gateway setting to blank.');
     await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
@@ -856,13 +872,11 @@ if (process.argv.includes('--models-only')) {
       providerUsabilityProven: false,
     };
     await setAdvancedGateway(page, false);
-    assert((await page.locator('#workspace-main details.er-models__details').count()) >= 1, 'Gateway technical details stay collapsed separately from the expanded picker.');
-    assert.strictEqual(await page.locator('#workspace-main details.er-models__details[open]').count(), 0, 'Gateway technical details must start collapsed.');
+    assert.equal(await gatewayDialog.count(), 1, 'Models card must retain its native Gateway connection dialog.');
+    assert.strictEqual(await gatewayDialog.evaluate((element) => (element as HTMLDialogElement).open), false, 'Gateway connection dialog must be closed after its settings roundtrip.');
     assert.strictEqual(await page.locator('.er-model-picker__find').count(), 0, 'Expanded picker must not introduce a Find disclosure.');
     assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Expanded picker must not introduce pagination.');
     assert.strictEqual(await page.locator('section.er-model-picker__advanced').count(), 0, 'Expanded picker must not hide Model details.');
-    const summaries = page.locator('#workspace-main details.er-models__details > summary');
-    for (let i = 0; i < await summaries.count(); i++) assert((await summaries.nth(i).innerText()).trim().length > 0, 'Every collapsed gateway section must carry an accessible label.');
     await assertDisabledChoice(page, 'answers', browserModelRoutes);
     await assertDisabledChoice(page, 'understanding', browserModelRoutes);
     await activePicker(page, 'answers');
@@ -959,12 +973,25 @@ if (process.argv.includes('--models-only')) {
       }
       await expect(ppage.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
       const providerItems = ppage.locator('.er-providers__item');
+      const providerDialog = ppage.locator('dialog.er-providers__dialog');
       assert.equal(await providerItems.count(), providersBefore.body.providers.length, 'Provider editor must show every stored provider.');
-      const displayedProviderConfigs = await providerItems.evaluateAll((items) => items.map((item) => ({
-        id: item.querySelector('.er-providers__id span')?.textContent?.trim() ?? '',
-        enabled: item.querySelector('.er-providers__check input')?.checked === true,
-        type: item.querySelector('.er-providers__fields select')?.value ?? '',
-      })));
+      const displayedProviderConfigs = [];
+      for (const [index, provider] of providersBefore.body.providers.entries()) {
+        const row = providerItems.nth(index);
+        const humanName = providerDisplayName(provider.id);
+        assert.equal((await row.locator('.er-providers__id').innerText()).trim(), humanName,
+          'Provider row must use its human-readable heading (' + provider.id + ').');
+        const enabled = await row.locator('.er-providers__check input').isChecked();
+        await row.getByRole('button', { name: 'Connection details for ' + humanName, exact: true }).click();
+        await expect(providerDialog).toBeVisible();
+        await expect(providerDialog.getByRole('heading', { name: 'Connection details — ' + humanName, exact: true })).toBeVisible();
+        const idInput = providerDialog.getByRole('textbox', { name: 'Provider ID', exact: true });
+        const typeSelect = providerDialog.getByRole('combobox', { name: 'Type', exact: true });
+        const displayedId = await idInput.inputValue();
+        const displayedType = await typeSelect.inputValue();
+        await providerDialog.getByRole('button', { name: 'Done', exact: true }).click();
+        displayedProviderConfigs.push({ id: displayedId, enabled, type: displayedType });
+      }
       const expectedProviderConfigs = providersBefore.body.providers.map((provider) => ({
         id: provider.id,
         enabled: provider.enabled,
@@ -974,15 +1001,19 @@ if (process.argv.includes('--models-only')) {
       await ppage.getByRole('button', { name: 'Add provider', exact: true }).click();
       assert.equal(await providerItems.count(), providersBefore.body.providers.length + 1, 'Add provider must append one draft row.');
       const draft = ppage.locator('.er-providers__item').last();
-      assert.equal(await draft.locator('details.er-providers__details').evaluate((el) => el.open), true, 'New provider draft must open Connection details (isNew stable).');
-      await expect(draft.locator('select')).toHaveValue('openai-compatible');
-      await draft.locator('.er-providers__fields input').first().fill(evalProviderId);
-      assert.equal(await draft.locator('details.er-providers__details').evaluate((el) => el.open), true, 'Editing the provider ID must keep Connection details open.');
-      await draft.locator('input[placeholder="https://"]').fill('https://api.example.com/v1/');
-      await draft.locator('input[placeholder="custom-command-code"]').fill('custom-eval-provider');
-      await draft.locator('input[placeholder="v1"]').fill('v1');
-      await draft.getByRole('checkbox', { name: 'Enabled' }).uncheck();
-      await expect(draft.getByRole('checkbox', { name: 'Enabled' })).not.toBeChecked();
+      await expect(draft.locator('.er-providers__id')).toHaveText('New provider');
+      await expect(providerDialog).toBeVisible();
+      await expect(providerDialog.getByRole('combobox', { name: 'Type', exact: true })).toHaveValue('openai-compatible');
+      await expect(providerDialog.getByRole('textbox', { name: 'Provider ID', exact: true })).toHaveValue('new-provider');
+      await providerDialog.getByRole('textbox', { name: 'Provider ID', exact: true }).fill(evalProviderId);
+      await providerDialog.locator('input[placeholder="https://"]').fill('https://api.example.com/v1/');
+      await providerDialog.locator('input[placeholder="custom-command-code"]').fill('custom-eval-provider');
+      await providerDialog.locator('input[placeholder="v1"]').fill('v1');
+      await expect(providerDialog.getByRole('heading', { name: 'Connection details — ' + evalProviderId, exact: true })).toBeVisible();
+      await providerDialog.getByRole('button', { name: 'Done', exact: true }).click();
+      const draftEnabled = draft.getByRole('checkbox', { name: 'Enable ' + evalProviderId, exact: true });
+      await draftEnabled.uncheck();
+      await expect(draftEnabled).not.toBeChecked();
       const saveModels = ppage.getByRole('button', { name: 'Save', exact: true });
       await saveModels.scrollIntoViewIfNeeded();
       const putResponse = ppage.waitForResponse((r) => r.url() === browserOrigin + '/api/models/providers' && r.request().method() === 'PUT', { timeout: 30000 });
@@ -1004,11 +1035,12 @@ if (process.argv.includes('--models-only')) {
       assert.equal(evalRow.gatewaySlug, 'custom-eval-provider');
       assert.equal(evalRow.gatewayPath, 'v1');
       assert.equal(evalRow.enabled, false, 'Eval provider must stay disabled so no discovery or inference runs.');
-      const openRouterRow = ppage.locator('.er-providers__item', { hasText: 'openrouter' });
+      const openRouterRow = providerItems.filter({ has: ppage.getByRole('heading', { name: 'OpenRouter', exact: true }) });
       assert.equal(await openRouterRow.count(), 1, 'Exactly one OpenRouter provider row must be shown.');
-      await openRouterRow.getByText('Connection details').click();
-      assert.equal(await openRouterRow.locator('details.er-providers__details').evaluate((el) => el.open), true, 'OpenRouter Connection details must open before editing the data-use choice.');
-      const dataUseSelect = openRouterRow.getByLabel(/Data use/);
+      await openRouterRow.getByRole('button', { name: 'Connection details for OpenRouter', exact: true }).click();
+      await expect(providerDialog).toBeVisible();
+      await expect(providerDialog.getByRole('heading', { name: 'Connection details — OpenRouter', exact: true })).toBeVisible();
+      const dataUseSelect = providerDialog.getByLabel(/Data use/);
       assert.equal(await dataUseSelect.count(), 1, 'OpenRouter row must show the data-use choice.');
       assert.equal(await dataUseSelect.inputValue(), 'deny', 'OpenRouter data-use choice must default to deny.');
       assert.equal(await ppage.getByLabel(/Data use/).count(), 1, 'Only the OpenRouter row may show a data-use choice.');
@@ -1019,6 +1051,7 @@ if (process.argv.includes('--models-only')) {
       const snapshotBeforePolicy = JSON.stringify(catalogBeforePolicy.body.snapshot);
       const modelsBeforePolicy = JSON.stringify(catalogBeforePolicy.body.models);
       await dataUseSelect.selectOption('allow');
+      await providerDialog.getByRole('button', { name: 'Done', exact: true }).click();
       const policyPutResponse = ppage.waitForResponse((r) => r.url() === browserOrigin + '/api/models/providers' && r.request().method() === 'PUT', { timeout: 30000 });
       await saveModels.click();
       assert.equal((await policyPutResponse).status(), 200, 'Policy-only Models Save must persist the provider array.');
@@ -1042,11 +1075,13 @@ if (process.argv.includes('--models-only')) {
       assert.equal(settingsAfterPolicy.body.settings.nativeUsageMode, settingsBeforePolicy.body.settings.nativeUsageMode, 'Policy-only save must keep native billing unchanged.');
       await ppage.reload();
       await expect(ppage.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
-      const openRouterReloaded = ppage.locator('.er-providers__item', { hasText: 'openrouter' });
-      await openRouterReloaded.getByText('Connection details').click();
-      assert.equal(await openRouterReloaded.locator('details.er-providers__details').evaluate((el) => el.open), true, 'OpenRouter Connection details must reopen after reload before restoring deny.');
-      assert.equal(await openRouterReloaded.getByLabel(/Data use/).inputValue(), 'allow', 'Reload must persist the allow choice.');
-      await openRouterReloaded.getByLabel(/Data use/).selectOption('deny');
+      const openRouterReloaded = providerItems.filter({ has: ppage.getByRole('heading', { name: 'OpenRouter', exact: true }) });
+      await openRouterReloaded.getByRole('button', { name: 'Connection details for OpenRouter', exact: true }).click();
+      await expect(providerDialog).toBeVisible();
+      const reloadedDataUse = providerDialog.getByLabel(/Data use/);
+      assert.equal(await reloadedDataUse.inputValue(), 'allow', 'Reload must persist the allow choice.');
+      await reloadedDataUse.selectOption('deny');
+      await providerDialog.getByRole('button', { name: 'Done', exact: true }).click();
       const policyRestoreResponse = ppage.waitForResponse((r) => r.url() === browserOrigin + '/api/models/providers' && r.request().method() === 'PUT', { timeout: 30000 });
       await saveModels.click();
       assert.equal((await policyRestoreResponse).status(), 200, 'Policy restore Save must persist deny.');
@@ -1083,9 +1118,9 @@ if (process.argv.includes('--models-only')) {
       await expect(reloadPage.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
       const restoredItems = reloadPage.locator('.er-providers__item');
       assert.equal(await restoredItems.count(), providersBefore.body.providers.length, 'Reload after restore must show the original provider row count.');
-      const restoredProviderIds = await restoredItems.locator('.er-providers__id span').allTextContents();
-      assert.deepEqual(restoredProviderIds.map((id) => id.trim()), providersBefore.body.providers.map((provider) => provider.id),
-        'Reload after restore must show every original required provider ID in order.');
+      const restoredProviderNames = await restoredItems.locator('.er-providers__id').allTextContents();
+      assert.deepEqual(restoredProviderNames.map((name) => name.trim()), providersBefore.body.providers.map((provider) => providerDisplayName(provider.id)),
+        'Reload after restore must show every original human-readable provider heading in order.');
       await expect(reloadPage.locator('.er-providers__item', { hasText: evalProviderId })).toHaveCount(0);
     } finally {
       await providerReloadContext.close().catch(() => undefined);
