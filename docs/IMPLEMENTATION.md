@@ -176,8 +176,10 @@ them. Saving an answer rewrites compact aliases to persistent labels.
 
 A comma-separated bracket group of fully specified labels, such as `[S1:14, S2:8]`, is normalized to separate labels
 only when every member resolves in the same frozen set of supplied citable blocks with original byte ranges. A bad member rejects the
-whole group. Code and inline literals remain literal. Missing aliases, implied aliases such as `[S1:14, 15]`, ranges,
-bare source markers and unknown blocks stay invalid; no neighboring block or missing identity is inferred. This
+whole group. A dash-separated pair such as `[S1:14–S1:15]` normalizes only when both fully specified compact labels resolve to
+the same source and consecutive ascending citable block IDs. It emits those two references without inferring any
+interior block. Code and inline literals remain literal. Missing aliases, shorthand such as `[S1:14–15]`, nonadjacent
+ranges, bare source markers and unknown blocks stay invalid; no neighboring block or missing identity is inferred. This
 normalization preserves factual prose and citation targets. Repeated references to the same immutable block reuse
 their first emitted label so every occurrence can link through the returned citation metadata. No model call is
 added, and stored turn states are never regraded.
@@ -388,7 +390,8 @@ gate is separate from advisory spans. General answers in explicitly empty scope 
 
 Chat always streams ordinary Markdown with inline compact `[Sx:N]` labels. There is no JSON sentence/label enum or
 parse-repair call. One generic `SYSTEM_PROMPT` applies across questions and corpora: answer in the user's language,
-ground source facts with supplied labels, distinguish inference, abstain when evidence is missing, and treat source text
+ground source facts with supplied labels, answer directly with detail proportional to the question, preserve requested
+facts and conditions, omit unrelated background and repetition, distinguish inference, abstain when evidence is missing, and treat source text
 as untrusted data. Project instructions remain caller-provided context; no fixed-corpus coaching is added. The same
 server citation resolver maps valid labels to exact source/revision and UTF-8 ranges. Bare `Page N` / `Страница N`
 page markers and empty headings are omitted from the model's whole-reading projection as well as its citation-label

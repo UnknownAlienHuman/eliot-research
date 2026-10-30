@@ -154,6 +154,71 @@ describe("resolveCitations", () => {
     ]);
   });
 
+  it("resolves explicit adjacent compact pairs across dash forms with UTF-8 source ranges", () => {
+    const first = "Факт 36 🌍.";
+    const second = "Факт 37 α.";
+    const pageOnly = "Page 2";
+    const distant = "Факт 40 β.";
+    const text = [first, second, pageOnly, distant].join("\n\n");
+    const ids = [36, 37, 38, 40];
+    const allBlocks = scanBlocks(text).map((block, index) => ({ ...block, id: ids[index] ?? block.id }));
+    const citableBlocks = allBlocks.filter((block) => isCitableBlock(block, sliceUtf8(text, block.start, block.end)));
+    expect(citableBlocks.map((block) => block.id)).toEqual([36, 37, 40]);
+    const sourceBText = "Чужой источник 🧪.";
+    const sourceBBlocks = scanBlocks(sourceBText).map((block) => ({ ...block, id: 37 }));
+    const sources: LabelSource[] = [
+      { sourceId: GROUP_SRC, revisionId: GROUP_REV, title: "Synthetic source A", blocks: citableBlocks, alias: "S9" },
+      { sourceId: GROUP_SRC2, revisionId: GROUP_REV2, title: "Synthetic source B", blocks: sourceBBlocks, alias: "S10" },
+    ];
+    const answer = "Negative -5 and −5 stay prose. [S9:36-S9:37] [S9:36–S9:37] [S9:36—S9:37].";
+    const out = resolveCitations(answer, sources);
+    expect(out.invalidLabels).toBe(0);
+    expect(out.text).toBe("Negative -5 and −5 stay prose. [S9:36][S9:37] [S9:36][S9:37] [S9:36][S9:37].");
+    expect(out.citations.map((citation) => [citation.label, citation.sourceId, citation.revisionId, citation.block])).toEqual([
+      ["[S9:36]", GROUP_SRC, GROUP_REV, 36],
+      ["[S9:37]", GROUP_SRC, GROUP_REV, 37],
+    ]);
+    const firstBlock = citableBlocks[0], secondBlock = citableBlocks[1];
+    if (!firstBlock || !secondBlock) throw new Error("Synthetic adjacent citable blocks are missing.");
+    expect(out.citations.map((citation) => [citation.start, citation.end])).toEqual([
+      [firstBlock.start, firstBlock.end], [secondBlock.start, secondBlock.end],
+    ]);
+    expect(sliceUtf8(text, out.citations[0]?.start ?? -1, out.citations[0]?.end ?? -1)).toBe(first + "\n");
+    expect(sliceUtf8(text, out.citations[1]?.start ?? -1, out.citations[1]?.end ?? -1)).toBe(second + "\n");
+  });
+
+  it("rejects incomplete, cross-source, nonadjacent and noncitable dash pairs atomically", () => {
+    const first = "Факт 36 🌍.";
+    const second = "Факт 37 α.";
+    const pageOnly = "Page 2";
+    const distant = "Факт 40 β.";
+    const text = [first, second, pageOnly, distant].join("\n\n");
+    const ids = [36, 37, 38, 40];
+    const blocks = scanBlocks(text).map((block, index) => ({ ...block, id: ids[index] ?? block.id }));
+    const citable = blocks.filter((block) => isCitableBlock(block, sliceUtf8(text, block.start, block.end)));
+    const sourceBText = "Чужой источник 🧪.";
+    const sourceBBlocks = scanBlocks(sourceBText).map((block) => ({ ...block, id: 37 }));
+    const sources: LabelSource[] = [
+      { sourceId: GROUP_SRC, revisionId: GROUP_REV, title: "Synthetic source A", blocks: citable, alias: "S9" },
+      { sourceId: GROUP_SRC2, revisionId: GROUP_REV2, title: "Synthetic source B", blocks: sourceBBlocks, alias: "S10" },
+    ];
+    const rejected = [
+      "[S9:37–S9:36]", // Descending adjacent IDs are not the allowed ascending pair.
+      "[S9:36–S9:40]", // Both resolve, but block IDs are not adjacent.
+      "[S9:36–37]", // The right endpoint omits its source identity.
+      "[S9:36–S10:37]", // Both resolve, but cross source identities.
+      "[S9:36–S9:99]", // Unknown endpoint.
+      "[S9:37–S9:38]", // Block 38 is the filtered standalone page marker.
+      "[S9:36–S9:37–S9:40]", // More than two atoms is not a pair.
+    ];
+    for (const token of rejected) {
+      const out = resolveCitations("before " + token + " after", sources);
+      expect(out.text).toBe("before  after");
+      expect(out.citations).toEqual([]);
+      expect(out.invalidLabels).toBe(1);
+    }
+  });
+
   it("rejects a comma group with an unknown atom as a whole", () => {
     const groupSources: LabelSource[] = [
       { sourceId: GROUP_SRC, revisionId: GROUP_REV, title: "Paper G", blocks: makeBlocks(30), alias: "S9" },

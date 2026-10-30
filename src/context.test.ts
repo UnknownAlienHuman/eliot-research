@@ -617,8 +617,24 @@ describe("buildContext K3 claims fallback", () => {
       texts: { r9: { text: body, guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 300, heading: null }, { id: 2, type: "paragraph", start: 300, end: 600, heading: null }] } },
       claims: { r9: [{ ordinal: 1, statement: "Finding one", quote: "quoted one", conditions: null, blockIndex: 2, ambiguous: 0 }] },
     });
-    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 1400, maxOutputTokens: 100 }, question: "Q" + "q".repeat(459), instructions: "I" + "i".repeat(459) });
+    const question = "Q" + "q".repeat(459), instructions = "I" + "i".repeat(459), outputTokens = 100;
+    const estimateTokens = (value: string) => Math.ceil(new TextEncoder().encode(value).byteLength / 3);
+    const measuredSystem = await buildContext(env, actor, {
+      projectId: "p1", scopeMode: "empty", model: { contextTokens: 5000, maxOutputTokens: outputTokens }, question, instructions,
+    });
+    const systemTokens = estimateTokens(measuredSystem.messages[0]?.content ?? "");
+    const callerTokens = estimateTokens(question) + estimateTokens(instructions);
+    const wholePrefitTokens = Math.ceil(600 / 3) + systemTokens + callerTokens + outputTokens;
+    // Place the existing 60% cap one token below the current whole-prefit estimate;
+    // claims must still fit after its smaller labelled excerpts are estimated.
+    const contextTokens = Math.floor((wholePrefitTokens - 1) / 0.6);
+    const cap = Math.min(Math.floor(contextTokens * 0.6), 400000);
+    expect(cap).toBeLessThan(wholePrefitTokens);
+    const res = await buildContext(env, actor, {
+      projectId: "p1", scopeMode: "project_default", model: { contextTokens, maxOutputTokens: outputTokens }, question, instructions,
+    });
     expect(res.mode).toBe("claims");
+    expect(res.estimatedInputTokens + callerTokens + outputTokens).toBeLessThanOrEqual(cap);
     expect(res.revisionIds).toEqual(["r9"]);
     expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
     expect(res.messages[1]).toMatchObject({ role: "user" });
@@ -854,15 +870,30 @@ describe("orientation from stored guides", () => {
     expect(orient).not.toContain("[S1:1]");
   });
   it("omits orientation without headroom and keeps whole", async () => {
+    const text = "Alpha.";
+    const outputTokens = 100;
     const { env } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r1", createdAt: 1 }],
-      revisions: [{ id: "r1", readableState: "readable", readableSize: 10, distillState: "done", guideSummary: "G".repeat(600), deletedAt: null }],
-      texts: { r1: { text: "Alpha.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 6, heading: null }] } },
+      revisions: [{ id: "r1", readableState: "readable", readableSize: new TextEncoder().encode(text).byteLength, distillState: "done", guideSummary: "G".repeat(600), deletedAt: null }],
+      texts: { r1: { text, blocks: [{ id: 1, type: "paragraph", start: 0, end: 6, heading: null }] } },
     });
-    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 800, maxOutputTokens: 100 } });
+    const estimateTokens = (value: string) => Math.ceil(new TextEncoder().encode(value).byteLength / 3);
+    const measuredWhole = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 20000, maxOutputTokens: outputTokens } });
+    expect(measuredWhole.mode).toBe("whole");
+    expect(measuredWhole.messages).toHaveLength(3);
+    const baseTokens = estimateTokens(measuredWhole.messages[0]?.content ?? "") + estimateTokens(measuredWhole.messages[1]?.content ?? "");
+    const orientationTokens = estimateTokens(measuredWhole.messages[2]?.content ?? "");
+    const contextTokens = Math.ceil((baseTokens + outputTokens) / 0.6);
+    const cap = Math.min(Math.floor(contextTokens * 0.6), 400000);
+    expect(baseTokens + outputTokens).toBeLessThanOrEqual(cap);
+    expect(baseTokens + orientationTokens + outputTokens).toBeGreaterThan(cap);
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens, maxOutputTokens: outputTokens } });
     expect(res.mode).toBe("whole");
     expect(res.messages.length).toBe(2);
+    expect(res.estimatedInputTokens).toBe(baseTokens);
+    expect(res.estimatedInputTokens + outputTokens).toBeLessThanOrEqual(cap);
+    expect(res.estimatedInputTokens + orientationTokens + outputTokens).toBeGreaterThan(cap);
     const body = res.messages.map((m) => m.content).join(NL);
     expect(body).not.toContain("Derived orientation");
     expect(body).not.toContain("GGGGGGGG");

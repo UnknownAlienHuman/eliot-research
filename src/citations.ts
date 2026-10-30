@@ -8,9 +8,9 @@ import type { AnswerWarning } from "./shared/api.js";
  * and persistent `[R<full-revision-uuid>:<block>]` labels outside fenced and inline
  * code resolve against the frozen source scope. Unknown, out-of-scope,
  * malformed, ambiguous, out-of-range and bare [S<N>] labels are removed and counted.
- * A comma-separated group of full atomic labels canonicalizes to adjacent
- * individual references only when every atom resolves against the same frozen
- * maps; a group with any invalid atom is removed and counted once.
+ * Comma-separated groups retain their full-atom frozen-scope validation. A
+ * dash-separated pair canonicalizes only when two full compact labels resolve
+ * to ascending consecutive blocks of the same source; either invalid atom rejects the pair.
  * Offsets come from the block map only; nothing is fabricated.
  * Each citation keeps its sourceId and the label token as emitted in the
  * returned text, so the reader matches c.label (or the persistent label
@@ -152,6 +152,14 @@ function splitGroupToken(token: string): string[] | undefined {
   return inner.split(",").map((part) => `[${part.trim()}]`);
 }
 
+/** Two fully written compact labels may use a dash only for an ascending adjacent same-source pair. */
+function splitAdjacentPairToken(token: string): [string, string] | undefined {
+  const match = /^(S\d+:\d+)\s*[-\u2013\u2014]\s*(S\d+:\d+)$/u.exec(token.slice(1, -1));
+  const first = match?.[1], second = match?.[2];
+  if (first === undefined || second === undefined) return undefined;
+  return [`[${first}]`, `[${second}]`];
+}
+
 function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean): ResolvedAnswer {
   const maps = scopeMaps(sources);
   const fences = fencedRanges(answer);
@@ -169,7 +177,9 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
     const at = match.index ?? -1;
     if (at < 0 || inside(at)) continue;
     const token = match[0];
-    const atoms = splitGroupToken(token) ?? [token];
+    const commaAtoms = splitGroupToken(token);
+    const adjacentPairAtoms = commaAtoms === undefined ? splitAdjacentPairToken(token) : undefined;
+    const atoms = commaAtoms ?? adjacentPairAtoms ?? [token];
     const resolved: Array<{ parsed: ParsedLabel; source: LabelSource; atom: string }> = [];
     for (const atom of atoms) {
       const parsedAtom = parseToken(atom, maps);
@@ -177,7 +187,10 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
       if (parsedAtom === undefined || atomSource === undefined) break;
       resolved.push({ parsed: parsedAtom, source: atomSource, atom });
     }
-    if (resolved.length !== atoms.length) {
+    const first = resolved[0], second = resolved[1];
+    const invalidAdjacentPair = adjacentPairAtoms !== undefined && (resolved.length !== 2 || first === undefined || second === undefined
+      || first.parsed.sourceIndex !== second.parsed.sourceIndex || second.parsed.block !== first.parsed.block + 1);
+    if (resolved.length !== atoms.length || invalidAdjacentPair) {
       invalidLabels += 1;
       if (invalidExamples.length < 8) {
         const sample = Array.from(token).slice(0, 160).join("");
