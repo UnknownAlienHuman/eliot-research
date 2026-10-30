@@ -1,7 +1,7 @@
 # Eval — fixed material for contour acceptance
 
-`pnpm eval <contour>` drives a running Eliot through its public API. The current dispatcher supports K0–K3;
-MCP acceptance belongs to the future K4 contour. These scripts test the assembled product, not mocks. Reports belong
+`pnpm eval <contour>` drives a running Eliot through its public API. The current dispatcher supports K0–K4,
+including MCP transport checks. These scripts test the assembled product, not mocks. Reports belong
 in the contour PR. [MAP](../docs/MAP.md) owns current status and acceptance; script presence is not a contour pass.
 
 ## Acceptance semantics
@@ -32,7 +32,7 @@ SHA-256 so repeated runs do not redownload unchanged material.
 
 The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `pnpm eval`. Implemented scripts are
 [`k0.ts`](../scripts/eval/k0.ts), [`k1.ts`](../scripts/eval/k1.ts), [`k2.ts`](../scripts/eval/k2.ts) and
-[`k3.ts`](../scripts/eval/k3.ts); each currently contains its own small transport/check helpers.
+[`k3.ts`](../scripts/eval/k3.ts) and [`k4.ts`](../scripts/eval/k4.ts); each currently contains its own small transport/check helpers.
 
 | Command / mode | Actual scope |
 |---|---|
@@ -61,6 +61,11 @@ Environment:
   `Библиотека — PDF и точные ссылки`;
 - `ELIOT_EVAL_CHAT` — existing K2 chat for resume or stored-only validation;
 - `ELIOT_K3_CLAIM_PROJECT`, `ELIOT_K3_CLAIM_CHAT` — existing overflow project/chat for stored claim-mode C1–C4 checks;
+- `ELIOT_K3_BASELINE_SEED_RESULT`, `ELIOT_K3_OVERFLOW_STORAGE_COMPLETION` — existing seed/storage JSON files for full
+  K3 validation: frozen project, source/revision IDs, original/canonical SHA-256 and byte counts, plus the prepared
+  overflow chat. Full mode checks these against the running app before model work; native/unchanged modes do not
+  require them. The run admits at most twenty baseline model calls and four claim answers; the two overflow papers
+  must already be understood. It neither creates a replacement chat nor retries an ambiguous or failed answer.
 - `ELIOT_EVAL_NET=1` — explicitly include K1 network URL checks in native mode;
 - `ELIOT_EVAL_LIMIT=1` — include K1 25 MiB boundary checks.
 
@@ -88,7 +93,7 @@ additional spend by a read-only run.
   numeric support and the [anchor table](arxiv-10/questions.md#k3--якоря-дистилляции) for Transformer, ResNet and LoRA,
   plus actual automatic claim-mode C1–C4. Anchors count only source-specific exact claim quotes with the required
   conditions, never generated digest. Stored turns must report `contextMode=claims`; native smoke is not that journey.
-- **K4 and later:** material, commands and acceptance arrive with their contours. Follow [MAP](../docs/MAP.md);
+- **K4 and later:** follow the implemented command's scope and [MAP](../docs/MAP.md);
   planned search corpora and legacy golden tests are not current replacement acceptance.
 
 Keep one script per contour. Do not introduce a second test framework or mocks for capabilities that do not exist.
