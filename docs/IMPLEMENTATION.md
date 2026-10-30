@@ -361,6 +361,11 @@ rejected before either existing product function runs. These tools never grant a
 Each source context declares its exact citable-label inventory from the resolver's same block set. Block IDs can have
 gaps and are never page numbers; the inventory is included in the existing input-token estimate.
 
+Whole and compact source evidence use one JSON record per source, with its alias, available labels and an array of
+`{ quoteBlock, text }` passages. Each label applies only to its own passage. JSON decoding preserves the original
+passage bytes; literal bracket text is escaped separately from that source's authority labels. Answers remain
+ordinary Markdown, and the existing final serialized-request bound includes this input formatting.
+
 Freeze readable revision IDs at turn start. Context modes are whole labelled text, verified K3 guides/claims when whole
 text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. Whole-text capacity is
 `min(0.6 × model context, 400k)` after history/output reserve. If the complete scope does not fit, choose whole or
