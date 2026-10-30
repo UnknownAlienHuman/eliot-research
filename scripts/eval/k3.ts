@@ -402,18 +402,49 @@ function anchorHay(byFile) {
     quote: normalize(c && c.quote),
   }));
 }
+function pairedAnchor(items, statementPredicate, quotePredicate = statementPredicate) {
+  return items.some((card) => statementPredicate(card.statement) && quotePredicate(card.quote));
+}
+const frenchTranslation = (q) => /english.{0,25}french|en[-– ]fr/.test(q);
+const a1ComputeResult = (q) => q.includes('41.8') && frenchTranslation(q);
+const a1ComputeStatement = (q) => a1ComputeResult(q)
+  && /(?:\b3\.5\s*days?\b|\b3[,.]5\s*(?:дня|дней)(?!\p{L}))/u.test(q)
+  && (/(?:\b(?:8|eight)\b.{0,30}\bgpus?\b)/u.test(q) || /восьми.{0,30}\bgpus?\b/u.test(q));
+const a1ComputeQuote = (q) => a1ComputeResult(q)
+  && /\b3\.5\s*days?\b/u.test(q)
+  && /\b(?:8|eight)\b.{0,30}\bgpus?\b/u.test(q);
+const a2ResidualMapping = (q) => q.includes('residual')
+  && /\b(?:functions?|mappings?)\b/u.test(q)
+  && /reformulat|recast|learn|fit/u.test(q);
+
+const a1RussianCompute = 'модель установила bleu 41.8 на wmt 2014 english-to-french после 3.5 дней обучения на восьми gpu.';
+const a1EnglishQuote = 'the model reached bleu 41.8 on the wmt 2014 english-to-french task after 3.5 days of training on eight gpus.';
+assert.equal(pairedAnchor([{ statement: a1RussianCompute, quote: a1EnglishQuote }], a1ComputeStatement, a1ComputeQuote), true, 'Harness selftest: RU A1 compute statement pairs with its own exact EN quote.');
+assert.equal(pairedAnchor([{ statement: a1RussianCompute.replace('41.8', '41.9'), quote: a1EnglishQuote }], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: wrong A1 score must fail.');
+assert.equal(pairedAnchor([{ statement: a1RussianCompute.replace('восьми gpu', 'девяти gpu'), quote: a1EnglishQuote }], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: wrong A1 GPU quantity must fail.');
+assert.equal(pairedAnchor([{ statement: a1RussianCompute.replace('english-to-french', 'english-to-german'), quote: a1EnglishQuote.replace('english-to-french', 'english-to-german') }], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: wrong A1 language direction must fail.');
+assert.equal(pairedAnchor([
+  { statement: a1RussianCompute, quote: 'the model was trained for 3.5 days on eight gpus.' },
+  { statement: 'unrelated result', quote: a1EnglishQuote },
+], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: A1 language/result facts cannot be borrowed from another card.');
+const a2ResidualStatement = 'the method reformulates stacked layers to fit a residual mapping f(x) := h(x) - x, recasting the original mapping as f(x)+x.';
+const a2ResidualQuote = 'we explicitly let these layers fit a residual mapping. the original mapping is recast into f(x)+x.';
+assert.equal(pairedAnchor([{ statement: a2ResidualStatement, quote: a2ResidualQuote }], a2ResidualMapping), true, 'Harness selftest: residual mapping wording passes with its own supporting quote.');
+assert.equal(pairedAnchor([
+  { statement: 'the method reformulates stacked layers as residual functions.', quote: 'we let stacked layers fit residual functions.' },
+], a2ResidualMapping), true, 'Harness selftest: legacy English residual functions wording remains accepted.');
+
 function checkAnchors(byFile) {
   const missing = [];
   // Every independent anchor must be stated by one owner-visible card and supported by that card's own exact quote.
   const cards = anchorHay(byFile);
   const q01 = cards('arxiv-01.pdf'), q03 = cards('arxiv-03.pdf'), q07 = cards('arxiv-07.pdf');
   const wmt = (q) => /wmt\s*(?:2014|14)/.test(q);
-  const french = (q) => /english.{0,25}french|en[-– ]fr/.test(q);
-  const paired = (items, predicate) => items.some((card) => predicate(card.statement) && predicate(card.quote));
+  const paired = pairedAnchor;
   if (!paired(q01, (q) => q.includes('28.4') && q.includes('bleu') && wmt(q) && /english.{0,25}german|en[-– ]de/.test(q))) missing.push('A1-English-German-28.4-BLEU');
-  if (!paired(q01, (q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && french(q))) missing.push('A1-English-French-41.8-BLEU');
-  if (!paired(q01, (q) => q.includes('41.8') && french(q) && /3\.5\s*days?/.test(q) && /(?:\b8\b|\beight\b).{0,30}gpus?/.test(q))) missing.push('A1-compute(3.5d/8GPU-for-French-result)');
-  if (!paired(q03, (q) => q.includes('residual') && q.includes('function') && /reformulat|learn|mapping/.test(q))) missing.push('A2-residual-functions');
+  if (!paired(q01, (q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && frenchTranslation(q))) missing.push('A1-English-French-41.8-BLEU');
+  if (!paired(q01, a1ComputeStatement, a1ComputeQuote)) missing.push('A1-compute(3.5d/8GPU-for-French-result)');
+  if (!paired(q03, a2ResidualMapping)) missing.push('A2-residual-functions');
   if (!paired(q03, (q) => runsOf(q).includes('152') && /layer/.test(q))) missing.push('A2-152-layers');
   if (!paired(q03, (q) => q.includes('3.57') && q.includes('ensemble') && q.includes('imagenet') && q.includes('test') && q.includes('error'))) missing.push('A2-ensemble-3.57%-ImageNet-test-error');
   if (!paired(q07, (q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q))) missing.push('A3-frozen-weights-trained-lowrank');
