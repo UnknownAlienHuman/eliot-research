@@ -4,7 +4,7 @@
 // Provider/search display-only filtering with controlled selection; no donor
 // runtime/qualification/key handling, no pricing output, no paging.
 // Selection metadata is context/output tokens only.
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { MaterialSymbol } from './ui/MaterialSymbol';
 import './model-picker.css';
 
@@ -49,13 +49,14 @@ export function modelCatalogEntryKey(model: ModelRoute): string {
   return `${provider.length}:${provider}${model.id}`;
 }
 
-export function ModelPicker({ label, choices, value, onChange, emptyLabel, loading = false, error = '',
+export function ModelPicker({ label, choices, value, onChange, emptyLabel, defaultRoute, loading = false, error = '',
   compact = false, warnings = [], onRoutePendingChange }: {
   readonly label: string;
   readonly choices: readonly ModelRoute[];
   readonly value: string;
   readonly onChange: (route: string) => void;
   readonly emptyLabel?: string;
+  readonly defaultRoute?: string;
   readonly loading?: boolean;
   readonly error?: string;
   readonly compact?: boolean;
@@ -67,18 +68,17 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
   const [provider, setProvider] = useState('');
   const [freeOnly, setFreeOnly] = useState(false);
   const [compactProvider, setCompactProvider] = useState(() => routeProviderId(value));
-  const pendingNotify = useRef(onRoutePendingChange);
   const [routePending, setRoutePending] = useState(false);
-  pendingNotify.current = onRoutePendingChange;
   useEffect(() => {
     setCompactProvider(routeProviderId(value));
     setRoutePending(false);
-    pendingNotify.current?.(false);
   }, [value]);
 
   const matches = (route: string) => choices.filter((model) => model.route === route);
   const selectedMatches = value === '' ? [] : matches(value);
   const selected = selectedMatches.length === 1 ? selectedMatches[0] : undefined;
+  const defaultMatches = defaultRoute ? matches(defaultRoute) : [];
+  const inherited = defaultMatches.length === 1 ? defaultMatches[0] : undefined;
   const keyCounts = new Map<string, number>();
   const providers = new Map<string, string>();
   for (const model of choices) {
@@ -87,8 +87,26 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
     providers.set(providerId(model), providerLabel(model));
   }
   const identityIssue = (model: ModelRoute) => keyCounts.get(modelCatalogEntryKey(model)) !== 1 || matches(model.route).length !== 1;
-  const selectedIssue = selected && identityIssue(selected) ? 'Not uniquely identified in the current catalogue.'
-    : selected && !selected.enabled ? selected.unavailableReason || 'Model is unavailable.' : null;
+  function routeIssue(route: string, routeMatches: readonly ModelRoute[]): string | null {
+    if (route === '') return null;
+    if (routeMatches.length === 0) return 'Route is missing from the current catalogue.';
+    if (routeMatches.length > 1) return 'Route is ambiguous in the current catalogue.';
+    const candidate = routeMatches[0];
+    if (candidate === undefined) return 'Route is missing from the current catalogue.';
+    if (identityIssue(candidate)) return 'Model is not uniquely identified in the current catalogue.';
+    if (!candidate.enabled) return candidate.unavailableReason || 'Model is disabled in the current catalogue.';
+    return null;
+  }
+  const selectedIssue = value === '' ? null : routeIssue(value, selectedMatches);
+  const inheritedIssue = defaultRoute ? routeIssue(defaultRoute, defaultMatches) : null;
+  const activeModel = value !== '' ? selected : inherited;
+  const activeRoute = value !== '' ? value : defaultRoute;
+  const activeIssue = value !== '' ? selectedIssue : inheritedIssue;
+  const activeUnavailable = !loading && error === '' && activeRoute !== undefined && activeRoute !== '' && activeIssue !== null;
+  const sendBlocked = routePending || activeUnavailable;
+  useEffect(() => {
+    onRoutePendingChange?.(sendBlocked);
+  }, [onRoutePendingChange, sendBlocked]);
   const terms = search.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
   const filtered = choices.filter((model) => {
     if (provider !== '' && providerId(model) !== provider) return false;
@@ -103,7 +121,8 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
     if (group) group.push(model); else groups.set(name, [model]);
   }
   const selectedVisible = filtered.some((model) => model.route === value);
-  const compactModels = choices.filter((model) => providerId(model) === compactProvider);
+  const effectiveProvider = compactProvider || (value === '' && defaultRoute ? routeProviderId(defaultRoute) : '');
+  const compactModels = choices.filter((model) => providerId(model) === effectiveProvider);
   const currentProvider = selected ? providerId(selected) : routeProviderId(value);
   const displayedCompactValue = value !== '' && currentProvider === compactProvider ? value : '';
 
@@ -111,20 +130,17 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
     setCompactProvider(nextProvider);
     if (nextProvider === '') {
       setRoutePending(false);
-      pendingNotify.current?.(false);
       onChange('');
       return;
     }
     const pending = value === '' || currentProvider !== nextProvider;
     setRoutePending(pending);
-    pendingNotify.current?.(pending);
   }
 
   function chooseModel(route: string): void {
     if (route === '' && emptyLabel !== undefined) {
       setCompactProvider('');
       setRoutePending(false);
-      pendingNotify.current?.(false);
       onChange('');
       return;
     }
@@ -133,7 +149,6 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
     if (candidate?.enabled && !identityIssue(candidate)) {
       setCompactProvider(providerId(candidate));
       setRoutePending(false);
-      pendingNotify.current?.(false);
       onChange(route);
     }
   }
@@ -164,9 +179,10 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
             <label className='er-model-picker__control' htmlFor={id + '-compact-model-select'}>
               <span>Model</span>
               <select id={id + '-compact-model-select'} aria-label={label}
-                value={displayedCompactValue} disabled={loading || error !== '' || compactProvider === ''}
+                title={selected?.label ?? inherited?.label}
+                value={displayedCompactValue} disabled={loading || error !== '' || effectiveProvider === ''}
                 onChange={(event) => chooseModel(event.currentTarget.value)}>
-                <option value='' disabled>{compactProvider === '' ? 'Choose a provider first' : 'Choose a model'}</option>
+                <option value='' disabled={compactProvider !== '' || defaultRoute === undefined}>{compactProvider === '' ? inherited?.label ?? (defaultRoute ? 'Project default model' : 'Choose a provider first') : 'Choose a model'}</option>
                 {value !== '' && compactProvider === currentProvider && !compactModels.some((model) => model.route === value)
                   ? <option value={value} disabled={!selected || selectedIssue !== null}>
                     {selected ? optionLabel(selected) + ' — saved selection' : 'Saved selection unavailable'}
@@ -223,16 +239,21 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, loadi
           </>
         )}
         {routePending ? <p className='er-status' role='status'><span>Choose a model from this provider to use it.</span></p> : null}
-        {selected?.mayTrainOnYourPrompts === true ? <p className='er-status' role='note'><span>Warning: this provider may train on your prompts.</span></p> : null}
+        {activeModel?.mayTrainOnYourPrompts === true ? <p className='er-status' role='note'><span>Warning: this provider may train on your prompts.</span></p> : null}
         {warnings.length > 0 ? <details className='er-model-picker__warnings'>
           <summary>Provider availability</summary>
           <ul>{warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
         </details> : null}
         {loading ? <p className='er-status' role='status'><span>Loading model catalog…</span></p> : null}
         {error !== '' ? <p className='er-status er-status--error' role='alert'><span>{error}</span></p> : null}
-        {!loading && error === '' && value !== '' && !selected
-          ? <p className='er-status er-status--error' role='alert'><span>Selected model is unavailable in the current catalog. Its saved route is preserved; refresh models in Settings to update availability.</span></p> : null}
-        {selectedIssue !== null ? <p className='er-status er-status--error' role='alert'><span>Selected model is unavailable: {selectedIssue}</span></p> : null}
+        {activeUnavailable ? (
+          <p className='er-status er-status--error' role='alert'>
+            <span>
+              {value !== '' ? 'Selected model is unavailable: ' : 'Inherited default model is unavailable: '}
+              {activeIssue}{value !== '' ? ' Its saved route is preserved; refresh models in Settings to update availability.' : ' Choose an available model or refresh models in Settings.'}
+            </span>
+          </p>
+        ) : null}
       </div>
     </div>
   );

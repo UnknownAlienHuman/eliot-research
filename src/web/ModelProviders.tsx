@@ -2,6 +2,7 @@
 // Save writes D1 only via PUT /api/models/providers and never refreshes
 // the catalogue or starts a model job. Root mounts this inside Settings.
 
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ModelProvider } from '../models';
 import { isOpenRouterApiBase, type DataCollectionPolicy } from '../shared/api';
 import './model-providers.css';
@@ -29,6 +30,19 @@ export interface Draft {
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const PATH_RE = /^(?:[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*)?$/;
+const PROVIDER_NAMES: Readonly<Record<string, string>> = {
+  'workers-ai': 'Workers AI',
+  openrouter: 'OpenRouter',
+  'command-code': 'Command Code',
+  kilo: 'Kilo',
+  nous: 'Nous Portal',
+  'opencode-go': 'OpenCode Go',
+};
+
+function providerName(id: string): string {
+  if (id === '' || id === 'new-provider') return 'New provider';
+  return PROVIDER_NAMES[id] ?? id;
+}
 
 export function toDraft(p: ModelProvider): Draft {
   return { isNew: false, id: p.id, type: p.type, baseUrl: p.baseUrl ?? '', gatewaySlug: p.gatewaySlug ?? '', gatewayPath: p.gatewayPath, enabled: p.enabled, modelsUrl: p.modelsUrl ?? '', metadataUrl: p.metadataUrl ?? '', dataCollection: p.dataCollection ?? 'deny' };
@@ -70,6 +84,21 @@ export function validateDrafts(drafts: Draft[]): { providers: ModelProvider[] | 
 }
 
 export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, disabled = false }: ModelProvidersProps) {
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const dialogTitleId = useId();
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const selectedDraft = editingIndex === null ? null : drafts?.[editingIndex] ?? null;
+  const selectedFieldError = editingIndex === null ? undefined : fieldErrors[editingIndex];
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog === null) return;
+    if (editingIndex === null) {
+      if (dialog.open) dialog.close();
+    } else if (!dialog.open) {
+      dialog.showModal();
+    }
+  }, [editingIndex]);
+
   function update(index: number, patch: Partial<Draft>): void {
     if (drafts === null || disabled) return;
     onChange(drafts.map((d, i) => {
@@ -81,16 +110,25 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
   }
   function addProvider(): void {
     if (drafts === null || disabled) return;
-    onChange([...drafts, { isNew: true, id: 'new-provider', type: 'openai-compatible', baseUrl: '', gatewaySlug: '', gatewayPath: 'v1', enabled: true, modelsUrl: '', metadataUrl: '', dataCollection: 'deny' }]);
+    const newIndex = drafts.length;
+    onChange([...drafts, { isNew: true, id: 'new-provider', type: 'openai-compatible', baseUrl: '', gatewaySlug: '', gatewayPath: 'v1', enabled: false, modelsUrl: '', metadataUrl: '', dataCollection: 'deny' }]);
+    setEditingIndex(newIndex);
   }
   function removeProvider(index: number): void {
     if (drafts === null || disabled) return;
     onChange(drafts.filter((_, i) => i !== index));
   }
 
+  function closeConnectionDetails(): void {
+    if (dialogRef.current?.open) dialogRef.current.close();
+    setEditingIndex(null);
+  }
 
-
-
+  function removeSelectedProvider(): void {
+    if (editingIndex === null) return;
+    removeProvider(editingIndex);
+    closeConnectionDetails();
+  }
 
   if (drafts === null) return <p className="er-status" role="status"><span>Loading providers…</span></p>;
   return (
@@ -100,66 +138,18 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
       <ul className="er-providers__list">
         {drafts.map((d, i) => {
           const quota = quotas?.[d.id] ?? null;
-          const quotaText = typeof quota === 'string' && quota !== '' ? quota : 'Quota unknown';
-          const fieldError = fieldErrors[i];
           return (
             <li key={i} className="er-card er-providers__item">
               <div className="er-providers__summary">
-                <h3 className="er-providers__id"><span>{d.id === '' ? 'Unnamed provider' : d.id}</span></h3>
-                <p className="er-providers__type"><span>{d.type === 'workers-ai' ? 'Workers AI (native)' : 'OpenAI compatible'}</span></p>
+                <h3 className="er-providers__id">{providerName(d.id)}</h3>
                 <label className="er-providers__check">
-                  <input type="checkbox" disabled={disabled} checked={d.enabled} onChange={(e) => update(i, { enabled: e.currentTarget.checked })} />
+                  <input type="checkbox" aria-label={'Enable ' + providerName(d.id)} disabled={disabled} checked={d.enabled} onChange={(e) => update(i, { enabled: e.currentTarget.checked })} />
                   <span className="er-providers__checktext">Enabled</span>
                 </label>
-                <p className="er-providers__quota"><span>{quotaText}</span></p>
+                {typeof quota === 'string' && quota !== '' ? <p className="er-providers__quota">{quota}</p> : null}
+                <button className="er-button er-button--text er-providers__connection" type="button" disabled={disabled}
+                  aria-label={'Connection details for ' + providerName(d.id)} onClick={() => setEditingIndex(i)}>Connection</button>
               </div>
-              <details className="er-providers__details" open={d.isNew}>
-                <summary>Connection details</summary>
-                <div className="er-providers__fields">
-                  <label className="er-field er-providers__row">
-                    <span className="er-providers__label">Type</span>
-                    <select value={d.type} disabled={disabled} onChange={(e) => update(i, { type: e.currentTarget.value as Draft['type'] })}>
-                      <option value="workers-ai">Workers AI (native)</option>
-                      <option value="openai-compatible">OpenAI compatible</option>
-                    </select>
-                  </label>
-                  <label className="er-field er-providers__row">
-                    <span className="er-providers__label">ID</span>
-                    <input value={d.id} onChange={(e) => update(i, { id: e.currentTarget.value })} autoComplete="off" disabled={disabled || d.type === 'workers-ai'} aria-invalid={fieldError !== undefined} />
-                  </label>
-                  {d.type === 'workers-ai' ? (
-                    <p className="er-status"><span>Native binding.</span></p>
-                  ) : (
-                    <>
-                      <label className="er-field er-providers__row">
-                        <span className="er-providers__label">Base URL<span className="er-providers__help">Provider HTTPS base URL, no keys.</span></span>
-                        <input type="url" inputMode="url" value={d.baseUrl} onChange={(e) => update(i, { baseUrl: e.currentTarget.value })} placeholder="https://" autoComplete="off" disabled={disabled} aria-invalid={fieldError !== undefined} />
-                      </label>
-                      <label className="er-field er-providers__row">
-                        <span className="er-providers__label">Gateway provider slug<span className="er-providers__help">Routing slug, e.g. custom-command-code. Not the Gateway ID.</span></span>
-                        <input value={d.gatewaySlug} onChange={(e) => update(i, { gatewaySlug: e.currentTarget.value })} placeholder="custom-command-code" autoComplete="off" disabled={disabled} aria-invalid={fieldError !== undefined} />
-                      </label>
-                      <label className="er-field er-providers__row">
-                        <span className="er-providers__label">Path prefix<span className="er-providers__help">Optional path prefix, e.g. v1. Blank for none.</span></span>
-                        <input value={d.gatewayPath} onChange={(e) => update(i, { gatewayPath: e.currentTarget.value })} placeholder="v1" autoComplete="off" disabled={disabled} aria-invalid={fieldError !== undefined} />
-                      </label>
-                      {isOpenRouterApiBase(d.baseUrl) ? (
-                        <label className="er-field er-providers__row">
-                          <span className="er-providers__label">Data use<span className="er-providers__help">Allow permits providers that may retain inputs or use them for training; account settings can add restrictions.</span></span>
-                          <select value={d.dataCollection} disabled={disabled} onChange={(e) => update(i, { dataCollection: e.currentTarget.value as Draft['dataCollection'] })}>
-                            <option value="deny">Disallow collection (default)</option>
-                            <option value="allow">Allow collection</option>
-                          </select>
-                        </label>
-                      ) : null}
-                    </>
-                  )}
-                  <div className="er-providers__actions">
-                    <button className="er-button er-button--text" type="button" disabled={disabled} onClick={() => removeProvider(i)}>Remove</button>
-                  </div>
-                </div>
-              </details>
-              {fieldError !== undefined ? <p className="er-status er-status--error" role="alert"><span>{fieldError}</span></p> : null}
             </li>
           );
         })}
@@ -167,6 +157,63 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
       <div className="er-providers__actions">
         <button className="er-button er-button--text" type="button" disabled={disabled} onClick={() => addProvider()}>Add provider</button>
       </div>
+      <dialog className="er-dialog er-providers__dialog" ref={dialogRef} aria-labelledby={dialogTitleId}
+        onClose={() => setEditingIndex(null)}>
+        {selectedDraft !== null && editingIndex !== null ? (
+          <>
+            <h2 className="er-dialog__title" id={dialogTitleId}>Connection details — {providerName(selectedDraft.id)}</h2>
+            <div className="er-dialog__body er-providers__dialog-body">
+              <div className="er-providers__fields">
+                <label className="er-field er-providers__row">
+                  <span className="er-providers__label">Type</span>
+                  <select value={selectedDraft.type} disabled={disabled} onChange={(e) => update(editingIndex, { type: e.currentTarget.value as Draft['type'] })}>
+                    <option value="workers-ai">Workers AI</option>
+                    <option value="openai-compatible">OpenAI compatible</option>
+                  </select>
+                </label>
+                <label className="er-field er-providers__row">
+                  <span className="er-providers__label">Provider ID</span>
+                  <input value={selectedDraft.id} onChange={(e) => update(editingIndex, { id: e.currentTarget.value })} autoComplete="off"
+                    disabled={disabled || selectedDraft.type === 'workers-ai'} aria-invalid={selectedFieldError !== undefined} />
+                </label>
+                {selectedDraft.type === 'workers-ai' ? (
+                  <p className="er-status"><span>Uses the existing native binding.</span></p>
+                ) : (
+                  <>
+                    <label className="er-field er-providers__row">
+                      <span className="er-providers__label">Provider address</span>
+                      <input type="url" inputMode="url" value={selectedDraft.baseUrl} onChange={(e) => update(editingIndex, { baseUrl: e.currentTarget.value })} placeholder="https://" autoComplete="off" disabled={disabled} aria-invalid={selectedFieldError !== undefined} />
+                    </label>
+                    <label className="er-field er-providers__row">
+                      <span className="er-providers__label">Gateway provider slug</span>
+                      <input value={selectedDraft.gatewaySlug} onChange={(e) => update(editingIndex, { gatewaySlug: e.currentTarget.value })} placeholder="custom-command-code" autoComplete="off" disabled={disabled} aria-invalid={selectedFieldError !== undefined} />
+                    </label>
+                    <label className="er-field er-providers__row">
+                      <span className="er-providers__label">Path prefix</span>
+                      <input value={selectedDraft.gatewayPath} onChange={(e) => update(editingIndex, { gatewayPath: e.currentTarget.value })} placeholder="v1" autoComplete="off" disabled={disabled} aria-invalid={selectedFieldError !== undefined} />
+                    </label>
+                    {isOpenRouterApiBase(selectedDraft.baseUrl) ? (
+                      <label className="er-field er-providers__row">
+                        <span className="er-providers__label">Data use</span>
+                        <select value={selectedDraft.dataCollection} disabled={disabled} onChange={(e) => update(editingIndex, { dataCollection: e.currentTarget.value as Draft['dataCollection'] })}>
+                          <option value="deny">Disallow collection (default)</option>
+                          <option value="allow">Allow collection</option>
+                        </select>
+                      </label>
+                    ) : null}
+                    <p className="er-providers__help">Provider credentials stay in Cloudflare. Do not enter keys here.</p>
+                  </>
+                )}
+              </div>
+              {selectedFieldError !== undefined ? <p className="er-status er-status--error" role="alert"><span>{selectedFieldError}</span></p> : null}
+              <div className="er-providers__dialog-actions">
+                <button className="er-button er-button--text" type="button" disabled={disabled} onClick={removeSelectedProvider}>Remove provider</button>
+                <button className="er-button er-button--primary" type="button" onClick={closeConnectionDetails}>Done</button>
+              </div>
+            </div>
+          </>
+        ) : null}
+      </dialog>
     </div>
   );
 }
