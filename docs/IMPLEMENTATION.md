@@ -247,6 +247,9 @@ request/validation changes do not establish paid-service or quality acceptance.
 
 Code verifies quotes and numbers between calls. Draft statements are hypotheses, not evidence: the second call checks
 each retained candidate against its own quote and can add a small number of atomic facts from the same frozen excerpts.
+Fresh candidates that already fail the scalar-result projection are excluded before the second call. Their originally
+selected source blocks remain in the same declared evidence pool; code neither splits a compound candidate nor creates
+facts from it. Historical verified candidate IDs are not recomputed during cached-output rechecks.
 Only its supported, code-checked output is committed to the claim reader. Result claims describe one scalar result
 per task/dataset/metric/condition instead of a compound table row. A result's `valueText` may contain at most one numeric
 quantity; an explicit list such as two percentages is rejected even when both values occur in the quote and
@@ -259,6 +262,8 @@ sentence. Its primary numeric value must occur in that statement, and every auth
 the structured primary result or context, all supported by the same exact quote. Missing numeric conditions reject
 the card instead of disappearing during formatting. Qualifiers and delta descriptions remain authored prose;
 semantic support is still a separate quality gate.
+New second-call additional claims require the same nullable structured fields as extraction. Cached outputs may
+omit these fields; storage-only rechecks retain that shape and treat omissions as null without inventing metadata.
 Store raw result/report in R2, compact verified claims in D1, and usage
 and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
