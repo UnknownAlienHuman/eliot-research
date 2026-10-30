@@ -40,11 +40,6 @@
   align-items: center;
   color: var(--md-sys-color-on-surface-variant);
 }
-.er-lib__form {
-  justify-items: start;
-  max-width: var(--eliot-type-reading-measure);
-}
-.er-lib__form input, .er-lib__form textarea { inline-size: 100%; }
 .er-lib__list { display: grid; gap: var(--eliot-space-hairline); margin: 0; padding: 0; list-style: none; min-width: 0; }
 .er-lib__row {
   display: flex;
@@ -61,6 +56,11 @@
 .er-lib__row-main > span { display: grid; min-width: 0; }
 .er-lib__row-title { color: inherit; font-size: var(--eliot-type-body-large-size); overflow-wrap: anywhere; }
 .er-lib__row-meta { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); overflow-wrap: anywhere; }
+.er-lib__form {
+  justify-items: start;
+  max-width: var(--eliot-type-reading-measure);
+}
+.er-lib__form input, .er-lib__form textarea { inline-size: 100%; }
 .er-lib__badge {
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
@@ -70,7 +70,6 @@
 .er-lib__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-block-control); min-height: var(--eliot-size-control); }
 .er-lib__facts { min-width: 0; }
 .er-lib__facts summary { display: flex; align-items: center; min-height: var(--eliot-size-control); color: var(--md-sys-color-on-surface-variant); cursor: pointer; }
-.er-lib__row > .er-lib__facts { flex: 1 1 100%; }
 .er-lib__facts-content { display: grid; gap: var(--eliot-space-block-control); min-width: 0; padding-block: var(--eliot-space-block-control); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
 .er-lib__facts-content p { margin: 0; }
 .er-lib__facts-content select {
@@ -114,4 +113,190 @@
 }
 @media (forced-colors: active) {
   .er-lib__empty, .er-lib__progress, .er-lib__text, .er-lib__excerpt, .er-lib__drop { border: var(--eliot-divider-width) solid CanvasText; }
+}
+
+.er-sources-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--eliot-space-panel);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+}
+
+.er-sources-pane__head {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
+}
+
+.er-sources-pane__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--eliot-space-gutter) var(--eliot-space-panel);
+  min-width: 0;
+}
+
+.er-sources-pane__heading {
+  display: grid;
+  min-width: 0;
+  gap: var(--eliot-space-block-control);
+}
+
+.er-sources-pane__default {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-tight) var(--eliot-space-gutter);
+  min-width: 0;
+  min-height: var(--eliot-size-control);
+}
+
+.er-sources-pane__default-hint {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-small-size);
+  overflow-wrap: anywhere;
+}
+
+.er-sources-pane__scroll {
+  display: grid;
+  align-content: start;
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.er-sources-pane__load {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
+}
+.er-sources-pane__rows {
+  display: grid;
+  gap: var(--eliot-space-hairline);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.er-sources-pane__row {
+  display: grid;
+  grid-template-columns: var(--eliot-size-touch-target) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--eliot-space-tight);
+  min-width: 0;
+  min-height: var(--eliot-size-list-row);
+  border-radius: var(--eliot-shape-medium);
+  padding-inline: var(--eliot-space-tight);
+}
+
+.er-sources-pane__checkbox {
+  display: grid;
+  place-items: center;
+  inline-size: var(--eliot-size-touch-target);
+  block-size: var(--eliot-size-touch-target);
+  cursor: pointer;
+}
+
+.er-sources-pane__checkbox input { margin: var(--eliot-space-hairline); }
+
+.er-sources-pane__row:hover {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 5%, transparent);
+}
+
+.er-sources-pane__row[data-selected="true"] .er-sources-pane__row-title {
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-sources-pane__row-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--eliot-space-tight);
+  min-width: 0;
+}
+
+.er-sources-pane__row-title {
+  display: -webkit-box;
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  text-decoration: none;
+  word-break: normal;
+  overflow-wrap: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.er-sources-pane__row-title:hover,
+.er-sources-pane__row-title:focus-visible { text-decoration: underline; }
+
+.er-sources-pane__row .er-chip {
+  flex: 0 1 auto;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.er-sources-pane__latest {
+  flex: 1 1 100%;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-small-size);
+  overflow-wrap: anywhere;
+}
+
+.er-sources-pane__original {
+  grid-column: 3;
+  justify-self: end;
+  align-self: start;
+  white-space: nowrap;
+}
+.er-sources-pane__empty {
+  display: flex;
+  align-items: center;
+  min-height: var(--eliot-size-touch-target);
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+.er-sources-pane__dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--eliot-space-gutter);
+  min-width: 0;
+}
+
+.er-sources-pane__dialog .er-lib__form,
+.er-sources-pane__dialog .er-lib__drop {
+  inline-size: 100%;
+  max-width: none;
+}
+
+.er-sources-pane__dialog .er-lib__drop input[type="file"] {
+  max-width: 100%;
+}
+
+
+
+@media (forced-colors: active) {
+  .er-sources-pane__empty,
+  .er-sources-pane__row {
+    border: var(--eliot-divider-width) solid CanvasText;
+  }
 }

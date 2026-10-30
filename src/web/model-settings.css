@@ -10,13 +10,16 @@
 .er-models__row select, .er-models__row input:not([type="checkbox"]):not([type="radio"]), .er-models__row textarea { inline-size: 100%; max-inline-size: var(--eliot-type-reading-measure); }
 .er-models__target { display: grid; gap: var(--eliot-space-block-control); margin: 0; border: 0; padding: 0; min-width: 0; }
 .er-models__target legend { padding: 0; font-size: var(--eliot-type-label-large-size); line-height: var(--eliot-type-label-large-line-height); font-weight: var(--eliot-type-font-weight-medium); letter-spacing: var(--eliot-type-letter-spacing-label); color: var(--md-sys-color-on-surface-variant); }
+.er-models__target--inline { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-tight) var(--eliot-space-block-control); }
+.er-models__target--inline legend { flex-basis: 100%; }
 .er-models__check { display: flex; gap: var(--eliot-space-gutter); align-items: flex-start; min-width: 0; min-height: var(--eliot-size-control); cursor: pointer; }
+.er-models__check--compact { align-items: center; min-height: var(--eliot-size-control); }
 .er-models__check input { flex-shrink: 0; inline-size: var(--eliot-size-checkbox); block-size: var(--eliot-size-checkbox); margin-top: var(--eliot-space-tight); accent-color: var(--md-sys-color-primary); }
+.er-models__check--compact input { margin-top: 0; }
 .er-models__checktext { display: grid; gap: var(--eliot-space-tight); font-size: var(--eliot-type-body-medium-size); line-height: var(--eliot-type-body-medium-line-height); color: var(--md-sys-color-on-surface); }
-.er-models__details { display: grid; gap: var(--eliot-space-block-control); min-width: 0; }
-.er-models__details summary { display: flex; align-items: center; min-height: var(--eliot-size-control); cursor: pointer; color: var(--md-sys-color-on-surface-variant); font-weight: var(--eliot-type-font-weight-medium); }
-.er-models__warnings { display: grid; gap: var(--eliot-space-tight); margin: 0; padding-inline-start: var(--eliot-space-group); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
 .er-models__actions { display: flex; flex-wrap: wrap; gap: var(--eliot-space-block-control); align-items: center; min-height: var(--eliot-size-control); }
+.er-models__dialog-body { color: var(--md-sys-color-on-surface); }
+.er-models__dialog-actions { display: flex; justify-content: flex-end; gap: var(--eliot-space-block-control); }
 .er-models--compact { display: grid; gap: var(--eliot-space-block-control); }
 @media (forced-colors: active) {
   .er-models__card { border: var(--eliot-divider-width) solid CanvasText; }

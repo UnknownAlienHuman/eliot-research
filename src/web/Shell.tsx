@@ -14,12 +14,13 @@ export function Shell({ theme, onThemeChange }: ShellProps) {
     <div className="er-shell">
       <a className="er-shell-skip" href="#workspace-main">Skip to workspace</a>
       <header className="er-shell-header">
-        <NavLink className="er-shell-brand" to="/" aria-label="Eliot Research">
+        <NavLink className="er-shell-brand" to="/" aria-label={projectId ? "Projects" : "Eliot Research"}>
           <span className="er-shell-brand-mark">
             <MaterialSymbol name="spark" />
           </span>
           <span className="er-shell-brand-name">Eliot Research</span>
         </NavLink>
+        {projectId ? <Link className="er-button er-button--text" to="/settings" aria-label="Settings"><MaterialSymbol name="settings" /></Link> : null}
         <details className="er-shell-preferences">
           <summary aria-label="Appearance">
             <MaterialSymbol name={theme === "dark" ? "dark-mode" : "light-mode"} />
@@ -43,23 +44,23 @@ export function Shell({ theme, onThemeChange }: ShellProps) {
         </details>
       </header>
       <nav className="er-shell-nav" aria-label="Primary">
-        <Link className="er-shell-destination" to="/" aria-current={pathname === "/" ? "page" : undefined}>
+        {!projectId ? <Link className="er-shell-destination" to="/" aria-current={pathname === "/" ? "page" : undefined}>
           <span className="er-shell-destination-icon">
             <MaterialSymbol name="home" />
           </span>
           <span className="er-shell-destination-label">Projects</span>
-        </Link>
+        </Link> : null}
         {projectId ? <>
           <Link className="er-shell-destination" to={`/p/${projectId}/sources`} aria-current={pathname.includes("/source") ? "page" : undefined}><span className="er-shell-destination-icon"><MaterialSymbol name="folder" /></span><span className="er-shell-destination-label">Sources</span></Link>
           <NavLink className="er-shell-destination" to={`/p/${projectId}/chat`}><span className="er-shell-destination-icon"><MaterialSymbol name="chat" /></span><span className="er-shell-destination-label">Chat</span></NavLink>
           <NavLink className="er-shell-destination" to={`/p/${projectId}/studio`}><span className="er-shell-destination-icon"><MaterialSymbol name="bookmarks" /></span><span className="er-shell-destination-label">Studio</span></NavLink>
         </> : null}
-        <NavLink className="er-shell-destination" to="/settings">
+        {!projectId ? <NavLink className="er-shell-destination" to="/settings">
           <span className="er-shell-destination-icon">
             <MaterialSymbol name="settings" />
           </span>
           <span className="er-shell-destination-label">Settings</span>
-        </NavLink>
+        </NavLink> : null}
       </nav>
       <main className="er-shell-reading" id="workspace-main" tabIndex={-1}>
         <Outlet />

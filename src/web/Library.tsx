@@ -2,9 +2,9 @@
 // 7c034569b908d3b03a8b821b7c537477a24b10f7/sources/{projects,import,document}.
 // No donor runtime/query/byte helpers. Root wires Routes/App/Shell + this CSS
 // and owns routes/schema/shared/api. Ranges: UTF-8 bytes, end-exclusive.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
-import type { Project, Revision, Source } from "../shared/api";
+import type { Project, Revision, Source, SourceSelection } from "../shared/api";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
 import { SourceUnderstanding } from "./Understanding";
 export interface OutlineItem { label: string; start: number; end: number; }
@@ -23,6 +23,7 @@ function stateLabel(s: string): string {
     case "done": return "Uploaded";
     case "error": return "Upload failed";
     case "duplicate": return "Already in Library";
+    case "attached": return "Added to this project";
     default: return "Unknown";
   }
 }
@@ -153,8 +154,53 @@ export function Projects() {
   );
 }
 interface UploadRow { name: string; state: string; detail?: string; duplicateId?: string; duplicateTitle?: string; }
-export function Library() {
-  const { projectId } = useParams();
+export interface SourcesPaneProps {
+  projectId: string;
+  selection: SourceSelection;
+  onSelectionChange(next: SourceSelection): void;
+}
+
+function isReadableSource(source: Source): boolean {
+  return source.currentRevisionId !== null;
+}
+
+function understandingLabel(source: Source): string {
+  switch (source.distillState) {
+    case "none": return "Not analyzed";
+    case "queued": return "Queued";
+    case "running": return "Analyzing";
+    case "paused": return "Paused";
+    case "done": return source.claimCount > 0 ? "Ready · " + source.claimCount + " claims" : "Ready";
+    case "partial": return source.claimCount > 0 ? "Partial · " + source.claimCount + " claims" : "Partial";
+    case "failed": return "Failed";
+    default: return "Unknown";
+  }
+}
+
+function understandingTone(state: Source["distillState"]): string {
+  switch (state) {
+    case "done": return "ok";
+    case "partial": return "warn";
+    case "queued":
+    case "running": return "busy";
+    case "paused":
+    case "none": return "paused";
+    case "failed": return "bad";
+    default: return "paused";
+  }
+}
+
+export function SourcesPane({ projectId, selection, onSelectionChange }: SourcesPaneProps) {
+  const headingId = useId();
+  const dialogId = useId();
+  const dialogHeadingId = useId();
+  const fileInputId = useId();
+  const textTitleId = useId();
+  const textBodyId = useId();
+  const urlId = useId();
+  const urlTitleId = useId();
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const dialogHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const [sources, setSources] = useState<Source[] | undefined>(undefined);
   const [cursor, setCursor] = useState<string | null>(null);
   const [failure, setFailure] = useState("");
@@ -166,68 +212,149 @@ export function Library() {
   const [urlTitle, setUrlTitle] = useState("");
   const load = useMemo(() => async () => {
     if (!projectId) return;
-    try { const d = await apiJson<{ sources: Source[]; nextCursor: string | null }>("/api/projects/" + encodeURIComponent(projectId) + "/sources"); setSources(d.sources); setCursor(d.nextCursor); setFailure(""); }
-    catch (err) { setFailure(err instanceof Error ? err.message : "Could not load sources."); }
+    try {
+      const d = await apiJson<{ sources: Source[]; nextCursor: string | null }>("/api/projects/" + encodeURIComponent(projectId) + "/sources");
+      setSources(d.sources);
+      setCursor(d.nextCursor);
+      setFailure("");
+    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not load sources."); }
   }, [projectId]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { dialogRef.current?.close(); }, [projectId]);
   useEffect(() => {
-    if (!sources?.some((s) => s.readableState === "pending")) return;
+    if (!sources?.some((s) => s.readableState === "pending" || s.distillState === "queued" || s.distillState === "running")) return;
     const timer = window.setInterval(() => { void load(); }, POLL_MS);
     return () => window.clearInterval(timer);
   }, [sources, load]);
+  const projectDefaultIds = useMemo(
+    () => (sources ?? []).filter((s) => isReadableSource(s) && s.enabled !== false).map((s) => s.id),
+    [sources],
+  );
+  const sourceById = useMemo(() => new Map<string, Source>((sources ?? []).map((s) => [s.id, s])), [sources]);
+  const defaultScopeIncomplete = selection.scopeMode === "project_default" && (sources === undefined || cursor !== null);
+  function selectedIdsForEdit(): string[] {
+    if (selection.scopeMode === "project_default") {
+      const preserved = selection.sourceIds.filter((id) => {
+        const known = sourceById.get(id);
+        return !known || (isReadableSource(known) && known.enabled !== false);
+      });
+      return Array.from(new Set([...preserved, ...projectDefaultIds]));
+    }
+    return selection.scopeMode === "explicit" ? Array.from(new Set(selection.sourceIds)) : [];
+  }
+  function publishExplicit(ids: readonly string[]) {
+    const next = Array.from(new Set(ids));
+    onSelectionChange(next.length > 0
+      ? { scopeMode: "explicit", sourceIds: next }
+      : { scopeMode: "empty", sourceIds: [] });
+  }
+  function toggleSource(source: Source) {
+    if (!isReadableSource(source) || defaultScopeIncomplete) return;
+    const next = new Set(selectedIdsForEdit());
+    if (next.has(source.id)) next.delete(source.id);
+    else next.add(source.id);
+    publishExplicit(Array.from(next));
+  }
+
+  function changeProjectDefault(checked: boolean) {
+    if (!checked && defaultScopeIncomplete) return;
+    if (checked) onSelectionChange({ scopeMode: "project_default", sourceIds: projectDefaultIds });
+    else publishExplicit(selectedIdsForEdit());
+  }
+  function openAddDialog() {
+    const dialog = dialogRef.current;
+    if (!dialog || dialog.open) return;
+    dialog.showModal();
+    dialogHeadingRef.current?.focus();
+  }
   async function loadMore() {
-    if (!projectId || !cursor) return;
-    try { const d = await apiJson<{ sources: Source[]; nextCursor: string | null }>("/api/projects/" + encodeURIComponent(projectId) + "/sources?cursor=" + encodeURIComponent(cursor)); setSources((p) => [...(p ?? []), ...d.sources]); setCursor(d.nextCursor); }
-    catch (err) { setFailure(err instanceof Error ? err.message : "Could not load more sources."); }
+    if (!cursor) return;
+    try {
+      const d = await apiJson<{ sources: Source[]; nextCursor: string | null }>("/api/projects/" + encodeURIComponent(projectId) + "/sources?cursor=" + encodeURIComponent(cursor));
+      setSources((previous) => [...(previous ?? []), ...d.sources]);
+      setCursor(d.nextCursor);
+      setFailure("");
+    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not load more sources."); }
   }
   async function uploadOne(file: File, index: number): Promise<void> {
-    const mark = (p: Partial<UploadRow>) => setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...p } : r)));
+    const mark = (patch: Partial<UploadRow>) => setRows((previous) => previous.map((row, i) => (i === index ? { ...row, ...patch } : row)));
     mark({ state: "uploading" });
     if (file.size > FILE_LIMIT) { mark({ state: "error", detail: "This file is too large. Choose a smaller file." }); return; }
     const form = new FormData();
     form.append("file", file, file.name);
     let res: Response;
     try {
-      res = await fetch("/api/projects/" + encodeURIComponent(projectId ?? "") + "/sources/file", { method: "POST", body: form, credentials: "same-origin" });
+      res = await fetch("/api/projects/" + encodeURIComponent(projectId) + "/sources/file", { method: "POST", body: form, credentials: "same-origin" });
     } catch (err) { mark({ state: "error", detail: err instanceof Error ? err.message : "Upload failed before a response arrived." }); return; }
     if (res.status === 409) {
-      let dupId = "", dupTitle = "";
-      try { const b = (await res.json()) as { duplicate?: { sourceId?: string; title?: string } }; dupId = b.duplicate?.sourceId ?? ""; dupTitle = b.duplicate?.title ?? ""; }
-      catch { /* keep row actionable without parsed duplicate */ }
-      if (!dupId) { mark({ state: "error", detail: "Duplicate details could not be read. Choose the file again to retry." }); return; }
-      mark({ state: "duplicate", detail: "Exact duplicate of " + (dupTitle || file.name) + ".", duplicateId: dupId, duplicateTitle: dupTitle });
+      let duplicateId = "", duplicateTitle = "";
+      try {
+        const body = (await res.json()) as { duplicate?: { sourceId?: string; title?: string } };
+        duplicateId = body.duplicate?.sourceId ?? "";
+        duplicateTitle = body.duplicate?.title ?? "";
+      } catch { /* keep the row actionable without parsed duplicate details */ }
+      if (!duplicateId) { mark({ state: "error", detail: "Duplicate details could not be read. Choose the file again to retry." }); return; }
+      mark({ state: "duplicate", detail: "Exact duplicate of " + (duplicateTitle || file.name) + ".", duplicateId, duplicateTitle });
       return;
     }
     mark(res.ok ? { state: "done" } : { state: "error", detail: await apiErrorMessage(res) });
   }
   async function uploadMany(files: readonly File[]) {
-    if (!projectId || uploading || files.length === 0) return;
+    if (uploading || files.length === 0) return;
     setUploading(true);
     try {
-      setRows(files.map((f) => ({ name: f.name, state: "queued" })));
+      setRows(files.map((file) => ({ name: file.name, state: "queued" })));
       let next = 0;
-      const worker = async () => { while (next < files.length) { const at = next; next += 1; const f = files[at]; if (f) await uploadOne(f, at); } };
+      const worker = async () => {
+        while (next < files.length) {
+          const index = next;
+          next += 1;
+          const file = files[index];
+          if (file) await uploadOne(file, index);
+        }
+      };
       await Promise.all([worker(), worker()]);
       await load();
     } finally { setUploading(false); }
   }
   async function attach(sourceId: string) {
     try {
-      await apiJson("/api/projects/" + encodeURIComponent(projectId ?? "") + "/sources/attach", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceId }) });
+      await apiJson("/api/projects/" + encodeURIComponent(projectId) + "/sources/attach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceId }),
+      });
+      setRows((previous) => previous.map((row) => row.duplicateId === sourceId
+        ? { ...row, state: "attached", detail: "Attached from the shared Library." }
+        : row));
       await load();
-    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not attach the source."); }
+    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not attach the existing source."); }
   }
   async function submitDuplicate(path: string, label: string, payload: unknown): Promise<boolean> {
     let res: Response;
     try {
-      res = await fetch("/api/projects/" + encodeURIComponent(projectId ?? "") + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), credentials: "same-origin" });
+      res = await fetch("/api/projects/" + encodeURIComponent(projectId) + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "same-origin",
+      });
     } catch (err) { setFailure(err instanceof Error ? err.message : "The request failed before a response arrived."); return false; }
     if (res.status === 409) {
-      let dupId = "", dupTitle = "";
-      try { const b = (await res.json()) as { duplicate?: { sourceId?: string; title?: string } }; dupId = b.duplicate?.sourceId ?? ""; dupTitle = b.duplicate?.title ?? ""; }
-      catch { /* keep row actionable without parsed duplicate */ }
-      if (!dupId) { setFailure("Duplicate details could not be read. Submit again to retry."); return false; }
-      setRows((prev) => [...prev, { name: label, state: "duplicate", detail: "Exact duplicate of " + (dupTitle || label) + ".", duplicateId: dupId, duplicateTitle: dupTitle }]);
+      let duplicateId = "", duplicateTitle = "";
+      try {
+        const body = (await res.json()) as { duplicate?: { sourceId?: string; title?: string } };
+        duplicateId = body.duplicate?.sourceId ?? "";
+        duplicateTitle = body.duplicate?.title ?? "";
+      } catch { /* keep the row actionable without parsed duplicate details */ }
+      if (!duplicateId) { setFailure("Duplicate details could not be read. Submit again to retry."); return false; }
+      setRows((previous) => [...previous, {
+        name: label,
+        state: "duplicate",
+        detail: "Exact duplicate of " + (duplicateTitle || label) + ".",
+        duplicateId,
+        duplicateTitle,
+      }]);
       return false;
     }
     if (!res.ok) { setFailure(await apiErrorMessage(res)); return false; }
@@ -237,45 +364,132 @@ export function Library() {
     if (!textTitle.trim() || !textBody.trim()) return;
     const label = textTitle.trim();
     if (!await submitDuplicate("/sources/text", label, { title: label, text: textBody })) return;
-    setTextTitle(""); setTextBody(""); await load();
+    setTextTitle("");
+    setTextBody("");
+    await load();
   }
   async function submitUrl() {
     if (!url.trim()) return;
     const label = urlTitle.trim() || url.trim();
     if (!await submitDuplicate("/sources/url", label, { url: url.trim(), title: urlTitle.trim() || undefined })) return;
-    setUrl(""); setUrlTitle(""); await load();
+    setUrl("");
+    setUrlTitle("");
+    await load();
   }
-  if (sources === undefined) return <LoadGate text="Loading sources…" failure={failure} onRetry={() => void load()} />;
+  function sourceStatus(source: Source): { label: string; tone: string; latest?: string } {
+    if (!isReadableSource(source)) return { label: stateLabel(source.readableState), tone: tone(source.readableState) };
+    const latest = source.revisionId !== source.currentRevisionId ? "Latest version: " + stateLabel(source.readableState) : undefined;
+    return {
+      label: understandingLabel(source),
+      tone: understandingTone(source.distillState),
+      ...(latest ? { latest } : {}),
+    };
+  }
+  if (!projectId) return <section className="er-sources-pane" aria-labelledby={headingId}><h1 className="er-lib__title" id={headingId}>Sources</h1><p role="status">Choose a project to view sources.</p></section>;
   return (
-    <section className="er-lib" aria-labelledby="er-lib-sources">
-      <header className="er-lib__head"><div className="er-lib__actions"><Link className="er-button er-button--text" to="/">Projects</Link><Link className="er-button er-button--text" to={'/p/' + encodeURIComponent(projectId ?? '') + '/overview'}>Project overview</Link></div><h1 className="er-lib__title" id="er-lib-sources">Library</h1><p className="er-lib__hint">Add files, text or a web page to this project.</p></header>
-      {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
-      <div className="er-card er-field er-lib__drop"><label htmlFor="er-lib-files">Choose files</label><input id="er-lib-files" type="file" multiple disabled={uploading} onChange={(e) => { void uploadMany(Array.from(e.currentTarget.files ?? [])); e.currentTarget.value = ""; }} /></div>
-      {rows.length > 0 ? (<ul className="er-card er-lib__progress" aria-live="polite">{rows.map((r, i) => (
-        <li key={r.name + i}><span>{r.name} — {stateLabel(r.state)}{r.detail ? ": " + r.detail : ""}</span>{r.state === "duplicate" && r.duplicateId ? <button className="er-button er-button--tonal" type="button" onClick={() => void attach(r.duplicateId ?? "")}>Attach existing{r.duplicateTitle ? " (" + r.duplicateTitle + ")" : ""}</button> : null}</li>))}
-      </ul>) : null}
-      <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void submitText(); }}>
-        <label className="er-field__label" htmlFor="er-lib-text-title">Pasted text title</label><input id="er-lib-text-title" value={textTitle} maxLength={200} onChange={(e) => setTextTitle(e.currentTarget.value)} placeholder="Meeting notes" />
-        <label className="er-field__label" htmlFor="er-lib-text-body">Text</label><textarea id="er-lib-text-body" value={textBody} onChange={(e) => setTextBody(e.currentTarget.value)} placeholder="Paste source text here" />
-        <button className="er-button er-button--tonal" type="submit" disabled={!textTitle.trim() || !textBody.trim()}>Save text</button>
-      </form>
-      <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void submitUrl(); }}>
-        <label className="er-field__label" htmlFor="er-lib-url">Page URL (https only)</label><input id="er-lib-url" inputMode="url" value={url} onChange={(e) => setUrl(e.currentTarget.value)} placeholder="https://example.com/report" />
-        <label className="er-field__label" htmlFor="er-lib-url-title">Title (optional)</label><input id="er-lib-url-title" value={urlTitle} maxLength={200} onChange={(e) => setUrlTitle(e.currentTarget.value)} />
-        <button className="er-button er-button--tonal" type="submit" disabled={!url.trim()}>Add URL</button>
-      </form>
-      {sources.length === 0 ? <p className="er-card er-lib__empty">No sources in this project yet.</p> : (
-        <ul className="er-lib__list">{sources.map((s) => (
-          <li className="er-lib__row" key={s.id}>
-            <span className="er-lib__row-main"><MaterialSymbol name={s.readableState === "failed" ? "error" : "info"} /><span><Link className="er-lib__row-title" to={"/p/" + encodeURIComponent(projectId ?? "") + "/source/" + encodeURIComponent(s.id) + "?revisionId=" + encodeURIComponent(s.currentRevisionId ?? s.revisionId)}>{s.title}</Link><span className="er-lib__row-meta"><span className="er-chip er-lib__badge" data-tone={tone(s.readableState)}>{stateLabel(s.readableState)}</span></span>{s.warningSummary ? <span className="er-lib__row-meta">{s.warningSummary}</span> : null}{s.error ? <span className="er-lib__error">{s.error}</span> : null}</span></span>
-            <details className="er-lib__facts"><summary>Details</summary><div className="er-lib__facts-content">
-              <p>{sourceKindLabels[s.kind]}</p>
-              {s.originalFilename ? <p>Original file: {s.originalFilename}</p> : null}
-              <p><a href={"/api/revisions/" + encodeURIComponent(s.currentRevisionId ?? s.revisionId) + "/original"}>Download original</a></p>
-            </div></details>
-          </li>))}
-        </ul>)}
-      {cursor ? <button className="er-button er-button--tonal" type="button" onClick={() => void loadMore()}>Load more</button> : null}
+    <section className="er-sources-pane" aria-labelledby={headingId}>
+      <header className="er-sources-pane__head">
+        <div className="er-sources-pane__toolbar">
+          <div className="er-sources-pane__heading">
+            <h1 className="er-lib__title" id={headingId}>Sources</h1>
+            <p className="er-lib__hint">Select readable sources for this project.</p>
+          </div>
+          <button className="er-button er-button--tonal" type="button" aria-haspopup="dialog" aria-controls={dialogId} onClick={openAddDialog}>
+            Add
+          </button>
+        </div>
+        <label className="er-sources-pane__default">
+          <input type="checkbox" checked={selection.scopeMode === "project_default"} disabled={defaultScopeIncomplete} onChange={(event) => changeProjectDefault(event.currentTarget.checked)} />
+          <span>Project default</span>
+          <span className="er-sources-pane__default-hint">Use the sources enabled for this project</span>
+        </label>
+        {defaultScopeIncomplete ? (
+          <p className="er-sources-pane__default-hint" role="status">
+            {sources === undefined
+              ? failure ? "Retry loading sources before customizing this scope." : "Loading sources before customizing this scope."
+              : "Load remaining sources before customizing this scope. Use Load more sources below."}
+          </p>
+        ) : null}
+      </header>
+      <div className="er-sources-pane__scroll" aria-busy={sources === undefined}>
+        {sources !== undefined && failure ? <p className="er-lib__error" role="alert">{failure}{cursor ? <button className="er-button er-button--text" type="button" onClick={() => void loadMore()}>Retry</button> : null}</p> : null}
+        {sources === undefined ? (
+          <div className="er-sources-pane__load">
+            {failure ? <p className="er-lib__error" role="alert">{failure}</p> : <p className="er-sources-pane__empty" role="status">Loading sources…</p>}
+            {failure ? <button className="er-button er-button--text" type="button" onClick={() => void load()}>Retry</button> : null}
+          </div>
+        ) : sources.length === 0 ? (
+          <p className="er-sources-pane__empty">No sources in this project yet.</p>
+        ) : (
+          <ul className="er-sources-pane__rows">
+            {sources.map((source) => {
+              const readable = isReadableSource(source);
+              const checked = readable && (selection.scopeMode === "project_default"
+                ? source.enabled !== false
+                : selection.scopeMode === "explicit" && selection.sourceIds.includes(source.id));
+              const status = sourceStatus(source);
+              const readerRevisionId = source.currentRevisionId ?? source.revisionId;
+              return (
+                <li className="er-sources-pane__row" key={source.id} data-selected={checked}>
+                  <label className="er-sources-pane__checkbox">
+                    <input
+                      type="checkbox"
+                      aria-label={"Include " + source.title + " in the current source selection"}
+                      checked={checked}
+                      disabled={!readable || defaultScopeIncomplete}
+                      onChange={() => toggleSource(source)}
+                    />
+                  </label>
+                  <div className="er-sources-pane__row-main">
+                    <Link className="er-sources-pane__row-title" title={source.title} to={"/p/" + encodeURIComponent(projectId) + "/source/" + encodeURIComponent(source.id) + "?revisionId=" + encodeURIComponent(readerRevisionId)}>{source.title}</Link>
+                    <span className="er-chip er-lib__badge" data-tone={status.tone}>{status.label}</span>
+                    {status.latest ? <span className="er-sources-pane__latest">{status.latest}</span> : null}
+                  </div>
+                  <a className="er-button er-button--text er-sources-pane__original" href={"/api/revisions/" + encodeURIComponent(source.revisionId) + "/original"} download aria-label={"Download original: " + source.title}>Original</a>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {cursor ? <button className="er-button er-button--tonal" type="button" onClick={() => void loadMore()}>Load more sources</button> : null}
+      </div>
+      <dialog ref={dialogRef} id={dialogId} className="er-dialog er-sources-pane__dialog" aria-labelledby={dialogHeadingId}>
+        <div className="er-sources-pane__dialog-head">
+          <h2 className="er-dialog__title" id={dialogHeadingId} ref={dialogHeadingRef} tabIndex={-1}>Add sources</h2>
+          <button className="er-button er-button--text" type="button" onClick={() => dialogRef.current?.close()}>Close</button>
+        </div>
+        <div className="er-dialog__body">
+          {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
+          <div className="er-card er-field er-lib__drop">
+            <label htmlFor={fileInputId}>Choose files</label>
+            <input id={fileInputId} type="file" multiple disabled={uploading} onChange={(event) => { void uploadMany(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
+          </div>
+          <form className="er-field er-lib__form" onSubmit={(event) => { event.preventDefault(); void submitText(); }}>
+            <label className="er-field__label" htmlFor={textTitleId}>Pasted text title</label>
+            <input id={textTitleId} value={textTitle} maxLength={200} onChange={(event) => setTextTitle(event.currentTarget.value)} placeholder="Meeting notes" />
+            <label className="er-field__label" htmlFor={textBodyId}>Text</label>
+            <textarea id={textBodyId} value={textBody} onChange={(event) => setTextBody(event.currentTarget.value)} placeholder="Paste source text here" />
+            <button className="er-button er-button--tonal" type="submit" disabled={!textTitle.trim() || !textBody.trim()}>Add text</button>
+          </form>
+          <form className="er-field er-lib__form" onSubmit={(event) => { event.preventDefault(); void submitUrl(); }}>
+            <label className="er-field__label" htmlFor={urlId}>Page URL (https only)</label>
+            <input id={urlId} inputMode="url" value={url} onChange={(event) => setUrl(event.currentTarget.value)} placeholder="https://example.com/report" />
+            <label className="er-field__label" htmlFor={urlTitleId}>Title (optional)</label>
+            <input id={urlTitleId} value={urlTitle} maxLength={200} onChange={(event) => setUrlTitle(event.currentTarget.value)} />
+            <button className="er-button er-button--tonal" type="submit" disabled={!url.trim()}>Add URL</button>
+          </form>
+          {rows.length > 0 ? (
+            <ul className="er-card er-lib__progress" aria-live="polite">
+              {rows.map((row, index) => (
+                <li key={row.name + index}>
+                  <span>{row.name} — {stateLabel(row.state)}{row.detail ? ": " + row.detail : ""}</span>
+                  {row.state === "duplicate" && row.duplicateId ? <button className="er-button er-button--tonal" type="button" onClick={() => void attach(row.duplicateId ?? "")}>Attach from Library{row.duplicateTitle ? " (" + row.duplicateTitle + ")" : ""}</button> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </dialog>
     </section>
   );
 }

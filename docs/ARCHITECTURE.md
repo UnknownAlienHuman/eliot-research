@@ -119,6 +119,8 @@ The accepted Material 3 Expressive interface in legacy `packages/ui` and `apps/e
 not redrawn. Keep its semantic tokens, Google Sans with Cyrillic, light/dark themes, navigation rail/bottom bar, touch
 targets and stable streaming geometry. Replace legacy data adapters with the new API; do not copy obsolete runtime or
 query layers. A different visual language requires an explicit owner decision.
+The project workspace presents Sources, Chat and Studio together on desktop and as three compact bottom destinations.
+Source selection, chat and saved pages retain their existing routes and product functions within that frame.
 
 ## Rules that keep implementation small
 

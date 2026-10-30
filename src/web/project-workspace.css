@@ -1,0 +1,51 @@
+.er-shell-reading:has(> .er-project-workspace) {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+  padding: var(--eliot-space-panel);
+}
+.er-project-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--eliot-space-group);
+  block-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+.er-shell .er-shell-reading > .er-project-workspace {
+  inline-size: 100%;
+  max-inline-size: none;
+  margin-inline: 0;
+}
+.er-project-workspace__header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--eliot-space-gutter); }
+.er-shell .er-project-workspace__header h1 {
+  margin: 0;
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+}
+.er-shell .er-project-workspace :is(.er-chat__title, .er-lib__title) {
+  margin: 0;
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+}
+.er-project-workspace__panes {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(20rem, 2.3fr) minmax(14rem, 1fr);
+  gap: var(--eliot-space-group);
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+.er-project-workspace__pane { display: flex; flex-direction: column; min-inline-size: 0; min-block-size: 0; overflow: hidden; }
+.er-project-workspace__pane > section { min-block-size: 0; block-size: 100%; }
+.er-project-workspace__chat { display: flex; flex: 1; min-block-size: 0; min-inline-size: 0; }
+.er-project-workspace__chat > section { flex: 1; min-block-size: 0; }
+.er-project-workspace__reader { min-block-size: 0; min-inline-size: 0; overflow: auto; }
+.er-project-workspace__pane--sources, .er-project-workspace__pane--studio { border-inline-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); }
+@media (max-width: 48rem) {
+  .er-project-workspace__panes { display: block; }
+  .er-project-workspace__pane { block-size: 100%; border: none; }
+  .er-project-workspace[data-reading="false"][data-active-pane="sources"] .er-project-workspace__pane:not(.er-project-workspace__pane--sources),
+  .er-project-workspace[data-reading="false"][data-active-pane="chat"] .er-project-workspace__pane:not(.er-project-workspace__pane--chat),
+  .er-project-workspace[data-reading="false"][data-active-pane="studio"] .er-project-workspace__pane:not(.er-project-workspace__pane--studio) { display: none; }
+  .er-project-workspace[data-reading="true"] .er-project-workspace__pane { display: none; }
+  .er-project-workspace[data-reading="true"] .er-project-workspace__pane--chat { display: flex; }
+}

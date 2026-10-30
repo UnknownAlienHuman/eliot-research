@@ -4,10 +4,9 @@ import { fetchMe } from "./api";
 import { Shell } from "./Shell";
 import { useTheme } from "./theme";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
-import { Library, Projects, Reader } from "./Library";
-import { ChatView, StudioView } from "./Chat";
+import { Projects } from "./Library";
+import { ProjectWorkspace } from "./ProjectWorkspace";
 import { ModelSettings } from "./ModelSettings";
-import { ProjectOverview } from "./Understanding";
 
 export function App() {
   const { pathname } = useLocation();
@@ -36,11 +35,7 @@ export function App() {
     <Routes>
       <Route element={<Shell theme={theme} onThemeChange={setTheme} />}>
         <Route index element={<Projects />} />
-        <Route path="p/:projectId/sources" element={<Library key={pathname} />} />
-        <Route path="p/:projectId/source/:sourceId" element={<Reader key={pathname} />} />
-        <Route path="p/:projectId/chat/:chatId?" element={<ChatView key={pathname} />} />
-        <Route path="p/:projectId/studio" element={<StudioView key={pathname} />} />
-        <Route path="p/:projectId/overview" element={<ProjectOverview key={pathname} />} />
+        <Route path="p/:projectId/*" element={<ProjectWorkspace key={pathname.split("/")[2]} />} />
         <Route path="settings" element={
           <>
             <h1 id="workspace-heading" tabIndex={-1}>Settings</h1>

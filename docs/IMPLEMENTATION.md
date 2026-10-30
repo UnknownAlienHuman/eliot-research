@@ -626,6 +626,14 @@ reduced-motion and forced-colour queries remain accessibility preferences. Appea
 The chat composer stays visible at the bottom of the reading pane while earlier answers scroll. Answer details show
 cited passages; token counts, timings and context/verification counters stay in API/eval diagnostics. Library and
 understanding show useful availability, progress and actionable failures without model routes or workflow machinery.
+The project screen uses Sources, Chat and Studio panes on desktop and the same three destinations in the compact
+bottom bar. Pane contents scroll independently; the composer is the final Chat row, never a sticky overlay over
+sources. Sources start with readable-source checkboxes and current understanding availability. One Add action opens
+the existing file/text/URL forms in a native dialog. History is a menu and project settings a dialog. Opening a source
+passage temporarily replaces the center reader without dropping the selected chat or source scope. Saved output
+refreshes Studio through the existing storage-only page API.
+Converting project-default scope to an explicit selection waits until all source pages are loaded; it never drops
+unloaded sources. Already explicit selections retain their full IDs while the visible source list is paginated.
 
 Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:sourceId?start=&end=`; K2
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
@@ -637,8 +645,10 @@ provider, search and free-name filters only filter the displayed catalogue; they
 Chat uses compact provider then model controls with project default available. A provider with no enabled,
 unambiguous catalogue choices is visibly unavailable. Model changes affect the next Send; each answer shows its stored
 model's name. New chats may Send with no sources, while existing chats wait for their history to load. Changing chats
-clears the previous queue view and ignores messages from the closed connection. Settings keeps provider addresses and
-Gateway routing in collapsed provider details. Unknown metadata stays visible, and model-job admission remains separate
+clears the previous queue view and ignores messages from the closed connection. The inherited model name is displayed
+without sending an explicit override. Settings keeps human provider names and known quota values on compact rows,
+with provider addresses and Gateway routing in connection dialogs. Both owner billing and data-use choices remain.
+Unknown metadata stays visible, and model-job admission remains separate
 from selection.
 
 ## 14. Lifecycle and export

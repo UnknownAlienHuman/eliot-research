@@ -19,8 +19,8 @@ interface GatewayConnection { readonly gatewayId: string | null; readonly provid
 interface ModelCatalog { readonly models: ModelRoute[]; readonly warnings: string[]; readonly defaultModel: string; readonly quotas?: ProviderQuota[]; readonly nativeUsage?: NativeUsage | null; }
 function quotaLabels(quotas: ProviderQuota[]): Record<string, string | null> {
   return Object.fromEntries(quotas.map((quota) => [quota.providerId,
-    quota.usage === null && quota.limit === null ? quota.error === 'quota-unavailable' ? 'Quota unavailable' : null :
-      `Last refresh: usage ${quota.usage?.toLocaleString('en-US') ?? 'unknown'} / ${quota.limit?.toLocaleString('en-US') ?? 'unknown'}`]));
+    quota.usage === null || quota.limit === null ? null :
+      `${quota.usage.toLocaleString('en-US')} / ${quota.limit.toLocaleString('en-US')}`]));
 }
 async function apiErrorMessage(res: Response): Promise<string> {
   try { const b = (await res.json()) as { error?: { message?: string } }; if (b.error && b.error.message) return b.error.message; } catch { /* status text */ }
@@ -35,11 +35,10 @@ async function apiRequest(path: string, init?: RequestInit): Promise<void> {
   const res = await fetch(path, { credentials: 'same-origin', ...init });
   if (!res.ok) throw new Error(await apiErrorMessage(res));
 }
-export function ModelSettings({ projectId }: { readonly projectId?: string }) {
+export function ModelSettings({ projectId, onSaved }: { readonly projectId?: string; readonly onSaved?: () => void }) {
   const [models, setModels] = useState<ModelRoute[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState('');
-  const [modelsWarnings, setModelsWarnings] = useState<string[]>([]);
   const [providerQuotas, setProviderQuotas] = useState<Record<string, string | null>>({});
   const [answerModel, setAnswerModel] = useState('');
   const [distillModel, setDistillModel] = useState('');
@@ -50,6 +49,7 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   const [refreshNote, setRefreshNote] = useState('');
   const [modelsRefreshing, setModelsRefreshing] = useState(false);
   const [ready, setReady] = useState(false);
+  const gatewayDialog = useRef<HTMLDialogElement | null>(null);
   const [gatewayId, setGatewayId] = useState('');
   const [allowGateway, setAllowGateway] = useState(false);
   const [editingTarget, setEditingTarget] = useState<'answer' | 'distill'>('answer');
@@ -71,8 +71,6 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   const gatewayHelpHref = trimmedGatewayId !== 'default' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(trimmedGatewayId)
     ? 'https://dash.cloudflare.com/?to=/:account/ai/ai-gateway/gateways/' + encodeURIComponent(trimmedGatewayId) + '/integrations'
     : null;
-  const gatewayOff = gatewayId === '' && modelChoices.some((m) => !m.enabled && m.route.startsWith('gateway:'));
-  const otherDisabled = modelChoices.filter((m) => !m.enabled && !(gatewayOff && m.route.startsWith('gateway:')));
   const answerMatches = modelChoices.filter((m) => m.route === answerModel);
   const answerLabel = answerModel === '' ? 'not chosen' : answerMatches.length === 1 ? answerMatches.at(0)?.label ?? answerModel : answerModel;
   const distillMatches = modelChoices.filter((m) => m.route === distillModel);
@@ -95,7 +93,6 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     try {
       const d = await apiJson<ModelCatalog>('/api/models', { signal: controller.signal });
       if (!current()) return;
-      setModelsWarnings(d.warnings);
       setProviderQuotas(quotaLabels(d.quotas ?? []));
       setNativeUsage(d.nativeUsage ?? null);
       setModels((previous) => current() ? d.models : previous);
@@ -115,6 +112,15 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   function selectDistillModel(route: string): void {
     setDistillModel(route);
   }
+  function openGatewayDialog(): void {
+    if (gatewayDialog.current !== null && !gatewayDialog.current.open) gatewayDialog.current.showModal();
+  }
+  function closeGatewayDialog(): void {
+    gatewayDialog.current?.close();
+  }
+  const nativeUsageLabel = nativeUsage !== null && nativeUsage.error === null && nativeUsage.neurons !== null
+    ? `Workers AI: ${nativeUsage.neurons.toLocaleString('en-US')} / ${nativeUsage.allowanceNeurons.toLocaleString('en-US')} neurons today`
+    : null;
   useEffect(() => {
     let live = true;
     const generation = ++gatewayGeneration.current;
@@ -135,10 +141,15 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
   async function save(): Promise<void> {
     setNote('');
     if (projectId !== undefined) {
+      setSavingAll(true);
+      let saved = false;
       try {
         await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instructions, answerModel: useGlobal ? null : answerModel }) });
         setNote('Saved.');
+        saved = true;
       } catch (err) { setNote(err instanceof Error ? err.message : 'Could not save settings.'); }
+      finally { setSavingAll(false); }
+      if (saved) onSaved?.();
       return;
     }
     if (answerModel === '') { setNote('Choose an answer model.'); return; }
@@ -206,12 +217,6 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
     }
   }
 
-  const catalogWarnings = modelsWarnings.length > 0 || otherDisabled.length > 0
-    ? <details className='er-models__details'>
-      <summary>Provider availability</summary>
-      {otherDisabled.length > 0 ? <p className='er-status'><span>Some models are currently unavailable. They remain listed with their provider status.</span></p> : null}
-      {modelsWarnings.length > 0 ? <ul className='er-models__warnings'>{modelsWarnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul> : null}
-    </details> : null;
   if (!ready) return note === '' ? <p className='er-status' role='status'><span>Loading settings…</span></p> : <p className='er-status er-status--error' role='alert'><span>{note}</span></p>;
   if (projectId !== undefined) {
     return (
@@ -223,7 +228,6 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
         <ModelPicker label='Answer model' choices={modelChoices} value={useGlobal ? '' : answerModel} emptyLabel='Use global default'
           loading={modelsLoading || savingAll} error={modelsError} compact
           onChange={selectAnswerModel} />
-        {catalogWarnings}
         <div className='er-models__actions'>
           <button className='er-button er-button--primary' type='button' disabled={savingAll} onClick={() => void save()}>{savingAll ? 'Saving…' : 'Save'}</button>
           {note !== '' ? <p className='er-status' role='status'><span>{note}</span></p> : null}
@@ -238,58 +242,62 @@ export function ModelSettings({ projectId }: { readonly projectId?: string }) {
           <h2 className='er-models__title'>Models</h2>
           <p className='er-status'><span>Defaults for answers and understanding.</span></p>
         </div>
-        <fieldset className='er-models__target'>
+        <fieldset className='er-models__target er-models__target--inline'>
           <legend>Use model for</legend>
-          <label className='er-models__check'>
-            <input type='radio' name='er-models-target' value='answer' checked={editingTarget === 'answer'} onChange={() => setEditingTarget('answer')} />
+          <label className='er-models__check er-models__check--compact'>
+            <input type='radio' name='er-models-target' value='answer' disabled={savingAll} checked={editingTarget === 'answer'} onChange={() => setEditingTarget('answer')} />
             <span className='er-models__checktext'>Answers — {answerLabel}</span>
           </label>
-          <label className='er-models__check'>
-            <input type='radio' name='er-models-target' value='distill' checked={editingTarget === 'distill'} onChange={() => setEditingTarget('distill')} />
+          <label className='er-models__check er-models__check--compact'>
+            <input type='radio' name='er-models-target' value='distill' disabled={savingAll} checked={editingTarget === 'distill'} onChange={() => setEditingTarget('distill')} />
             <span className='er-models__checktext'>Understanding — {distillLabel}</span>
           </label>
         </fieldset>
         <ModelPicker label={editingTarget === 'answer' ? 'Answer model' : 'Understanding model'} choices={modelChoices} value={editingTarget === 'answer' ? answerModel : distillModel} onChange={(route) => { if (editingTarget === 'answer') selectAnswerModel(route); else selectDistillModel(route); }}
           loading={modelsLoading || savingAll} error={modelsError} />
-        {catalogWarnings}
-        <fieldset className='er-models__target'>
+        <fieldset className='er-models__target er-models__target--inline er-models__usage'>
           <legend>Workers AI usage</legend>
-          <label className='er-models__check'>
-            <input type='radio' name='er-native-usage' value='included' checked={nativeUsageMode === 'included'} onChange={() => setNativeUsageMode('included')} />
-            <span className='er-models__checktext'>Only included quota — 10,000 Neurons/day<span className='er-models__help'>Native requests stay paused until this cap can be enforced. OpenRouter uses its own limits.</span></span>
+          <label className='er-models__check er-models__check--compact'>
+            <input type='radio' name='er-native-usage' value='included' disabled={savingAll} checked={nativeUsageMode === 'included'} onChange={() => setNativeUsageMode('included')} />
+            <span className='er-models__checktext'>Use included quota<span className='er-models__help'>Native requests stay paused while the daily cap cannot be verified and enforced.</span></span>
           </label>
-          <label className='er-models__check'>
-            <input type='radio' name='er-native-usage' value='standard' checked={nativeUsageMode === 'standard'} onChange={() => setNativeUsageMode('standard')} />
-            <span className='er-models__checktext'>Standard Cloudflare billing<span className='er-models__help'>Overage beyond the included quota is billed to the Cloudflare account. Applies to new native requests only. Choosing and saving starts no inference.</span></span>
+          <label className='er-models__check er-models__check--compact'>
+            <input type='radio' name='er-native-usage' value='standard' disabled={savingAll} checked={nativeUsageMode === 'standard'} onChange={() => setNativeUsageMode('standard')} />
+            <span className='er-models__checktext'>Standard Cloudflare billing<span className='er-models__help'>Standard permits normal Cloudflare billing, including Paid overage, for native requests.</span></span>
           </label>
         </fieldset>
-        {nativeUsage === null || nativeUsage.error !== null || nativeUsage.neurons === null ? <p className='er-status'><span>Workers AI usage unavailable, resets 00:00 UTC.</span></p> : <p className='er-status'><span>{'Workers AI: used ' + nativeUsage.neurons.toLocaleString('en-US') + ' of ' + nativeUsage.allowanceNeurons.toLocaleString('en-US') + ' neurons today, resets ' + (nativeUsage.resetAt.slice(11, 16) || '00:00') + ' UTC.'}</span></p>}
-        {gatewayOff ? (<p className='er-status'><span>Connect AI Gateway to use external models.</span></p>) : null}
+        {nativeUsageLabel !== null ? <p className='er-status'><span>{nativeUsageLabel}</span></p> : null}
         <div className='er-models__actions'>
           <button className='er-button er-button--text' type='button' disabled={modelsLoading || modelsRefreshing || savingAll} onClick={() => void refreshModels()}>
             {modelsRefreshing ? 'Refreshing models…' : 'Refresh models'}
           </button>
-          <button className='er-button er-button--primary' type='button' onClick={() => void save()}>Save</button>
+          <button className='er-button er-button--text' type='button' disabled={savingAll} onClick={openGatewayDialog}>AI Gateway connection</button>
+          <button className='er-button er-button--primary' type='button' disabled={savingAll} onClick={() => void save()}>{savingAll ? 'Saving…' : 'Save'}</button>
           {note !== '' ? <p className='er-status' role='status'><span>{note}</span></p> : null}
         </div>
         {refreshNote !== '' ? <p className='er-status' role={refreshNote === 'Models refreshed.' ? 'status' : 'alert'}>{refreshNote}</p> : null}
         <ModelProviders drafts={providerDrafts} onChange={(d) => { setProviderDrafts(d); setProviderFieldErrors({}); }} quotas={providerQuotas} fieldErrors={providerFieldErrors} disabled={savingAll} />
         {providersError !== '' ? <p className='er-status er-status--error' role='alert'><span>{providersError}</span></p> : null}
-
-        {gatewayHelpHref !== null ? <a className='er-button er-button--text' href={gatewayHelpHref} target='_blank' rel='noopener noreferrer'>Open Gateway integrations</a> : null}
-        <details className='er-models__details'>
-          <summary>Advanced provider settings</summary>
-          <label className='er-field er-models__row'>
-            <span className='er-models__label'>Gateway ID<span className='er-models__help'>Blank disables external routing.</span></span>
-            <input value={gatewayId} onChange={(e) => setGatewayId(e.currentTarget.value)} autoComplete='off' />
-          </label>
-          <label className='er-models__check'>
-            <input type='checkbox' checked={allowGateway} onChange={(e) => setAllowGateway(e.currentTarget.checked)} />
-            <span className='er-models__checktext'>Allow external model requests from this workspace.</span>
-          </label>
-          {gatewayId !== '' ? <p className='er-status'><span>Saved connection does not verify provider usability.</span></p> : null}
-        </details>
-        {gatewayNote !== '' ? <p className='er-status' role='status'><span>{gatewayNote}</span></p> : null}
+        <dialog className='er-dialog er-models__dialog' ref={gatewayDialog} aria-labelledby='er-gateway-connection-title'>
+          <h2 className='er-dialog__title' id='er-gateway-connection-title'>AI Gateway connection</h2>
+          <div className='er-dialog__body er-models__dialog-body'>
+            {gatewayHelpHref !== null ? <a className='er-button er-button--text' href={gatewayHelpHref} target='_blank' rel='noopener noreferrer'>Open Gateway integrations</a> : null}
+            <label className='er-field er-models__row'>
+              <span className='er-models__label'>Gateway ID</span>
+              <input value={gatewayId} disabled={savingAll} onChange={(e) => setGatewayId(e.currentTarget.value)} autoComplete='off' />
+            </label>
+            <label className='er-models__check er-models__check--compact'>
+              <input type='checkbox' disabled={savingAll} checked={allowGateway} onChange={(e) => setAllowGateway(e.currentTarget.checked)} />
+              <span className='er-models__checktext'>Allow external model requests from this workspace</span>
+            </label>
+            <p className='er-status'><span>Credentials remain in Cloudflare.</span></p>
+            {gatewayId !== '' ? <p className='er-status'><span>Saved connection does not verify provider usability.</span></p> : null}
+            {gatewayNote !== '' ? <p className='er-status' role='status'><span>{gatewayNote}</span></p> : null}
+            <div className='er-models__dialog-actions'>
+              <button className='er-button er-button--primary' type='button' onClick={closeGatewayDialog}>Done</button>
+            </div>
+          </div>
+        </dialog>
       </section>
     </div>
   );
