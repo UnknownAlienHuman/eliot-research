@@ -495,44 +495,46 @@ describe("splitDistillStatements", () => {
 });
 
 describe("resultStatement", () => {
-  const triviaQuote =
-    "Note that in addition to all results being in\nthe closed-book setting, our use of few-shot, one-shot, and zero-shot evaluations represent an even stricter setting than\nprevious closed-book QA work: in addition to external content not being allowed, fine-tuning on the Q&A dataset itself\nis also not permitted.\nThe results for GPT-3 are shown in Table 3.3. On TriviaQA, we achieve 64.3% in the zero-shot setting, 68.0% in the\none-shot setting, and 71.2% in the few-shot setting. The zero-shot result already outperforms the fine-tuned T5-11B by\n14.2%, and also outperforms a version with Q&A tailored span prediction during pre-training by 3.8%. The one-shot\nresult improves by 3.7% and matches the SOTA for an open-domain QA system which not only fine-tunes but also\nmakes use of a learned retrieval mechanism over a 15.3B parameter dense vector index of 21M documents [LPP+20].\nGPT-3\u2019s few-shot result further improves performance another 3.2% beyond this.\n";
-  const triviaClaim: VerifiedClaim = {
+  const syntheticQuote =
+    "System Alpha reports 82.6% in setting A, 84.1% in setting B, and 86.3% in setting C.\n" +
+    "Setting A is 3.4% above its prior score; an alternate method adds 1.7%.\n" +
+    "The evaluated index contains 2.6 billion parameters and 4 million records.\n";
+  const syntheticClaim: VerifiedClaim = {
     kind: "result",
     statement:
-      "On TriviaQA, GPT-3 achieves 64.3% in the zero-shot setting, 68.0% in the one-shot setting, and 71.2% in the few-shot setting; the zero-shot result outperforms the fine-tuned T5-11B by 14.2%.",
-    quote: triviaQuote,
-    block: 68,
-    task: "Closed-book question answering",
+      "On Dataset A, System Alpha reports 82.6% in setting A, 84.1% in setting B, and 86.3% in setting C; setting A is 3.4% above its prior score.",
+    quote: syntheticQuote,
+    block: 1,
+    task: "classification",
     metric: "accuracy",
-    dataset: "TriviaQA",
-    valueText: "71.2",
+    dataset: "Dataset A",
+    valueText: "86.3",
     unit: "%",
-    conditions: "few-shot",
-    start: 43525,
-    end: 44485,
+    conditions: "setting C",
+    start: 0,
+    end: TE.encode(syntheticQuote).byteLength,
     ambiguous: false,
-    valueNumber: 71.2,
+    valueNumber: 86.3,
   };
 
-  it("rejects the TriviaQA compound instead of collapsing it", () => {
-    expect(resultStatement(triviaClaim)).toBeNull();
+  it("rejects a compound result instead of collapsing it", () => {
+    expect(resultStatement(syntheticClaim)).toBeNull();
   });
 
   it("rejects a result without valueText", () => {
-    expect(resultStatement({ ...triviaClaim, valueText: null })).toBeNull();
-    expect(resultStatement({ ...triviaClaim, valueText: "  " })).toBeNull();
+    expect(resultStatement({ ...syntheticClaim, valueText: null })).toBeNull();
+    expect(resultStatement({ ...syntheticClaim, valueText: "  " })).toBeNull();
   });
 
   it("allows an unparsed valueNumber but requires a finite one when given", () => {
     const atomic = {
-      ...triviaClaim,
-      statement: "Accuracy reaches 71.2% few-shot.",
-      task: "Closed-book question answering",
+      ...syntheticClaim,
+      statement: "Accuracy reaches 86.3% in setting C.",
+      task: "classification",
       metric: "accuracy",
-      dataset: "TriviaQA",
-      conditions: "few-shot",
-      valueText: "71.2",
+      dataset: "Dataset A",
+      conditions: "setting C",
+      valueText: "86.3",
       unit: "%",
     };
     expect(resultStatement({ ...atomic, valueNumber: null })).toBe(atomic.statement);
@@ -540,91 +542,99 @@ describe("resultStatement", () => {
   });
 
   it("rejects an unsupported primary value", () => {
-    expect(resultStatement({ ...triviaClaim, valueText: "99.9", valueNumber: 99.9 })).toBeNull();
+    expect(resultStatement({ ...syntheticClaim, valueText: "99.9", valueNumber: 99.9 })).toBeNull();
   });
 
   it("passes non-result statements through untouched", () => {
     const limitation: VerifiedClaim = {
-      ...triviaClaim,
       kind: "limitation",
-      statement:
-        "GPT-3 has notable weaknesses in text synthesis: samples sometimes repeat themselves semantically at the document level.",
+      statement: "System Alpha can produce inconsistent summaries for some inputs.",
+      quote: "System Alpha can produce inconsistent summaries for some inputs.",
+      block: 1,
+      task: null,
+      metric: null,
+      dataset: null,
+      valueText: null,
+      unit: null,
+      conditions: null,
+      start: 0,
+      end: TE.encode("System Alpha can produce inconsistent summaries for some inputs.").byteLength,
+      ambiguous: false,
+      valueNumber: null,
     };
     expect(resultStatement(limitation)).toBe(limitation.statement);
   });
 
   it("does not double a percent unit already on the value", () => {
     const percent: VerifiedClaim = {
-      ...triviaClaim,
-      statement: "The model reaches 65.2% accuracy on the test set.",
-      quote: "The model reaches 65.2% accuracy on the test set.",
+      ...syntheticClaim,
+      statement: "System Alpha reaches 63.5% accuracy on the test set.",
+      quote: "System Alpha reaches 63.5% accuracy on the test set.",
       task: null,
       dataset: null,
       conditions: null,
-      valueText: "65.2%",
+      valueText: "63.5%",
       unit: "%",
-      valueNumber: 65.2,
+      valueNumber: 63.5,
     };
     expect(resultStatement(percent)).toBe(percent.statement);
   });
-  it("rejects the real BERT two-scalar list instead of splitting it", () => {
-    // Exact sentence from arxiv-02-first-job.json card 4c78560b (LF bytes kept).
-    const bertQuote =
-      "BERTLARGE out-\nperforms the authors\u2019 baseline ESIM+ELMo sys-\ntem by +27.1% and OpenAI GPT by 8.3%.";
+  it("rejects a synthetic two-scalar list instead of splitting it", () => {
+    const compoundQuote = "System Alpha\u2019s classifier reached\n+12.7% on setting A and 5.4%\non setting B.";
     expect(
       resultStatement({
-        ...triviaClaim,
-        task: "SWAG",
+        ...syntheticClaim,
+        task: "classification",
         metric: "accuracy",
-        dataset: "SWAG",
+        dataset: "Dataset B",
         conditions: null,
-        quote: bertQuote,
-        statement: "SWAG, SWAG: accuracy +27.1% / 8.3%",
-        valueText: "+27.1% / 8.3%",
+        quote: compoundQuote,
+        statement: "System Alpha\u2019s classifier reached +12.7% on setting A and 5.4% on setting B.",
+        valueText: "+12.7% / 5.4%",
         unit: "%",
         valueNumber: null,
       }),
     ).toBeNull();
   });
   it("keeps one scientific quantity and one scalar with unit", () => {
-    const base = { ...triviaClaim, task: null, dataset: null, conditions: null };
+    const base = { ...syntheticClaim, task: null, dataset: null, conditions: null };
     expect(
-      resultStatement({ ...base, statement: "rate 1e-8", metric: "rate", quote: "Corpus rate 1e-8.", valueText: "1e-8", unit: null, valueNumber: 1e-8 }),
-    ).toBe("rate 1e-8");
+      resultStatement({ ...base, statement: "rate 6e-7", metric: "rate", quote: "Corpus rate 6e-7.", valueText: "6e-7", unit: null, valueNumber: 6e-7 }),
+    ).toBe("rate 6e-7");
     expect(
-      resultStatement({ ...base, statement: "decay 4.9\u00d710^\u22125", metric: "decay", quote: "Decay 4.9\u00d710^\u22125 rate.", valueText: "4.9\u00d710^\u22125", unit: null, valueNumber: null }),
-    ).toBe("decay 4.9\u00d710^\u22125");
+      resultStatement({ ...base, statement: "decay 3.6\u00d710^\u22124", metric: "decay", quote: "Decay 3.6\u00d710^\u22124 rate.", valueText: "3.6\u00d710^\u22124", unit: null, valueNumber: null }),
+    ).toBe("decay 3.6\u00d710^\u22124");
     expect(
-      resultStatement({ ...base, statement: "steps 3\u00d7", metric: "steps", quote: "Needs 3\u00d7 fewer steps.", valueText: "3\u00d7", unit: "\u00d7", valueNumber: null }),
-    ).toBe("steps 3\u00d7");
+      resultStatement({ ...base, statement: "steps 5\u00d7", metric: "steps", quote: "Needs 5\u00d7 fewer steps.", valueText: "5\u00d7", unit: "\u00d7", valueNumber: null }),
+    ).toBe("steps 5\u00d7");
     expect(
-      resultStatement({ ...base, statement: "epsilon 10^-8", metric: "epsilon", quote: "Adam epsilon 10^-8.", valueText: "10^-8", unit: null, valueNumber: null }),
-    ).toBe("epsilon 10^-8");
+      resultStatement({ ...base, statement: "epsilon 10^-7", metric: "epsilon", quote: "Optimizer epsilon 10^-7.", valueText: "10^-7", unit: null, valueNumber: null }),
+    ).toBe("epsilon 10^-7");
   });
   it("passes a non-result qual fact even with compound numbers", () => {
     expect(
-      resultStatement({ ...triviaClaim, kind: "other", statement: "Qualitative note about training.", valueText: "+27.1% / 8.3%", unit: "%", valueNumber: null }),
+      resultStatement({ ...syntheticClaim, kind: "other", statement: "Qualitative note about training.", valueText: "+12.7% / 5.4%", unit: "%", valueNumber: null }),
     ).toBe("Qualitative note about training.");
   });
   it("preserves the 4.6% absolute improvement with its qualifier", () => {
-    const statement = "For the largest and most widely reported GLUE task, MNLI, BERT obtains a 4.6% absolute accuracy improvement.";
-    const quote = "For the largest and most widely\nreported GLUE task, MNLI, BERT obtains a 4.6%\nabsolute accuracy improvement.";
+    const statement = "System Alpha obtains a 4.6% absolute improvement in validation accuracy.";
+    const quote = "System Alpha obtains a 4.6% absolute\nimprovement in validation accuracy.";
     expect(
-      resultStatement({ ...triviaClaim, task: "MNLI", metric: "accuracy", dataset: "MNLI", conditions: null, quote, statement, valueText: "4.6%", unit: "%", valueNumber: 4.6 }),
+      resultStatement({ ...syntheticClaim, task: "classification", metric: "accuracy", dataset: "Dataset B", conditions: null, quote, statement, valueText: "4.6%", unit: "%", valueNumber: 4.6 }),
     ).toBe(statement);
   });
   it("rejects the 1M versus 500k step conditions instead of erasing them", () => {
-    const statement = "BERTBASE achieves almost 1.0% additional accuracy on MNLI when trained on 1M steps compared to 500k steps.";
-    const quote = "Answer: Yes, BERTBASE achieves almost\n1.0% additional accuracy on MNLI when\ntrained on 1M steps compared to 500k steps.\n";
+    const statement = "System Alpha reaches 1.0% additional accuracy on Dataset A when trained on 1M steps compared to 500k steps.";
+    const quote = "System Alpha reaches 1.0% additional accuracy on Dataset A\nwhen trained on 1M steps compared to 500k steps.\n";
     expect(
-      resultStatement({ ...triviaClaim, task: "MNLI", metric: "accuracy", dataset: "MNLI", conditions: null, quote, statement, valueText: "1.0%", unit: "%", valueNumber: 1 }),
+      resultStatement({ ...syntheticClaim, task: "classification", metric: "accuracy", dataset: "Dataset A", conditions: null, quote, statement, valueText: "1.0%", unit: "%", valueNumber: 1 }),
     ).toBeNull();
   });
-  it("rejects the 80/10/10 masking mix instead of collapsing to 84.2", () => {
-    const statement = "Dev set results for MNLI fine-tuning with masking strategy 80% MASK, 10% SAME, 10% RND is 84.2.";
-    const quote = "80% 10% 10% 84.2 95.4 94.9\n";
+  it("rejects a synthetic 80/10/10 masking mix instead of collapsing to 84.2", () => {
+    const statement = "System Alpha reaches 84.2% accuracy on Dataset A using an 80/10/10 masking mix.";
+    const quote = "System Alpha reaches 84.2% accuracy on Dataset A using 80% masked, 10% unchanged, and 10% random input tokens.\n";
     expect(
-      resultStatement({ ...triviaClaim, task: "MNLI", metric: "Dev Accuracy", dataset: "MNLI", conditions: null, quote, statement, valueText: "84.2", unit: "%", valueNumber: 84.2 }),
+      resultStatement({ ...syntheticClaim, task: "classification", metric: "accuracy", dataset: "Dataset A", conditions: null, quote, statement, valueText: "84.2", unit: "%", valueNumber: 84.2 }),
     ).toBeNull();
   });
 });

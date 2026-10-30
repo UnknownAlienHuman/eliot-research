@@ -272,7 +272,7 @@ describe("buildContext K2 whole scope", () => {
     expect(secondSource).toContain("[S2:7] " + secondText);
     expect(secondSource).not.toContain("[S1:2]");
     const system = res.messages[0]?.content ?? "";
-    expect(system).toContain("The N in [Sx:N] is an exact source block ID, not a page, section or bibliography number; gaps are intentional.");
+    expect(system).toContain("The N in [Sx:N] is an exact source block ID, not a page, section, footnote or bibliography number; gaps are intentional.");
     expect(system).toContain("If no listed label supports a claim, omit it rather than infer an ID.");
     const resolved = resolveCitations(
       "A [S1:2] and [S1:3]; B [S2:7]; page-only [S1:1] [S1:4] [S1:5]; absent [S1:132] [S7:132]; foreign [S1:7] [S2:2].",

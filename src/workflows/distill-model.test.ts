@@ -33,7 +33,7 @@ vi.mock("../models", async () => ({
   requireAvailableModel: vi.fn(), requireCatalogModel: vi.fn(), availableModels: vi.fn(),
 }));
 
-import { NoObjectGeneratedError, generateText } from "ai";
+import { NoObjectGeneratedError, generateText, Output } from "ai";
 import { modelFailure, resolveModelTransport } from "../model-transport";
 import { availableModels, requireAvailableModel, requireCatalogModel } from "../models";
 import { discoverGatewayModels } from "../model-catalog";
@@ -315,6 +315,182 @@ describe("DistillWorkflow admitted model snapshot", () => {
       finished(f, "The admitted model snapshot no longer matches the stored model route.");
       expect(f.db.prepare("SELECT distill_model AS model FROM source_revision WHERE id=?").get(revisionId)).toEqual({ model: storedRoute });
     } finally { f.db.close(); }
+  });
+
+  it("requires nullable additional-result metadata for new call two but still saves historical optional call-two output", async () => {
+    const withBatch = (target: ReturnType<typeof fixture>) => {
+      const db = target.env.DB as unknown as {
+        batch(statements: Array<{ run(): Promise<{ meta: { changes: number } }> }>): Promise<{ meta: { changes: number } }[]>;
+      };
+      db.batch = async (statements) => {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        return results;
+      };
+      return target;
+    };
+    const document = documentWithBlocks([
+      { type: "paragraph", text: "Method Alpha uses a low-rank update.\n" },
+      { type: "paragraph", text: "The source reports 3 and 5 examples. On Set 2021 Variant Alpha, the model scores 9.4 QScore, improving over the baseline by 1.7 QScore.\n" },
+      { type: "paragraph", text: "The source notes one limitation.\n" },
+      { type: "paragraph", text: "The source describes a related condition.\n" },
+    ]);
+    const f = withBatch(fixture(snapshot.route, document));
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(Output.object).mockClear();
+    const extraction = {
+      guide: [
+        { labels: ["[S1:1]"], text: "The source describes method Alpha." },
+        { labels: ["[S1:3]"], text: "The source notes a limitation." },
+        { labels: ["[S1:4]"], text: "The source describes a related condition." },
+      ],
+      claims: [
+        { quoteBlock: "[S1:3]", kind: "result", task: "outcomes", metric: "count", dataset: null,
+          valueText: "9", unit: null, conditions: null, statement: "The source reports 9 outcomes." },
+        { quoteBlock: "[S1:2]", kind: "result", task: "measured examples", metric: "count", dataset: null,
+          valueText: "3 and 5", unit: null, conditions: null, statement: "The method yields exactly 3 and 5 measured examples." },
+        { quoteBlock: "[S1:1]", kind: "method", task: null, metric: null, dataset: null,
+          valueText: null, unit: null, conditions: null, statement: "Method Alpha uses a low-rank update." },
+        { quoteBlock: "[S1:2]", kind: "result", task: "synthetic scoring task", metric: "QScore",
+          dataset: "Set 2021", valueText: "9.4", unit: "QScore", conditions: "Variant Alpha",
+          statement: "On Set 2021 Variant Alpha, the model scores 9.4 QScore, improving over the baseline by 1.7 QScore." },
+      ],
+      questions: ["What method is described?", "What result is reported?", "What limitation is noted?"],
+      authors: "", published: null,
+    };
+    vi.mocked(generateText)
+      .mockImplementationOnce(async () => ({
+        output: extraction,
+        totalUsage: { inputTokens: 12, inputTokenDetails: { cacheReadTokens: 0 }, outputTokens: 24, raw: null },
+      } as never))
+      .mockRejectedValueOnce(new Error("Stop after capturing call-two schema."));
+    try {
+      await run(f);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      const callInstructions = vi.mocked(generateText).mock.calls.map(([options]) => options.instructions);
+      const call2Options = vi.mocked(generateText).mock.calls[1]?.[0];
+      const call2Messages = call2Options?.messages;
+      const call2SourceContext = call2Messages?.[0]?.content;
+      if (typeof call2SourceContext !== "string") throw new Error("Call two source context was not captured.");
+      const capturedContext = JSON.parse(call2SourceContext) as {
+        candidates: Array<{ id: string; statement: string }>;
+        evidence: Array<{ label: string; quote: string }>;
+      };
+      expect(capturedContext.candidates).toEqual([{ id: "C0", statement: "Method Alpha uses a low-rank update.", quoteBlock: "[S1:1]", kind: "method",
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }]);
+      expect(capturedContext.evidence).toContainEqual({ label: "[S1:2]", block: 2,
+        quote: "The source reports 3 and 5 examples. On Set 2021 Variant Alpha, the model scores 9.4 QScore, improving over the baseline by 1.7 QScore.\n" });
+      const verifiedBody = f.bodies.get(prefix + "distill-verified.json");
+      if (!verifiedBody) throw new Error("Fresh verified stage was not retained before call two.");
+      const verified = JSON.parse(verifiedBody);
+      expect(verified.claims).toHaveLength(1);
+      expect(verified.claims[0].statement).toBe("Method Alpha uses a low-rank update.");
+      expect(verified.dropped).toContainEqual({ index: 0, reason: "unsupported-statement-numbers" });
+      expect(verified.dropped).toContainEqual({ index: 1, reason: "pre-synthesis-missing-or-unsupported-primary-result" });
+      expect(verified.dropped).toContainEqual({ index: 3, reason: "pre-synthesis-missing-or-unsupported-primary-result" });
+      const marker = "Return one JSON object conforming to this schema: ";
+      type JsonSchemaNode = {
+        $defs?: Record<string, JsonSchemaNode>;
+        definitions?: Record<string, JsonSchemaNode>;
+        properties?: Record<string, JsonSchemaNode>;
+        items?: JsonSchemaNode;
+        required?: string[];
+        $ref?: string;
+        type?: string | string[];
+        anyOf?: JsonSchemaNode[];
+        oneOf?: JsonSchemaNode[];
+        allOf?: JsonSchemaNode[];
+      };
+      const generatedSchema = (instructions: unknown): JsonSchemaNode => {
+        if (typeof instructions !== "string") throw new Error("Structured request instructions were not captured.");
+        const at = instructions.lastIndexOf(marker);
+        if (at < 0) throw new Error("Generated JSON schema was not included in the captured model request.");
+        return JSON.parse(instructions.slice(at + marker.length)) as JsonSchemaNode;
+      };
+      const firstSchema = generatedSchema(callInstructions[0]);
+      const secondSchema = generatedSchema(callInstructions[1]);
+      const firstClaim = firstSchema.properties?.claims?.items;
+      const additionalClaim = secondSchema.properties?.additionalClaims?.items;
+      if (!firstClaim || !additionalClaim) throw new Error("Generated call schemas are missing their claim item definitions.");
+      const fields = ["task", "metric", "dataset", "valueText", "unit", "conditions"];
+      expect(firstClaim.required).toEqual(expect.arrayContaining(fields));
+      expect(additionalClaim.required).toEqual(expect.arrayContaining(fields));
+      const acceptsNull = (node: JsonSchemaNode | undefined, rootSchema: JsonSchemaNode, seen = new Set<string>()): boolean => {
+        if (!node) return false;
+        if (node.$ref) {
+          const name = decodeURIComponent(node.$ref.split("/").at(-1) || "");
+          if (seen.has(name)) return false;
+          const next = new Set(seen); next.add(name);
+          return acceptsNull(rootSchema.$defs?.[name] ?? rootSchema.definitions?.[name], rootSchema, next);
+        }
+        if (node.type === "null" || (Array.isArray(node.type) && node.type.includes("null"))) return true;
+        return [...(node.anyOf ?? []), ...(node.oneOf ?? []), ...(node.allOf ?? [])]
+          .some((child) => acceptsNull(child, rootSchema, seen));
+      };
+      for (const field of fields) {
+        expect(acceptsNull(firstClaim.properties?.[field], firstSchema), "call-one " + field + " must be nullable").toBe(true);
+        expect(acceptsNull(additionalClaim.properties?.[field], secondSchema), "call-two " + field + " must be nullable").toBe(true);
+      }
+    } finally { f.db.close(); }
+
+    const cached = withBatch(fixture(snapshot.route, document));
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(document.text);
+    const quote = (block: Block) => new TextDecoder().decode(bytes.subarray(block.start, block.end));
+    const block1 = document.blocks[0], block2 = document.blocks[1], block3 = document.blocks[2];
+    if (!block1 || !block2 || !block3) throw new Error("Historical fixture requires three source blocks.");
+    cached.bodies.set(prefix + "distill-verified.json", JSON.stringify({
+      claims: [{
+        kind: "method", statement: "Method Alpha uses a low-rank update.", quote: quote(block1), block: block1.id,
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null,
+        start: block1.start, end: block1.end, ambiguous: false, valueNumber: null,
+      }],
+      guide: [
+        { labels: ["[S1:1]"], text: "The source describes method Alpha." },
+        { labels: ["[S1:2]"], text: "The source reports a result." },
+        { labels: ["[S1:3]"], text: "The source notes a limitation." },
+      ],
+      evidence: [block1, block2, block3].map((block) => ({ label: "[S1:" + block.id + "]", block: block.id, quote: quote(block) })),
+      questions: ["What method is described?", "What result is reported?", "What limitation is noted?"],
+      dropped: [], clearedNumbers: 0,
+    }));
+    cached.bodies.set(prefix + "distill-call2.json", JSON.stringify({
+      output: {
+        supportedClaims: ["C0"],
+        additionalClaims: [{ quoteBlock: "[S1:2]", kind: "result", statement: "The source reports a result of 3 times." }],
+        guide: [
+          { labels: ["[S1:1]"], text: "The source describes method Alpha." },
+          { labels: ["[S1:2]"], text: "The source reports a result." },
+          { labels: ["[S1:3]"], text: "The source notes a limitation." },
+        ],
+        digest: [{ labels: ["[S1:1]"], text: "The source describes method Alpha." }],
+        glossary: [],
+      },
+      usage: { inputTokens: 12, cachedTokens: 0, outputTokens: 24, tokenLimit: 1000, providerUsage: null },
+    }));
+    cached.bodies.set(prefix + "distill.json", JSON.stringify({
+      state: "failed", questions: [], usage: { calls: 2, inputTokens: 24, cachedTokens: 0, outputTokens: 48, tokenLimit: 1000, wallMs: 30, providerUsage: [] },
+      kept: 0, dropped: [], clearedNumbers: 0, raw: { first: prefix + "distill-call1.json", second: prefix + "distill-call2.json" }, error: "historical call-two output",
+    }));
+    cached.db.prepare("UPDATE source_revision SET distill_state='failed',distill_calls=2,distill_error=? WHERE id=?")
+      .run("historical call-two output", revisionId);
+    try {
+      expect(await hasAvailableUnderstanding(cached.env, revisionId)).toBe(true);
+      vi.mocked(generateText).mockClear();
+      vi.mocked(resolveModelTransport).mockClear();
+      await expect(requestUnderstanding(cached.env, { type: "owner" } as Actor, {
+        sourceId, revisionId, saveAvailable: true,
+      })).resolves.toEqual({ revisionId });
+      expect(generateText).not.toHaveBeenCalled();
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+      const savedBody = cached.bodies.get(prefix + "checked/distill.json");
+      if (!savedBody) throw new Error("Historical call-two output was not saved.");
+      const saved = JSON.parse(savedBody) as DistillReport & { state: string };
+      expect(saved.state).toBe("done");
+      expect(saved.kept).toBe(1);
+      expect(saved.usage.calls).toBe(2);
+      expect(saved.dropped).toContainEqual({ index: 0, reason: "additional-missing-or-unsupported-primary-result" });
+    } finally { cached.db.close(); }
   });
 
   it("passes the exact admitted context, reserve and checked date to transport without rediscovery", async () => {

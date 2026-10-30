@@ -40,14 +40,15 @@ interface GuideItem { labels: string[]; text: string }
 interface Verified { claims: VerifiedClaim[]; guide: GuideItem[]; evidence: Evidence[]; questions: string[]; dropped: { index: number; reason: string }[]; clearedNumbers: number }
 interface Projection { kept: number; guideSentences: number; dropped: { index: number; reason: string }[]; clearedNumbers: number }
 interface Prepared extends Projection { guide: string; digest: string; glossary: GlossaryEntry[]; claims: VerifiedClaim[]; summary: string }
-function synthesisSchema(labels: [string, ...string[]], claimIds: string[]) {
+function synthesisSchema(labels: [string, ...string[]], claimIds: string[], requireAdditionalMetadata = false) {
   const label = z.enum(labels), claimId = claimIds.length ? z.enum(claimIds as [string, ...string[]]) : z.string();
   const prose = z.object({ labels: z.array(label).min(1).max(4), text: z.string().min(1).max(1500) });
+  const additionalClaim = z.object({ quoteBlock: label, kind,
+    task: optionalText.optional(), metric: optionalText.optional(), dataset: optionalText.optional(),
+    valueText: optionalText.optional().describe("One reported scalar, copied as written, for one condition; never a list of experiment results. Null for a non-result fact."),
+    unit: optionalText.optional(), conditions: optionalText.optional(), statement: z.string().min(1).max(1200) });
   return z.object({ supportedClaims: z.array(claimId).max(claimIds.length),
-    additionalClaims: z.array(z.object({ quoteBlock: label, kind,
-      task: optionalText.optional(), metric: optionalText.optional(), dataset: optionalText.optional(),
-      valueText: optionalText.optional().describe("One reported scalar, copied as written, for one condition; never a list of experiment results. Null for a non-result fact."),
-      unit: optionalText.optional(), conditions: optionalText.optional(), statement: z.string().min(1).max(1200) })).max(8),
+    additionalClaims: z.array(requireAdditionalMetadata ? additionalClaim.required() : additionalClaim).max(8),
     guide: z.array(prose).min(3).max(5), digest: z.array(prose).min(1).max(8),
     glossary: z.array(z.object({ labels: z.array(label).min(1).max(4), en: z.string().max(150), ru: z.string().max(150), definition: z.string().max(800) })).max(12) });
 }
@@ -101,7 +102,7 @@ export async function hasAvailableUnderstanding(env: Env, revisionId: string): P
     const raw = await json<Raw<Synthesis>>(env, revisionId, "distill-call2.json");
     if (!verified.evidence.length) return false;
     if (!raw.output) return false;
-    return synthesisSchema(verified.evidence.map((e) => e.label) as [string, ...string[]], verified.claims.map((_, i) => "C" + i)).safeParse(raw.output).success;
+    return synthesisSchema(verified.evidence.map((e) => e.label) as [string, ...string[]], verified.claims.map((_, i) => "C" + i), false).safeParse(raw.output).success;
   } catch { return false; }
 }
 
@@ -198,6 +199,21 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
   };
   const candidates: CandidateClaim[] = raw.output.claims.map(({ quoteBlock, ...item }) => ({ ...item, ...evidence(quoteBlock) }));
   const verified = verifyClaims(text, blocks, candidates);
+  const verifiedClaims = verified.claims;
+  const rejectedCandidates = new Set(verified.dropped.map((item) => item.index));
+  let verifiedIndex = 0;
+  const synthesisCandidates = candidates.flatMap((_, index) => {
+    if (rejectedCandidates.has(index)) return [];
+    const claim = verifiedClaims[verifiedIndex++];
+    if (!claim) throw new Error("The call-1 verifier lost candidate ordering.");
+    if (claim.kind === "result" && resultStatement(claim) === null) {
+      verified.dropped.push({ index, reason: "pre-synthesis-missing-or-unsupported-primary-result" });
+      return [];
+    }
+    return [claim];
+  });
+  if (verifiedIndex !== verifiedClaims.length) throw new Error("The call-1 verifier lost candidate ordering.");
+  verified.claims = synthesisCandidates;
   const guideDropped: { index: number; reason: string }[] = [];
   const guide: GuideItem[] = raw.output.guide.flatMap((item, index) => {
     const labels = [...new Set(item.labels)], quotes = labels.map((label) => evidence(label).quote).join("\n");
@@ -235,7 +251,7 @@ async function synthesize(env: Env, revisionId: string, model: ModelSpec) {
     "Use guideCandidates only as leads to the supplied excerpts, never as claims or evidence themselves. Preserve distinct, nonredundant source-grounded facts across contribution, methods, assumptions, findings, conditions and limitations when stated. If the excerpts support a missing fact as one atomic claim from one block, include it in additionalClaims; otherwise omit it. At the 32-claim bound, prioritize distinct supported facts and omit duplicates. When stated and supported, prioritize the central contribution, mechanism, assumptions and limitations before secondary result rows or repeated variants; the maximum claim count is a ceiling, not a target. Add only useful atomic facts missing from retained candidates, quoting one supplied block per additional claim; total retained plus additional claims must not exceed 32. Each additional result needs its task, metric, dataset, one scalar valueText, unit and exact conditions from that block. Split different settings into separate records, use null for absent fields, and do not calculate or borrow values from another block. " +
     "Then produce 3–5 source-grounded guide sentences, a concise digest and an EN/RU glossary for the owner. Describe the source's contribution or purpose, methods, assumptions, findings, conditions and limitations without review narration or candidate IDs. Preserve disagreements with their own citations instead of reconciling them. Put supplied authority citation labels only in labels arrays, never in prose. Copy numeric spellings, including powers of ten, exactly from the quoted block. Keep each value with its dataset, method and conditions; do not add unsupported facts or generalize beyond the source.",
     sourceContextJson({ evidence: verified.evidence, guideCandidates: verified.guide,
-      candidates: claims }, new Set(labels)), synthesisSchema(labels, claims.map((item) => item.id)),
+      candidates: claims }, new Set(labels)), synthesisSchema(labels, claims.map((item) => item.id), true),
     documentLanguage(verified.evidence.map((item) => item.quote).join("\n")), model);
   await put(env, revisionId, "distill-call2.json", raw);
 }
@@ -244,7 +260,7 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
   const raw = await json<Raw<Synthesis>>(env, revisionId, "distill-call2.json");
   if (!verified.evidence.length) throw new Error("No frozen source excerpts are available.");
   if (!raw.output) throw new Error("The retained source material did not produce supported understanding. No paid step will be repeated.");
-  raw.output = synthesisSchema(verified.evidence.map((e) => e.label) as [string, ...string[]], verified.claims.map((_, i) => "C" + i)).parse(raw.output);
+  raw.output = synthesisSchema(verified.evidence.map((e) => e.label) as [string, ...string[]], verified.claims.map((_, i) => "C" + i), false).parse(raw.output);
   const dropped = [...verified.dropped];
   const retained = new Set(raw.output.supportedClaims);
   const selected = verified.claims.filter((_item, index) => {
