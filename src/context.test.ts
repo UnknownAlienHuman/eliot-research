@@ -186,6 +186,76 @@ function twoSourceEnv() {
   });
 }
 
+function mixedScopeEnv(firstText = "Небольшой читаемый источник.\n") {
+  const encoder = new TextEncoder();
+  const sourceIds = Array.from({ length: 12 }, (_value, index) => "s" + (index + 1));
+  const revisionIds = Array.from({ length: 12 }, (_value, index) =>
+    "00000000-0000-4000-8000-" + String(index + 1).padStart(12, "0"));
+  const sources: MemSource[] = [];
+  const revisions: MemRevision[] = [];
+  const memberships: MemMembership[] = [];
+  const texts: Record<string, MemText> = {};
+  const claims: Record<string, MemClaim[]> = {};
+  const largeBlocks = new Map<string, MemBlock[]>();
+  const largeTexts = new Map<string, string>();
+  const firstBlock = scanBlocks(firstText)[0];
+  const lastText = "Заключительный читаемый источник.\n";
+  const lastBlocks = scanBlocks(lastText);
+  const lastBlock = lastBlocks[0];
+  if (!firstBlock || !lastBlock) throw new Error("Mixed-context fixtures require citable original blocks.");
+  for (let index = 0; index < 12; index++) {
+    const sourceId = sourceIds[index], revisionId = revisionIds[index];
+    if (sourceId === undefined || revisionId === undefined) throw new Error("Mixed-context fixture source identity is missing.");
+    const title = index === 0 ? "Readable failed source" : index === 11 ? "Readable unstarted source" : "Paper " + (index + 1);
+    sources.push({ id: sourceId, title, state: "active", currentRevisionId: revisionId, createdAt: index + 1 });
+    memberships.push({ projectId: "p1", sourceId, enabled: 1 });
+    if (index === 0) {
+      const blocks = scanBlocks(firstText);
+      revisions.push({ id: revisionId, readableState: "readable", readableSize: encoder.encode(firstText).byteLength, distillState: "failed", guideSummary: null, deletedAt: null });
+      texts[revisionId] = { text: firstText, blocks };
+    } else if (index === 11) {
+      revisions.push({ id: revisionId, readableState: "readable", readableSize: encoder.encode(lastText).byteLength, distillState: "none", guideSummary: null, deletedAt: null });
+      texts[revisionId] = { text: lastText, blocks: lastBlocks };
+    } else {
+      const quote = "Paper " + (index + 1) + " reports 8.4 QScore.";
+      const background = "Background " + "x".repeat(148_000);
+      const tail = "Supplementary text." + NL;
+      const text = background + NL + NL + quote + NL + NL + tail;
+      const backgroundEnd = encoder.encode(background).byteLength;
+      const quoteStart = backgroundEnd + encoder.encode(NL + NL).byteLength;
+      const quoteEnd = quoteStart + encoder.encode(quote).byteLength;
+      const tailStart = quoteEnd + encoder.encode(NL + NL).byteLength;
+      const blocks: MemBlock[] = [
+        { id: 1, type: "paragraph", start: 0, end: backgroundEnd, heading: null },
+        { id: 2, type: "paragraph", start: quoteStart, end: quoteEnd, heading: null },
+        { id: 3, type: "paragraph", start: tailStart, end: encoder.encode(text).byteLength, heading: null },
+      ];
+      const quoteBlock = blocks[1];
+      if (!quoteBlock) throw new Error("Expected a compactable quote block.");
+      const exactQuote = sliceUtf8(text, quoteBlock.start, quoteBlock.end);
+      largeBlocks.set(sourceId, blocks);
+      largeTexts.set(sourceId, text);
+      revisions.push({ id: revisionId, readableState: "readable", readableSize: encoder.encode(text).byteLength,
+        distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 });
+      texts[revisionId] = { text, blocks, guide: "Guide [R" + revisionId + ":" + quoteBlock.id + "]." };
+      claims[revisionId] = [{ ordinal: 0, statement: exactQuote, quote: exactQuote, conditions: null,
+        blockIndex: quoteBlock.id, ambiguous: 0 }];
+    }
+  }
+  const fixture = makeEnv({ memberships, sources, revisions, texts, claims });
+  return {
+    ...fixture,
+    sourceIds,
+    revisionIds,
+    firstText,
+    firstBlock,
+    lastText,
+    lastBlock,
+    largeBlocks,
+    largeTexts,
+  };
+}
+
 describe("buildContext K2 whole scope", () => {
   it("freezes enabled readable revisions with per-block labels and sourceIds", async () => {
     const { env } = twoSourceEnv();
@@ -390,12 +460,14 @@ describe("buildContext K2 whole scope", () => {
     expect((err as LibraryError).code).toBe("invalid");
   });
 
-  it("rejects a huge scope from D1 sizes before R2 loads", async () => {
-    const { env, reads } = makeEnv({
+  it("rejects an actually over-budget undistilled whole projection", async () => {
+    const big = "x".repeat(9000);
+    const byteLength = new TextEncoder().encode(big).byteLength;
+    const { env, requested } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "Native25", state: "active", currentRevisionId: "r9", createdAt: 1 }],
-      revisions: [{ id: "r9", readableState: "readable", readableSize: 26214400, distillState: "queued", guideSummary: null, deletedAt: null }],
-      texts: {},
+      revisions: [{ id: "r9", readableState: "readable", readableSize: byteLength, distillState: "queued", guideSummary: null, deletedAt: null }],
+      texts: { r9: { text: big, blocks: [wholeBlock(big, 1)] } },
     });
     let err: unknown;
     try {
@@ -407,7 +479,72 @@ describe("buildContext K2 whole scope", () => {
     expect(err).toBeInstanceOf(LibraryError);
     expect((err as LibraryError).code).toBe("invalid");
     expect((err as LibraryError).status).toBe(400);
-    expect(reads()).toBe(0);
+    expect(requested).toContain("source/r9/text.md");
+  });
+
+  it("uses exact citable projection before rejecting a marker-heavy unprocessed source", async () => {
+    const encoder = new TextEncoder();
+    const pageMarkers = Array.from({ length: 2000 }, (_value, index) => "### Page " + (index + 1)).join(NL + NL);
+    const pageText = pageMarkers + NL + NL + "Small citable paragraph." + NL;
+    const pageBlocks = scanBlocks(pageText);
+    const originalBlock = pageBlocks[pageBlocks.length - 1];
+    if (!originalBlock) throw new Error("Expected the whole source to retain its final citable paragraph.");
+    const largeRevision = "22222222-2222-4222-8222-222222222222";
+    const pageRevision = "11111111-1111-4111-8111-111111111111";
+    const largePrefix = "Background " + "b".repeat(9000);
+    const compactQuote = "The result is 3 times.";
+    const largeText = largePrefix + NL + NL + compactQuote + NL;
+    const prefixBytes = encoder.encode(largePrefix).byteLength;
+    const quoteStart = prefixBytes + encoder.encode(NL + NL).byteLength;
+    const quoteEnd = quoteStart + encoder.encode(compactQuote).byteLength;
+    const compactBlock: MemBlock = { id: 2, type: "paragraph", start: quoteStart, end: quoteEnd, heading: null };
+    const largeBlocks: MemBlock[] = [
+      { id: 1, type: "paragraph", start: 0, end: prefixBytes, heading: null },
+      compactBlock,
+    ];
+    const { env, requested } = makeEnv({
+      memberships: [
+        { projectId: "p1", sourceId: "s1", enabled: 1 },
+        { projectId: "p1", sourceId: "s2", enabled: 1 },
+      ],
+      sources: [
+        { id: "s1", title: "Readable failed source", state: "active", currentRevisionId: pageRevision, createdAt: 1 },
+        { id: "s2", title: "Compactable paper", state: "active", currentRevisionId: largeRevision, createdAt: 2 },
+      ],
+      revisions: [
+        { id: pageRevision, readableState: "readable", readableSize: encoder.encode(pageText).byteLength, distillState: "failed", guideSummary: null, deletedAt: null },
+        { id: largeRevision, readableState: "readable", readableSize: encoder.encode(largeText).byteLength, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 1 },
+      ],
+      texts: {
+        [pageRevision]: { text: pageText, blocks: pageBlocks },
+        [largeRevision]: { text: largeText, blocks: largeBlocks, guide: "Guide [R" + largeRevision + ":2]." },
+      },
+      claims: {
+        [largeRevision]: [{ ordinal: 0, statement: compactQuote, quote: compactQuote, conditions: null, blockIndex: 2, ambiguous: 0 }],
+      },
+    });
+    const model = { contextTokens: 5000, maxOutputTokens: 100 };
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model });
+    expect(res.mode).toBe("claims");
+    expect(res.revisionIds).toEqual([pageRevision, largeRevision]);
+    expect(res.sources.map((source) => source.alias)).toEqual(["S1", "S2"]);
+    expect(res.sources[0]?.blocks).toEqual([originalBlock]);
+    expect(res.sources[1]?.blocks).toEqual([compactBlock]);
+    const sourcesText = res.messages[1]?.content ?? "";
+    expect(sourcesText).toContain("[S1:" + originalBlock.id + "] Small citable paragraph.");
+    expect(sourcesText).not.toContain("[S1:1]");
+    expect(sourcesText).toContain("[S2:2] " + compactQuote);
+    expect(sourcesText).not.toContain("b".repeat(1000));
+    const citations = resolveCitations("Whole [S1:" + originalBlock.id + "] and compact [S2:2].", res.sources);
+    expect(citations.citations.map((citation) => [citation.sourceId, citation.revisionId, citation.block, citation.start, citation.end])).toEqual([
+      ["s1", pageRevision, originalBlock.id, originalBlock.start, originalBlock.end],
+      ["s2", largeRevision, compactBlock.id, compactBlock.start, compactBlock.end],
+    ]);
+    expect(citations.invalidLabels).toBe(0);
+    expect(res.estimatedInputTokens + modelOutputLimit(model)).toBeLessThanOrEqual(Math.min(3000, 400000));
+    expect(requested).toContain("source/" + pageRevision + "/text.md");
+    expect(requested).not.toContain("source/" + largeRevision + "/text.md");
+    expect(requested.some((key) => key.startsWith("source/" + largeRevision + "/text.md#r"))).toBe(true);
   });
 
   it("treats empty block maps as unavailable without inventing labels", async () => {
@@ -506,6 +643,119 @@ describe("buildContext K3 claims fallback", () => {
     expect(resolved.citations.length).toBe(1);
     expect(resolved.citations[0]?.sourceId).toBe("s1");
     expect(resolved.invalidLabels).toBe(1);
+  });
+
+  it("keeps readable failed and unstarted sources whole while compacting large eligible sources", async () => {
+    const fixture = mixedScopeEnv();
+    const model = { contextTokens: 1048576, maxOutputTokens: 8192 };
+    const res = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model });
+    const compactSourceId = fixture.sourceIds[1];
+    if (compactSourceId === undefined) throw new Error("Expected a second frozen source.");
+    const compactBlock = fixture.largeBlocks.get(compactSourceId)?.[1];
+    const firstLargeBlock = fixture.largeBlocks.get(compactSourceId)?.[0];
+    const largeText = fixture.largeTexts.get(compactSourceId);
+    if (!compactBlock || !firstLargeBlock || !largeText) throw new Error("Expected the second frozen source to have original blocks.");
+    const compactQuote = sliceUtf8(largeText, compactBlock.start, compactBlock.end);
+    const smallQuote = sliceUtf8(fixture.firstText, fixture.firstBlock.start, fixture.firstBlock.end);
+    const lastQuote = sliceUtf8(fixture.lastText, fixture.lastBlock.start, fixture.lastBlock.end);
+    expect(res.mode).toBe("claims");
+    expect(res.revisionIds).toEqual(fixture.revisionIds);
+    expect(res.sources.map((source) => source.sourceId)).toEqual(fixture.sourceIds);
+    expect(res.sources.map((source) => source.alias)).toEqual(Array.from({ length: 12 }, (_value, i) => "S" + (i + 1)));
+    expect(res.sources[0]?.blocks).toEqual([fixture.firstBlock]);
+    expect(res.sources[1]?.blocks).toEqual([compactBlock]);
+    expect(res.sources[11]?.blocks).toEqual([fixture.lastBlock]);
+    const sourceText = res.messages[1]?.content ?? "";
+    expect(sourceText).toContain("[S1:" + fixture.firstBlock.id + "] " + smallQuote);
+    expect(sourceText).toContain("[S2:" + compactBlock.id + "] " + compactQuote);
+    expect(sourceText).toContain("[S12:" + fixture.lastBlock.id + "] " + lastQuote);
+    const s2 = sourceText.slice(sourceText.indexOf("Paper 2"), sourceText.indexOf("Paper 3"));
+    expect(s2).not.toContain("x".repeat(1000));
+    const resolved = resolveCitations(
+      "First [S1:" + fixture.firstBlock.id + "], compact [S2:" + compactBlock.id + "], final [S12:" + fixture.lastBlock.id + "].",
+      res.sources,
+    );
+    expect(resolved.invalidLabels).toBe(0);
+    expect(resolved.citations.map((citation) => [citation.sourceId, citation.revisionId, citation.block, citation.start, citation.end])).toEqual([
+      [fixture.sourceIds[0], fixture.revisionIds[0], fixture.firstBlock.id, fixture.firstBlock.start, fixture.firstBlock.end],
+      [fixture.sourceIds[1], fixture.revisionIds[1], compactBlock.id, compactBlock.start, compactBlock.end],
+      [fixture.sourceIds[11], fixture.revisionIds[11], fixture.lastBlock.id, fixture.lastBlock.start, fixture.lastBlock.end],
+    ]);
+    expect(fixture.requested).toContain("source/" + fixture.revisionIds[0] + "/text.md");
+    expect(fixture.requested).toContain("source/" + fixture.revisionIds[11] + "/text.md");
+    expect(fixture.requested).not.toContain("source/" + fixture.revisionIds[1] + "/text.md");
+    expect(fixture.requested.some((key) => key.startsWith("source/" + fixture.revisionIds[1] + "/text.md#r"))).toBe(true);
+    expect(res.estimatedInputTokens + modelOutputLimit(model)).toBeLessThanOrEqual(400000);
+  });
+
+  it("rejects an over-budget mixed scope after exact projection without dropping sources", async () => {
+    const impossibleText = "u".repeat(1_300_000) + NL;
+    const fixture = mixedScopeEnv(impossibleText);
+    let err: unknown;
+    try {
+      await buildContext(fixture.env, actor, {
+        projectId: "p1", scopeMode: "project_default", model: { contextTokens: 1048576, maxOutputTokens: 8192 },
+      });
+      expect.unreachable();
+    } catch (error) {
+      err = error;
+    }
+    expect(err).toBeInstanceOf(LibraryError);
+    expect((err as LibraryError).code).toBe("invalid");
+    expect((err as LibraryError).status).toBe(400);
+    expect(fixture.requested.filter((key) => key === "source/" + fixture.revisionIds[0] + "/text.md")).toHaveLength(1);
+    expect(fixture.requested.filter((key) => key === "source/" + fixture.revisionIds[11] + "/text.md")).toHaveLength(1);
+    for (const revisionId of fixture.revisionIds.slice(1, 11)) {
+      expect(fixture.requested).not.toContain("source/" + revisionId + "/text.md");
+    }
+  });
+
+  it("recomputes retained history and enforces the existing output and caller budget for mixed context", async () => {
+    const fixture = mixedScopeEnv();
+    const model = { contextTokens: 1048576, maxOutputTokens: 8192 };
+    const smallBlock = fixture.firstBlock;
+    const smallSourceId = fixture.sourceIds[0], compactSourceId = fixture.sourceIds[1];
+    const smallRevisionId = fixture.revisionIds[0], compactRevisionId = fixture.revisionIds[1];
+    if (smallSourceId === undefined || compactSourceId === undefined || smallRevisionId === undefined || compactRevisionId === undefined) {
+      throw new Error("Expected the first two frozen source identities.");
+    }
+    const largeBlocks = fixture.largeBlocks.get(compactSourceId);
+    if (!largeBlocks) throw new Error("Expected original blocks for Paper 2.");
+    const compactBlock = largeBlocks[1], absentBlock = largeBlocks[0];
+    if (!compactBlock || !absentBlock) throw new Error("Expected compact and unselected blocks for Paper 2.");
+    const priorCitations = [
+      { sourceId: smallSourceId, revisionId: smallRevisionId, block: smallBlock.id, start: smallBlock.start, end: smallBlock.end,
+        sourceTitle: "Readable failed source", deleted: false, label: "[S1:" + smallBlock.id + "]" },
+      { sourceId: compactSourceId, revisionId: compactRevisionId, block: compactBlock.id, start: compactBlock.start, end: compactBlock.end,
+        sourceTitle: "Paper 2", deleted: false, label: "[S2:" + compactBlock.id + "]" },
+      { sourceId: compactSourceId, revisionId: compactRevisionId, block: absentBlock.id, start: absentBlock.start, end: absentBlock.end,
+        sourceTitle: "Paper 2", deleted: false, label: "[S2:" + absentBlock.id + "]" },
+    ];
+    const question = "Q".repeat(30000), instructions = "I".repeat(30000);
+    const history = [
+      { role: "user" as const, content: "Old oversized question", revisionIds: fixture.revisionIds },
+      { role: "assistant" as const, content: "Old oversized answer " + "o".repeat(320000), revisionIds: fixture.revisionIds, citations: [] },
+      { role: "user" as const, content: "Recent scope-preserving question", revisionIds: fixture.revisionIds },
+      { role: "assistant" as const, content: "Retain [S1:" + smallBlock.id + "] and [S2:" + compactBlock.id + "]; remove [S2:" + absentBlock.id + "].",
+        revisionIds: [smallRevisionId, compactRevisionId], citations: priorCitations },
+    ];
+    const res = await buildContext(fixture.env, actor, {
+      projectId: "p1", scopeMode: "project_default", model, history, question, instructions,
+    });
+    expect(res.mode).toBe("claims");
+    expect(res.revisionIds).toEqual(fixture.revisionIds);
+    const body = res.messages.map((message) => message.content).join(NL);
+    expect(body).toContain("Recent scope-preserving question");
+    expect(body).toContain("Retain [S1:" + smallBlock.id + "] and [S2:" + compactBlock.id + "]");
+    expect(body).not.toContain("Old oversized answer");
+    expect(body).not.toContain("[S2:" + absentBlock.id + "]");
+    const estimate = (value: string) => Math.ceil(new TextEncoder().encode(value).byteLength / 3);
+    const callerTokens = estimate(question) + estimate(instructions);
+    const historyTokens = res.messages.slice(3).reduce((sum, message) => sum + estimate(message.content), 0);
+    const cap = Math.min(Math.floor(model.contextTokens * 0.6), 400000);
+    expect(historyTokens).toBeLessThanOrEqual(Math.floor(model.contextTokens * 0.1));
+    expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + estimate(message.content), 0));
+    expect(res.estimatedInputTokens + callerTokens + modelOutputLimit(model)).toBeLessThanOrEqual(cap);
   });
 
   it("filters structural page markers from hydrated claim and guide passages", async () => {
@@ -668,11 +918,13 @@ describe("buildContext K3 claims fallback", () => {
   });
 
   it("undistilled scope reports understanding-needed, not silent whole", async () => {
+    const text = "x".repeat(9000);
+    const readableSize = new TextEncoder().encode(text).byteLength;
     const { env } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "Big", state: "active", currentRevisionId: "r1", createdAt: 1 }],
-      revisions: [{ id: "r1", readableState: "readable", readableSize: 26214400, distillState: "queued", guideSummary: null, deletedAt: null }],
-      texts: {},
+      revisions: [{ id: "r1", readableState: "readable", readableSize, distillState: "queued", guideSummary: null, deletedAt: null }],
+      texts: { r1: { text, blocks: [wholeBlock(text, 1)] } },
       claims: {},
     });
     let err: unknown;
@@ -688,11 +940,13 @@ describe("buildContext K3 claims fallback", () => {
   });
 
   it("distilled scope without usable claims reports understanding-needed", async () => {
-    const { env, reads } = makeEnv({
+    const text = "Maybe" + "x".repeat(9000);
+    const readableSize = new TextEncoder().encode(text).byteLength;
+    const { env, reads, requested } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "NoClaims", state: "active", currentRevisionId: "r1", createdAt: 1 }],
-      revisions: [{ id: "r1", readableState: "readable", readableSize: 26214400, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 }],
-      texts: { r1: { blocks: [{ id: 1, type: "paragraph", start: 0, end: 5, heading: null }] } },
+      revisions: [{ id: "r1", readableState: "readable", readableSize, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 2 }],
+      texts: { r1: { text, blocks: [wholeBlock(text, 1)] } },
       claims: { r1: [{ ordinal: 1, statement: "Maybe", quote: "maybe", conditions: null, blockIndex: 1, ambiguous: 1 }] },
     });
     let err: unknown;
@@ -705,7 +959,8 @@ describe("buildContext K3 claims fallback", () => {
     expect(err).toBeInstanceOf(LibraryError);
     expect((err as LibraryError).code).toBe("invalid");
     expect((err as LibraryError).message).toMatch(/understood/);
-    expect(reads()).toBe(1);
+    expect(reads()).toBe(3);
+    expect(requested.filter((key) => key === "source/r1/text.md")).toHaveLength(1);
   });
   it("prints only own-revision persistent guide refs as citable passages", async () => {
     const rev = "9f3b1c2d-4a5e-4f6a-8b7c-9d0e1f2a3b4c";

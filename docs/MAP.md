@@ -231,7 +231,8 @@ re-distilled automatically.
    Preserve a safe failure reason for the reader without retaining raw provider errors or credentials.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
    an extra overview model call.
-6. Add claim context mode. The same answer prompt and citation resolver are used.
+6. Add claim context mode. Preserve whole originals where the shared budget permits; compress eligible sources only
+   as needed, retaining the complete frozen scope and aliases. The same answer prompt and citation resolver are used.
 7. Add reader guide/claims UI, quote cases and `pnpm eval k3`. Reader metadata shows availability and verification
    caveats; quote links retain exact identities without displaying UUIDs or call/token/time/reservation counters.
    API progress retains the admitted job bound independently of later model-default or catalogue changes.
@@ -272,11 +273,12 @@ re-distilled automatically.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 
-K3 is not fully accepted or deployed. Claim cards still omit Transformer's 28.4 BLEU German result, ResNet's 3.57%
-ensemble ImageNet test error, and LoRA's 10,000-fold parameter and threefold GPU-memory reductions. Claim-mode C1–C4
-remain open; semantic support for guide, digest and glossary content remains
-separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference and does not
-qualify K3.
+K3 is not fully accepted or deployed. The ten baseline papers reached `done` with two recorded calls each; the
+unchanged-revision check retained all 111 claims and 20 recorded calls without further inference. Required conditions
+for the French Transformer result and some LoRA anchors remain unresolved. All four real overflow answers used
+`claims` mode, but C2–C4 failed numeric support in their cited ranges. Semantic support for guide, digest and glossary
+content remains separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference
+and does not qualify K3.
 
 ---
 

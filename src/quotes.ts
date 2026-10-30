@@ -13,7 +13,8 @@ import type { Block } from "./blocks.js";
  * declared reference tokens; splitDistillStatements keeps fenced code as one
  * unit. resultStatement formats one scalar result card and rejects it when
  * the composed task/dataset/conditions plus metric:valueText+unit lacks numeric
- * support. verifyClaims leaves task/metric/dataset unchecked by itself.
+ * support. Direct dataset/quote split contradictions are rejected; other
+ * task/metric/dataset semantics remain unchecked.
  */
 
 export interface CandidateClaim {
@@ -346,8 +347,20 @@ function foldedHits(slices: Map<number, Slice>, order: number[], foldedQuote: st
   return hits;
 }
 
-/** Parse one plain/decimal/thousands/scientific value; percent kept as written. */
-
+/** Ephemeral, reject-only comparison; unknown or multiple splits stay with semantic review. */
+function singleDataSplit(value: string | null, quoted: boolean): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (quoted && /\b(?:test|train(?:ing)?|validation|dev(?:elopment)?)\s*(?:\/|and|or)\s*(?:test|train(?:ing)?|validation|dev(?:elopment)?)\b/i.test(value)) return undefined;
+  const mentions = value.matchAll(quoted
+    ? /\b(test|train(?:ing)?|validation|dev(?:elopment)?)[\s-]+(?:set|split|data)\b/gi
+    : /\b(test|train(?:ing)?|validation|dev(?:elopment)?)\b/gi);
+  const splits = new Set<string>();
+  for (const match of mentions) {
+    const name = (match[1] ?? "").toLowerCase();
+    splits.add(name === "test" ? "test" : name.startsWith("train") ? "train" : "validation");
+  }
+  return splits.size === 1 ? splits.values().next().value : undefined;
+}
 
 export function verifyClaims(
   text: string,
@@ -385,6 +398,16 @@ export function verifyClaims(
     }
     if (candidate.conditions !== null && candidate.conditions !== undefined && !numbersSupported(candidate.conditions, verifiedText)) {
       dropped.push({ index, reason: "unsupported-condition-numbers" });
+      return;
+    }
+    const datasetSplit = candidate.kind === "result" ? singleDataSplit(candidate.dataset, false) : undefined;
+    // Only simple literal names with one trailing split are recognized; no entity aliases.
+    const datasetName = datasetSplit === undefined ? undefined
+      : /^([A-Za-z][A-Za-z0-9]*(?: [A-Za-z0-9]+)?) (?:test|train(?:ing)?|validation|dev(?:elopment)?)(?: (?:set|split|data))?$/i.exec(candidate.dataset?.trim() ?? "")?.[1];
+    const quoteSplit = datasetName !== undefined && hits.length === 1 ? singleDataSplit(verifiedText, true) : undefined;
+    const namedSplit = datasetName !== undefined && new RegExp(`\\b${datasetName}[\\s-]+(?:test|train(?:ing)?|validation|dev(?:elopment)?)[\\s-]+(?:set|split|data)\\b`).test(verifiedText);
+    if (datasetSplit !== undefined && quoteSplit !== undefined && datasetSplit !== quoteSplit && namedSplit) {
+      dropped.push({ index, reason: "contradictory-dataset-split" });
       return;
     }
     let valueText = candidate.valueText;

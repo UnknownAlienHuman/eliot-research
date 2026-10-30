@@ -61,6 +61,7 @@ const NONE_SCOPE_POLICY =
   "No Library sources selected. Do not claim Library grounding or emit source labels; distinguish any general knowledge.";
 const NARROW_SCOPE = "Narrow the source selection so the answer fits.";
 const NEEDS_UNDERSTANDING = "Narrow the selection: some sources are still being understood.";
+const CLAIMS_ORIENTATION_HEADER = "Derived claim orientation only; these statements and conditions are not source evidence. Verify facts against the labelled original excerpts above, including their actual experiment conditions.\n\n";
 const GUIDE_MISSING = "A selected source is still being understood. Narrow the selection or wait for understanding to finish.";
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const bomDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -122,6 +123,7 @@ interface ClaimRow {
   conditions: string | null;
   blockIndex: number;
 }
+interface ClaimContextPart { section: string; orientation: string; source: LabelSource }
 
 async function ensureProject(env: Env, projectId: string): Promise<void> {
   const row = await env.DB.prepare("SELECT id FROM project WHERE id=?").bind(projectId).first();
@@ -316,7 +318,42 @@ async function loadGuideBlocks(env: Env, entry: Frozen, byId: Map<number, Block>
   return out;
 }
 
-async function buildClaims(
+async function loadClaimContextPart(env: Env, entry: Frozen, index: number): Promise<ClaimContextPart | undefined> {
+  if (!DISTILLED.has(entry.distillState ?? "")) return undefined;
+  const alias = "S" + (index + 1);
+  const claims = await loadClaims(env, entry.revisionId);
+  const blocks = await loadBlocks(env, entry.revisionId);
+  const byId = new Map<number, Block>();
+  for (const block of blocks) byId.set(block.id, block);
+  const supported = claims.filter((claim) => {
+    const block = byId.get(claim.blockIndex);
+    return block !== undefined && isCitableBlock(block, claim.quote);
+  });
+  if (supported.length === 0) return undefined;
+  const used = new Set<number>();
+  const quoted = new Set<string>();
+  const lines = [sourceHeader(alias, entry.title)];
+  const claimsOrientation = [sourceHeader(alias, entry.title)];
+  for (const guide of await loadGuideBlocks(env, entry, byId)) {
+    used.add(guide.id);
+    quoted.add(JSON.stringify([guide.id, guide.passage]));
+    lines.push("[" + alias + ":" + guide.id + "] " + guide.passage);
+  }
+  for (const claim of supported) {
+    used.add(claim.blockIndex);
+    const when = claim.conditions && claim.conditions.trim() ? " [" + claim.conditions.trim() + "]" : "";
+    claimsOrientation.push(stripLabels(claim.statement + when));
+    const key = JSON.stringify([claim.blockIndex, claim.quote]);
+    if (quoted.has(key)) continue;
+    quoted.add(key);
+    lines.push("[" + alias + ":" + claim.blockIndex + "] " + claim.quote);
+  }
+  const source: LabelSource = { sourceId: entry.sourceId, revisionId: entry.revisionId, title: entry.title, blocks: blocks.filter((block) => used.has(block.id)), alias };
+  lines.splice(1, 0, citableLabelInventory(source));
+  return { section: lines.join("\n"), orientation: claimsOrientation.join("\n"), source };
+}
+
+async function buildMixedContext(
   env: Env,
   frozen: Frozen[],
   rawHistory: ContextHistoryTurn[] | undefined,
@@ -326,66 +363,98 @@ async function buildClaims(
   callerTokens: number,
   maxOutputTokens: number,
   cap: number,
+  wholePrefitTokens: number,
+  preloadedWhole?: Array<Awaited<ReturnType<typeof loadSourceText>> | undefined>,
 ): Promise<ContextResult> {
-  const sections: string[] = [];
-  const orientations: string[] = [];
-  const sources: LabelSource[] = [];
+  const compactParts: Array<ClaimContextPart | undefined> = [];
   for (let i = 0; i < frozen.length; i++) {
     const entry = frozen[i];
-    if (!entry) continue;
-    if (!DISTILLED.has(entry.distillState ?? "")) throw new LibraryError("invalid", NEEDS_UNDERSTANDING, 400);
-    const alias = "S" + (i + 1);
-    const claims = await loadClaims(env, entry.revisionId);
-    const blocks = await loadBlocks(env, entry.revisionId);
-    const byId = new Map<number, Block>();
-    for (const block of blocks) byId.set(block.id, block);
-    const supported = claims.filter((claim) => {
-      const block = byId.get(claim.blockIndex);
-      return block !== undefined && isCitableBlock(block, claim.quote);
-    });
-    if (supported.length === 0) throw new LibraryError("invalid", NEEDS_UNDERSTANDING, 400);
-    const used = new Set<number>();
-    const quoted = new Set<string>();
-    const lines = [sourceHeader(alias, entry.title)];
-    const claimsOrientation = [sourceHeader(alias, entry.title)];
-    for (const guide of await loadGuideBlocks(env, entry, byId)) {
-      used.add(guide.id);
-      quoted.add(JSON.stringify([guide.id, guide.passage]));
-      lines.push("[" + alias + ":" + guide.id + "] " + guide.passage);
-    }
-    for (const claim of supported) {
-      used.add(claim.blockIndex);
-      const when = claim.conditions && claim.conditions.trim() ? " [" + claim.conditions.trim() + "]" : "";
-      claimsOrientation.push(stripLabels(claim.statement + when));
-      const key = JSON.stringify([claim.blockIndex, claim.quote]);
-      if (quoted.has(key)) continue;
-      quoted.add(key);
-      lines.push("[" + alias + ":" + claim.blockIndex + "] " + claim.quote);
-    }
-    const source: LabelSource = { sourceId: entry.sourceId, revisionId: entry.revisionId, title: entry.title, blocks: blocks.filter((block) => used.has(block.id)), alias };
-    lines.splice(1, 0, citableLabelInventory(source));
-    sections.push(lines.join("\n"));
-    orientations.push(claimsOrientation.join("\n"));
-    sources.push(source);
+    if (entry) compactParts[i] = await loadClaimContextPart(env, entry, i);
   }
-  const sourcesText = SOURCES_HEADER + sections.join("\n\n");
-  const orientationText = "Derived claim orientation only; these statements and conditions are not source evidence. Verify facts against the labelled original excerpts above, including their actual experiment conditions.\n\n" + orientations.join("\n\n");
-  const sourceTokens = estimateTokens(sourcesText) + estimateTokens(orientationText);
-  const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources);
-  const estimatedInputTokens = systemTokens + sourceTokens + history.tokens;
-  if (estimatedInputTokens + callerTokens + maxOutputTokens > cap) throw new LibraryError("invalid", NARROW_SCOPE, 400);
-  return {
-    mode: "claims",
-    revisionIds: frozen.map((entry) => entry.revisionId),
-    sources,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: sourcesText },
-      { role: "user", content: orientationText },
-      ...history.messages,
-    ],
-    estimatedInputTokens,
+  const wholeParts = preloadedWhole ? [...preloadedWhole] : new Array<Awaited<ReturnType<typeof loadSourceText>> | undefined>(frozen.length);
+  let projectedTokens = wholePrefitTokens;
+  if (preloadedWhole) {
+    const sections = wholeParts.map((part) => part?.section ?? "");
+    const sources = wholeParts.flatMap((part) => part ? [part.source] : []);
+    const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources);
+    projectedTokens = systemTokens + estimateTokens(SOURCES_HEADER + sections.join("\n\n"))
+      + history.tokens + callerTokens + maxOutputTokens;
+  } else {
+    projectedTokens += estimateTokens(SOURCES_HEADER) + Math.max(0, frozen.length - 1) * estimateTokens("\n\n");
+    for (let i = 0; i < frozen.length; i++) {
+      const entry = frozen[i];
+      if (entry) projectedTokens += estimateTokens(sourceHeader("S" + (i + 1), entry.title));
+    }
+  }
+  const candidates = compactParts.flatMap((part, index) => {
+    if (!part) return [];
+    const compactTokens = estimateTokens(part.section) + estimateTokens(part.orientation);
+    const loaded = wholeParts[index];
+    const entry = frozen[index];
+    const fullTokens = loaded ? estimateTokens(loaded.section)
+      : entry && typeof entry.readableSize === "number"
+        ? Math.ceil(entry.readableSize / 3) + estimateTokens(sourceHeader("S" + (index + 1), entry.title))
+        : undefined;
+    return [{ index, compactTokens, fullTokens, saving: fullTokens === undefined ? 0 : fullTokens - compactTokens }];
+  }).sort((a, b) => b.saving - a.saving || a.index - b.index);
+  const compressed = new Set<number>();
+  const orientationHeaderTokens = estimateTokens(CLAIMS_ORIENTATION_HEADER);
+  for (const candidate of candidates) {
+    if (projectedTokens <= cap) break;
+    if (candidate.saving <= 0) continue;
+    compressed.add(candidate.index);
+    projectedTokens -= candidate.saving;
+    if (compressed.size === 1) projectedTokens += orientationHeaderTokens;
+  }
+  const needsUnderstanding = compactParts.some((part) => part === undefined);
+  const assemble = async (): Promise<ContextResult | undefined> => {
+    const sections: string[] = [];
+    const sources: LabelSource[] = [];
+    const orientations: string[] = [];
+    for (let i = 0; i < frozen.length; i++) {
+      const entry = frozen[i];
+      if (!entry) continue;
+      const compact = compressed.has(i) ? compactParts[i] : undefined;
+      if (compressed.has(i) && !compact) throw new Error("A compact context source disappeared during assembly.");
+      const part = compact ?? (wholeParts[i] ?? (wholeParts[i] = await loadSourceText(env, entry, i)));
+      sections.push(part.section);
+      sources.push(part.source);
+      if (compact) orientations.push(compact.orientation);
+    }
+    const sourcesText = SOURCES_HEADER + sections.join("\n\n");
+    const claimOrientation = orientations.length ? CLAIMS_ORIENTATION_HEADER + orientations.join("\n\n") : "";
+    const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources);
+    const estimatedInputTokens = systemTokens + estimateTokens(sourcesText)
+      + (claimOrientation ? estimateTokens(claimOrientation) : 0) + history.tokens;
+    if (estimatedInputTokens + callerTokens + maxOutputTokens > cap) return undefined;
+    return {
+      mode: compressed.size ? "claims" : "whole",
+      revisionIds: frozen.map((entry) => entry.revisionId),
+      sources,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: sourcesText },
+        ...(claimOrientation ? [{ role: "user" as const, content: claimOrientation }] : []),
+        ...history.messages,
+      ],
+      estimatedInputTokens,
+    };
   };
+
+  let result = await assemble();
+  if (result) return result;
+  while (compressed.size < candidates.length) {
+    const remaining = candidates.filter((candidate) => !compressed.has(candidate.index)).map((candidate) => {
+      const loaded = wholeParts[candidate.index];
+      return { index: candidate.index, saving: (loaded ? estimateTokens(loaded.section) : candidate.fullTokens ?? 0) - candidate.compactTokens };
+    }).sort((a, b) => b.saving - a.saving || a.index - b.index);
+    const next = remaining[0];
+    if (!next || next.saving <= 0) break;
+    compressed.add(next.index);
+    result = await assemble();
+    if (result) return result;
+  }
+  throw new LibraryError("invalid", needsUnderstanding ? NEEDS_UNDERSTANDING : NARROW_SCOPE, 400);
 }
 
 export async function buildContext(env: Env, _actor: Actor, input: ContextInput): Promise<ContextResult> {
@@ -423,7 +492,8 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
   for (const entry of frozen) {
     if (typeof entry.readableSize === "number") knownBytes += entry.readableSize;
   }
-  const wholePrefit = Math.ceil(knownBytes / 3) + systemTokens + history.tokens + callerTokens + maxOutputTokens <= cap;
+  const wholePrefitTokens = Math.ceil(knownBytes / 3) + systemTokens + history.tokens + callerTokens + maxOutputTokens;
+  const wholePrefit = wholePrefitTokens <= cap;
 
   if (frozen.length === 0) {
     return {
@@ -439,6 +509,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     };
   }
 
+  const wholeParts: Array<Awaited<ReturnType<typeof loadSourceText>> | undefined> = new Array(frozen.length);
   if (wholePrefit) {
     const sections: string[] = [];
     const sources: LabelSource[] = [];
@@ -446,6 +517,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
       const entry = frozen[i];
       if (!entry) continue;
       const loaded = await loadSourceText(env, entry, i);
+      wholeParts[i] = loaded;
       sections.push(loaded.section);
       sources.push(loaded.source);
     }
@@ -486,7 +558,8 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
       };
     }
   }
-  return buildClaims(env, frozen, input.history, frozenSet, historyBudget, systemTokens, callerTokens, maxOutputTokens, cap);
+  return buildMixedContext(env, frozen, input.history, frozenSet, historyBudget, systemTokens, callerTokens,
+    maxOutputTokens, cap, wholePrefitTokens, wholePrefit ? wholeParts : undefined);
 }
 
 
