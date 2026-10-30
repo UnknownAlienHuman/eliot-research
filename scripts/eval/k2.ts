@@ -843,6 +843,13 @@ if (process.argv.includes('--models-only')) {
     assert.equal(connectionAfterConsentSave.status, 200);
     assert.equal(connectionAfterConsentSave.body.connection.gatewayId, 'eliotr-reasoning',
       'Readback must show the actual stored Gateway setting; this does not prove provider usability.');
+    const connectedCatalog = await apiJson('/api/models');
+    const inheritedChoice = connectedCatalog.body.models.find((model) => model.enabled && model.route.startsWith('gateway:'));
+    const nativeChoice = connectedCatalog.body.models.find((model) => model.enabled && model.route.startsWith('workers-ai:'));
+    assert(inheritedChoice && nativeChoice, 'Unavailable-default regression requires real external and native catalogue choices.');
+    const inheritedProject = await apiJson('/api/projects/' + projectId + '/settings', { method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: inheritedChoice.route }) });
+    assert.equal(inheritedProject.status, 200, 'An available external route must be saved as this fixture project default.');
     await setAdvancedGateway(page, true);
     await expect(consent).not.toBeChecked();
     await gatewayId.fill('');
@@ -852,6 +859,21 @@ if (process.argv.includes('--models-only')) {
     await saveModels.click();
     assert.equal((await restoreConnectionResponse).status(), 200, 'The same Models Save must restore the Gateway setting to blank.');
     await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
+    const inheritedPage = await context.newPage();
+    try {
+      await inheritedPage.goto(browserOrigin + '/p/' + projectId + '/chat');
+      await inheritedPage.getByRole('textbox', { name: 'Question', exact: true }).fill('Unavailable inherited model check');
+      await expect(inheritedPage.getByRole('alert').filter({ hasText: 'Inherited default model is unavailable:' })).toBeVisible();
+      await expect(inheritedPage.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+      await inheritedPage.getByRole('combobox', { name: 'Model: provider', exact: true }).selectOption('workers-ai');
+      await inheritedPage.getByRole('combobox', { name: 'Model', exact: true }).selectOption(nativeChoice.route);
+      await expect(inheritedPage.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+    } finally {
+      await inheritedPage.close();
+      const restoredProject = await apiJson('/api/projects/' + projectId + '/settings', { method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: null }) });
+      assert.equal(restoredProject.status, 200, 'Restore the fixture project default without inference.');
+    }
     const connectionAfterRestore = await apiJson('/api/models/connection');
     assert.equal(connectionAfterRestore.status, 200);
     assert.equal(connectionAfterRestore.body.connection.gatewayId, null,
@@ -1002,6 +1024,7 @@ if (process.argv.includes('--models-only')) {
       assert.equal(await providerItems.count(), providersBefore.body.providers.length + 1, 'Add provider must append one draft row.');
       const draft = ppage.locator('.er-providers__item').last();
       await expect(draft.locator('.er-providers__id')).toHaveText('New provider');
+      await expect(draft.getByRole('checkbox', { name: 'Enable New provider', exact: true })).not.toBeChecked();
       await expect(providerDialog).toBeVisible();
       await expect(providerDialog.getByRole('combobox', { name: 'Type', exact: true })).toHaveValue('openai-compatible');
       await expect(providerDialog.getByRole('textbox', { name: 'Provider ID', exact: true })).toHaveValue('new-provider');

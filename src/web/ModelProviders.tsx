@@ -111,7 +111,7 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
   function addProvider(): void {
     if (drafts === null || disabled) return;
     const newIndex = drafts.length;
-    onChange([...drafts, { isNew: true, id: 'new-provider', type: 'openai-compatible', baseUrl: '', gatewaySlug: '', gatewayPath: 'v1', enabled: true, modelsUrl: '', metadataUrl: '', dataCollection: 'deny' }]);
+    onChange([...drafts, { isNew: true, id: 'new-provider', type: 'openai-compatible', baseUrl: '', gatewaySlug: '', gatewayPath: 'v1', enabled: false, modelsUrl: '', metadataUrl: '', dataCollection: 'deny' }]);
     setEditingIndex(newIndex);
   }
   function removeProvider(index: number): void {
