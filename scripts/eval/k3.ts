@@ -1,4 +1,5 @@
 import { unsupportedNumbers, parseSingleNumber, countNumericQuantities } from "../../src/numbers.ts";
+import { unsupportedNumericStatements } from "../../src/citations.ts";
 import { assertEvalOrigin, fetchEval } from "./origin.mjs";
 // K3 Distill eval harness (docs/MAP.md K3; docs/IMPLEMENTATION.md 6, 8, 10, 11).
 // Interface assumptions (backend contract under test):
@@ -262,6 +263,7 @@ async function assertClaimTurnReadOnly(t, tag, question, revIdSet, revKey) {
   assert.equal(t.invalidLabels, 0, 'Claim turn must resolve every label (' + tag + ').');
   assert.equal(t.state, 'completed', 'Claim turn must be completed, not partial (' + tag + ' state=' + t.state + ').');
   const texts = [];
+  const quoteByLabel = new Map();
   for (const c of t.citations) {
     assert(c && typeof c.revisionId === 'string' && typeof c.block === 'number' && Number.isSafeInteger(c.start) && Number.isSafeInteger(c.end) && c.end > c.start, 'Claim citation needs revision/block/exact byte range (' + tag + ').');
     assert(revIdSet.has(c.revisionId), 'Claim citation revision must belong to the frozen large scope (' + tag + ').');
@@ -269,17 +271,27 @@ async function assertClaimTurnReadOnly(t, tag, question, revIdSet, revKey) {
     assert.equal(r.status, 200, 'Each claim citation range must open (GET range 200) (' + tag + ').');
     assert.equal(r.bytes.length, c.end - c.start, 'Each claim citation range must return exact bytes (' + tag + ').');
     if (typeof c.quote === 'string' && c.quote.length > 0) assert.equal(r.bytes.toString('utf8'), c.quote, 'Each claim citation quote must equal the range bytes exactly (' + tag + ').');
-    texts.push(r.bytes.toString('utf8'));
+    const quote = r.bytes.toString('utf8');
+    texts.push(quote);
+    quoteByLabel.set(c.label, quote);
   }
   const deLabeled = t.answer.replace(/\[(?:S\d+:\d+|R[0-9a-fA-F-]{36}:\d+)\]/g, '');
   const qualityViolations = [];
   try {
     assert.deepEqual(numericsUnsupported(texts.join('\n'), deLabeled, undefined), [], 'Every stated number must occur whole in cited ranges (' + tag + ').');
   } catch (e) { qualityViolations.push(tag + ': ' + String((e && e.message) || e)); }
+  try {
+    assert.equal(unsupportedNumericStatements(t.answer, t.citations, quoteByLabel), 0, 'Every numeric factual statement must be supported by the quotes selected on that statement (' + tag + ').');
+  } catch (e) { qualityViolations.push(tag + ': ' + String((e && e.message) || e)); }
   try { checkClaimAnswer(tag, t.answer); }
   catch (e) { qualityViolations.push(tag + ': ' + String((e && e.message) || e)); }
   return qualityViolations;
 }
+function assertStoredClaimPreflightQuality(tag, qualityViolations) {
+  assert.deepEqual(qualityViolations, [], 'Stored claim control must pass before baseline paid work (' + tag + ').');
+}
+assert.doesNotThrow(() => assertStoredClaimPreflightQuality('C1', []), 'Harness self-check: passing stored claim control allows paid preflight.');
+assert.throws(() => assertStoredClaimPreflightQuality('C1', ['unsupported numeric citation']), /Stored claim control must pass before baseline paid work \(C1\)/, 'Harness self-check: known stored claim failure blocks paid preflight.');
 async function apiJson(path, init) {
   const r = await fetchEval(origin + path, { ...init, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } }, origin, process.env.ELIOT_ORIGIN);
   const t = await r.text();
@@ -321,6 +333,17 @@ function numericsUnsupported(quote, valueText, valueNumber, ...texts) {
   }
   return [...new Set(bad)];
 }
+const numericLocalityCitations = [{ label: '[S1:1]' }, { label: '[S1:2]' }];
+const numericLocalityQuotes = new Map([['[S1:1]', '8 heads'], ['[S1:2]', '512 dimensions']]);
+const numericBorrowAnswer = 'Width is 512 [S1:1].\nThe other passage reports 512 dimensions [S1:2].';
+const numericBorrowAnswerWithoutLabels = numericBorrowAnswer.replace(/\[(?:S\d+:\d+|R[0-9a-fA-F-]{36}:\d+)\]/g, '');
+assert.deepEqual(numericsUnsupported([...numericLocalityQuotes.values()].join('\n'), numericBorrowAnswerWithoutLabels, undefined), [], 'Harness self-check: the old answer-wide quote union demonstrates cross-citation numeric borrowing.');
+assert.equal(unsupportedNumericStatements(numericBorrowAnswer, numericLocalityCitations, numericLocalityQuotes), 1, 'Harness self-check: a number cannot borrow support from another statement citation.');
+assert.equal(unsupportedNumericStatements('Width is 512 [S1:2].', [{ label: '[S1:2]' }], new Map([['[S1:2]', '512 dimensions']])), 0, 'Harness self-check: a number supported by its own statement citation passes.');
+const uncitedBulletNumericAnswer = 'Settings follow [S1:1].\n\n- Alpha is 0.001.\n- Beta one is 0.9.\n- Beta two is 0.999.\n- Epsilon is 10^-8.';
+const allSettingsQuote = 'Alpha is 0.001; beta one is 0.9; beta two is 0.999; epsilon is 10^-8.';
+assert.deepEqual(numericsUnsupported(allSettingsQuote, uncitedBulletNumericAnswer.replace(/\[(?:S\d+:\d+|R[0-9a-fA-F-]{36}:\d+)\]/g, ''), undefined), [], 'Harness self-check: an earlier intro citation still makes the old answer-wide numeric union pass.');
+assert.equal(unsupportedNumericStatements(uncitedBulletNumericAnswer, [{ label: '[S1:1]' }], new Map([['[S1:1]', allSettingsQuote]])), 4, 'Harness self-check: an earlier intro citation cannot cover four uncited numeric bullets.');
 function compoundResultUnsupported(c) {
   if (!c || c.kind !== 'result') return [];
   if (typeof c.valueText !== 'string' || c.valueText.trim() === '') return [];
@@ -1099,7 +1122,10 @@ async function preflightClaimScope() {
   const revisionSet = new Set(revisionIds);
   for (let i = 0; i < CLAIM_QUESTIONS.length; i++) {
     const turn = uniqueClaimTurn(snapshot.body.turns, CLAIM_QUESTIONS[i], revisionKey);
-    if (turn) void await assertClaimTurnReadOnly(turn, CLAIM_ORDER[i], CLAIM_QUESTIONS[i], revisionSet, revisionKey);
+    if (turn && runModel) {
+      const qualityViolations = await assertClaimTurnReadOnly(turn, CLAIM_ORDER[i], CLAIM_QUESTIONS[i], revisionSet, revisionKey);
+      assertStoredClaimPreflightQuality(CLAIM_ORDER[i], qualityViolations);
+    }
   }
   return { project, chat, rows, revisionKey, revisionSet, turns: snapshot.body.turns, priorExtraCalls };
 }
