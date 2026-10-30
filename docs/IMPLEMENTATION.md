@@ -455,9 +455,16 @@ Checked-output recovery publishes its guarded head before claim upserts, so FTS 
 are all used. No claim-delete trigger is needed before lifecycle deletion has a caller. Headless proposals are omitted
 from accepted Studio pages until the owner accepts them.
 
+For an external client against the built Worker, `pnpm eval k4 --serve-signed-agent` uses explicit loopback MCP/UI
+origins with one shared nonzero port. It starts the existing Miniflare fixture with test JWKS, no AI binding and no
+automatic data seeding. Test credentials are written only to a private ignored session file; the session expires and
+disposes after 30 minutes. The ordinary signed fixture retains its five-minute credentials. This is local protocol
+and actor verification, not deployed Access acceptance.
+
 Workflow IDs are deterministic: `ingest-<revision>`, `distill-<revision>`,
 `project-<project>-<inputHash>`, `research-<job>`. Reuse an existing instance according to installed types. Each external
-call is one retryable step; each deterministic write is a short separate step. Avoid fine-grained polling loops because
+call is one bounded step; paid model/search calls are not automatically repeated. Each deterministic write is a short
+separate step. Avoid fine-grained polling loops because
 steps are billed; use `uploadAndPoll` in one step when safe. Bodies stay in R2 and Workflow state keeps IDs/counts/compact
 diagnostics. Progress lives in the D1 row already polled by UI. Check cancellation and budget before every external
 call; an in-flight call may finish.

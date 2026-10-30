@@ -35,7 +35,8 @@ quotas.
 - K0 keeps the accepted Material shell with hostname Access auth: `/api/me`, Projects/Settings navigation and System/Light/Dark appearance verified locally on 1440/390 px with Cyrillic fonts, and all assets pass through auth. Live Access and deployed acceptance are not claimed.
 - K1 implements projects, the shared Library with immutable revisions, and exact UTF-8 reading (outline, whole text, ranges, original download). Exact text/URL duplicates return 409 with explicit Attach existing, reusing the stored revision with no silent merge. Conversion stays on the current path: native text locally, Workers AI `toMarkdown` where a document format requires it. AI Search and later-contour bindings remain absent.
 - K2 has a local Markdown chat path with frozen source scope, server-resolved citations, Stop/reconnect and storage-only Save, plus the R2 model snapshot with the owner-only refresh route. K2 and K3 are not fully accepted; their remaining quality and claim-mode gates stay open in their contour sections below.
-- K4 is active in an isolated integration branch and remains unaccepted. K6 is frozen until K2/K3 acceptance.
+- K4 is implemented in main. Its signed-agent read, proposal and owner-decision path is verified locally with test
+  JWKS; deployed Access remains unverified. K6 is frozen until K2/K3 acceptance.
 - The existing `eliotr-core.kleymor-metal.workers.dev` address is retained per owner decision; the replacement is not deployed over it.
 - Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
 - PR #417 is the authoritative replacement-documentation history and supersedes the stacked plan in PR #416.
@@ -274,10 +275,10 @@ re-distilled automatically.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 
-K3 is not fully accepted or deployed. The ten baseline papers reached `done` with two recorded calls each; the
-unchanged-revision check retained all 111 claims and 20 recorded calls without further inference. Required conditions
-for the French Transformer result and some LoRA anchors remain unresolved. All four real overflow answers used
-`claims` mode, but C2–C4 failed numeric support in their cited ranges. Semantic support for guide, digest and glossary
+K3 is not fully accepted or deployed. The ten baseline papers reached `done`; the unchanged-revision check dispatched
+no further inference. Required conditions for the French Transformer result and some LoRA anchors remain unresolved.
+All four real overflow answers used `claims` mode; statement-local numeric and citation support gates remain open.
+Semantic support for guide, digest and glossary
 content remains separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference
 and does not qualify K3.
 
@@ -305,8 +306,11 @@ use D1/R2 only.
 
 The initial slice adds 1,365 non-test source lines and removes ten against the 900-line target. The excess retains
 bounded UTF-8 tool pagination, immutable cited proposals with stale-head checks, and the owner review dialog; these
-remain plain product functions and existing Material controls. Local signed-JWT MCP transport and owner acceptance
-are verified with test JWKS. Real agent answers to O2/O5 and deployed Access remain open, so K4 is not accepted.
+remain plain product functions and existing Material controls. In a local signed-JWT fixture containing ten exact
+arXiv canonical texts, an external agent answered O2/O5 through Eliot tools, proposed one page and read it after a
+reviewed test-owner acceptance. All 22 cited ranges retained their identities and exact bytes; agent attempts to
+refresh models or request understanding were denied without side effects. This verifies the local functional path,
+not deployed Cloudflare Access or K2/K3 quality acceptance. Deployed Access remains open, so K4 is not fully accepted.
 
 **Not now.** Per-agent project ACLs, task marketplace, outgoing MCP tools, large upload through MCP.
 

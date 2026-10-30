@@ -41,7 +41,7 @@ Do **not** port legacy receipt/proof/qualification/admission/outbox/lease/author
 research/workflow frameworks, generic artifacts/navigation/federation packages, `owner-api-client`, PWA/query adapters,
 Rust crates or legacy SQL. K10 reads legacy stores only to import owner data.
 
-### K0 adoption — 2026-10-25
+### K0 adoption
 
 At the legacy pin above, K0 moved `packages/ui/src/tokens/theme.css`, its `fonts/fonts.css` and self-hosted font files,
 the native button/control CSS from `packages/ui/src/primitives/`, and a small `catalog/MaterialSymbol.tsx` subset into
@@ -56,7 +56,7 @@ same pinned Material primitives and semantic tokens. Native markup in Library, c
 calls these classes directly; duplicate feature declarations and the second Appearance selector are removed. No new
 component family, donor runtime or data adapter is imported.
 
-### K1 adoption — 2026-10-25
+### K1 adoption
 
 At the same legacy pin, `structural-projector.ts` supplied the UTF-8 line/heading mechanism as an idea for the small
 typed scanner; no projection schema or chunk pipeline was imported. `markdown-conversion.ts` supplied the narrow
@@ -68,7 +68,7 @@ IngestWorkflow and reader; verification is the fixed-corpus `pnpm eval k1` plus 
 
 ## Cloudflare primary donors
 
-### K2 adoption — 2026-10-26
+### K2 adoption
 
 K2 adapts the composer, answer/evidence presentation and model-selection interaction from legacy Eliot pin
 `7c034569b908d3b03a8b821b7c537477a24b10f7`, paths `packages/ui/src/features/research/{run,evidence}` and
