@@ -238,6 +238,11 @@ re-distilled automatically.
 
 **Hard acceptance — `pnpm eval k3`**
 
+- Before model work, verify the exact ten baseline source/revision identities and original/canonical bytes, the
+  separate twelve-source overflow scope, its already-understood extras and its prepared claim chat. Missing or
+  ambiguous inputs stop the run before any paid call; duplicate stored answers are never silently reused. Check the
+  extras' own recorded call counts separately. An admission or answer failure stops later eval submissions while
+  already accepted jobs retain their results; queued revisions keep their stored model selection.
 - All ten papers reach `done` or a documented `partial` state; a second eval run performs no re-distillation of unchanged revisions.
   `pnpm eval k3 --unchanged-only` preflights all ten terminal revisions, submits each exact revision ID once and compares
   the stored reports, claims, call counts and usage. This reuse check does not waive the semantic or claim-mode gates.
@@ -251,7 +256,7 @@ re-distilled automatically.
   the card rather than rewriting it into a bare scalar; the primary numeric value must occur in the stored statement.
 - Transformer, ResNet and LoRA anchor expectations in `eval/arxiv-10/questions.md` are present with correct conditions;
   no unsupported number is stored. Claim count and drop rate are reported, not quality gates.
-- An anchor must be expressed by a stored claim statement and supported by that same claim's exact quote; a matching
+- An anchor must be expressed by an EN/RU stored claim statement and supported by that same claim's exact quote; a matching
   phrase only inside a broad quote does not establish that the claim card contains the fact. Guides/digests are not
   anchor evidence.
 - Claim mode keeps C1–C4 correct and citations valid; overview lists every readable source without a model call.
@@ -266,8 +271,9 @@ re-distilled automatically.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 
-K3 is not fully accepted or deployed. Open quality gates remain for three ResNet anchors, the LoRA frozen/low-rank
-mechanism and latency anchors, and claim-mode C1–C4; semantic support for guide, digest and glossary content remains
+K3 is not fully accepted or deployed. Claim cards still omit Transformer's 28.4 BLEU German result, ResNet's 3.57%
+ensemble ImageNet test error, and LoRA's 10,000-fold parameter and threefold GPU-memory reductions. Claim-mode C1–C4
+remain open; semantic support for guide, digest and glossary content remains
 separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference and does not
 qualify K3.
 

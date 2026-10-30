@@ -11,6 +11,7 @@ import { assertEvalOrigin, fetchEval } from "./origin.mjs";
 // Default: validate stored hard gates, fail on missing work, zero model calls.
 // --native-only is explicitly limited. Paid distillation requires ELIOT_K3_MODEL=1.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 const EOL = String.fromCharCode(10);
@@ -48,12 +49,136 @@ for (const line of (await readFile(evalDir + '/arxiv-10/questions.md', 'utf8')).
 }
 assert.equal(CLAIM_Q.size, 4, 'questions.md must define C1-C4.');
 const CLAIM_QUESTIONS = CLAIM_ORDER.map((k) => CLAIM_Q.get(k));
+const baselineManifest = JSON.parse(await readFile(evalDir + '/arxiv-10/sources.json', 'utf8'));
+const overflowManifest = JSON.parse(await readFile(evalDir + '/arxiv-10/overflow.json', 'utf8'));
+const BASELINE_EXPECTED = baselineManifest.sources.map((s) => ({ filename: 'arxiv-' + s.id + '.pdf', title: s.title }));
+const baselineSeedPath = process.env.ELIOT_K3_BASELINE_SEED_RESULT;
+const overflowStoragePath = process.env.ELIOT_K3_OVERFLOW_STORAGE_COMPLETION;
+assert(nativeOnly || unchangedOnly || (baselineSeedPath && overflowStoragePath), 'Full K3 eval requires the caller-frozen ELIOT_K3_BASELINE_SEED_RESULT and ELIOT_K3_OVERFLOW_STORAGE_COMPLETION paths.');
+const baselineSeed = !nativeOnly && !unchangedOnly && baselineSeedPath ? JSON.parse(await readFile(baselineSeedPath, 'utf8')) : null;
+const overflowStorage = !nativeOnly && !unchangedOnly && overflowStoragePath ? JSON.parse(await readFile(overflowStoragePath, 'utf8')) : null;
+const OVERFLOW_EXPECTED = overflowManifest.sources.map((s) => ({ id: s.id, title: s.title, arxiv: s.arxiv }));
+assert.deepEqual(BASELINE_EXPECTED.map((s) => s.filename), Array.from({ length: 10 }, (_, i) => 'arxiv-' + String(i + 1).padStart(2, '0') + '.pdf'), 'K3 baseline manifest must name each arxiv-01..10 PDF once.');
+assert.deepEqual(overflowManifest.sources.map((s) => s.id).slice().sort(), ['gpt3', 'palm'], 'K3 overflow manifest must remain the two approved papers.');
+
+function exactSourceRows(rows, expected, what) {
+  assert(Array.isArray(rows), what + ': source rows must be an array.');
+  assert.equal(rows.length, expected.length, what + ': expected exactly ' + expected.length + ' source rows.');
+  const expectedByName = new Map(expected.map((s) => [s.filename, s]));
+  assert.equal(expectedByName.size, expected.length, what + ': expected filenames must be unique.');
+  const byName = new Map(), sourceIds = new Set(), revisionIds = new Set();
+  for (const row of rows) {
+    assert(row && expectedByName.has(row.originalFilename), what + ': unexpected source ' + String(row && row.originalFilename));
+    const filename = row.originalFilename;
+    assert(!byName.has(filename), what + ': duplicate filename ' + filename);
+    assert.equal(row.title, expectedByName.get(filename).title, what + ': title mismatch for ' + filename);
+    assert.equal(row.kind, 'file', what + ': expected a PDF source for ' + filename);
+    assert(typeof row.id === 'string' && row.id.length > 0, what + ': missing source ID for ' + filename);
+    assert(typeof row.currentRevisionId === 'string' && row.currentRevisionId.length > 0, what + ': missing current revision for ' + filename);
+    assert.equal(row.revisionId, row.currentRevisionId, what + ': listed revision is not current for ' + filename);
+    const frozen = expectedByName.get(filename);
+    if (frozen.sourceId !== undefined) assert.equal(row.id, frozen.sourceId, what + ': source ID changed for ' + filename);
+    if (frozen.revisionId !== undefined) assert.equal(row.currentRevisionId, frozen.revisionId, what + ': current revision changed for ' + filename);
+    if (frozen.originalBytes !== undefined) assert.equal(row.originalSize, frozen.originalBytes, what + ': original byte count changed for ' + filename);
+    if (frozen.canonicalBytes !== undefined) assert.equal(row.readableSize, frozen.canonicalBytes, what + ': canonical byte count changed for ' + filename);
+    assert(['readable', 'readable_with_warnings'].includes(row.readableState), what + ': source is not readable for ' + filename);
+    assert(Number.isSafeInteger(row.readableSize) && row.readableSize >= 0, what + ': readable byte count is unknown for ' + filename);
+    assert(!sourceIds.has(row.id), what + ': duplicate source ID ' + row.id);
+    assert(!revisionIds.has(row.currentRevisionId), what + ': duplicate revision ID ' + row.currentRevisionId);
+    sourceIds.add(row.id);
+    revisionIds.add(row.currentRevisionId);
+    byName.set(filename, row);
+  }
+  for (const source of expected) assert(byName.has(source.filename), what + ': missing source ' + source.filename);
+  return expected.map((source) => byName.get(source.filename));
+}
+function uniqueClaimTurn(turns, question, revisionKey) {
+  const matching = (turns || []).filter((turn) => turn && turn.question === question);
+  assert(matching.length <= 1, 'Ambiguous stored turn: more than one answer for ' + question + '.');
+  const turn = matching[0] || null;
+  if (turn) {
+    assert.equal(turn.state, 'completed', 'Existing ' + question + ' turn is not terminal; no retry.');
+    assert.equal(turn.scopeMode, 'explicit', 'Existing ' + question + ' turn has the wrong scope; no duplicate Send.');
+    assert(Array.isArray(turn.revisionIds) && turn.revisionIds.slice().sort().join(',') === revisionKey, 'Existing ' + question + ' turn has a different revision set; no duplicate Send.');
+  }
+  return turn;
+}
+function assertPaidCallCeiling(distillPosts, answerPosts, baselineCount, what) {
+  assert(Number.isSafeInteger(distillPosts) && distillPosts >= 0 && distillPosts <= baselineCount, what + ': distill submissions exceed the frozen baseline.');
+  assert(Number.isSafeInteger(answerPosts) && answerPosts >= 0 && answerPosts <= CLAIM_ORDER.length, what + ': answer submissions exceed C1-C4.');
+  assert(distillPosts * 2 + answerPosts <= baselineCount * 2 + CLAIM_ORDER.length, what + ': paid call ceiling exceeded.');
+}
+const sourceFixture = (filename, id, revisionId, title) => ({ originalFilename: filename, id, currentRevisionId: revisionId, revisionId, title, kind: 'file', readableState: 'readable', readableSize: 100 });
+const scopeFixtureExpected = [{ filename: 'arxiv-01.pdf', title: 'Paper 1' }, { filename: 'arxiv-02.pdf', title: 'Paper 2' }];
+const scopeFixture = [sourceFixture('arxiv-01.pdf', 's1', 'r1', 'Paper 1'), sourceFixture('arxiv-02.pdf', 's2', 'r2', 'Paper 2')];
+assert.equal(exactSourceRows(scopeFixture, scopeFixtureExpected, 'scope fixture').length, 2);
+assert.throws(() => exactSourceRows([scopeFixture[0], { ...scopeFixture[1], originalFilename: 'arxiv-01.pdf' }], scopeFixtureExpected, 'duplicate fixture'), /duplicate filename/);
+assert.throws(() => exactSourceRows([scopeFixture[0]], scopeFixtureExpected, 'missing fixture'), /expected exactly/);
+assert.throws(() => exactSourceRows([...scopeFixture, sourceFixture('arxiv-03.pdf', 's3', 'r3', 'Paper 3')], scopeFixtureExpected, 'extra fixture'), /expected exactly/);
+assert.throws(() => exactSourceRows([scopeFixture[0], { ...scopeFixture[1], revisionId: 'old-r2' }], scopeFixtureExpected, 'stale fixture'), /not current/);
+const frozenFixtureExpected = scopeFixtureExpected.map((s, i) => ({ ...s, sourceId: 's' + (i + 1), revisionId: 'r' + (i + 1), originalBytes: 100, canonicalBytes: 100 }));
+assert.throws(() => exactSourceRows([{ ...scopeFixture[0], id: 'swapped' }, scopeFixture[1]], frozenFixtureExpected, 'swap fixture'), /source ID changed/);
+const claimFixtureTurn = { question: 'C1', state: 'completed', scopeMode: 'explicit', revisionIds: ['r1', 'r2'] };
+assert.equal(uniqueClaimTurn([claimFixtureTurn], 'C1', 'r1,r2'), claimFixtureTurn);
+assert.throws(() => uniqueClaimTurn([claimFixtureTurn, { ...claimFixtureTurn }], 'C1', 'r1,r2'), /more than one answer/);
+assert.throws(() => uniqueClaimTurn([{ ...claimFixtureTurn, state: 'running' }], 'C1', 'r1,r2'), /not terminal/);
+assert.throws(() => uniqueClaimTurn([{ ...claimFixtureTurn, revisionIds: ['r1', 'other'] }], 'C1', 'r1,r2'), /different revision set/);
+assertPaidCallCeiling(10, 4, 10, 'ceiling fixture');
+assert.throws(() => assertPaidCallCeiling(11, 0, 10, 'distill ceiling fixture'), /submissions exceed/);
+assert.throws(() => assertPaidCallCeiling(10, 5, 10, 'answer ceiling fixture'), /submissions exceed/);
+const FROZEN_BASELINE = baselineSeed ? (() => {
+  assert(baselineSeed.project && typeof baselineSeed.project.id === 'string', 'Frozen baseline seed must include its project identity.');
+  assert(Array.isArray(baselineSeed.records) && baselineSeed.records.length === BASELINE_EXPECTED.length, 'Frozen baseline seed must contain exactly ten records.');
+  const byFilename = new Map(baselineSeed.records.map((r) => [r.filename, r]));
+  assert.equal(byFilename.size, BASELINE_EXPECTED.length, 'Frozen baseline seed filenames must be unique.');
+  return BASELINE_EXPECTED.map((expected) => {
+    const record = byFilename.get(expected.filename);
+    assert(record && record.title === expected.title, 'Frozen baseline record mismatch for ' + expected.filename);
+    assert(typeof record.sourceId === 'string' && typeof record.revisionId === 'string', 'Frozen baseline source/revision identity missing for ' + expected.filename);
+    assert(Number.isSafeInteger(record.expectedOriginalBytes) && /^[0-9a-f]{64}$/u.test(record.expectedOriginalSha256), 'Frozen original SHA/bytes missing for ' + expected.filename);
+    assert(Number.isSafeInteger(record.expectedCanonicalBytes) && /^[0-9a-f]{64}$/u.test(record.expectedCanonicalSha256), 'Frozen canonical SHA/bytes missing for ' + expected.filename);
+    return { ...expected, sourceId: record.sourceId, revisionId: record.revisionId,
+      originalBytes: record.expectedOriginalBytes, originalSha256: record.expectedOriginalSha256,
+      canonicalBytes: record.expectedCanonicalBytes, canonicalSha256: record.expectedCanonicalSha256 };
+  });
+})() : null;
+assert(!overflowStorage || FROZEN_BASELINE, 'Frozen overflow storage requires the matching baseline seed-result.json.');
+const FROZEN_OVERFLOW = overflowStorage ? (() => {
+  assert.equal(overflowStorage.projectId && overflowStorage.chatId ? true : false, true, 'Frozen overflow must name its project and prepared chat.');
+  assert(Array.isArray(overflowStorage.extras) && overflowStorage.extras.length === OVERFLOW_EXPECTED.length, 'Frozen overflow must contain exactly the two manifest extras.');
+  const extras = new Map(overflowStorage.extras.map((s) => [s.id, s]));
+  assert.equal(extras.size, OVERFLOW_EXPECTED.length, 'Frozen overflow extra IDs must be unique.');
+  const extraRows = OVERFLOW_EXPECTED.map((manifest) => {
+    const extra = extras.get(manifest.id);
+    assert(extra, 'Frozen overflow misses manifest paper ' + manifest.id);
+    assert.equal(extra.filename, manifest.id + '-' + manifest.arxiv + '.pdf', 'Frozen overflow filename must identify ' + manifest.id);
+    assert(typeof extra.sourceId === 'string' && typeof extra.revisionId === 'string', 'Frozen overflow source/revision identity missing for ' + manifest.id);
+    assert(Number.isSafeInteger(extra.original?.bytes) && extra.original.bytes > 0 && /^[0-9a-f]{64}$/u.test(extra.original.sha256), 'Frozen overflow original SHA/bytes missing for ' + manifest.id);
+    assert(Number.isSafeInteger(extra.canonical?.bytes) && extra.canonical.bytes > 0 && /^[0-9a-f]{64}$/u.test(extra.canonical.sha256), 'Frozen overflow canonical SHA/bytes missing for ' + manifest.id);
+    return { filename: extra.filename, title: manifest.title, id: manifest.id, sourceId: extra.sourceId, revisionId: extra.revisionId,
+      originalBytes: extra.original.bytes, originalSha256: extra.original.sha256,
+      canonicalBytes: extra.canonical.bytes, canonicalSha256: extra.canonical.sha256 };
+  });
+  return extraRows;
+})() : null;
+if (FROZEN_BASELINE && overflowStorage) {
+  assert(overflowStorage.title && overflowStorage.chatTitle, 'Frozen overflow project/chat titles are required.');
+  assert(!process.env.ELIOT_K3_CLAIM_PROJECT || process.env.ELIOT_K3_CLAIM_PROJECT === overflowStorage.title, 'ELIOT_K3_CLAIM_PROJECT must identify the frozen overflow project.');
+  assert(!process.env.ELIOT_K3_CLAIM_CHAT || [overflowStorage.chatId, overflowStorage.chatTitle].includes(process.env.ELIOT_K3_CLAIM_CHAT), 'ELIOT_K3_CLAIM_CHAT must identify the frozen prepared chat.');
+}
+const claimTitle = process.env.ELIOT_K3_CLAIM_PROJECT || overflowStorage?.title;
+const claimChatLoc = process.env.ELIOT_K3_CLAIM_CHAT || overflowStorage?.chatId;
 function normMath(s) {
   const chars = Array.from(String(s));
   for (let i = 1; i + 1 < chars.length; i++) {
     if (chars[i] === MIDDOT && SUPER_DIGITS.has(chars[i - 1]) && SUPER_DIGITS.has(chars[i + 1])) chars[i] = '.';
   }
-  let n = chars.join('').normalize('NFKC').replace(/\[(?:S\d+|R[0-9a-f-]{36}):\d+\]/gi, ' ').toLowerCase().split(',').join('.');
+  let n = chars.join('').normalize('NFKC')
+    .replace(/\\_/g, '_')
+    .replace(/\\(?:cdot|times)\b/gi, ' ')
+    .replace(/×/g, ' ')
+    .replace(/\[(?:S\d+|R[0-9a-f-]{36}):\d+\]/gi, ' ')
+    .toLowerCase().split(',').join('.');
   n = n.split(UNIMINUS).join('-');
   n = n.split('=').join(' = ');
   n = n.replace(/\bstep_num\b/g, 'step');
@@ -66,13 +191,27 @@ function normMath(s) {
 }
 function c2FormulaPass(m) {
   const warmup4000 = /(?:\b(?:warmup|warm-up|warm up)\b|разогрев|прогрев|размин[а-яё]*)[\s\S]{0,40}\b4000\b|\b4000\b[\s\S]{0,40}(?:\b(?:warmup|warm-up|warm up)\b|разогрев|прогрев|размин[а-яё]*)/iu.test(m);
-  const strictFormula = warmup4000 && /\bd model\s*-0\.5\b[\s\S]{0,120}\bmin\b[\s\S]{0,100}\bstep\s*-0\.5\b[\s\S]{0,80}\bstep\b[\s\S]{0,100}\bwarmup\s*-1\.5\b/u.test(m);
+  const coefficientFree = !hasNonUnitCoefficient(m);
+  const strictFormula = coefficientFree && warmup4000 && /\bd model\s*-0\.5\b[\s\S]{0,120}\bmin\b[\s\S]{0,100}\bstep\s*-0\.5\b[\s\S]{0,80}\bstep\b[\s\S]{0,100}\bwarmup\s*-1\.5\b/u.test(m);
   const modelExponent = /\bd model\s*-0\.5\b|\bd model\s*-1\/2\b|1\s*\/\s*sqrt\s+d model|sqrt\s+d model\s*-1\b/u.test(m);
   const stepExponent = /\bstep\s*-0\.5\b|\bstep\s*-1\/2\b|1\s*\/\s*sqrt\s+step|sqrt\s+step\s*-1\b/u.test(m);
   const warmupExponent = /\bwarmup\s*-1\.5\b|\bwarmup\s*-3\/2\b|\/\s*warmup\s+(?:1\.5|3\/2)\b/u.test(m);
-  const sqrtFormula = m.includes('sqrt') && warmup4000 && /\bmin\b/u.test(m)
+  const sqrtFormula = coefficientFree && m.includes('sqrt') && warmup4000 && /\bmin\b/u.test(m)
     && modelExponent && stepExponent && warmupExponent;
   return strictFormula || sqrtFormula;
+}
+function hasNonUnitCoefficient(math) {
+  const canonicalStart = math.indexOf('d model -0.5');
+  const radicalStart = math.indexOf('sqrt d model');
+  const start = canonicalStart >= 0 ? canonicalStart : radicalStart;
+  if (start < 0) return false;
+  const tail = math.slice(start);
+  const endMatch = /\bwarmup\s+(?:-1\.5|1\.5)\b/u.exec(tail);
+  const end = endMatch ? start + endMatch.index + endMatch[0].length + 12 : Math.min(math.length, start + 260);
+  const window = math.slice(Math.max(0, start - 24), Math.min(math.length, end));
+  const leading = [...window.matchAll(/(?:^|[\s(])([+-]?\d+(?:\.\d+)?)\s+(?:d model|step|warmup)\b/gu)];
+  const trailing = [...window.matchAll(/\b(?:d model|step|warmup)\s+(?:-0\.5|-1\.5|-1)\s*[.,]?\s*([+-]?\d+(?:\.\d+)?)\s+(?:min|step|warmup)\b/gu)];
+  return [...leading, ...trailing].some((match) => Number(match[1]) !== 1);
 }
 function checkClaimAnswer(qid, ans) {
   const m = normMath(ans);
@@ -105,7 +244,14 @@ assert.equal(c2FormulaPass(normMath('lrate = d_model^-0.5 * min(step_num^-0.5, s
 assert.equal(c2FormulaPass(normMath('d_model^-0.5 * min(step_num^-0.6, step_num * warmup_steps^-1.5), warmup 4000')), false, 'C2 wrong step_num exponent must fail.');
 assert.equal(c2FormulaPass(normMath('d_model^-0.5 * min(step_num^-0.5, step_num * warmup_steps^-1.4), warmup 4000')), false, 'C2 wrong warmup_steps exponent must fail.');
 assert.equal(c2FormulaPass(normMath('lrate = d_model^-0.5 * min(previous_step_num^-0.5, step_num * warmup_steps^-1.5), warmup 4000')), false, 'C2 previous_step_num must not pass as step.');
-async function assertClaimTurnReadOnly(t, tag, revIdSet, revKey) {
+const latexC2 = 'lrate = d_{model}^{-0.5} \\cdot \\min(step\\_num^{-0.5},\\ step\\_num \\cdot warmup\\_steps^{-1.5}), warmup\\_steps = 4000';
+assert.equal(c2FormulaPass(normMath(latexC2)), true, 'C2 escaped LaTeX underscores and multiplication must pass.');
+assert.equal(c2FormulaPass(normMath(latexC2.replace('d_{model}', '2 \\cdot d_{model}'))), false, 'C2 non-unit d_model coefficient must fail.');
+assert.equal(c2FormulaPass(normMath(latexC2.replace('min(step\\_num', 'min(2 \\cdot step\\_num'))), false, 'C2 non-unit step coefficient must fail.');
+assert.equal(c2FormulaPass(normMath(latexC2.replace('step\\_num \\cdot warmup\\_steps', 'step\\_num \\cdot 2 warmup\\_steps'))), false, 'C2 non-unit warmup coefficient must fail.');
+assert.equal(c2FormulaPass(normMath(latexC2.replace(', warmup\\_steps = 4000', ''))), false, 'C2 formula without warmup 4000 must fail.');
+async function assertClaimTurnReadOnly(t, tag, question, revIdSet, revKey) {
+  assert.equal(t.question, question, 'Turn question must match ' + tag + '.');
   assert.equal(t.contextMode, 'claims', 'TurnView.contextMode must be claims (' + tag + ').');
   assert(typeof SELECTED_ANSWER_MODEL === 'string' && SELECTED_ANSWER_MODEL.length > 0, 'Selected answerModel must be frozen before claim checks (' + tag + ').');
   assert.equal(t.model, SELECTED_ANSWER_MODEL, 'Turn model must stay the frozen selected answerModel (' + tag + ').');
@@ -139,6 +285,18 @@ async function apiJson(path, init) {
 async function apiBytes(path) {
   const r = await fetchEval(origin + path, { headers: { ...H } }, origin, process.env.ELIOT_ORIGIN);
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
+}
+function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
+async function assertFrozenSourceBytes(source, expected, what) {
+  const original = await apiBytes('/api/revisions/' + encodeURIComponent(expected.revisionId) + '/original');
+  assert.equal(original.status, 200, what + ': GET original must be 200.');
+  assert.equal(original.bytes.length, expected.originalBytes, what + ': original byte count changed.');
+  assert.equal(sha256(original.bytes), expected.originalSha256, what + ': original SHA-256 changed.');
+  const canonical = await apiBytes('/api/revisions/' + encodeURIComponent(expected.revisionId) + '/text');
+  assert.equal(canonical.status, 200, what + ': GET canonical text must be 200.');
+  assert.equal(canonical.bytes.length, expected.canonicalBytes, what + ': canonical byte count changed.');
+  assert.equal(sha256(canonical.bytes), expected.canonicalSha256, what + ': canonical SHA-256 changed.');
+  assert.equal(source.currentRevisionId, expected.revisionId, what + ': current revision changed during byte verification.');
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function runsOf(s) { return String(s).match(/[0-9]+/g) || []; }
@@ -244,18 +402,49 @@ function anchorHay(byFile) {
     quote: normalize(c && c.quote),
   }));
 }
+function pairedAnchor(items, statementPredicate, quotePredicate = statementPredicate) {
+  return items.some((card) => statementPredicate(card.statement) && quotePredicate(card.quote));
+}
+const frenchTranslation = (q) => /english.{0,25}french|en[-– ]fr/.test(q);
+const a1ComputeResult = (q) => q.includes('41.8') && frenchTranslation(q);
+const a1ComputeStatement = (q) => a1ComputeResult(q)
+  && /(?:\b3\.5\s*days?\b|\b3[,.]5\s*(?:дня|дней)(?!\p{L}))/u.test(q)
+  && (/(?:\b(?:8|eight)\b.{0,30}\bgpus?\b)/u.test(q) || /восьми.{0,30}\bgpus?\b/u.test(q));
+const a1ComputeQuote = (q) => a1ComputeResult(q)
+  && /\b3\.5\s*days?\b/u.test(q)
+  && /\b(?:8|eight)\b.{0,30}\bgpus?\b/u.test(q);
+const a2ResidualMapping = (q) => q.includes('residual')
+  && /\b(?:functions?|mappings?)\b/u.test(q)
+  && /reformulat|recast|learn|fit/u.test(q);
+
+const a1RussianCompute = 'модель установила bleu 41.8 на wmt 2014 english-to-french после 3.5 дней обучения на восьми gpu.';
+const a1EnglishQuote = 'the model reached bleu 41.8 on the wmt 2014 english-to-french task after 3.5 days of training on eight gpus.';
+assert.equal(pairedAnchor([{ statement: a1RussianCompute, quote: a1EnglishQuote }], a1ComputeStatement, a1ComputeQuote), true, 'Harness selftest: RU A1 compute statement pairs with its own exact EN quote.');
+assert.equal(pairedAnchor([{ statement: a1RussianCompute.replace('41.8', '41.9'), quote: a1EnglishQuote }], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: wrong A1 score must fail.');
+assert.equal(pairedAnchor([{ statement: a1RussianCompute.replace('восьми gpu', 'девяти gpu'), quote: a1EnglishQuote }], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: wrong A1 GPU quantity must fail.');
+assert.equal(pairedAnchor([{ statement: a1RussianCompute.replace('english-to-french', 'english-to-german'), quote: a1EnglishQuote.replace('english-to-french', 'english-to-german') }], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: wrong A1 language direction must fail.');
+assert.equal(pairedAnchor([
+  { statement: a1RussianCompute, quote: 'the model was trained for 3.5 days on eight gpus.' },
+  { statement: 'unrelated result', quote: a1EnglishQuote },
+], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: A1 language/result facts cannot be borrowed from another card.');
+const a2ResidualStatement = 'the method reformulates stacked layers to fit a residual mapping f(x) := h(x) - x, recasting the original mapping as f(x)+x.';
+const a2ResidualQuote = 'we explicitly let these layers fit a residual mapping. the original mapping is recast into f(x)+x.';
+assert.equal(pairedAnchor([{ statement: a2ResidualStatement, quote: a2ResidualQuote }], a2ResidualMapping), true, 'Harness selftest: residual mapping wording passes with its own supporting quote.');
+assert.equal(pairedAnchor([
+  { statement: 'the method reformulates stacked layers as residual functions.', quote: 'we let stacked layers fit residual functions.' },
+], a2ResidualMapping), true, 'Harness selftest: legacy English residual functions wording remains accepted.');
+
 function checkAnchors(byFile) {
   const missing = [];
   // Every independent anchor must be stated by one owner-visible card and supported by that card's own exact quote.
   const cards = anchorHay(byFile);
   const q01 = cards('arxiv-01.pdf'), q03 = cards('arxiv-03.pdf'), q07 = cards('arxiv-07.pdf');
   const wmt = (q) => /wmt\s*(?:2014|14)/.test(q);
-  const french = (q) => /english.{0,25}french|en[-– ]fr/.test(q);
-  const paired = (items, predicate) => items.some((card) => predicate(card.statement) && predicate(card.quote));
+  const paired = pairedAnchor;
   if (!paired(q01, (q) => q.includes('28.4') && q.includes('bleu') && wmt(q) && /english.{0,25}german|en[-– ]de/.test(q))) missing.push('A1-English-German-28.4-BLEU');
-  if (!paired(q01, (q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && french(q))) missing.push('A1-English-French-41.8-BLEU');
-  if (!paired(q01, (q) => q.includes('41.8') && french(q) && /3\.5\s*days?/.test(q) && /(?:\b8\b|\beight\b).{0,30}gpus?/.test(q))) missing.push('A1-compute(3.5d/8GPU-for-French-result)');
-  if (!paired(q03, (q) => q.includes('residual') && q.includes('function') && /reformulat|learn|mapping/.test(q))) missing.push('A2-residual-functions');
+  if (!paired(q01, (q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && frenchTranslation(q))) missing.push('A1-English-French-41.8-BLEU');
+  if (!paired(q01, a1ComputeStatement, a1ComputeQuote)) missing.push('A1-compute(3.5d/8GPU-for-French-result)');
+  if (!paired(q03, a2ResidualMapping)) missing.push('A2-residual-functions');
   if (!paired(q03, (q) => runsOf(q).includes('152') && /layer/.test(q))) missing.push('A2-152-layers');
   if (!paired(q03, (q) => q.includes('3.57') && q.includes('ensemble') && q.includes('imagenet') && q.includes('test') && q.includes('error'))) missing.push('A2-ensemble-3.57%-ImageNet-test-error');
   if (!paired(q07, (q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q))) missing.push('A3-frozen-weights-trained-lowrank');
@@ -283,10 +472,17 @@ function assertUnderstanding(u, what) {
     assert.equal(u.progress?.maximumTokens, u.report.usage.tokenLimit,
       'Understanding progress.maximumTokens must equal the retained report tokenLimit (' + what + ').');
 }
+function assertUnderstandingIdentity(u, sourceId, revisionId, what) {
+  assert.equal(u.sourceId, sourceId, 'Understanding sourceId must match request (' + what + ').');
+  if (revisionId !== undefined) assert.equal(u.revisionId, revisionId, 'Understanding revisionId must match request (' + what + ').');
+}
+assert.doesNotThrow(() => assertUnderstandingIdentity({ sourceId: 's1', revisionId: 'r1' }, 's1', 'r1', 'identity fixture'));
+assert.throws(() => assertUnderstandingIdentity({ sourceId: 's2', revisionId: 'r1' }, 's1', 'r1', 'source identity fixture'), /sourceId must match/);
+assert.throws(() => assertUnderstandingIdentity({ sourceId: 's1', revisionId: 'old-r1' }, 's1', 'r1', 'revision identity fixture'), /revisionId must match/);
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
-const title = process.env.ELIOT_EVAL_PROJECT || (nativeOnly ? 'k1-eval' : 'Библиотека — PDF и точные ссылки');
+const title = process.env.ELIOT_EVAL_PROJECT || (nativeOnly ? 'k1-eval' : (baselineSeed?.project?.title || 'Библиотека — PDF и точные ссылки'));
 let projects = [], cursor = undefined;
 for (let i = 0; i < 5; i++) {
   const p = await apiJson('/api/projects' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''));
@@ -295,8 +491,11 @@ for (let i = 0; i < 5; i++) {
   cursor = p.body.nextCursor || undefined;
   if (!cursor) break;
 }
-const proj = projects.find((p) => p.title === title);
+const projectMatches = projects.filter((p) => p.title === title);
+const proj = projectMatches[0];
 if (!proj) { console.log('K3 skipped: project ' + JSON.stringify(title) + ' not found; prep K1 corpus first, do not upload/convert again.'); process.exit(2); }
+assert.equal(projectMatches.length, 1, 'K3 project title must resolve to exactly one project.');
+if (FROZEN_BASELINE && !nativeOnly) assert.equal(proj.id, baselineSeed.project.id, 'K3 project must match the frozen baseline seed project.');
 let sources = [], scur = undefined;
 for (let i = 0; i < 10; i++) {
   const s = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/sources' + (scur ? '?cursor=' + encodeURIComponent(scur) : ''));
@@ -305,9 +504,18 @@ for (let i = 0; i < 10; i++) {
   scur = s.body.nextCursor || undefined;
   if (!scur) break;
 }
-const want = new Set(Array.from({ length: 10 }, (_, i) => 'arxiv-' + String(i + 1).padStart(2, '0') + '.pdf'));
-const scoped = sources.filter((s) => want.has(s.originalFilename) && s.currentRevisionId && (s.readableState === 'readable' || s.readableState === 'readable_with_warnings'));
-if (!nativeOnly && scoped.length < 10) { console.log('K3 skipped: found ' + scoped.length + '/10 arxiv readable; prep K1 first, do not upload/convert again.'); process.exit(2); }
+assert.equal(scur, undefined, 'K3 baseline source listing exceeded its page bound; exact scope cannot be proven.');
+const want = new Set(BASELINE_EXPECTED.map((s) => s.filename));
+const scoped = nativeOnly
+  ? sources.filter((s) => want.has(s.originalFilename) && s.currentRevisionId && ['readable', 'readable_with_warnings'].includes(s.readableState))
+  : exactSourceRows(sources, FROZEN_BASELINE || BASELINE_EXPECTED, 'K3 baseline');
+if (FROZEN_BASELINE && !nativeOnly) {
+  for (const source of scoped) {
+    const expected = FROZEN_BASELINE.find((s) => s.filename === source.originalFilename);
+    assert(expected, 'Frozen baseline manifest misses ' + source.originalFilename);
+    await assertFrozenSourceBytes(source, expected, 'K3 baseline ' + source.originalFilename);
+  }
+}
 function storedRevisionSnapshot(u, what) {
   assertUnderstanding(u, what);
   assert(Array.isArray(u.claims), what + ' must expose its exact claim rows.');
@@ -338,7 +546,10 @@ const u0 = await apiJson('/api/sources/' + encodeURIComponent(probeRev.id) + '/u
 const o0 = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/overview');
 const understandingWired = u0.status !== 404;
 const overviewWired = o0.status !== 404;
-if (understandingWired) assertUnderstanding(u0.body, 'probe');
+if (understandingWired) {
+  assertUnderstanding(u0.body, 'probe');
+  assertUnderstandingIdentity(u0.body, probeRev.id, probeRev.currentRevisionId, 'probe');
+}
 if (overviewWired) assert(o0.body && Array.isArray(o0.body.sources), 'GET overview must return the direct Overview object with sources array.');
 if (unchangedOnly) {
   assert(understandingWired && overviewWired, 'K3 unchanged-only requires wired understanding and overview routes.');
@@ -354,8 +565,10 @@ if (unchangedOnly) {
   for (const s of scoped) {
     const r = await apiJson('/api/sources/' + encodeURIComponent(s.id) + '/understanding?revisionId=' + encodeURIComponent(s.currentRevisionId));
     if (r.status !== 200) { preflightViolations.push(s.originalFilename + ': GET understanding ' + r.status); continue; }
-    try { assertUnderstanding(r.body, 'unchanged preflight ' + s.originalFilename); } catch (e) { preflightViolations.push(s.originalFilename + ': ' + String((e && e.message) || e).split(EOL)[0]); continue; }
-    if (r.body.revisionId !== s.currentRevisionId) { preflightViolations.push(s.originalFilename + ': revisionId mismatch'); continue; }
+    try {
+      assertUnderstanding(r.body, 'unchanged preflight ' + s.originalFilename);
+      assertUnderstandingIdentity(r.body, s.id, s.currentRevisionId, 'unchanged preflight ' + s.originalFilename);
+    } catch (e) { preflightViolations.push(s.originalFilename + ': ' + String((e && e.message) || e).split(EOL)[0]); continue; }
     if (r.body.state !== 'done' && r.body.state !== 'partial') { preflightViolations.push(s.originalFilename + ': state=' + r.body.state + ' (need terminal done/partial, no POST)'); continue; }
     const rep = r.body.report;
     if (!rep || !rep.usage || !Number.isSafeInteger(rep.usage.calls) || rep.usage.calls < 0 || rep.usage.calls > 2 ||
@@ -387,7 +600,8 @@ if (unchangedOnly) {
   for (const f of frozen) {
     const r = await apiJson('/api/sources/' + encodeURIComponent(f.sourceId) + '/understanding?revisionId=' + encodeURIComponent(f.revisionId));
     if (r.status !== 200) { reuseViolations.push(f.filename + ': re-GET ' + r.status); continue; }
-    if (r.body.revisionId !== f.revisionId) reuseViolations.push(f.filename + ': revisionId moved');
+    try { assertUnderstandingIdentity(r.body, f.sourceId, f.revisionId, 'unchanged re-read ' + f.filename); }
+    catch (e) { reuseViolations.push(f.filename + ': ' + String((e && e.message) || e).split(EOL)[0]); continue; }
     if (r.body.state !== f.record.body.state) reuseViolations.push(f.filename + ': state moved ' + f.record.body.state + ' -> ' + r.body.state);
     const recordAfter = storedRevisionSnapshot(r.body, 'unchanged re-read ' + f.filename);
     revisionRowsReadAfter++;
@@ -446,9 +660,11 @@ const distillOutputBound = outputBound(distillMeta);
 assert(Number.isSafeInteger(distillOutputBound) && distillOutputBound > 0, 'Selected distillModel output bound must be known.');
 const answerCallTokenLimit = answerMeta.contextTokens + answerOutputBound;
 const distillCallTokenLimit = distillMeta.contextTokens + distillOutputBound;
-const fullFreshCalls = 28;
+const runCallCeiling = nativeOnly ? 0 : scoped.length * 2 + CLAIM_ORDER.length;
 const revisionRecordsBefore = new Map();
-const boundReport = 'Fresh full K3 bound: baseline 10*2 + overflow 2*2 + answers 4*1 = 28 calls, distill per-call token limit ' + distillCallTokenLimit + ' (ctx+output, ' + SELECTED_DISTILL_MODEL + '), answer per-call token limit ' + answerCallTokenLimit + ' (ctx+output, ' + SELECTED_ANSWER_MODEL + '), two-call distill ' + (2 * distillCallTokenLimit) + '. Historical calls are not reset or silently counted as fresh. Models frozen once from stored settings for this run.';
+const boundReport = nativeOnly
+  ? 'K3 native-only: zero model calls.'
+  : 'K3 eval command call ceiling: baseline ' + scoped.length + '*2 + C1-C4 ' + CLAIM_ORDER.length + ' = ' + runCallCeiling + ' calls; overflow papers are separately prepared. Distill per-call limit ' + distillCallTokenLimit + ' (ctx+output, ' + SELECTED_DISTILL_MODEL + '), answer per-call limit ' + answerCallTokenLimit + ' (ctx+output, ' + SELECTED_ANSWER_MODEL + '). Historical calls are not counted as fresh; models are frozen from stored settings.';
 console.log(boundReport);
 if (nativeOnly) {
   assert(understandingWired && overviewWired, 'K3 native smoke requires the actual understanding and overview routes.');
@@ -481,6 +697,7 @@ if (nativeOnly) {
         const probe = await apiJson('/api/sources/' + encodeURIComponent(recSource) + '/understanding');
         assert.equal(probe.status, 200, 'GET recovery understanding (current revision) must be 200.');
         assertUnderstanding(probe.body, 'recovery current');
+        assertUnderstandingIdentity(probe.body, recSource, undefined, 'recovery current');
         u0 = probe.body;
         rev = u0.revisionId;
       }
@@ -546,6 +763,7 @@ if (nativeOnly) {
       const cprobe = await apiJson('/api/sources/' + encodeURIComponent(checkSource) + '/understanding');
       assert.equal(cprobe.status, 200, 'GET check understanding (current revision) must be 200.');
       assertUnderstanding(cprobe.body, 'check current');
+      assertUnderstandingIdentity(cprobe.body, checkSource, undefined, 'check current');
       const cu = cprobe.body;
       const crev = cu.revisionId;
       assert(cu.state === 'done' || cu.state === 'partial', 'Check source must be terminal (done/partial), got ' + cu.state + ' (read-only, no POST).');
@@ -593,6 +811,7 @@ if (nativeOnly) {
       const cprobe2 = await apiJson('/api/sources/' + encodeURIComponent(checkSource) + '/understanding');
       assert.equal(cprobe2.status, 200, 'GET check re-read must be 200 (deterministic head).');
       assertUnderstanding(cprobe2.body, 'check re-read');
+      assertUnderstandingIdentity(cprobe2.body, checkSource, crev, 'check re-read');
       assert.deepEqual((Array.isArray(cprobe2.body.claims) ? cprobe2.body.claims : []).map((c) => c && c.id), cclaims.map((c) => c && c.id), 'Check normal head must return stable claim IDs across GETs.');
       checkLines.push('- check source: ' + checkSource + ' rev ' + String(crev).slice(0, 8) + ' (' + cu.state + ', read-only, no POST)');
       checkLines.push('- check guide sentences: ' + cseg.length + '; claims: ' + cclaims.length + ' (kept ' + crep.kept + '); calls: ' + cusage.calls);
@@ -616,7 +835,11 @@ if (nativeOnly) {
       for (const s of candLists) {
         if (!s || !s.currentRevisionId || !['readable', 'readable_with_warnings'].includes(s.readableState)) continue;
         const u = await apiJson('/api/sources/' + encodeURIComponent(s.id) + '/understanding?revisionId=' + encodeURIComponent(s.currentRevisionId));
-        if (u.status === 200 && u.body && (u.body.state === 'done' || u.body.state === 'partial')) { rbSrc = s; rbRev = s.currentRevisionId; rbU = u.body; break; }
+        if (u.status === 200) {
+          assertUnderstanding(u.body, 'reader-browser candidate');
+          assertUnderstandingIdentity(u.body, s.id, s.currentRevisionId, 'reader-browser candidate');
+          if (u.body.state === 'done' || u.body.state === 'partial') { rbSrc = s; rbRev = s.currentRevisionId; rbU = u.body; break; }
+        }
       }
       if (!rbSrc) {
         browserLines.push('- readerBrowserChecks: skipped (no stored done/partial understanding in corpus, no new derivation)');
@@ -752,6 +975,7 @@ if (nativeOnly) {
           }
           const rbU2 = await apiJson('/api/sources/' + encodeURIComponent(rbSrc.id) + '/understanding?revisionId=' + encodeURIComponent(rbRev));
           assert.equal(rbU2.status, 200, 'Understanding re-read must stay 200 after browser.');
+          assertUnderstandingIdentity(rbU2.body, rbSrc.id, rbRev, 'reader-browser re-read');
           const rbRecordAfter = storedRevisionSnapshot(rbU2.body, 'reader-browser after');
           assert.deepEqual(rbRecordAfter.body, rbRecordBefore.body, 'GET-only reader browser must preserve the exact owning revision record.');
           assert.equal(rbRecordAfter.claimRows, rbRecordBefore.claimRows, 'GET-only reader browser must preserve the owning revision claim row count.');
@@ -769,6 +993,7 @@ if (nativeOnly) {
               if (!s || s.id === rbSrc.id || !s.currentRevisionId) continue;
               if (s.readableState === 'needs_conversion' || s.readableState === 'failed') { otherPartial = { s: s, st: s.readableState }; break; }
               const u = await apiJson('/api/sources/' + encodeURIComponent(s.id) + '/understanding?revisionId=' + encodeURIComponent(s.currentRevisionId));
+              if (u.status === 200) assertUnderstandingIdentity(u.body, s.id, s.currentRevisionId, 'reader-browser partial probe');
               if (u.status === 200 && (u.body.state === 'partial' || u.body.state === 'failed' || u.body.state === 'none')) { otherPartial = { s: s, st: u.body.state }; break; }
             }
             if (otherPartial) browserLines.push('- reader-browser unavailable/partial display: covered on ' + (otherPartial.s.originalFilename || otherPartial.s.title) + ' (' + otherPartial.st + ', stored data only)');
@@ -814,6 +1039,76 @@ if (nativeOnly) {
   }
   process.exit(0);
 }
+async function readClaimSources(projectId, what) {
+  let rows = [], cursor;
+  for (let i = 0; i < 10; i++) {
+    const page = await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/sources' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''));
+    assert.equal(page.status, 200, what + ': GET sources must be 200.');
+    rows = rows.concat(page.body.sources || []);
+    cursor = page.body.nextCursor || undefined;
+    if (!cursor) break;
+  }
+  assert.equal(cursor, undefined, what + ': source listing exceeded its page bound.');
+  return rows;
+}
+async function preflightClaimScope() {
+  assert(FROZEN_BASELINE && FROZEN_OVERFLOW, 'Frozen baseline and overflow manifests are required before full K3 work.');
+  assert(claimTitle && claimChatLoc, 'Frozen claim project and prepared chat are required before baseline paid work.');
+  const claimProjects = projects.filter((p) => p.title === claimTitle);
+  assert.equal(claimProjects.length, 1, 'Frozen overflow project title must resolve exactly once.');
+  const project = claimProjects[0];
+  assert.equal(project.id, overflowStorage.projectId, 'Claim project ID must match frozen overflow storage.');
+  assert.notEqual(project.id, proj.id, 'Claim project must be separate from the baseline project.');
+  const rawRows = await readClaimSources(project.id, 'K3 overflow preflight');
+  const expected = [...FROZEN_BASELINE, ...FROZEN_OVERFLOW];
+  const rows = exactSourceRows(rawRows, expected, 'K3 overflow scope');
+  const canonicalBytes = rows.reduce((n, s) => n + s.readableSize, 0);
+  const reserve = outputBound(answerMeta);
+  assert(Number.isSafeInteger(reserve) && reserve > 0, 'Selected answerModel output reserve must be known before paid work.');
+  assert(canonicalBytes / 3 + reserve > Math.min(0.6 * answerMeta.contextTokens, 400000), 'Frozen twelve-source scope must exceed the unchanged whole-reading cap.');
+  for (let i = FROZEN_BASELINE.length; i < rows.length; i++) await assertFrozenSourceBytes(rows[i], expected[i], 'K3 overflow ' + expected[i].filename);
+  let priorExtraCalls = 0;
+  for (const source of rows.slice(FROZEN_BASELINE.length)) {
+    const u = await getUnderstanding(source.id, source.currentRevisionId);
+    assert(['done', 'partial'].includes(u.state) && u.claims.length > 0, 'Frozen overflow extra must be understood with usable claims before baseline paid work: ' + source.originalFilename + ' is ' + u.state);
+    const record = storedRevisionSnapshot(u, 'K3 overflow preflight ' + source.originalFilename);
+    assert(record.calls !== null && record.calls <= 2, 'Frozen overflow extra must have known owning calls within the two-call bound: ' + source.originalFilename);
+    priorExtraCalls += record.calls;
+  }
+  assert(priorExtraCalls <= FROZEN_OVERFLOW.length * 2, 'Prior overflow extra calls must be at most four before baseline paid work.');
+  const chatsResult = await apiJson('/api/projects/' + encodeURIComponent(project.id) + '/chats');
+  assert.equal(chatsResult.status, 200, 'K3 overflow chat list must be readable before baseline paid work.');
+  const chats = (chatsResult.body.chats || []).filter((c) => c && (c.id === claimChatLoc || c.title === claimChatLoc));
+  assert.equal(chats.length, 1, 'Frozen claim chat must exist exactly once; the eval will not create or substitute one.');
+  const chat = chats[0];
+  assert.equal(chat.id, overflowStorage.chatId, 'Claim chat ID must match frozen storage completion.');
+  assert.equal(chat.title, overflowStorage.chatTitle, 'Claim chat title must match frozen storage completion.');
+  const snapshot = await apiJson('/api/projects/' + encodeURIComponent(project.id) + '/chats/' + encodeURIComponent(chat.id));
+  assert.equal(snapshot.status, 200, 'K3 overflow chat snapshot must be readable before baseline paid work.');
+  assert.equal(snapshot.body.chat?.id, chat.id, 'K3 overflow snapshot must remain attached to the prepared chat.');
+  assert.equal(snapshot.body.chat?.projectId, project.id, 'K3 overflow snapshot must remain in the frozen project.');
+  assert(Array.isArray(snapshot.body.turns), 'K3 overflow chat must return stored turns.');
+  assert(!snapshot.body.queued, 'K3 overflow chat already has a queued turn; no new Send is safe.');
+  const revisionIds = rows.map((s) => s.currentRevisionId);
+  const revisionKey = revisionIds.slice().sort().join(',');
+  const revisionSet = new Set(revisionIds);
+  for (let i = 0; i < CLAIM_QUESTIONS.length; i++) {
+    const turn = uniqueClaimTurn(snapshot.body.turns, CLAIM_QUESTIONS[i], revisionKey);
+    if (turn) await assertClaimTurnReadOnly(turn, CLAIM_ORDER[i], CLAIM_QUESTIONS[i], revisionSet, revisionKey);
+  }
+  return { project, chat, rows, revisionKey, revisionSet, turns: snapshot.body.turns, priorExtraCalls };
+}
+async function assertClaimSourcesReady(preflight) {
+  const rows = exactSourceRows(await readClaimSources(preflight.project.id, 'K3 claim readiness'), [...FROZEN_BASELINE, ...FROZEN_OVERFLOW], 'K3 claim readiness');
+  for (const source of rows) {
+    const u = await getUnderstanding(source.id, source.currentRevisionId);
+    assert(['done', 'partial'].includes(u.state) && u.claims.length > 0, 'K3 claim source must be understood with usable claims before answer POST: ' + source.originalFilename + ' is ' + u.state);
+  }
+}
+let claimPreflight = null, claimPreflightError = '';
+try { claimPreflight = await preflightClaimScope(); }
+catch (e) { claimPreflightError = String((e && e.message) || e).split(EOL)[0]; }
+if (runModel) assert(claimPreflight, 'K3 paid preflight blocked before any Understand POST: ' + claimPreflightError);
 if (!runModel) {
   const violations = [];
   const sRows = [];
@@ -912,52 +1207,21 @@ if (!runModel) {
   assert(settingsAfterStored.body && settingsAfterStored.body.settings, 'GET /api/settings must retain its settings record.');
   if (JSON.stringify(settingsAfterStored.body.settings) !== JSON.stringify(settingsForRun.body.settings)) violations.push('settings record changed during stored validation');
   {
-    const ct = process.env.ELIOT_K3_CLAIM_PROJECT;
-    const cl = process.env.ELIOT_K3_CLAIM_CHAT;
-    if (!ct || !cl) violations.push('claim-mode C1-C4 skipped: no verified claim-mode turns (separate root step)');
-    else {
-      try {
-        let cproj = null, ccur = undefined;
-        for (let i = 0; i < 5 && !cproj; i++) {
-          const pg = await apiJson('/api/projects' + (ccur ? '?cursor=' + encodeURIComponent(ccur) : ''));
-          assert.equal(pg.status, 200, 'GET /api/projects must be 200.');
-          cproj = (pg.body.projects || []).find((x) => x && x.title === ct) || null;
-          ccur = pg.body.nextCursor || undefined;
-          if (!ccur) break;
-        }
-        assert(cproj, 'K3 claim-mode skipped: claim project not found: ' + ct);
-        assert.notEqual(cproj.id, proj.id, 'Claim project must be separate from the baseline corpus project.');
-        let csrc = [], scc = undefined;
-        for (let i = 0; i < 10; i++) {
-          const s = await apiJson('/api/projects/' + encodeURIComponent(cproj.id) + '/sources' + (scc ? '?cursor=' + encodeURIComponent(scc) : ''));
-          assert.equal(s.status, 200, 'GET claim sources must be 200.');
-          csrc = csrc.concat(s.body.sources || []);
-          scc = s.body.nextCursor || undefined;
-          if (!scc) break;
-        }
-        const cset = new Set(csrc.filter((s) => s.currentRevisionId).map((s) => s.currentRevisionId));
-        const ckey = [...cset].sort().join(',');
-        const cl0 = await apiJson('/api/projects/' + encodeURIComponent(cproj.id) + '/chats');
-        assert.equal(cl0.status, 200, 'GET claim chats must be 200.');
-        const cchat = (cl0.body.chats || []).find((x) => x && (x.id === cl || x.title === cl)) || null;
-        assert(cchat, 'K3 claim-mode skipped: claim chat not found (read-only stored run creates nothing): ' + cl);
-        const cr = await apiJson('/api/projects/' + encodeURIComponent(cproj.id) + '/chats/' + encodeURIComponent(cchat.id));
-        assert.equal(cr.status, 200, 'GET claim chat snapshot must be 200.');
-        assert(Array.isArray(cr.body.turns), 'GET claim chat must return stored turn rows.');
-        const cturns = cr.body.turns;
-        for (let qi = 0; qi < CLAIM_ORDER.length; qi++) {
-          const tag = CLAIM_ORDER[qi];
-          const t = cturns.find((x) => x && x.question === CLAIM_QUESTIONS[qi] && x.state === 'completed' && x.scopeMode === 'explicit' && Array.isArray(x.revisionIds) && x.revisionIds.slice().sort().join(',') === ckey) || null;
-          assert(t, 'K3 claim-mode ' + tag + ' skipped: no completed exact-scope stored turn (read-only, no POST).');
-          await assertClaimTurnReadOnly(t, tag, cset, ckey);
-        }
-        const cr2 = await apiJson('/api/projects/' + encodeURIComponent(cproj.id) + '/chats/' + encodeURIComponent(cchat.id));
-        assert.equal(cr2.status, 200, 'GET claim chat after stored validation must be 200.');
-        assert(Array.isArray(cr2.body.turns), 'GET claim chat after stored validation must return turn rows.');
-        assert.deepEqual(cr2.body.turns, cturns, 'Read-only claim validation must preserve exact stored turn records and row count.');
-      } catch (e) {
-        violations.push('claim-mode stored: ' + String((e && e.message) || e).split('\n')[0]);
+    if (!claimPreflight) violations.push('claim-mode preflight failed: ' + claimPreflightError);
+    else try {
+      await assertClaimSourcesReady(claimPreflight);
+      const turns = claimPreflight.turns;
+      for (let qi = 0; qi < CLAIM_ORDER.length; qi++) {
+        const tag = CLAIM_ORDER[qi], question = CLAIM_QUESTIONS[qi];
+        const turn = uniqueClaimTurn(turns, question, claimPreflight.revisionKey);
+        assert(turn, 'K3 claim-mode ' + tag + ' skipped: no completed exact-scope stored turn (read-only, no POST).');
+        await assertClaimTurnReadOnly(turn, tag, question, claimPreflight.revisionSet, claimPreflight.revisionKey);
       }
+      const after = await apiJson('/api/projects/' + encodeURIComponent(claimPreflight.project.id) + '/chats/' + encodeURIComponent(claimPreflight.chat.id));
+      assert.equal(after.status, 200, 'GET claim chat after stored validation must be 200.');
+      assert.deepEqual(after.body.turns, turns, 'Read-only claim validation must preserve exact stored turn records and row count.');
+    } catch (e) {
+      violations.push('claim-mode stored: ' + String((e && e.message) || e).split('\n')[0]);
     }
   }
   const md = ['# K3 stored hard-gate validation (zero paid calls)', '', '- project: ' + title, '- owning revision rows before/after: ' + storedRevisionRecordsBefore.size + '/' + revisionRecordsAfterCount + '; exact records preserved: ' + exactRevisionRowsPreserved, '- owning revision claim rows before/after: ' + sClaimRows + '/' + sClaimRowsAfter, '- recorded owning revision calls before/after (known subtotal): ' + sCalls + '/' + sCallsAfter + '; unknown rows ' + sCallRowsUnknown + '/' + sCallRowsUnknownAfter, '- calls this run on POSTed revisions (known delta subtotal): 0; unknown delta rows 0 (storage-only)', '- chat settings record preserved: ' + String(JSON.stringify(settingsAfterStored.body.settings) === JSON.stringify(settingsForRun.body.settings)), '- fullK3Accepted: false', '- violations: ' + violations.length, '', '| source | state | claims | mode |', '|---|---|---|---|'].concat(sRows).concat(['', '## Violations / open gates', '']).concat(violations.map((v) => '- ' + v)).concat(['']).join(EOL);
@@ -973,6 +1237,7 @@ async function getUnderstanding(sourceId, rev) {
   assert.equal(r.status, 200, 'GET understanding must be 200 for distilled revision.');
   const u = r.body;
   assertUnderstanding(u, rev.slice(0, 8));
+  assertUnderstandingIdentity(u, sourceId, rev, 'GET understanding ' + rev.slice(0, 8));
   return u;
 }
 const rows = [];
@@ -981,6 +1246,8 @@ const failedRevs = [], pausedRevs = [];
 const paidByFile = new Map();
 const attemptedRevisions = new Set();
 const postedRevisions = new Set();
+let claimPostAttempts = 0;
+const claimPostQuestions = new Set();
 const firstPass = new Map();
 let admit = true;
 let newTokens = 0;
@@ -989,19 +1256,28 @@ let newTokensUnknown = 0;
   const blocked = [];
   for (const s of scoped) {
     const u = await getUnderstanding(s.id, s.currentRevisionId);
-    revisionRecordsBefore.set(s.currentRevisionId, storedRevisionSnapshot(u, 'paid-run preflight ' + s.originalFilename));
+    const beforeRecord = storedRevisionSnapshot(u, 'paid-run preflight ' + s.originalFilename);
+    revisionRecordsBefore.set(s.currentRevisionId, beforeRecord);
     if (u.state === 'failed' || u.state === 'paused') blocked.push(s.originalFilename + ':' + u.state);
+    if (u.state === 'queued' && u.progress?.model !== SELECTED_DISTILL_MODEL) blocked.push(s.originalFilename + ': queued model differs from the frozen distill route or is unknown');
+    if (beforeRecord.calls === null) blocked.push(s.originalFilename + ': owning call count is unknown');
   }
-  assert.equal(blocked.length, 0, 'Paid preflight aborts: known failed/paused sources would fail the run, no paid calls made: ' + blocked.join(', '));
+  assert.equal(blocked.length, 0, 'Paid preflight aborts: frozen call/state inputs are open, no paid calls made: ' + blocked.join(', '));
 }
 async function distillOne(s) {
   const rev = s.currentRevisionId;
   let u = await getUnderstanding(s.id, rev);
+  if (u.state === 'queued' && u.progress?.model !== SELECTED_DISTILL_MODEL) {
+    admit = false;
+    throw new Error('Queued model differs from the frozen distill route or is unknown; no conflicting Understand POST.');
+  }
   if ((u.state === 'none' || u.state === 'queued') && !admit) {
     rows.push('| ' + s.originalFilename + ' | ' + u.state + ' | - | admitting stopped after first failure, no POST |');
     return;
   }
   if (u.state === 'none' || u.state === 'queued') {
+    assert(!attemptedRevisions.has(rev), 'K3 never repeats an Understand POST for one frozen revision (' + s.originalFilename + ').');
+    assertPaidCallCeiling(attemptedRevisions.size + 1, claimPostAttempts, scoped.length, 'before Understand POST');
     attemptedRevisions.add(rev);
     const p = await apiJson('/api/sources/' + encodeURIComponent(s.id) + '/understanding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionId: rev, model: SELECTED_DISTILL_MODEL }) });
     assert.equal(p.status, 202, 'POST understanding is always 202 idempotent for ' + s.originalFilename + '.');
@@ -1017,7 +1293,7 @@ async function distillOne(s) {
     await sleep(POLL_MS);
     u = await getUnderstanding(s.id, rev);
   }
-  if (u.state === 'paused') { pausedRevs.push(s.originalFilename); rows.push('| ' + s.originalFilename + ' | paused | - | admission blocked, operator action, no retry |'); return; }
+  if (u.state === 'paused') { admit = false; pausedRevs.push(s.originalFilename); rows.push('| ' + s.originalFilename + ' | paused | - | admission blocked, operator action, no retry |'); return; }
   if (u.state === 'failed') { failedRevs.push(s.originalFilename); rows.push('| ' + s.originalFilename + ' | failed | - | no auto retry |'); admit = false; return; }
   const claims = Array.isArray(u.claims) ? u.claims : [];
   assert(claims.length <= 32, 'Claims per revision capped at 32 (' + s.originalFilename + ').');
@@ -1163,96 +1439,51 @@ const executedCallRowsUnknown = [...executionCalls.values()].filter((calls) => c
 const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- revision POST attempts this run: ' + attemptedRevisions.size + '; accepted 202 responses: ' + posted + ' (second scan needs 0)', '- owning revision rows before/after: ' + revisionRecordsBefore.size + '/' + revisionRowsReadAfter, '- owning revision claim rows before/after: ' + revisionClaimRowsBefore + '/' + revisionClaimRowsAfter, '- recorded owning revision calls before/after (known subtotal): ' + revisionCallsBefore + '/' + revisionCallsAfter + '; unknown rows ' + revisionCallRowsUnknownBefore + '/' + revisionCallRowsUnknownAfter, '- exact owning revision records stable on reread: ' + terminalSnapshotsStable + '/' + revisionRowsReadAfter, '- calls this run on attempted revisions (known delta subtotal): ' + executedCallsKnown + '; unknown delta rows ' + executedCallRowsUnknown + '; input/output tokens on accepted revision records (known subtotal): ' + newTokens + '; unknown token rows ' + newTokensUnknown, '- settings record preserved: ' + String(settingsAfterRun.status === 200 && JSON.stringify(settingsAfterRun.body?.settings) === settingsBeforeRun), '- claim-mode C1-C4: skipped (hard gate remains open)', '- fullK3Accepted: false', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | state | claims | recorded calls | in/cached/out | tokenLimit | wall_ms |', '|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
 console.log(md);
 await writeFile(outDir + '/k3-' + Date.now() + '.md', boundReport + EOL + EOL + md);
-const claimTitle = process.env.ELIOT_K3_CLAIM_PROJECT;
-const claimChatLoc = process.env.ELIOT_K3_CLAIM_CHAT;
 const claimV = [];
-if (!claimTitle || !claimChatLoc) claimV.push('claim-mode C1-C4 skipped: the root has not supplied the larger dataset and prepared claim chat; no paid calls made here.');
+let postedTurns = 0;
+if (!claimPreflight) claimV.push('claim-mode preflight failed: ' + claimPreflightError);
 else {
-  let claimProj = null, cc = undefined;
-  for (let i = 0; i < 5 && !claimProj; i++) {
-    const pg = await apiJson('/api/projects' + (cc ? '?cursor=' + encodeURIComponent(cc) : ''));
-    assert.equal(pg.status, 200, 'GET /api/projects must be 200.');
-    claimProj = (pg.body.projects || []).find((x) => x && x.title === claimTitle) || null;
-    cc = pg.body.nextCursor || undefined;
-    if (!cc) break;
-  }
-  if (!claimProj) claimV.push('claim-mode C1-C4 skipped: claim project not found: ' + claimTitle);
-  else {
-    assert.notEqual(claimProj.id, proj.id, 'Claim project must be separate from the baseline corpus project.');
-    let csrc = [], sc = undefined;
-    for (let i = 0; i < 10; i++) {
-      const s = await apiJson('/api/projects/' + encodeURIComponent(claimProj.id) + '/sources' + (sc ? '?cursor=' + encodeURIComponent(sc) : ''));
-      assert.equal(s.status, 200, 'GET claim sources must be 200.');
-      csrc = csrc.concat(s.body.sources || []);
-      sc = s.body.nextCursor || undefined;
-      if (!sc) break;
-    }
-    const cread = csrc.filter((s) => s.currentRevisionId && (s.readableState === 'readable' || s.readableState === 'readable_with_warnings'));
-    for (const rev of scoped.map((s) => s.currentRevisionId)) if (!cread.some((s) => s.currentRevisionId === rev)) claimV.push('Claim project misses baseline revision ' + String(rev).slice(0, 8));
-    if (cread.length < scoped.length + 2) claimV.push('Claim project needs the baseline 10 plus at least two extra readable papers (GPT-3/PaLM minimum).');
-    const sizeTokens = cread.reduce((n, s) => n + (typeof s.readableSize === 'number' ? s.readableSize : 0) / 3, 0);
-    const answerOverflowReserve = outputBound(answerMeta);
-    assert(Number.isSafeInteger(answerOverflowReserve) && answerOverflowReserve > 0, 'Selected answerModel output reserve must be known for whole-cap.');
-    if (!(sizeTokens + answerOverflowReserve > Math.min(0.6 * answerMeta.contextTokens, 400000))) claimV.push('Claim scope must overflow whole mode (UTF8/3 + output reserve > min(0.6*ctx,400k)).');
-    for (const s of cread) {
-      const u = await getUnderstanding(s.id, s.currentRevisionId);
-      if (u.state !== 'done') claimV.push('Claim scope needs completed understanding, no hidden distill on reads: ' + s.originalFilename + ' is ' + u.state);
-    }
-    const revSet = cread.map((s) => s.currentRevisionId).sort().join(',');
-    const revIdSet = new Set(cread.map((s) => s.currentRevisionId));
-    const srcIds = cread.map((s) => s.id);
-    let chat = null;
-    const preOk = claimV.length === 0;
-    {
-      const cl = await apiJson('/api/projects/' + encodeURIComponent(claimProj.id) + '/chats');
-      assert.equal(cl.status, 200, 'GET claim chats must be 200.');
-      chat = (cl.body.chats || []).find((x) => x && (x.id === claimChatLoc || x.title === claimChatLoc)) || null;
-      if (!chat) {
-        assert(!/^[0-9a-fA-F-]{36}$/.test(claimChatLoc), 'claim-mode skipped: claim chat ID was not found: ' + claimChatLoc);
-        assert(runModel, 'K3 claim-mode read-only: claim chat missing, creation needs ELIOT_K3_MODEL=1.');
-        assert(preOk, 'K3 claim-mode blocked: preconditions open, no paid chat creation.');
-        const created = await apiJson('/api/projects/' + encodeURIComponent(claimProj.id) + '/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: claimChatLoc }) });
-        assert.equal(created.status, 201, 'POST claim chat must be 201.');
-        chat = created.body.chat;
-      }
-    }
+  const { project: claimProj, chat, rows: claimRows, revisionSet: revIdSet, revisionKey: revSet, priorExtraCalls } = claimPreflight;
+  try { await assertClaimSourcesReady(claimPreflight); }
+  catch (e) { claimV.push('Claim sources are not ready for paid answers: ' + String((e && e.message) || e).split(EOL)[0]); }
+  const claimReady = claimV.length === 0;
+  const srcIds = claimRows.map((s) => s.id);
+  if (claimReady) {
     async function claimTurns() {
       const r = await apiJson('/api/projects/' + encodeURIComponent(claimProj.id) + '/chats/' + encodeURIComponent(chat.id));
       assert.equal(r.status, 200, 'GET claim chat snapshot must be 200.');
       assert(Array.isArray(r.body.turns), 'GET claim chat snapshot must return stored turn rows.');
+      assert(!r.body.queued, 'Claim chat has queued work; no new Send is safe.');
       return r.body.turns;
     }
-    async function assertClaimTurn(t, tag) {
-      await assertClaimTurnReadOnly(t, tag, revIdSet, revSet);
-    }
-    let postedTurns = 0;
     for (let qi = 0; qi < CLAIM_QUESTIONS.length; qi++) {
       const q = CLAIM_QUESTIONS[qi], tag = 'C' + (qi + 1);
       try {
         const turns = await claimTurns();
-        let t = turns.find((x) => x && x.question === q && x.state === 'completed' && x.scopeMode === 'explicit' && Array.isArray(x.revisionIds) && x.revisionIds.slice().sort().join(',') === revSet) || null;
+        let t = uniqueClaimTurn(turns, q, revSet);
         if (!t) {
-          const prior = turns.find((x) => x && x.question === q && x.state !== 'completed');
-          if (prior) throw new Error(tag + ' already ' + (prior.state || 'unknown') + ', no retry');
           assert(runModel, 'K3 claim-mode read-only: missing ' + tag + ' turn, paid POST needs ELIOT_K3_MODEL=1.');
-          assert(preOk, 'K3 claim-mode blocked: ' + tag + ' preconditions open, no paid POST.');
+          assert(!claimPostQuestions.has(tag), 'K3 never retries a claim answer POST (' + tag + ').');
+          assertPaidCallCeiling(attemptedRevisions.size, claimPostAttempts + 1, scoped.length, 'before claim answer POST');
+          claimPostQuestions.add(tag);
+          claimPostAttempts++;
           const p = await apiJson('/api/projects/' + encodeURIComponent(claimProj.id) + '/chats/' + encodeURIComponent(chat.id) + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(120000), body: JSON.stringify({ turnId: crypto.randomUUID(), question: q, scopeMode: 'explicit', sourceIds: srcIds, model: SELECTED_ANSWER_MODEL }) });
           assert.equal(p.status, 200, 'POST claim turn (wait=1) must be 200 (' + tag + ').');
           t = p.body && p.body.turn;
           assert(t && typeof t === 'object' && !t.busy, 'POST claim turn must return the TurnView (' + tag + ').');
           postedTurns++;
-          assert(postedTurns <= 4, 'At most one call per question, max 4.');
           assert.equal(t.state, 'completed', 'Claim turn must be completed, not partial (' + tag + ' state=' + t.state + ').');
         }
-        await assertClaimTurn(t, tag);
+        await assertClaimTurnReadOnly(t, tag, q, revIdSet, revSet);
       } catch (e) {
         claimV.push(tag + ': ' + (e && e.message ? e.message : String(e)));
+        break;
       }
     }
-    const claimMd = ['# K3 claim-mode C1-C4 (whole-overflow scope, zero mode forcing)', '', '- project: ' + claimTitle, '- chat: ' + (chat.title || chat.id), '- posted turns this run: ' + postedTurns + ' (max 4, one per question)', '- scope revisions: ' + cread.length, '- model: ' + SELECTED_ANSWER_MODEL, '- fullK3Accepted: false', '- violations: ' + claimV.length, ''].join(EOL);
-    console.log(claimMd);
-    await writeFile(outDir + '/k3-claim-' + Date.now() + '.md', claimMd);
   }
+  const claimMd = ['# K3 claim-mode C1-C4 (whole-overflow scope, zero mode forcing)', '', '- project: ' + claimTitle, '- chat: ' + (chat.title || chat.id), '- frozen scope revisions: ' + claimRows.length, '- prepared overflow extras calls before this run: ' + priorExtraCalls + '/' + (FROZEN_OVERFLOW.length * 2) + ' (historical, separate from the 24-call run ceiling)', '- claim POST attempts this run: ' + claimPostAttempts + '; completed new turns: ' + postedTurns + ' (max 4)', '- model: ' + SELECTED_ANSWER_MODEL, '- fullK3Accepted: false', '- violations: ' + claimV.length, ''].join(EOL);
+  console.log(claimMd);
+  await writeFile(outDir + '/k3-claim-' + Date.now() + '.md', claimMd);
 }
 const finalViolations = [...tailV, ...claimV];
 assert.equal(finalViolations.length, 0, [
