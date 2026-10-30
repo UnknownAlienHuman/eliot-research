@@ -219,7 +219,12 @@ function normMath(s) {
   for (let i = 1; i + 1 < chars.length; i++) {
     if (chars[i] === MIDDOT && SUPER_DIGITS.has(chars[i - 1]) && SUPER_DIGITS.has(chars[i + 1])) chars[i] = '.';
   }
-  let n = chars.join('').normalize('NFKC').replace(/\[(?:S\d+|R[0-9a-f-]{36}):\d+\]/gi, ' ').toLowerCase().replace(/\bstep_num\b/g, 'step').replace(/\bwarmup_steps\b/g, 'warmup').split(',').join('.');
+  let n = chars.join('').normalize('NFKC')
+    .replace(/\\_/g, '_')
+    .replace(/\\(?:cdot|times)\b/gi, ' ')
+    .replace(/×/g, ' ')
+    .replace(/\[(?:S\d+|R[0-9a-f-]{36}):\d+\]/gi, ' ')
+    .toLowerCase().replace(/\bstep_num\b/g, 'step').replace(/\bwarmup_steps\b/g, 'warmup').split(',').join('.');
   n = n.split(UNIMINUS).join('-');
   n = n.split('=').join(' = ');
   const strip = ['$', '*', '_', BT, BACKSLASH, '{', '}', '^', '(', ')', '[', ']', ':', ';', SQ, DQ, MIDDOT];
@@ -227,6 +232,19 @@ function normMath(s) {
   n = n.split(EOL).join(' ').split(TAB).join(' ');
   while (n.includes('  ')) n = n.split('  ').join(' ');
   return ' ' + n + ' ';
+}
+function hasNonUnitCoefficient(math) {
+  const canonicalStart = math.indexOf('d model -0.5');
+  const radicalStart = math.indexOf('sqrt d model');
+  const start = canonicalStart >= 0 ? canonicalStart : radicalStart;
+  if (start < 0) return false;
+  const tail = math.slice(start);
+  const endMatch = /\bwarmup\s+(?:-1\.5|1\.5)\b/u.exec(tail);
+  const end = endMatch ? start + endMatch.index + endMatch[0].length + 12 : Math.min(math.length, start + 260);
+  const window = math.slice(Math.max(0, start - 24), Math.min(math.length, end));
+  const leading = [...window.matchAll(/(?:^|[\s(])([+-]?\d+(?:\.\d+)?)\s+(?:d model|step|warmup)\b/gu)];
+  const trailing = [...window.matchAll(/\b(?:d model|step|warmup)\s+(?:-0\.5|-1\.5|-1)\s*[.,]?\s*([+-]?\d+(?:\.\d+)?)\s+(?:min|step|warmup)\b/gu)];
+  return [...leading, ...trailing].some((match) => Number(match[1]) !== 1);
 }
 function checkAnswer(qid, ans) {
   const m = normMath(ans);
@@ -246,11 +264,12 @@ function checkAnswer(qid, ans) {
   }
   if (qid === 'C2') {
     const warmup4000 = /(?:\b(?:warmup|warm-up|warm up)\b|разогрев|прогрев|размин[а-яё]*)[\s\S]{0,40}\b4000\b|\b4000\b[\s\S]{0,40}(?:\b(?:warmup|warm-up|warm up)\b|разогрев|прогрев|размин[а-яё]*)/iu.test(m);
-    const strictFormula = warmup4000 && /\bd model\s*-0\.5\b[\s\S]{0,120}\bmin\b[\s\S]{0,100}\bstep\s*-0\.5\b[\s\S]{0,80}\bstep\b[\s\S]{0,100}\bwarmup\s*-1\.5\b/u.test(m);
+    const coefficientFree = !hasNonUnitCoefficient(m);
+    const strictFormula = coefficientFree && warmup4000 && /\bd model\s*-0\.5\b[\s\S]{0,120}\bmin\b[\s\S]{0,100}\bstep\s*-0\.5\b[\s\S]{0,80}\bstep\b[\s\S]{0,100}\bwarmup\s*-1\.5\b/u.test(m);
     const sqrtModelExponent = /\bd model\s*-0\.5\b|\bd model\s*-1\/2\b|1\s*\/\s*sqrt\s+d model|sqrt\s+d model\s*-1\b/u.test(m);
     const sqrtStepExponent = /\bstep\s*-0\.5\b|\bstep\s*-1\/2\b|1\s*\/\s*sqrt\s+step|sqrt\s+step\s*-1\b/u.test(m);
     const sqrtWarmupExponent = /\bwarmup\s*-1\.5\b|\bwarmup\s*-3\/2\b|\/\s*warmup\s+(?:1\.5|3\/2)\b/u.test(m);
-    const sqrtFormula = m.includes('sqrt') && warmup4000 && /\bmin\b/u.test(m)
+    const sqrtFormula = coefficientFree && m.includes('sqrt') && warmup4000 && /\bmin\b/u.test(m)
       && sqrtModelExponent && sqrtStepExponent && sqrtWarmupExponent;
     add('learning-rate formula and warmup=4000', strictFormula || sqrtFormula, 'Expected d_model^-0.5 min(step^-0.5, step·warmup^-1.5), warmup 4000, or an equivalent square-root expression.');
   }
@@ -265,6 +284,12 @@ function checkAnswer(qid, ans) {
 }
 function assertC2StaticSelftests() {
   const c2 = (answer) => checkAnswer('C2', answer).find((check) => check.name === 'learning-rate formula and warmup=4000')?.passed;
+  const latexFormula = 'lrate = d_{model}^{-0.5} \\cdot \\min(step\\_num^{-0.5},\\ step\\_num \\cdot warmup\\_steps^{-1.5}), warmup\\_steps = 4000';
+  assert.equal(c2(latexFormula), true, 'Escaped LaTeX underscores and multiplication must preserve the exact original-paper formula.');
+  assert.equal(c2(latexFormula.replace('d_{model}', '2 \\cdot d_{model}')), false, 'A non-unit coefficient on d_model must fail.');
+  assert.equal(c2(latexFormula.replace('min(step\\_num', 'min(2 \\cdot step\\_num')), false, 'A non-unit coefficient on the first step term must fail.');
+  assert.equal(c2(latexFormula.replace('step\\_num \\cdot warmup\\_steps', 'step\\_num \\cdot 2 warmup\\_steps')), false, 'A non-unit coefficient on warmup must fail.');
+  assert.equal(c2(latexFormula.replace(', warmup\\_steps = 4000', '')), false, 'The correct expression without warmup_steps=4000 must fail.');
   assert.equal(c2('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 4000'), true, 'Unicode superscript learning-rate formula must pass.');
   assert.equal(c2('1/sqrt(d_model) · min(1/sqrt(step), step/warmup^1.5), warmup 4000'), true, 'Equivalent square-root learning-rate formula must pass.');
   assert.equal(c2('d_model⁻⁰·⁶ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 4000'), false, 'Wrong d_model exponent must fail.');
