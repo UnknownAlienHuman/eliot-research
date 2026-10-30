@@ -406,14 +406,7 @@ async function buildMixedContext(
     projectedTokens -= candidate.saving;
     if (compressed.size === 1) projectedTokens += orientationHeaderTokens;
   }
-  const hasUnknownCompactSize = candidates.some((candidate) => candidate.fullTokens === undefined);
   const needsUnderstanding = compactParts.some((part) => part === undefined);
-  const unresolvedWholeWithoutSize = frozen.some((entry, index) =>
-    !compactParts[index] && typeof entry.readableSize !== "number");
-  if (!preloadedWhole && projectedTokens > cap && needsUnderstanding
-    && !hasUnknownCompactSize && !unresolvedWholeWithoutSize) {
-    throw new LibraryError("invalid", NEEDS_UNDERSTANDING, 400);
-  }
   const assemble = async (): Promise<ContextResult | undefined> => {
     const sections: string[] = [];
     const sources: LabelSource[] = [];

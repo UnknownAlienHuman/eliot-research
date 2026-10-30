@@ -399,64 +399,132 @@ async function assertStoredQuote(rev, c, tag) {
   assert.equal(r.status, 200, 'Each claim quote must open (GET range 200) ' + tag + '.');
   assert.equal(r.bytes.toString('utf8'), c.quote, 'Each claim quote must equal the range bytes exactly ' + tag + '.');
 }
+function normalizeAnchorText(value) {
+  return (typeof value === 'string' ? value : '').toLowerCase().replace(/-\s*\n\s*/g, '').replace(/\s+/g, ' ');
+}
 function anchorHay(byFile) {
   // Keep statement and this same card's quote separate; never pool fields or cards.
-  const normalize = (value) => (typeof value === 'string' ? value : '').toLowerCase().replace(/-\s*\n\s*/g, '').replace(/\s+/g, ' ');
   return (file) => (byFile.get(file) || []).map((c) => ({
-    statement: normalize(c && c.statement),
-    quote: normalize(c && c.quote),
+    statement: normalizeAnchorText(c && c.statement),
+    quote: normalizeAnchorText(c && c.quote),
   }));
 }
 function pairedAnchor(items, statementPredicate, quotePredicate = statementPredicate) {
   return items.some((card) => statementPredicate(card.statement) && quotePredicate(card.quote));
 }
-const frenchTranslation = (q) => /english.{0,25}french|en[-– ]fr/.test(q);
-const a1ComputeResult = (q) => q.includes('41.8') && frenchTranslation(q);
-const a1ComputeStatement = (q) => a1ComputeResult(q)
-  && /(?:\b3\.5\s*days?\b|\b3[,.]5\s*(?:дня|дней)(?!\p{L}))/u.test(q)
-  && (/(?:\b(?:8|eight)\b.{0,30}\bgpus?\b)/u.test(q) || /восьми.{0,30}\bgpus?\b/u.test(q));
-const a1ComputeQuote = (q) => a1ComputeResult(q)
-  && /\b3\.5\s*days?\b/u.test(q)
-  && /\b(?:8|eight)\b.{0,30}\bgpus?\b/u.test(q);
-const a2ResidualMapping = (q) => q.includes('residual')
-  && /\b(?:functions?|mappings?)\b/u.test(q)
-  && /reformulat|recast|learn|fit/u.test(q);
+const has28_4 = (q) => /(?<!\d)28[.,]4(?!\d)/u.test(q);
+const has41_8 = (q) => /(?<!\d)41[.,]8(?!\d)/u.test(q);
+const has3_57Percent = (q) => /(?<!\d)3[.,]57\s*%(?!\p{L})/u.test(q);
+const wmt2014 = (q) => /\bwmt\s*(?:2014|14)\b/u.test(q);
+const newstest2014 = (q) => /\bnewstest\s*2014\b/u.test(q);
+const newstest2014TableRow = (q) => newstest2014(q)
+  && /\ben-de\s+en-fr\b/u.test(q)
+  && /transformer\s*\(big(?:\s+model)?\)\s+28[.,]4\s+41[.,]8/u.test(q);
+const a1StatementYear = (q) => wmt2014(q) || newstest2014(q);
+const a1QuoteYear = (q) => wmt2014(q) || newstest2014TableRow(q);
+const englishGerman = (q) => /english.{0,25}german|en[-– ]de|английск\p{L}*.{0,40}немецк\p{L}*|англо[-– ]?немецк\p{L}*/iu.test(q);
+const frenchTranslation = (q) => /english.{0,25}french|en[-– ]fr|английск\p{L}*.{0,40}французск\p{L}*|англо[-– ]?французск\p{L}*/iu.test(q);
+const a1GermanStatement = (q) => has28_4(q) && q.includes('bleu') && englishGerman(q) && a1StatementYear(q);
+const a1GermanQuote = (q) => has28_4(q) && q.includes('bleu') && englishGerman(q) && a1QuoteYear(q);
+const a1FrenchStatement = (q) => has41_8(q) && q.includes('bleu') && frenchTranslation(q) && a1StatementYear(q);
+const a1FrenchQuote = (q) => has41_8(q) && q.includes('bleu') && frenchTranslation(q) && a1QuoteYear(q);
+const a1TrainingDays = (q) => /\b3\.5\s*days?\b/u.test(q) || /\b3[,.]5\s*дн(?:я|ей)(?!\p{L})/iu.test(q);
+const a1EightGpus = (q) => /\b(?:8|eight)\b.{0,30}\bgpus?\b/u.test(q) || /(?:восьми|восемь).{0,30}\bgpus?\b/iu.test(q);
+const a1ComputeStatement = (q) => a1FrenchStatement(q) && a1TrainingDays(q) && a1EightGpus(q);
+const a1ComputeQuote = (q) => a1FrenchQuote(q) && a1TrainingDays(q) && a1EightGpus(q);
+const a2ResidualConcept = (q) => /\bresidual\s+(?:functions?|mappings?)\b/iu.test(q)
+  || /(?:^|[^\p{L}])остаточн\p{L}*\s+(?:функц\p{L}*|отображен\p{L}*)/iu.test(q);
+const a2Reformulates = (q) => /\b(?:reformulat\p{L}*|recast(?:s|ing)?|fit(?:s|ting)?|learn\p{L}*)\b/iu.test(q)
+  || /(?:^|[^\p{L}])(?:переформулир\p{L}*|подгон\p{L}*|перезапис\p{L}*)(?!\p{L})/iu.test(q);
+const a2ResidualMapping = (q) => a2ResidualConcept(q) && a2Reformulates(q);
+const a2LayerTerm = (q) => /\blayers?\b/iu.test(q) || /(?:^|[^\p{L}])сло(?:й|я|ёв|ев|и|ях|ями)(?!\p{L})/iu.test(q);
+const a2Layers152 = (q) => /(?<!\d)152(?!\d)/u.test(q) && a2LayerTerm(q);
+const a2EnsembleTerm = (q) => /\bensembles?\b/iu.test(q) || /(?:^|[^\p{L}])ансамбл\p{L}*/iu.test(q);
+const a2TestSet = (q) => /\btests?(?:\s+set)?\b/iu.test(q) || /тест\p{L}*/iu.test(q);
+const a2ErrorTerm = (q) => /\berrors?\b/iu.test(q) || /ошибк\p{L}*/iu.test(q);
+const a2TopFive = (q) => /\btop[\s-]*5\b/iu.test(q) || /топ[\s-]*5/iu.test(q);
+const a2EnsembleFact = (q) => has3_57Percent(q) && a2EnsembleTerm(q) && q.includes('imagenet') && a2TestSet(q) && a2ErrorTerm(q);
+function pairedA2Ensemble(items) {
+  return items.some((card) => a2EnsembleFact(card.statement) && a2EnsembleFact(card.quote)
+    && a2TopFive(card.statement) === a2TopFive(card.quote));
+}
+const a3Gpt175 = (q) => /gpt[-– ]?3/u.test(q) && /175\s*b/u.test(q);
+const a3FrozenLowRankMatrices = (q) => (/\b(?:freeze|freezes|freezing|frozen)\b/iu.test(q) || /(?:замораж|заморож)\p{L}*/iu.test(q))
+  && (/\bweights?\b/iu.test(q) || /вес\p{L}*/iu.test(q))
+  && (/\btrainable\b/iu.test(q) || /обучаем\p{L}*/iu.test(q))
+  && (/\b(?:low[- ]rank|rank decomposition)\b/iu.test(q) || /низк\p{L}*\s+ранг\p{L}*|низкорангов\p{L}*/iu.test(q))
+  && (/\bmatrices?\b/iu.test(q) || /матриц\p{L}*/iu.test(q));
+const a3Fewer10000TrainableParameters = (q) => (
+  /10(?:[, \u00a0\u2009]?000)\s*(?:times?|fold|[x×])\s*(?:fewer|less)\s+(?:trainable\s+)?parameters?/iu.test(q)
+  || /(?:reduc\p{L}*|decreas\p{L}*).{0,60}(?:number\s+of\s+)?trainable\s+parameters?.{0,60}(?:by\s+)?10(?:[, \u00a0\u2009]?000)\s*(?:times?|fold|[x×])/iu.test(q)
+  || /(?:в\s+)?10(?:[, \u00a0\u2009]?000)(?:\s*[x×]|\s+раз)\s+меньше\s+обучаем\p{L}*\s+параметр\p{L}*/iu.test(q)
+  || /(?:уменьш|сокращ|сниж)\p{L}*.{0,60}обучаем\p{L}*.{0,30}параметр\p{L}*.{0,50}10(?:[, \u00a0\u2009]?000)\s*(?:раз|[x×])/iu.test(q)
+);
+const a3GpuMemoryTerm = (q) => /gpu.{0,20}memory|memory.{0,20}gpu|gpu.{0,20}памят\p{L}*|памят\p{L}*.{0,20}gpu/iu.test(q);
+const a3Threefold = (q) => /(?:\b(?:3|three)\s*(?:times?|fold|[x×])(?=$|[^\p{L}\p{N}])|в\s+(?:3|три)\s+раза)/iu.test(q);
+const a3MemoryDecrease = (q) => {
+  if (!a3GpuMemoryTerm(q) || !a3Threefold(q) || /(?:\b(?:more|higher|greater|increas\p{L}*)\b|больш\p{L}*|увелич\p{L}*)/iu.test(q)) return false;
+  return /(?:\b(?:reduc\p{L}*|decreas\p{L}*)\b.{0,110}(?:gpu.{0,20}memory|memory.{0,20}gpu).{0,40}(?:by\s*)?\b3\s*(?:times?|fold|[x×])|(?:gpu.{0,20}memory|memory.{0,20}gpu).{0,40}\b(?:reduc\p{L}*|decreas\p{L}*|less|fewer|lower)\b.{0,40}\b3\s*(?:times?|fold|[x×])|\b3\s*(?:times?|fold|[x×])\s*(?:less|fewer|lower)\b.{0,35}(?:gpu.{0,20}memory|memory.{0,20}gpu))/iu.test(q)
+    || /(?:gpu.{0,20}памят\p{L}*|памят\p{L}*.{0,20}gpu).{0,40}(?:сниж\p{L}*|уменьш\p{L}*|сокращ\p{L}*|меньше).{0,35}(?:в\s+)?(?:3|три)\s+раза/iu.test(q)
+    || /(?:в\s+)?(?:3|три)\s+раза\s+меньше.{0,30}(?:gpu.{0,20}памят\p{L}*|памят\p{L}*.{0,20}gpu)/iu.test(q)
+    || /\b(?:reduc\p{L}*|decreas\p{L}*)\b.{0,70}trainable\s+parameters?.{0,60}10(?:[, \u00a0\u2009]?000)\s*times?.{0,50}\band\b.{0,25}(?:the\s+)?gpu.{0,20}memory.{0,35}(?:by\s+)?3\s*times?/iu.test(q);
+};
+const a3NoAdditionalInferenceLatency = (q) => /\b(?:no|without)\b.{0,50}(?:additional\b.{0,30})?inference.{0,25}latency\b|\b(?:does|do)\s+not\s+(?:add|introduc\p{L}*).{0,50}inference.{0,25}latency\b/iu.test(q)
+  || /без.{0,50}(?:дополнительн\p{L}*.{0,25})?задержк\p{L}*.{0,50}инференс\p{L}*|инференс\p{L}*.{0,50}без.{0,25}(?:дополнительн\p{L}*.{0,25})?задержк\p{L}*|не.{0,40}(?:добавл|привод|внос|созда|име)\p{L}*.{0,40}(?:дополнительн\p{L}*.{0,15})?задержк\p{L}*.{0,40}инференс\p{L}*/iu.test(q);
 
-const a1RussianCompute = 'модель установила bleu 41.8 на wmt 2014 english-to-french после 3.5 дней обучения на восьми gpu.';
-const a1EnglishQuote = 'the model reached bleu 41.8 on the wmt 2014 english-to-french task after 3.5 days of training on eight gpus.';
-assert.equal(pairedAnchor([{ statement: a1RussianCompute, quote: a1EnglishQuote }], a1ComputeStatement, a1ComputeQuote), true, 'Harness selftest: RU A1 compute statement pairs with its own exact EN quote.');
-assert.equal(pairedAnchor([{ statement: a1RussianCompute.replace('41.8', '41.9'), quote: a1EnglishQuote }], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: wrong A1 score must fail.');
-assert.equal(pairedAnchor([{ statement: a1RussianCompute.replace('восьми gpu', 'девяти gpu'), quote: a1EnglishQuote }], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: wrong A1 GPU quantity must fail.');
-assert.equal(pairedAnchor([{ statement: a1RussianCompute.replace('english-to-french', 'english-to-german'), quote: a1EnglishQuote.replace('english-to-french', 'english-to-german') }], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: wrong A1 language direction must fail.');
+const selftestCard = (statement, quote) => ({ statement: normalizeAnchorText(statement), quote: normalizeAnchorText(quote) });
+const selftestPair = (statement, quote, predicate) => pairedAnchor([selftestCard(statement, quote)], predicate);
+const positiveAnchorCases = [
+  ['A1 German RU statement with EN quote', selftestPair('На WMT 2014 переводе с английского на немецкий получено 28,4 BLEU.', 'The model achieves 28.4 BLEU on the WMT 2014 English-to-German translation task.', a1GermanStatement)],
+  ['A1 French newstest2014 alias with exact table row', selftestPair('Transformer (big) получил 41,8 BLEU на WMT 2014 English-to-French newstest2014 test.', 'Table 2 reports English-to-French newstest2014 tests; Model BLEU EN-DE EN-FR Transformer (big model) 28.4 41.8.', a1FrenchStatement) && selftestPair('Transformer (big) получил 41,8 BLEU на WMT 2014 English-to-French newstest2014 test.', 'Table 2 reports English-to-French newstest2014 tests; Model BLEU EN-DE EN-FR Transformer (big model) 28.4 41.8.', a1FrenchQuote)],
+  ['A1 compute conditions RU statement with EN quote', selftestPair('Модель получила 41,8 BLEU на WMT 2014 English-to-French за 3,5 дня на восьми GPU.', 'The model reached 41.8 BLEU on the WMT 2014 English-to-French task after 3.5 days on eight GPUs.', a1ComputeStatement) && selftestPair('Модель получила 41,8 BLEU на WMT 2014 English-to-French за 3,5 дня на восьми GPU.', 'The model reached 41.8 BLEU on the WMT 2014 English-to-French task after 3.5 days on eight GPUs.', a1ComputeQuote)],
+  ['A2 residual functions legacy EN plural', selftestPair('The method reformulates stacked layers as residual functions.', 'The layers fit residual functions and the original mapping is recast.', a2ResidualMapping)],
+  ['A2 residual mapping RU statement with EN quote', selftestPair('Авторы переформулируют слои как остаточное отображение F(x) := H(x) − x и F(x)+x.', 'The layers fit a residual mapping F(x) := H(x) - x; the original mapping is recast as F(x)+x.', a2ResidualMapping)],
+  ['A2 152 layers RU statement with EN quote', selftestPair('ResNet глубиной 152 слоя в 8 раз глубже VGG, но имеет меньшую сложность.', 'The residual net has a depth of 152 layers, 8x deeper than VGG but with lower complexity.', a2Layers152)],
+  ['A2 ensemble test error RU statement with EN quote', pairedA2Ensemble([selftestCard('Ансамбль residual nets достигает 3,57% ошибки на тестовой выборке ImageNet.', 'An ensemble of residual nets achieves 3.57% error on the ImageNet test set.')])],
+  ['A2 top-5 qualifier is supported by its own quote', pairedA2Ensemble([selftestCard('Ансамбль показывает 3.57% top-5 error на ImageNet test set.', 'The ensemble has 3.57% top-5 error on the ImageNet test set.')])],
+  ['A3 frozen weights and trainable low-rank matrices RU/EN', selftestPair('LoRA замораживает предобученные веса и вводит обучаемые низкоранговые матрицы.', 'LoRA freezes pre-trained weights and injects trainable low-rank matrices.', a3FrozenLowRankMatrices)],
+  ['A3 GPT-3 175B 10,000x fewer trainable parameters RU/EN', selftestPair('Для GPT-3 175B LoRA использует в 10 000 раз меньше обучаемых параметров.', 'For GPT-3 175B, LoRA uses 10,000 times fewer trainable parameters.', (q) => a3Gpt175(q) && a3Fewer10000TrainableParameters(q))],
+  ['A3 GPT-3 175B 3x less GPU memory RU/EN', selftestPair('Для GPT-3 175B требования к GPU-памяти снижаются в 3 раза.', 'For GPT-3 175B, LoRA reduces the GPU memory requirement by 3 times.', (q) => a3Gpt175(q) && a3MemoryDecrease(q))],
+  ['A3 coordinated trainable-parameter and GPU-memory reductions', selftestPair('For GPT-3 175B, LoRA reduces trainable parameters by 10,000 times and GPU memory by 3 times.', 'For GPT-3 175B, LoRA can reduce the number of trainable parameters by 10,000 times and the GPU memory requirement by 3 times.', (q) => a3Gpt175(q) && a3MemoryDecrease(q))],
+  ['A3 no additional inference latency RU/EN', selftestPair('LoRA не добавляет дополнительной задержки инференса.', 'LoRA adds no additional inference latency.', a3NoAdditionalInferenceLatency)],
+];
+for (const [name, passed] of positiveAnchorCases) assert.equal(passed, true, 'Harness selftest must pass: ' + name);
+assert.equal(selftestPair('На WMT 2014 английский-to-немецкий результат равен 28,5 BLEU.', 'The model reaches 28.4 BLEU on WMT 2014 English-to-German.', a1GermanStatement), false, 'Harness selftest: wrong A1 value must fail.');
+assert.equal(selftestPair('41.8 BLEU on WMT 2014 English-to-French.', '41.8 BLEU on WMT 2014 English-to-German.', a1FrenchStatement), false, 'Harness selftest: wrong A1 language direction must fail.');
+assert.equal(selftestPair('41.8 BLEU on WMT 2014 English-to-French.', '41.8 BLEU on English-to-French newstest2013 tests; Transformer (big model) 28.4 41.8.', a1FrenchQuote), false, 'Harness selftest: newstest2013 must not alias WMT 2014.');
+assert.equal(selftestPair('Модель получила 41,8 BLEU на WMT 2014 English-to-French за 4 дня на восьми GPU.', 'The model reached 41.8 BLEU on WMT 2014 English-to-French after 3.5 days on eight GPUs.', a1ComputeStatement), false, 'Harness selftest: wrong compute condition must fail.');
+assert.equal(selftestPair('41.8 BLEU on WMT 2014 English-to-French after 3.5 days on eight GPUs.', 'The model reached 41.8 BLEU on WMT 2014 English-to-French after 3.5 days on seven GPUs.', a1ComputeQuote), false, 'Harness selftest: wrong A1 GPU count must fail.');
 assert.equal(pairedAnchor([
-  { statement: a1RussianCompute, quote: 'the model was trained for 3.5 days on eight gpus.' },
-  { statement: 'unrelated result', quote: a1EnglishQuote },
-], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: A1 language/result facts cannot be borrowed from another card.');
-const a2ResidualStatement = 'the method reformulates stacked layers to fit a residual mapping f(x) := h(x) - x, recasting the original mapping as f(x)+x.';
-const a2ResidualQuote = 'we explicitly let these layers fit a residual mapping. the original mapping is recast into f(x)+x.';
-assert.equal(pairedAnchor([{ statement: a2ResidualStatement, quote: a2ResidualQuote }], a2ResidualMapping), true, 'Harness selftest: residual mapping wording passes with its own supporting quote.');
-assert.equal(pairedAnchor([
-  { statement: 'the method reformulates stacked layers as residual functions.', quote: 'we let stacked layers fit residual functions.' },
-], a2ResidualMapping), true, 'Harness selftest: legacy English residual functions wording remains accepted.');
+  selftestCard('Модель получила 41,8 BLEU на WMT 2014 English-to-French за 3.5 дня на восьми GPU.', 'The model trained for 3.5 days on eight GPUs.'),
+  selftestCard('Unrelated method statement.', 'The model reached 41.8 BLEU on WMT 2014 English-to-French.'),
+], a1ComputeStatement, a1ComputeQuote), false, 'Harness selftest: facts cannot be borrowed from another card.');
+assert.equal(selftestPair('Сеть глубиной 151 слой.', 'The residual network has 152 layers.', a2Layers152), false, 'Harness selftest: wrong A2 layer count must fail.');
+assert.equal(selftestPair('Residual functions provide benefit.', 'Residual functions are beneficial.', a2ResidualMapping), false, 'Harness selftest: substring matches such as benefit must not imply reformulation.');
+assert.equal(pairedA2Ensemble([selftestCard('Ансамбль имеет 3.57% top-5 error на ImageNet test set.', 'The ensemble has 3.57% error on the ImageNet test set.')]), false, 'Harness selftest: top-5 must be present in its own quote when stated.');
+assert.equal(selftestPair('The pretrained weights are unfrozen and low-rank matrices are trainable.', 'The model uses unfrozen weights and trainable low-rank matrices.', a3FrozenLowRankMatrices), false, 'Harness selftest: unfrozen weights must not pass frozen-weights.');
+assert.equal(selftestPair('For GPT-3 175B, LoRA reduces trainable parameters by 10,000 times.', 'For GPT-3 175B, LoRA can reduce the number of trainable parameters by 10,000 times.', (q) => a3Gpt175(q) && a3Fewer10000TrainableParameters(q)), true, 'Harness selftest: source-style 10,000-times reduction must pass.');
+assert.equal(selftestPair('For GPT-3 175B, LoRA reduces trainable parameters by 10,000 times.', 'For GPT-3 175B, LoRA can reduce the number of trainable parameters by 10,000 times.', (q) => a3Gpt175(q) && a3Fewer10000TrainableParameters(q)), true, 'Harness selftest: source-style 10,000-times reduction must pass.');
+assert.equal(selftestPair('GPT-3 175B uses 10,000 times more trainable parameters.', 'For GPT-3 175B, LoRA uses 10,000 times more trainable parameters.', (q) => a3Gpt175(q) && a3Fewer10000TrainableParameters(q)), false, 'Harness selftest: 10,000 more parameters must not pass fewer.');
+assert.equal(selftestPair('GPT-3 175B uses 3x more GPU memory.', 'For GPT-3 175B, LoRA requires 3x more GPU memory.', (q) => a3Gpt175(q) && a3MemoryDecrease(q)), false, 'Harness selftest: 3x more GPU memory must not pass less.');
+assert.equal(selftestPair('LoRA adds additional inference latency.', 'LoRA adds additional inference latency.', a3NoAdditionalInferenceLatency), false, 'Harness selftest: affirmative latency must not pass no-added-latency.');
 
 function checkAnchors(byFile) {
   const missing = [];
   // Every independent anchor must be stated by one owner-visible card and supported by that card's own exact quote.
   const cards = anchorHay(byFile);
   const q01 = cards('arxiv-01.pdf'), q03 = cards('arxiv-03.pdf'), q07 = cards('arxiv-07.pdf');
-  const wmt = (q) => /wmt\s*(?:2014|14)/.test(q);
   const paired = pairedAnchor;
-  if (!paired(q01, (q) => q.includes('28.4') && q.includes('bleu') && wmt(q) && /english.{0,25}german|en[-– ]de/.test(q))) missing.push('A1-English-German-28.4-BLEU');
-  if (!paired(q01, (q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && frenchTranslation(q))) missing.push('A1-English-French-41.8-BLEU');
+  if (!paired(q01, a1GermanStatement, a1GermanQuote)) missing.push('A1-English-German-28.4-BLEU');
+  if (!paired(q01, a1FrenchStatement, a1FrenchQuote)) missing.push('A1-English-French-41.8-BLEU');
   if (!paired(q01, a1ComputeStatement, a1ComputeQuote)) missing.push('A1-compute(3.5d/8GPU-for-French-result)');
   if (!paired(q03, a2ResidualMapping)) missing.push('A2-residual-functions');
-  if (!paired(q03, (q) => runsOf(q).includes('152') && /layer/.test(q))) missing.push('A2-152-layers');
-  if (!paired(q03, (q) => q.includes('3.57') && q.includes('ensemble') && q.includes('imagenet') && q.includes('test') && q.includes('error'))) missing.push('A2-ensemble-3.57%-ImageNet-test-error');
-  if (!paired(q07, (q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q))) missing.push('A3-frozen-weights-trained-lowrank');
-  const gpt = (q) => /gpt[- ]?3/.test(q) && /175\s*b/.test(q);
-  if (!paired(q07, (q) => gpt(q) && /10[, ]*000/.test(q) && q.includes('trainable') && q.includes('parameter'))) missing.push('A3-GPT3-175B-10000x-trainable-params');
-  if (!paired(q07, (q) => gpt(q) && /(?:\b3\b|\bthree\b).{0,20}(?:times|[x×]|fold)/.test(q) && q.includes('gpu') && q.includes('memory'))) missing.push('A3-GPT3-175B-3x-GPU-memory');
-  if (!paired(q07, (q) => /(?:\bno\b|without|does not|do not).{0,80}latency/.test(q) && q.includes('inference'))) missing.push('A3-no-additional-inference-latency');
+  if (!paired(q03, a2Layers152)) missing.push('A2-152-layers');
+  if (!pairedA2Ensemble(q03)) missing.push('A2-ensemble-3.57%-ImageNet-test-error');
+  if (!paired(q07, a3FrozenLowRankMatrices)) missing.push('A3-frozen-weights-trained-lowrank');
+  if (!paired(q07, (q) => a3Gpt175(q) && a3Fewer10000TrainableParameters(q))) missing.push('A3-GPT3-175B-10000x-trainable-params');
+  if (!paired(q07, (q) => a3Gpt175(q) && a3MemoryDecrease(q))) missing.push('A3-GPT3-175B-3x-GPU-memory');
+  if (!paired(q07, a3NoAdditionalInferenceLatency)) missing.push('A3-no-additional-inference-latency');
   return missing;
 }
 const TERMINAL = new Set(['done', 'partial', 'failed']);

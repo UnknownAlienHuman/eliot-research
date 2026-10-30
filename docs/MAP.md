@@ -276,11 +276,12 @@ re-distilled automatically.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 
-K3 is not fully accepted or deployed. Claim cards still omit Transformer's 28.4 BLEU German result, ResNet's 3.57%
-ensemble ImageNet test error, and LoRA's 10,000-fold parameter and threefold GPU-memory reductions. Claim-mode C1–C4
-remain open; semantic support for guide, digest and glossary content remains
-separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference and does not
-qualify K3.
+K3 is not fully accepted or deployed. The ten baseline papers reached `done` with two recorded calls each; the
+unchanged-revision check retained all 111 claims and 20 recorded calls without further inference. Required conditions
+for the French Transformer result and some LoRA anchors remain unresolved. All four real overflow answers used
+`claims` mode, but C2–C4 failed numeric support in their cited ranges. Semantic support for guide, digest and glossary
+content remains separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference
+and does not qualify K3.
 
 ---
 

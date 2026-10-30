@@ -133,6 +133,59 @@ describe("verifyClaims", () => {
     expect(cleared.claims[0]).toMatchObject({ valueText: null, valueNumber: null, unit: null, conditions: "test split" });
   });
 
+  it("rejects validation metadata contradicted by its own explicit test-set quote", () => {
+    const quote = "Training error decreases. Evaluation error is 7.5% on the Dataset A test set.";
+    const out = verifyClaims(quote, [blockFor(1, quote, quote)], [claim({
+      quote, block: 1, statement: "Evaluation error is 7.5% on the Dataset A test set.",
+      dataset: "Dataset A validation", metric: "error", valueText: "7.5", unit: "%",
+    })]);
+    expect(out.claims).toEqual([]);
+    expect(out.dropped).toEqual([{ index: 0, reason: "contradictory-dataset-split" }]);
+  });
+
+  it("retains matching split metadata without rewriting the result or treating dev as a different split", () => {
+    for (const [split, dataset] of [["test", "Corpus test"], ["validation", "Corpus dev"]] as const) {
+      const quote = `Evaluation error is 7.5% on the Corpus ${split} set.`;
+      const out = verifyClaims(quote, [blockFor(1, quote, quote)], [claim({
+        quote, block: 1, statement: quote, dataset, metric: "error", valueText: "7.5", unit: "%",
+      })]);
+      expect(out.dropped).toEqual([]);
+      expect(out.claims).toHaveLength(1);
+      const stored = out.claims[0];
+      if (!stored) throw new Error("The matching result must be retained.");
+      expect(stored).toMatchObject({ dataset, statement: quote, quote, valueNumber: 7.5 });
+      expect(resultStatement(stored)).toBe(quote);
+    }
+  });
+
+  it("leaves ambiguous splits, absent split context and unknown dataset splits for semantic review", () => {
+    for (const [quote, dataset] of [
+      ["Error is 7.5% on Corpus training data and on the Corpus test set.", "Corpus validation"],
+      ["Error is 7.5% on Corpus training and test data.", "Corpus validation"],
+      ["A statistical test reports an error of 7.5% on Corpus.", "Corpus validation"],
+      ["Error is 7.5% on the Corpus test set.", "Corpus unspecified"],
+      ["Error is 7.5% on the Corpus test set.", "Corpus test/validation"],
+    ] as const) {
+      const out = verifyClaims(quote, [blockFor(1, quote, quote)], [claim({ quote, block: 1, statement: quote, dataset })]);
+      expect(out.dropped).toEqual([]);
+      expect(out.claims).toHaveLength(1);
+    }
+  });
+
+  it("does not bind another dataset's test set to the candidate's validation result", () => {
+    const quote = "Dataset A validation accuracy is 7.4. Dataset B uses a test set.";
+    const statement = "Dataset A validation accuracy is 7.4.";
+    const out = verifyClaims(quote, [blockFor(1, quote, quote)], [claim({
+      quote, block: 1, statement, dataset: "Dataset A validation", metric: "accuracy", valueText: "7.4",
+    })]);
+    expect(out.dropped).toEqual([]);
+    expect(out.claims).toHaveLength(1);
+    const stored = out.claims[0];
+    if (!stored) throw new Error("The unrelated dataset must not reject this result.");
+    expect(stored).toMatchObject({ dataset: "Dataset A validation", statement, quote, valueNumber: 7.4 });
+    expect(resultStatement(stored)).toBe(statement);
+  });
+
   it("checks scalar numeric identity without requiring percent typography", () => {
     const quote = "Validation accuracy reached 50.";
     const statement = "Validation accuracy reached 50%.";

@@ -262,6 +262,9 @@ sentence. Its primary numeric value must occur in that statement, and every auth
 the structured primary result or context, all supported by the same exact quote. Missing numeric conditions reject
 the card instead of disappearing during formatting. Qualifiers and delta descriptions remain authored prose;
 semantic support is still a separate quality gate.
+Code also rejects a result whose simple literal dataset name carries one explicit data split while its own quote
+names that same dataset with a different unambiguous split. It does not rewrite fields or infer dataset aliases;
+ambiguous splits and other task/metric/dataset semantics remain for quality review.
 New second-call additional claims require the same nullable structured fields as extraction. Cached outputs may
 omit these fields; storage-only rechecks retain that shape and treat omissions as null without inventing metadata.
 Store raw result/report in R2, compact verified claims in D1, and usage
