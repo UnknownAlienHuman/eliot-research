@@ -46,6 +46,13 @@ const SOFT_HYPHEN = "\u00AD";
 const encoder = new TextEncoder();
 const segmenter = new Intl.Segmenter(["en", "ru"], { granularity: "sentence" });
 
+/** Model-facing source JSON only: escape literal brackets inside strings, keeping exact authority labels. */
+export function sourceContextJson(value: Record<string, unknown>, authorityLabels: ReadonlySet<string>): string {
+  return JSON.stringify(value).replace(/"(?:\\.|[^"\\])*"/gu, (token) =>
+    authorityLabels.has(JSON.parse(token) as string) ? token
+      : token.replaceAll("[", "\\u005b").replaceAll("]", "\\u005d"));
+}
+
 interface Fence {
   char: string;
   count: number;

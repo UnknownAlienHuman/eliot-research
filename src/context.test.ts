@@ -226,30 +226,68 @@ describe("buildContext K2 whole scope", () => {
     const text = "### Page 1\n\n## Методы 🌿\n\nLes mesures de la Page 1 sont exactes.\n\n### Страница 2\n\nPage 3\n";
     const blocks = scanBlocks(text);
     const byteLength = new TextEncoder().encode(text).byteLength;
+    const secondText = "Paper B body.";
+    const secondBlock = wholeBlock(secondText, 7);
+    const secondByteLength = new TextEncoder().encode(secondText).byteLength;
     const { env } = makeEnv({
-      memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
-      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r1", createdAt: 1 }],
-      revisions: [{ id: "r1", readableState: "readable", readableSize: byteLength, distillState: null, guideSummary: null, deletedAt: null }],
-      texts: { r1: { text, blocks } },
+      memberships: [
+        { projectId: "p1", sourceId: "s1", enabled: 1 },
+        { projectId: "p1", sourceId: "s2", enabled: 1 },
+      ],
+      sources: [
+        { id: "s1", title: "Paper A", state: "active", currentRevisionId: "r1", createdAt: 1 },
+        { id: "s2", title: "Paper B", state: "active", currentRevisionId: "r2", createdAt: 2 },
+      ],
+      revisions: [
+        { id: "r1", readableState: "readable", readableSize: byteLength, distillState: null, guideSummary: null, deletedAt: null },
+        { id: "r2", readableState: "readable", readableSize: secondByteLength, distillState: null, guideSummary: null, deletedAt: null },
+      ],
+      texts: { r1: { text, blocks }, r2: { text: secondText, blocks: [secondBlock] } },
     });
     const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
     expect(res.mode).toBe("whole");
+    expect(res.revisionIds).toEqual(["r1", "r2"]);
+    expect(res.sources.map((source) => [source.sourceId, source.revisionId, source.alias])).toEqual([
+      ["s1", "r1", "S1"], ["s2", "r2", "S2"],
+    ]);
     expect(res.sources[0]?.blocks).toEqual([blocks[1], blocks[2]]);
     expect(res.sources[0]?.blocks.map((block) => sliceUtf8(text, block.start, block.end))).toEqual([
       "## Методы 🌿\n", "Les mesures de la Page 1 sont exactes.\n",
     ]);
+    expect(res.sources[1]?.blocks).toEqual([secondBlock]);
     const source = res.messages[1]?.content ?? "";
-    expect(source).not.toContain("### Page 1\n");
-    expect(source).not.toContain("### Страница 2\n");
-    expect(source).not.toContain("Page 3\n");
-    expect(source).not.toContain("[S1:1]");
-    expect(source).not.toContain("[S1:4]");
-    expect(source).not.toContain("[S1:5]");
-    expect(source).toContain("[S1:2] ## Методы 🌿");
-    expect(source).toContain("[S1:3] Les mesures de la Page 1 sont exactes.");
-    const resolved = resolveCitations("The page markers [S1:1], [S1:4] and [S1:5]; heading [S1:2].", res.sources);
-    expect(resolved.citations).toMatchObject([{ block: 2, start: blocks[1]?.start, end: blocks[1]?.end }]);
-    expect(resolved.invalidLabels).toBe(3);
+    const secondSourceStart = source.indexOf("Source S2 — Paper B");
+    const firstSource = source.slice(source.indexOf("Source S1 — Paper A"), secondSourceStart);
+    const secondSource = source.slice(secondSourceStart);
+    expect(firstSource).toContain("Citable labels for S1 (block IDs; gaps are intentional): [S1:2], [S1:3].");
+    expect(firstSource).not.toContain("### Page 1\n");
+    expect(firstSource).not.toContain("### Страница 2\n");
+    expect(firstSource).not.toContain("Page 3\n");
+    for (const unavailable of ["[S1:1]", "[S1:4]", "[S1:5]", "[S1:132]", "[S7:132]", "[S2:7]"]) {
+      expect(firstSource).not.toContain(unavailable);
+    }
+    expect(firstSource).toContain("[S1:2] ## Методы 🌿");
+    expect(firstSource).toContain("[S1:3] Les mesures de la Page 1 sont exactes.");
+    expect(secondSource).toContain("Citable labels for S2 (block IDs; gaps are intentional): [S2:7].");
+    expect(secondSource).toContain("[S2:7] " + secondText);
+    expect(secondSource).not.toContain("[S1:2]");
+    const system = res.messages[0]?.content ?? "";
+    expect(system).toContain("The N in [Sx:N] is an exact source block ID, not a page, section or bibliography number; gaps are intentional.");
+    expect(system).toContain("If no listed label supports a claim, omit it rather than infer an ID.");
+    const resolved = resolveCitations(
+      "A [S1:2] and [S1:3]; B [S2:7]; page-only [S1:1] [S1:4] [S1:5]; absent [S1:132] [S7:132]; foreign [S1:7] [S2:2].",
+      res.sources,
+    );
+    expect(resolved.citations.map((citation) => [citation.label, citation.sourceId, citation.revisionId, citation.block, citation.start, citation.end])).toEqual([
+      ["[S1:2]", "s1", "r1", 2, blocks[1]?.start, blocks[1]?.end],
+      ["[S1:3]", "s1", "r1", 3, blocks[2]?.start, blocks[2]?.end],
+      ["[S2:7]", "s2", "r2", 7, 0, secondByteLength],
+    ]);
+    expect(resolved.invalidLabels).toBe(7);
+    const estimateTokens = (value: string) => Math.ceil(new TextEncoder().encode(value).byteLength / 3);
+    expect(res.messages.map((message) => message.role)).toEqual(["system", "user"]);
+    expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + estimateTokens(message.content), 0));
+    expect(res.estimatedInputTokens + modelOutputLimit(MODEL)).toBeLessThanOrEqual(Math.min(Math.floor(MODEL.contextTokens * 0.6), 400000));
   });
 
   it("narrowed scope keeps answers citing only A and drops answers citing B", async () => {
@@ -579,7 +617,7 @@ describe("buildContext K3 claims fallback", () => {
       texts: { r9: { text: body, guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 300, heading: null }, { id: 2, type: "paragraph", start: 300, end: 600, heading: null }] } },
       claims: { r9: [{ ordinal: 1, statement: "Finding one", quote: "quoted one", conditions: null, blockIndex: 2, ambiguous: 0 }] },
     });
-    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 1200, maxOutputTokens: 100 }, question: "Q" + "q".repeat(459), instructions: "I" + "i".repeat(459) });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 1400, maxOutputTokens: 100 }, question: "Q" + "q".repeat(459), instructions: "I" + "i".repeat(459) });
     expect(res.mode).toBe("claims");
     expect(res.revisionIds).toEqual(["r9"]);
     expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
@@ -822,7 +860,7 @@ describe("orientation from stored guides", () => {
       revisions: [{ id: "r1", readableState: "readable", readableSize: 10, distillState: "done", guideSummary: "G".repeat(600), deletedAt: null }],
       texts: { r1: { text: "Alpha.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 6, heading: null }] } },
     });
-    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 584, maxOutputTokens: 100 } });
+    const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 800, maxOutputTokens: 100 } });
     expect(res.mode).toBe("whole");
     expect(res.messages.length).toBe(2);
     const body = res.messages.map((m) => m.content).join(NL);
@@ -891,6 +929,9 @@ describe("bare-label header regression", () => {
     const sourceText = res.messages[1]?.content ?? "";
     const orientText = res.messages[2]?.content ?? "";
     expect(sourceText).toContain("[S1:2] " + passage);
+    expect(sourceText).toContain("Citable labels for S1 (block IDs; gaps are intentional): [S1:2].");
+    expect(sourceText).not.toContain("[S1:1]");
+    expect(sourceText).not.toContain("[S1:3]");
     expect(sourceText).toContain("Source S1");
     expect(sourceText).toContain("Paper A");
     expect(sourceText).not.toMatch(/^\[S\d+\] /m);

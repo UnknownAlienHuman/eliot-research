@@ -207,6 +207,10 @@ range. K6 owns cross-source normalization; K3 must not pretend raw multilingual 
 
 ## 6. One-time distillation
 
+Model-facing source JSON Unicode-escapes literal square brackets inside strings while retaining the exact authority
+label strings. JSON decoding preserves the original value; canonical bytes and stored artifacts remain unchanged.
+Extraction and synthesis preserve table row, metric and column/split identity; blank cells are unreported results.
+
 States: `none|queued|running|paused|done|partial|failed`. Ingest leaves readable revisions at `none`. Only an explicit
 Understand request queues and admits its requested revision, subject to concurrency and provider allowance;
 unavailable allowance becomes visible `paused` until another explicit request. Cron only reconciles stale `running` rows
@@ -340,6 +344,9 @@ K4 also exposes `refresh_models` and `request_understanding` to owner-authentica
 rejected before either existing product function runs. These tools never grant an agent paid-job authority.
 
 ## 8. Ask and context
+
+Each source context declares its exact citable-label inventory from the resolver's same block set. Block IDs can have
+gaps and are never page numbers; the inventory is included in the existing input-token estimate.
 
 Freeze readable revision IDs at turn start. Context modes are whole labelled text, verified K3 guides/claims when whole
 text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. Whole-text capacity is
