@@ -548,7 +548,7 @@ export function ChatView({
                   ? (turn.state === 'started'
                     ? <p className='er-chat__hint' role='status'>Preparing your answer…</p>
                     : <p className='er-chat__hint'>No answer available.</p>)
-                  : <Markdown text={turn.answer} references={collectRefs(projectId, turn.citations)} warnings={turn.warnings ?? []} />}
+                  : <Markdown text={turn.answer} references={collectRefs(projectId, turn.citations)} />}
               </div>
               <p className='er-chat__meta'>
                 <span>{stateLabel(turn.state)}</span>
