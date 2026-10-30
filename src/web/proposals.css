@@ -28,7 +28,6 @@
 .er-proposals__review h3 { color: var(--md-sys-color-on-surface); font-size: var(--eliot-type-title-large-size); line-height: var(--eliot-type-title-large-line-height); }
 .er-proposals__review details { display: grid; gap: var(--eliot-space-block-control); min-width: 0; }
 .er-proposals__review summary { display: flex; align-items: center; min-height: var(--eliot-size-control); cursor: pointer; }
-.er-proposals__review code { overflow-wrap: anywhere; font-family: var(--eliot-type-font-family-mono); }
 .er-proposals__review li { min-width: 0; overflow-wrap: anywhere; }
 .er-proposals__review article > :where(p:first-child) { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); }
 .er-proposals__review article > :where(p[role='status']) { padding: var(--eliot-space-block-control) var(--eliot-space-gutter); border-radius: var(--eliot-shape-medium); background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }

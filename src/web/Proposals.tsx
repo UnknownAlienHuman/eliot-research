@@ -204,9 +204,8 @@ export function ProposalsInbox({ projectId, onAccepted }: { readonly projectId: 
                 <h3>{visible.title}</h3>
                 {visible.status === 'proposed' ? <p role="status">{baseIsCurrent ? visible.baseRevisionId ? 'Based on the current accepted page.' : 'New page proposal.' : 'Accepted page changed; request a new proposal before accepting.'}</p> : null}
                 <details>
-                  <summary>Revision and citations</summary>
+                  <summary>Source citations</summary>
                   <p>From: {visible.actor}</p>
-                  <p>Base: <code>{visible.baseRevisionId ?? 'New page'}</code> · Current head: <code>{visible.headRevisionId ?? 'None'}</code></p>
                   <ul>
                     {visible.citations.map((citation: Citation) => (
                       <li key={citation.revisionId + ':' + citation.block + ':' + citation.start}>
