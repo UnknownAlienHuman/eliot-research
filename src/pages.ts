@@ -138,7 +138,7 @@ export async function listPages(env: Env, _actor: Actor, input: { projectId: str
   const project = await env.DB.prepare("SELECT id FROM project WHERE id=?").bind(input.projectId).first<{ id: string }>();
   if (!project) throw new LibraryError("not_found", "Project not found.", 404);
   if (input.kind !== undefined && !PAGE_KINDS.includes(input.kind)) throw new LibraryError("invalid", "Unknown page kind.", 400);
-  const result = await env.DB.prepare("SELECT id,title,kind,head_revision_id AS headRevisionId,freshness,updated_at AS updatedAt FROM page WHERE project_id=? AND (? IS NULL OR kind=?) AND (? IS NULL OR (updated_at,id)<(SELECT updated_at,id FROM page WHERE id=?)) ORDER BY updated_at DESC,id DESC LIMIT 51").bind(input.projectId, input.kind ?? null, input.kind ?? null, input.cursor ?? null, input.cursor ?? null).all<PageSummary>();
+  const result = await env.DB.prepare("SELECT id,title,kind,head_revision_id AS headRevisionId,freshness,updated_at AS updatedAt FROM page WHERE project_id=? AND head_revision_id IS NOT NULL AND (? IS NULL OR kind=?) AND (? IS NULL OR (updated_at,id)<(SELECT updated_at,id FROM page WHERE id=?)) ORDER BY updated_at DESC,id DESC LIMIT 51").bind(input.projectId, input.kind ?? null, input.kind ?? null, input.cursor ?? null, input.cursor ?? null).all<PageSummary>();
   return { pages: result.results.slice(0, 50), nextCursor: result.results.length > 50 ? (result.results[49]?.id ?? null) : null };
 }
 

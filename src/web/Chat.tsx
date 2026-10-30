@@ -8,6 +8,7 @@ import type { MarkdownReference } from './Markdown';
 import type { SourceSelection, TurnView } from '../shared/api';
 import type { Citation } from '../citations';
 import { ModelSettings } from './ModelSettings';
+import { ProposalsInbox } from './Proposals';
 import { ModelPicker } from './ModelPicker';
 import type { ModelRoute } from './ModelPicker';
 import './chat.css';
@@ -623,6 +624,7 @@ export function ChatView({
 }
 
 export function StudioView({ projectId, refreshKey }: StudioViewProps) {
+  const [proposalRefresh, setProposalRefresh] = useState(0);
   const [pages, setPages] = useState<PageRow[] | undefined>(undefined);
   const [failure, setFailure] = useState('');
   const [openId, setOpenId] = useState('');
@@ -644,7 +646,7 @@ export function StudioView({ projectId, refreshKey }: StudioViewProps) {
         if (live) setFailure(error instanceof Error ? error.message : 'Could not load saved pages.');
       });
     return () => { live = false; };
-  }, [projectId, refreshKey]);
+  }, [projectId, refreshKey, proposalRefresh]);
 
   useEffect(() => {
     if (openId === '') {
@@ -673,7 +675,7 @@ export function StudioView({ projectId, refreshKey }: StudioViewProps) {
         if (live) setPageLoading(false);
       });
     return () => { live = false; };
-  }, [projectId, openId]);
+  }, [projectId, openId, proposalRefresh]);
 
   return (
     <section className='er-chat er-chat--studio' aria-label='Studio'>
@@ -682,6 +684,10 @@ export function StudioView({ projectId, refreshKey }: StudioViewProps) {
           <h1 className='er-chat__title'>Studio</h1>
           <p className='er-chat__hint'>Answers you saved from chat.</p>
         </div>
+        <ProposalsInbox projectId={projectId} onAccepted={(pageId) => {
+          setProposalRefresh(value => value + 1);
+          setOpenId(pageId);
+        }} />
       </header>
       <div className='er-chat__studio-content'>
         <section className='er-chat__studio-list' aria-label='Saved pages'>

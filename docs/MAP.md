@@ -35,7 +35,7 @@ quotas.
 - K0 keeps the accepted Material shell with hostname Access auth: `/api/me`, Projects/Settings navigation and System/Light/Dark appearance verified locally on 1440/390 px with Cyrillic fonts, and all assets pass through auth. Live Access and deployed acceptance are not claimed.
 - K1 implements projects, the shared Library with immutable revisions, and exact UTF-8 reading (outline, whole text, ranges, original download). Exact text/URL duplicates return 409 with explicit Attach existing, reusing the stored revision with no silent merge. Conversion stays on the current path: native text locally, Workers AI `toMarkdown` where a document format requires it. AI Search and later-contour bindings remain absent.
 - K2 has a local Markdown chat path with frozen source scope, server-resolved citations, Stop/reconnect and storage-only Save, plus the R2 model snapshot with the owner-only refresh route. K2 and K3 are not fully accepted; their remaining quality and claim-mode gates stay open in their contour sections below.
-- K4 and K6 remain isolated, unaccepted work. K6 is frozen until K2/K3 acceptance.
+- K4 is active in an isolated integration branch and remains unaccepted. K6 is frozen until K2/K3 acceptance.
 - The existing `eliotr-core.kleymor-metal.workers.dev` address is retained per owner decision; the replacement is not deployed over it.
 - Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
 - PR #417 is the authoritative replacement-documentation history and supersedes the stacked plan in PR #416.
@@ -277,10 +277,11 @@ page that the owner can accept or reject.
 
 **Build**
 
-1. Apply `migrations/0004_agents.sql`; backfill/write trigram FTS over verified claim bodies.
+1. Apply `migrations/0009_agents.sql`; backfill/write trigram FTS over current verified claim bodies and retain a proposal's accepted base revision.
 2. Implement the shared product tools as `(env, actor, input) → compact Markdown` with hard output caps.
 3. Expose them through stateless Streamable HTTP MCP on a separate Access-protected hostname. Agent service-token actors
    may read and propose; only owner accepts.
+   Catalogue refresh and source-understanding tools use the existing owner-authorized functions; agent actors cannot invoke these side effects.
 4. Move the proposals inbox and add `pnpm eval k4` using a real MCP client.
 
 **Hard acceptance.** Every tool respects scope/size and labels resolve. A connected agent answers O2/O5 using only Eliot
@@ -288,6 +289,11 @@ tools, proposes a page, and all citations remain valid after owner acceptance.
 
 **Cost.** Eliot performs no model call for an external-agent request; the client brings its own model. FTS/read tools
 use D1/R2 only.
+
+The initial slice adds 1,365 non-test source lines and removes ten against the 900-line target. The excess retains
+bounded UTF-8 tool pagination, immutable cited proposals with stale-head checks, and the owner review dialog; these
+remain plain product functions and existing Material controls. Local signed-JWT MCP transport and owner acceptance
+are verified with test JWKS. Real agent answers to O2/O5 and deployed Access remain open, so K4 is not accepted.
 
 **Not now.** Per-agent project ACLs, task marketplace, outgoing MCP tools, large upload through MCP.
 

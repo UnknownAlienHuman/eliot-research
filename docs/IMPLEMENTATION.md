@@ -99,14 +99,15 @@ Migrations own schema names:
 | `0001_library.sql` | project, source, immutable revision, membership |
 | `0002_ask.sql` | settings, chat/turn, page/revision, answer usage/cost |
 | `0003_distill.sql` | distillation state/usage, source metadata, typed claims |
-| `0004_agents.sql` | future K4 trigram claim FTS and backfill; excluded from current selection |
+| `0004_agents.sql` | superseded K4 draft; excluded from migration selection |
 | `0005_model_gateway.sql` | nullable `settings.model_gateway_id`; existing-Gateway opt-in |
 | `0006_integrity.sql` | approved #420 guards for source/page ownership and terminal-turn/capture-identity immutability |
 | `0007_manual_understanding.sql` | explicit source understanding, removal of the automatic switch |
 | `0008_model_providers.sql` | provider configuration, owning-row token bounds and saved native usage choice; existing accounting data retained |
+| `0009_agents.sql` | trigram claim FTS/backfill and immutable proposal base revision |
 
-Current `migrations/000[1235678]_*.sql` selects `0001`–`0003` and `0005`–`0008`;
-future K4 `0004_agents.sql` remains excluded.
+Current `migrations/000[12356789]_*.sql` selects `0001`–`0003` and `0005`–`0009`;
+the superseded `0004_agents.sql` draft remains excluded.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:
 
@@ -158,8 +159,8 @@ K1 static capture uses HTTPS port 443, at most three redirects, a 15-second tota
 Hostname validation does not pin DNS resolution; DNS rebinding prevention is not claimed. No owner/model credentials
 are sent to captured sites or corpus download hosts. `ELIOT_REMOTE_BINDINGS=0 pnpm dev` disables remote services for
 local native-text work and CI; the production bindings and Access checks are unchanged. `pnpm db:local` applies pending
-`0001`–`0003`, `0005_model_gateway.sql` and `0006_integrity.sql` through `migrations/000[12356]_*.sql`;
-future K4 `0004` stays excluded.
+`0001`–`0003` and `0005`–`0009` through `migrations/000[12356789]_*.sql`;
+the superseded `0004` draft stays excluded.
 Remote D1/R2 provisioning and deployment are not run.
 
 ## 5. Blocks, labels, citations and quote verification
@@ -335,6 +336,8 @@ Tools return compact Markdown with explicit pagination and a default 4,000-token
 adds `web_search`, `web_read`, `capture_url`. Every tool accepts `(env, actor, input)`, enforces scope/output/write
 authority in code and uses full source/revision IDs from `list_sources`. Descriptions stay short and state when to use the
 tool. Before K5, `search` uses guides/claims/FTS; after K5 it may use AI Search with claim fallback.
+K4 also exposes `refresh_models` and `request_understanding` to owner-authenticated MCP clients. Agent actors are
+rejected before either existing product function runs. These tools never grant an agent paid-job authority.
 
 ## 8. Ask and context
 
@@ -417,6 +420,12 @@ Initial monthly owner guard leaves included-tier headroom: 4.5M ingestion tokens
 Use the installed Agents SDK `createMcpHandler` path verified by generated types, a fresh MCP SDK v2 server/request and
 stateless Streamable HTTP at `POST /mcp`. Allow exact hostnames only. Register §7 tools; no K7 web tools before K7 and no
 large upload through MCP.
+`ELIOT_MCP_ORIGIN` selects that endpoint's exact origin. The UI and MCP hostnames use an Access application audience
+that covers both configured hosts; signed service tokens become read/propose agents only on MCP, never on UI APIs.
+Migration `0009_agents.sql` adds the proposal base to existing page revisions and maintains current-claim FTS.
+Checked-output recovery publishes its guarded head before claim upserts, so FTS insert/update and head maintenance
+are all used. No claim-delete trigger is needed before lifecycle deletion has a caller. Headless proposals are omitted
+from accepted Studio pages until the owner accepts them.
 
 Workflow IDs are deterministic: `ingest-<revision>`, `distill-<revision>`,
 `project-<project>-<inputHash>`, `research-<job>`. Reuse an existing instance according to installed types. Each external

@@ -21,6 +21,11 @@ export interface OwnerActor {
   email?: string;
   authentication: "access" | "local" | "service-token";
 }
+export interface AgentActor {
+  type: "agent";
+  id: string;
+  authentication: "service-token";
+}
 
 export interface MeResponse {
   actor: OwnerActor;
@@ -128,4 +133,21 @@ export interface SourceSelection {
   sourceIds: readonly string[];
 }
 import type { Citation } from "../citations";
+
+export interface ProposalSummary {
+  revisionId: string;
+  pageId: string;
+  title: string;
+  kind: "note" | "answer" | "report" | "wiki";
+  status: "proposed" | "accepted" | "rejected";
+  actor: string;
+  createdAt: number;
+  headRevisionId: string | null;
+  baseRevisionId: string | null;
+}
+export interface ProposalView extends ProposalSummary {
+  body: string;
+  citations: Citation[];
+  revisionIds: string[];
+}
 
