@@ -290,7 +290,7 @@ tools, proposes a page, and all citations remain valid after owner acceptance.
 **Cost.** Eliot performs no model call for an external-agent request; the client brings its own model. FTS/read tools
 use D1/R2 only.
 
-The initial slice adds 1,345 non-test source lines and removes nine against the 900-line target. The excess retains
+The initial slice adds 1,365 non-test source lines and removes ten against the 900-line target. The excess retains
 bounded UTF-8 tool pagination, immutable cited proposals with stale-head checks, and the owner review dialog; these
 remain plain product functions and existing Material controls. Local signed-JWT MCP transport and owner acceptance
 are verified with test JWKS. Real agent answers to O2/O5 and deployed Access remain open, so K4 is not accepted.
