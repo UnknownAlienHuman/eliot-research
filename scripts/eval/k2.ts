@@ -329,6 +329,34 @@ function invalidEvidenceText(row) {
   return 'invalidLabels: ' + count + ' (unique samples: ' + (samples.length ? samples.join('; ') : 'none retained')
     + '; complete original occurrences/positions unavailable)';
 }
+function classifyBenchmarkOutcome(qids, rows, hardFailureCount, ownerReviewRequired) {
+  const hardChecksPassed = hardFailureCount === 0 && qids.every((qid) => rows.get(qid)?.passed === true);
+  const needsOwnerReview = ownerReviewRequired || qids.some((qid) => rows.get(qid)?.ownerReviewRequired === true);
+  return {
+    hardChecksPassed,
+    ownerReviewRequired: needsOwnerReview,
+    exitCode: hardChecksPassed ? (needsOwnerReview ? 2 : 0) : 1,
+  };
+}
+function assertK2OutcomeStaticSelftests() {
+  const partialInvalid = new Map([['O6', { passed: false, turnState: 'partial', invalidLabels: 3,
+    hardFailures: ['turn state is partial', 'invalidLabels is not zero'] }]]);
+  assert.deepEqual(classifyBenchmarkOutcome(['O6'], partialInvalid, 0, true),
+    { hardChecksPassed: false, ownerReviewRequired: true, exitCode: 1 },
+    'A partial row with invalid labels hard-fails even if the counter missed it and owner review is also required.');
+  const completedAdvisory = new Map([['O1', { passed: true, turnState: 'completed', ownerReviewRequired: true,
+    uncitedStatements: 162, unsupportedNumericStatements: 153,
+    factChecks: [{ passed: false, advisory: true, hard: false }, { passed: false, advisory: true, hard: false }] }]]);
+  assert.deepEqual(classifyBenchmarkOutcome(['O1'], completedAdvisory, 0, false),
+    { hardChecksPassed: true, ownerReviewRequired: true, exitCode: 2 },
+    'Completed hard-passing rows keep advisory counts nonfatal while owner review selects exit 2.');
+  assert.deepEqual(classifyBenchmarkOutcome(['C1', 'O6'], new Map([['C1', { passed: true }]]), 0, false),
+    { hardChecksPassed: false, ownerReviewRequired: false, exitCode: 1 },
+    'A missing required row is a hard failure.');
+  assert.deepEqual(classifyBenchmarkOutcome(['C1'], new Map([['C1', { passed: true }]]), 0, false),
+    { hardChecksPassed: true, ownerReviewRequired: false, exitCode: 0 },
+    'All hard-passing rows without owner review exit 0.');
+}
 function assertJourneyStaticSelftests() {
   assert.equal(classifyStopOutcome({ state: 'partial', answer: 'A citation points at an exact passage. ', error: STOPPED_CAUSE }), 'stop-pass', 'Partial text with the exact owner-Stop cause must pass.');
   assert.equal(classifyStopOutcome({ state: 'cancelled', answer: '', error: STOPPED_CAUSE }), 'not-run', 'Cancelled before text is a separate NOT_RUN for streamed-partial coverage, not an overall pass.');
@@ -350,6 +378,7 @@ assertDispatchStopStaticSelftests();
 assertO8StaticSelftests();
 assertJourneyStaticSelftests();
 assertInvalidEvidenceStaticSelftests();
+assertK2OutcomeStaticSelftests();
 if (staticSelftest) {
   console.log('K2 evaluator static selftests passed.');
   process.exit(0);
@@ -2056,13 +2085,12 @@ else {
   if (unresolvedCount > 0) { hardFailures++; finalErrors.push(unresolvedCount + ' dispatched turn(s) remain unresolved after bounded read reconciliation; any held reservation is UNKNOWN, not zero.'); }
   if (finalErrors.length) { finalReadError = finalErrors.join(' '); stopReason = [stopReason, finalReadError].filter(Boolean).join(' '); }
 }
+const outcome = classifyBenchmarkOutcome(order, compareRows, hardFailures, ownerRequired);
 await writeCompare(compareRows, { mode: 'default-model benchmark; frozen global route; one request per unanswered question; no retry',
   defaultModel: benchmarkModel, projectModelOverride: projectModelOverride ?? 'none', chatId,
-  hardChecksPassed: hardFailures === 0, ownerReviewRequired: ownerRequired, stopReason,
+  hardChecksPassed: outcome.hardChecksPassed, ownerReviewRequired: outcome.ownerReviewRequired, stopReason,
   originalTurnRecordsPreserved,
   turnCountBefore: h0.turns.length, turnCountAfter: finalChat?.turns.length ?? 'UNKNOWN',
   newTokenLimit: newTokenLimit, reportedTokenLimit: reportedTokenLimit,
   firstTokenP50P95: [pct(firstMs, 0.5), pct(firstMs, 0.95)], totalP50P95: [pct(totalMs, 0.5), pct(totalMs, 0.95)] });
-if (hardFailures > 0) process.exit(1);
-if (ownerRequired) process.exit(2);
-process.exit(0);
+process.exit(outcome.exitCode);

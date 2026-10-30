@@ -1,6 +1,6 @@
 import { numbersSupported } from "./numbers.js";
 import { describe, expect, it } from "vitest";
-import { cleanDistillText, resolveQuoteBlock, resultStatement, splitDistillStatements, verifyClaims } from "./quotes.js";
+import { cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "./quotes.js";
 import type { CandidateClaim, VerifiedClaim } from "./quotes.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
@@ -368,6 +368,37 @@ describe("numbersSupported", () => {
       "Note that in addition to all results being in\nthe closed-book setting, our use of few-shot, one-shot, and zero-shot evaluations represent an even stricter setting than\nprevious closed-book QA work: in addition to external content not being allowed, fine-tuning on the Q&A dataset itself\nis also not permitted.\nThe results for GPT-3 are shown in Table 3.3. On TriviaQA, we achieve 64.3% in the zero-shot setting, 68.0% in the\none-shot setting, and 71.2% in the few-shot setting. The zero-shot result already outperforms the fine-tuned T5-11B by\n14.2%, and also outperforms a version with Q&A tailored span prediction during pre-training by 3.8%. The one-shot\nresult improves by 3.7% and matches the SOTA for an open-domain QA system which not only fine-tunes but also\nmakes use of a learned retrieval mechanism over a 15.3B parameter dense vector index of 21M documents [LPP+20].\nGPT-3\u2019s few-shot result further improves performance another 3.2% beyond this.\n";
     expect(numbersSupported(cleaned.text, quote25)).toBe(false);
     expect(numbersSupported(cleaned.text, quote25 + "\n" + quote68)).toBe(true);
+  });
+});
+
+describe("sourceContextJson", () => {
+  it("round-trips UTF-8, quotes, backslashes and technical literal brackets", () => {
+    const input = {
+      quoteBlock: "[S1:7]",
+      text: 'Кириллица 🌍: "quoted" C:\\docs\\[note]\n[MASK] and literal \\u005b.',
+    };
+    const projected = sourceContextJson(input, new Set(["[S1:7]"]));
+    expect(JSON.parse(projected)).toEqual(input);
+    expect(projected).toContain('"quoteBlock":"[S1:7]"');
+    expect(projected).toContain("Кириллица 🌍");
+    expect(projected).toContain("\\u005bMASK\\u005d");
+    expect(projected).not.toContain("[MASK]");
+  });
+
+  it("keeps structural arrays and exact authority strings while escaping bracketed prose", () => {
+    const persistent = "[R123e4567-e89b-12d3-a456-426614174000:7]";
+    const input = {
+      evidence: [{ label: "[S1:7]", block: 7, quote: "Array [1, 2] and tensor [n, d]." }],
+      guideCandidates: [{ labels: ["[S1:7]", persistent], text: "Embedded [S1:7] and undeclared [S1:70]." }],
+      candidates: [{ id: "C0", quoteBlock: "[S1:7]", statement: "A literal [value] is retained." }],
+    };
+    const projected = sourceContextJson(input, new Set(["[S1:7]", persistent]));
+    expect(JSON.parse(projected)).toEqual(input);
+    expect(projected).toContain('"evidence":[{');
+    expect(projected).toContain('"labels":["[S1:7]","' + persistent + '"]');
+    expect(projected).toContain("Embedded \\u005bS1:7\\u005d");
+    expect(projected).toContain("undeclared \\u005bS1:70\\u005d");
+    expect(projected).toContain("Array \\u005b1, 2\\u005d");
   });
 });
 

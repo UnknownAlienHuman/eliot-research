@@ -368,12 +368,28 @@ export async function readTool(env: Env, actor: Actor, input: ReadInput): Promis
   const labels = blocks.filter((block) => citable.has(block.id)).map((block) => blockLabel(selected.revisionId, block.id)).join(", ");
   const header = "## Exact passage " + (labels || "[revision " + selected.revisionId + "]") +
     "\nRequested UTF-8 byte range [" + start + "," + end + ") in revision " + selected.revisionId + ".";
-  if (bytes.byteLength + encoder.encode(header + "\n\n").byteLength > maxBytes)
-    return withinBudget("The exact requested range is too large to return intact at this cap. Narrow start and end; the range was not changed.", limit);
-  let passage: string;
-  try { passage = decoder.decode(bytes); }
+  try { decoder.decode(bytes); }
   catch { throw new LibraryError("invalid", "The passage must start and end on UTF-8 boundaries.", 400); }
-  return withinBudget(header + "\n\n" + passage, limit);
+  const segments: string[] = [];
+  let offset = 0;
+  const appendSegment = (label: string, from: number, to: number) => {
+    if (to <= from) return;
+    let text: string;
+    try { text = decoder.decode(bytes.subarray(from, to)); }
+    catch { throw new LibraryError("invalid", "The passage must start and end on UTF-8 boundaries.", 400); }
+    segments.push("Source segment " + label + " — source bytes [" + (start + from) + "," + (start + to) + ")\n" + text);
+  };
+  for (const block of blocks) {
+    if (!citable.has(block.id) || block.start < offset) continue;
+    if (block.start > offset) appendSegment("unlabelled", offset, block.start);
+    appendSegment(blockLabel(selected.revisionId, block.id), block.start, block.end);
+    offset = block.end;
+  }
+  if (offset < bytes.byteLength || segments.length === 0) appendSegment("unlabelled", offset, bytes.byteLength);
+  const body = header + "\n\n" + segments.join("\n\n");
+  if (encoder.encode(body).byteLength > maxBytes)
+    return withinBudget("The exact requested range is too large to return intact at this cap. Narrow start and end; the range was not changed.", limit);
+  return body;
 }
 export async function findClaimsTool(env: Env, actor: Actor, input: SearchInput): Promise<string> {
   const limit = outputBudget(input.maxTokens);

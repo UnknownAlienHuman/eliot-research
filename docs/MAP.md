@@ -182,6 +182,9 @@ selection stays in the source pane; Add, history and project settings do not fil
 
 **Hard acceptance — `pnpm eval k2`**
 
+Any failed or missing hard-check row exits 1 even when owner review is also pending. Exit 2 is reserved for an otherwise
+hard-passing comparison awaiting owner review; advisory counters do not change this classification.
+
 `pnpm eval k2 --journey-only` exercises the phone Stop/reconnect/Save path separately from the fixed twelve-question
 benchmark. It reads `ELIOT_EVAL_PROJECT` and an existing calibrated C3 chat in `ELIOT_EVAL_CHAT`; model work requires
 `ELIOT_K2_MODEL=1`. The run creates at most one empty-scope control turn on the frozen global model, stops after
