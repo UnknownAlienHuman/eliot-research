@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,17 +25,28 @@ const outDir = fileURLToPath(new URL("../../eval/out/k4/", import.meta.url));
 const now = new Date();
 const runId = now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
 const localMiniflareMode = process.argv.includes("--signed-agent-miniflare");
+const serveSignedAgentMode = process.argv.includes("--serve-signed-agent");
 
 type LocalMcpRuntime = {
   mcpOrigin: string;
   uiOrigin: string;
   agentHeaders: Record<string, string>;
   ownerHeaders: Record<string, string>;
+  expiresAt: string;
   fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   dispose: () => Promise<void>;
 };
 
 async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
+  const mcpOrigin = serveSignedAgentMode ? envValue("ELIOT_MCP_ORIGIN") : "http://127.0.0.1";
+  const uiOrigin = serveSignedAgentMode ? envValue("ELIOT_ORIGIN") : "http://localhost";
+  assert(mcpOrigin && uiOrigin, "Serve mode requires explicit ELIOT_MCP_ORIGIN and ELIOT_ORIGIN.");
+  if (serveSignedAgentMode) {
+    const mcp = new URL(assertEvalOrigin(mcpOrigin, mcpOrigin)), ui = new URL(assertEvalOrigin(uiOrigin, uiOrigin));
+    assert(mcp.protocol === "http:" && ui.protocol === "http:" && mcp.hostname === "127.0.0.1" && ui.hostname === "localhost"
+      && mcpOrigin === mcp.origin && uiOrigin === ui.origin && Number(mcp.port) > 0 && mcp.port === ui.port,
+    "Serve origins must be http://127.0.0.1:<positive-port> and http://localhost:<same-port> without a path, query or fragment.");
+  }
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const workerDir = path.join(root, "dist", "eliot_research");
   const config = JSON.parse(await readFile(path.join(workerDir, "wrangler.json"), "utf8"));
@@ -58,13 +70,13 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
   const jwk = { ...await exportJWK(publicKey), kid, alg: "RS256", use: "sig", key_ops: ["verify"] };
   const team = "k4-" + randomUUID().replaceAll("-", "").slice(0, 20) + ".cloudflareaccess.com";
   const issuer = "https://" + team, audience = "k4-test-" + randomUUID(), ownerEmail = "k4-owner@example.test";
+  const expiresAt = Math.floor(Date.now() / 1000) + (serveSignedAgentMode ? 1800 : 300);
   const sign = (claims: Record<string, unknown>) => new SignJWT({ type: "app", ...claims })
     .setProtectedHeader({ alg: "RS256", kid, typ: "JWT" }).setIssuer(issuer).setAudience(audience)
-    .setIssuedAt().setExpirationTime("5m").sign(privateKey);
+    .setIssuedAt().setExpirationTime(serveSignedAgentMode ? expiresAt : "5m").sign(privateKey);
   const [agentJwt, ownerJwt] = await Promise.all([
     sign({ sub: "", common_name: "k4-test-agent" }), sign({ sub: "k4-test-owner", email: ownerEmail }),
   ]);
-  const mcpOrigin = "http://127.0.0.1", uiOrigin = "http://localhost";
   const jwksUrl = issuer + "/cdn-cgi/access/certs", jwksBody = JSON.stringify({ keys: [jwk] });
   const egressScript = `const expected=${JSON.stringify(jwksUrl)},body=${JSON.stringify(jwksBody)};` +
     `export default{async fetch(request){const url=new URL(request.url);` +
@@ -103,7 +115,7 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
       },
       { name: "k4-test-jwks-egress", modules: true, script: egressScript },
     ],
-    host: "127.0.0.1", port: 0, inspectorPort: 0,
+    host: "127.0.0.1", port: serveSignedAgentMode ? Number(new URL(mcpOrigin).port) : 0, inspectorPort: 0,
   });
   const mf = new Miniflare(options);
   try {
@@ -115,13 +127,38 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
       catch (error) { throw new Error("Miniflare D1 migration " + file + " failed: " + (error instanceof Error ? error.message : String(error)), { cause: error }); }
     }
     return {
-      mcpOrigin, uiOrigin,
+      mcpOrigin, uiOrigin, expiresAt: new Date(expiresAt * 1000).toISOString(),
       agentHeaders: { "cf-access-jwt-assertion": agentJwt },
       ownerHeaders: { "cf-access-jwt-assertion": ownerJwt },
       fetch: (input, init) => mf.dispatchFetch(input, init),
       dispose: () => mf.dispose(),
     };
   } catch (error) { await mf.dispose(); throw error; }
+}
+
+if (serveSignedAgentMode) {
+  const runtime = await startLocalMcpRuntime();
+  const sessionPath = path.join(outDir, "session.json");
+  try {
+    await mkdir(outDir, { recursive: true, mode: 0o700 });
+    await writeFile(sessionPath, "", { mode: 0o600, flag: "wx" });
+    try {
+      if (process.platform === "win32") {
+        const identity = execFileSync("whoami.exe", [], { encoding: "utf8" }).trim();
+        execFileSync("icacls.exe", [sessionPath, "/inheritance:r", "/grant:r", identity + ":F"], { stdio: "pipe" });
+      }
+      await writeFile(sessionPath, JSON.stringify({ mcpOrigin: runtime.mcpOrigin, uiOrigin: runtime.uiOrigin,
+        agentHeaders: runtime.agentHeaders, ownerHeaders: runtime.ownerHeaders, expiresAt: runtime.expiresAt }) + "\n");
+      console.log("READY " + runtime.mcpOrigin + "/mcp");
+      await new Promise<void>((resolve) => {
+        const stop = () => { clearTimeout(timer); process.off("SIGINT", stop); process.off("SIGTERM", stop); resolve(); };
+        const timer = setTimeout(stop, Math.max(0, Date.parse(runtime.expiresAt) - Date.now()));
+        process.once("SIGINT", stop);
+        process.once("SIGTERM", stop);
+      });
+    } finally { await unlink(sessionPath); }
+  } finally { await runtime.dispose(); }
+  process.exit(0);
 }
 
 const localRuntime = localMiniflareMode ? await startLocalMcpRuntime() : null;
