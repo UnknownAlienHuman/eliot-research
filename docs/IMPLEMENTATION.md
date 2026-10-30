@@ -336,6 +336,9 @@ only; failed output is never re-queued.
 
 Tools return compact Markdown with explicit pagination and a default 4,000-token cap:
 
+`read` identifies each complete citable block beside its original text and byte interval. Unlabelled edges and wrappers
+remain in requested byte order; formatting overhead counts toward the cap, and an oversized request must be narrowed.
+
 `list_projects`, `list_sources`, `get_guide`, `outline`, `read`, `find_claims`, `search`, `get_page`, `propose_page`; K7
 adds `web_search`, `web_read`, `capture_url`. Every tool accepts `(env, actor, input)`, enforces scope/output/write
 authority in code and uses full source/revision IDs from `list_sources`. Descriptions stay short and state when to use the
