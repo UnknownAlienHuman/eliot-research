@@ -436,6 +436,10 @@ call; an in-flight call may finish.
 
 ## 11. Models
 
+The native default's cold-start metadata includes its documented low reasoning effort, matching the existing native
+catalogue discovery policy. GLM 5.3 Flash supports low/high/max and defaults to max when effort is omitted; reasoning
+cannot be disabled. The admitted model keeps this parameter frozen with its context and output bounds.
+
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
 selection. Paid admission requires usable context/output bounds and provider allowance, without a price lookup or a
