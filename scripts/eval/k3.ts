@@ -272,8 +272,13 @@ async function assertClaimTurnReadOnly(t, tag, question, revIdSet, revKey) {
     texts.push(r.bytes.toString('utf8'));
   }
   const deLabeled = t.answer.replace(/\[(?:S\d+:\d+|R[0-9a-fA-F-]{36}:\d+)\]/g, '');
-  assert.deepEqual(numericsUnsupported(texts.join('\n'), deLabeled, undefined), [], 'Every stated number must occur whole in cited ranges (' + tag + ').');
-  checkClaimAnswer(tag, t.answer);
+  const qualityViolations = [];
+  try {
+    assert.deepEqual(numericsUnsupported(texts.join('\n'), deLabeled, undefined), [], 'Every stated number must occur whole in cited ranges (' + tag + ').');
+  } catch (e) { qualityViolations.push(tag + ': ' + String((e && e.message) || e)); }
+  try { checkClaimAnswer(tag, t.answer); }
+  catch (e) { qualityViolations.push(tag + ': ' + String((e && e.message) || e)); }
+  return qualityViolations;
 }
 async function apiJson(path, init) {
   const r = await fetchEval(origin + path, { ...init, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } }, origin, process.env.ELIOT_ORIGIN);
@@ -1094,7 +1099,7 @@ async function preflightClaimScope() {
   const revisionSet = new Set(revisionIds);
   for (let i = 0; i < CLAIM_QUESTIONS.length; i++) {
     const turn = uniqueClaimTurn(snapshot.body.turns, CLAIM_QUESTIONS[i], revisionKey);
-    if (turn) await assertClaimTurnReadOnly(turn, CLAIM_ORDER[i], CLAIM_QUESTIONS[i], revisionSet, revisionKey);
+    if (turn) void await assertClaimTurnReadOnly(turn, CLAIM_ORDER[i], CLAIM_QUESTIONS[i], revisionSet, revisionKey);
   }
   return { project, chat, rows, revisionKey, revisionSet, turns: snapshot.body.turns, priorExtraCalls };
 }
@@ -1215,7 +1220,7 @@ if (!runModel) {
         const tag = CLAIM_ORDER[qi], question = CLAIM_QUESTIONS[qi];
         const turn = uniqueClaimTurn(turns, question, claimPreflight.revisionKey);
         assert(turn, 'K3 claim-mode ' + tag + ' skipped: no completed exact-scope stored turn (read-only, no POST).');
-        await assertClaimTurnReadOnly(turn, tag, question, claimPreflight.revisionSet, claimPreflight.revisionKey);
+        violations.push(...await assertClaimTurnReadOnly(turn, tag, question, claimPreflight.revisionSet, claimPreflight.revisionKey));
       }
       const after = await apiJson('/api/projects/' + encodeURIComponent(claimPreflight.project.id) + '/chats/' + encodeURIComponent(claimPreflight.chat.id));
       assert.equal(after.status, 200, 'GET claim chat after stored validation must be 200.');
@@ -1474,7 +1479,7 @@ else {
           postedTurns++;
           assert.equal(t.state, 'completed', 'Claim turn must be completed, not partial (' + tag + ' state=' + t.state + ').');
         }
-        await assertClaimTurnReadOnly(t, tag, q, revIdSet, revSet);
+        claimV.push(...await assertClaimTurnReadOnly(t, tag, q, revIdSet, revSet));
       } catch (e) {
         claimV.push(tag + ': ' + (e && e.message ? e.message : String(e)));
         break;

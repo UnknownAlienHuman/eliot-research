@@ -241,8 +241,9 @@ re-distilled automatically.
 - Before model work, verify the exact ten baseline source/revision identities and original/canonical bytes, the
   separate twelve-source overflow scope, its already-understood extras and its prepared claim chat. Missing or
   ambiguous inputs stop the run before any paid call; duplicate stored answers are never silently reused. Check the
-  extras' own recorded call counts separately. An admission or answer failure stops later eval submissions while
-  already accepted jobs retain their results; queued revisions keep their stored model selection.
+  extras' own recorded call counts separately. An admission or unfinished/failed answer stops later eval submissions;
+  completed answers that fail a quality check remain failed checks while the remaining fixed controls may run.
+  Already accepted jobs retain their results; queued revisions keep their stored model selection.
 - All ten papers reach `done` or a documented `partial` state; a second eval run performs no re-distillation of unchanged revisions.
   `pnpm eval k3 --unchanged-only` preflights all ten terminal revisions, submits each exact revision ID once and compares
   the stored reports, claims, call counts and usage. This reuse check does not waive the semantic or claim-mode gates.
