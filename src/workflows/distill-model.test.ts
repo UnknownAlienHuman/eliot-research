@@ -389,40 +389,47 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(verified.dropped).toContainEqual({ index: 1, reason: "pre-synthesis-missing-or-unsupported-primary-result" });
       expect(verified.dropped).toContainEqual({ index: 3, reason: "pre-synthesis-missing-or-unsupported-primary-result" });
       const marker = "Return one JSON object conforming to this schema: ";
-      const generatedSchema = (instructions: unknown) => {
+      type JsonSchemaNode = {
+        $defs?: Record<string, JsonSchemaNode>;
+        definitions?: Record<string, JsonSchemaNode>;
+        properties?: Record<string, JsonSchemaNode>;
+        items?: JsonSchemaNode;
+        required?: string[];
+        $ref?: string;
+        type?: string | string[];
+        anyOf?: JsonSchemaNode[];
+        oneOf?: JsonSchemaNode[];
+        allOf?: JsonSchemaNode[];
+      };
+      const generatedSchema = (instructions: unknown): JsonSchemaNode => {
         if (typeof instructions !== "string") throw new Error("Structured request instructions were not captured.");
         const at = instructions.lastIndexOf(marker);
         if (at < 0) throw new Error("Generated JSON schema was not included in the captured model request.");
-        return JSON.parse(instructions.slice(at + marker.length)) as {
-          $defs?: Record<string, any>;
-          definitions?: Record<string, any>;
-          properties?: Record<string, any>;
-        };
+        return JSON.parse(instructions.slice(at + marker.length)) as JsonSchemaNode;
       };
       const firstSchema = generatedSchema(callInstructions[0]);
       const secondSchema = generatedSchema(callInstructions[1]);
       const firstClaim = firstSchema.properties?.claims?.items;
       const additionalClaim = secondSchema.properties?.additionalClaims?.items;
-      expect(firstClaim).toBeDefined();
-      expect(additionalClaim).toBeDefined();
+      if (!firstClaim || !additionalClaim) throw new Error("Generated call schemas are missing their claim item definitions.");
       const fields = ["task", "metric", "dataset", "valueText", "unit", "conditions"];
       expect(firstClaim.required).toEqual(expect.arrayContaining(fields));
       expect(additionalClaim.required).toEqual(expect.arrayContaining(fields));
-      const acceptsNull = (node: any, rootSchema: typeof secondSchema, seen = new Set<string>()): boolean => {
-        if (!node || typeof node !== "object") return false;
-        if (typeof node.$ref === "string") {
+      const acceptsNull = (node: JsonSchemaNode | undefined, rootSchema: JsonSchemaNode, seen = new Set<string>()): boolean => {
+        if (!node) return false;
+        if (node.$ref) {
           const name = decodeURIComponent(node.$ref.split("/").at(-1) || "");
           if (seen.has(name)) return false;
           const next = new Set(seen); next.add(name);
           return acceptsNull(rootSchema.$defs?.[name] ?? rootSchema.definitions?.[name], rootSchema, next);
         }
         if (node.type === "null" || (Array.isArray(node.type) && node.type.includes("null"))) return true;
-        return ["anyOf", "oneOf", "allOf"].some((key) =>
-          Array.isArray(node[key]) && node[key].some((child: unknown) => acceptsNull(child, rootSchema, seen)));
+        return [...(node.anyOf ?? []), ...(node.oneOf ?? []), ...(node.allOf ?? [])]
+          .some((child) => acceptsNull(child, rootSchema, seen));
       };
       for (const field of fields) {
-        expect(acceptsNull(firstClaim.properties[field], firstSchema), "call-one " + field + " must be nullable").toBe(true);
-        expect(acceptsNull(additionalClaim.properties[field], secondSchema), "call-two " + field + " must be nullable").toBe(true);
+        expect(acceptsNull(firstClaim.properties?.[field], firstSchema), "call-one " + field + " must be nullable").toBe(true);
+        expect(acceptsNull(additionalClaim.properties?.[field], secondSchema), "call-two " + field + " must be nullable").toBe(true);
       }
     } finally { f.db.close(); }
 
@@ -430,7 +437,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
     const encoder = new TextEncoder();
     const bytes = encoder.encode(document.text);
     const quote = (block: Block) => new TextDecoder().decode(bytes.subarray(block.start, block.end));
-    const block1 = document.blocks[0]!, block2 = document.blocks[1]!, block3 = document.blocks[2]!;
+    const block1 = document.blocks[0], block2 = document.blocks[1], block3 = document.blocks[2];
+    if (!block1 || !block2 || !block3) throw new Error("Historical fixture requires three source blocks.");
     cached.bodies.set(prefix + "distill-verified.json", JSON.stringify({
       claims: [{
         kind: "method", statement: "Method Alpha uses a low-rank update.", quote: quote(block1), block: block1.id,

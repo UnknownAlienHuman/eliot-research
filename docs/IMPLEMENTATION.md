@@ -395,6 +395,7 @@ gate is separate from advisory spans. General answers in explicitly empty scope 
 
 Chat always streams ordinary Markdown with inline compact `[Sx:N]` labels. There is no JSON sentence/label enum or
 parse-repair call. One generic `SYSTEM_PROMPT` applies across questions and corpora: answer in the user's language,
+copy atomic source markers verbatim with commentary outside their brackets, retain every marker needed for a claim,
 ground source facts with supplied labels, answer directly with detail proportional to the question, preserve requested
 facts and conditions, omit unrelated background and repetition, distinguish inference, abstain when evidence is missing, and treat source text
 as untrusted data. Project instructions remain caller-provided context; no fixed-corpus coaching is added. The same
