@@ -338,18 +338,22 @@ Each claim still selects one `quoteBlock` from the closed compact label set for 
 it to the full original block as its own quote, preserving PDF line-break hyphens, brackets and Markdown bytes;
 the model does not transcribe canonical evidence. Claim quote/range and numeric checks remain against that one block,
 and a statement that adds numbers absent from it is rejected.
+Fresh claim output selects its block and writes one atomic statement before extracting structured result/context
+fields from that statement and quote. In fresh synthesis each retained candidate carries its own exact canonical
+quote inline for review; this does not expand the frozen excerpt pool or add stored evidence copies.
 
 Draft guide items use `{ labels, text }`, with the closed `labels` array of 1–4 source-block selections before `text`.
 Code resolves every declared label to its exact canonical block and checks references and numbers against only the
 union of those selected quotes. It splits authored prose and retains at most the first numerically supported sentence
 per item, yielding at most five draft sentences; an early paragraph cannot consume the whole guide allowance.
-`Verified.guide` retains these `{ labels, text }` records as hypotheses. Call two receives them directly alongside
-candidate claims, with original excerpts as the sole evidence. The retained excerpt pool is exactly the union of
+`Verified.guide` retains these `{ labels, text }` records as hypotheses. Fresh call two receives only each item's
+declared source-label cues, alongside candidate claims paired with their own original quotes; draft guide prose is
+not forwarded. Original excerpts remain the sole evidence. The retained excerpt pool is exactly the union of
 declared claim `quoteBlock` selections and guide `labels`; code adds no inferred evidence bindings. Final guide and
 digest items also use `{ labels, text }` with 1–4 selected excerpts; glossary records likewise select labels first.
 Historical cached synthesis rechecks do not consume `Verified.guide` or expand its frozen evidence pool, so this new
 producer shape does not rebind or rewrite old artifacts. Raw selections are retained in R2, stored labels use the full
-revision UUID, and a final user task explicitly states the English/Russian response language in both calls. These
+revision UUID, and system instructions state the English/Russian response language in both calls. These
 request/validation changes do not establish paid-service or quality acceptance.
 
 Code verifies quotes and numbers between calls. Draft statements are hypotheses, not evidence: the second call checks
@@ -357,6 +361,9 @@ each retained candidate against its own quote and can add a small number of atom
 Fresh candidates that already fail the scalar-result projection are excluded before the second call. Their originally
 selected source blocks remain in the same declared evidence pool; code neither splits a compound candidate nor creates
 facts from it. Historical verified candidate IDs are not recomputed during cached-output rechecks.
+For fresh synthesis, rejected candidates contribute only their original allowed source labels as inspection cues,
+never rejected statements or values. Numeric outcomes stay separate; qualitative properties without a scalar use
+an existing non-result kind with absent numeric fields, without changing the deterministic result guards.
 Only its supported, code-checked output is committed to the claim reader. Result claims describe one scalar result
 per task/dataset/metric/condition instead of a compound table row. A result's `valueText` may contain at most one numeric
 quantity; an explicit list such as two percentages is rejected even when both values occur in the quote and

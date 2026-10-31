@@ -373,11 +373,13 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const call2SourceContext = call2Messages?.[0]?.content;
       if (typeof call2SourceContext !== "string") throw new Error("Call two source context was not captured.");
       const capturedContext = JSON.parse(call2SourceContext) as {
-        candidates: Array<{ id: string; statement: string }>;
+        candidates: Array<{ id: string; statement: string; quote: string }>;
         evidence: Array<{ label: string; quote: string }>;
+        guideCandidates: Array<{ labels: string[] }>;
       };
-      expect(capturedContext.candidates).toEqual([{ id: "C0", statement: "Method Alpha uses a low-rank update.", quoteBlock: "[S1:1]", kind: "method",
+      expect(capturedContext.candidates).toEqual([{ id: "C0", statement: "Method Alpha uses a low-rank update.", quoteBlock: "[S1:1]", quote: "Method Alpha uses a low-rank update.\n", kind: "method",
         task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }]);
+      expect(capturedContext.guideCandidates).toEqual([{ labels: ["[S1:1]"] }, { labels: ["[S1:3]"] }, { labels: ["[S1:4]"] }]);
       expect(capturedContext.evidence).toContainEqual({ label: "[S1:2]", block: 2,
         quote: "The source reports 3 and 5 examples. On Set 2021 Variant Alpha, the model scores 9.4 QScore, improving over the baseline by 1.7 QScore.\n" });
       const verifiedBody = f.bodies.get(prefix + "distill-verified.json");
