@@ -29,6 +29,84 @@ export function isCitableBlock(block: Block, passage: string): boolean {
 }
 
 interface Line { body: string; start: number; end: number; charStart: number; charEnd: number }
+interface CharacterRange { start: number; end: number }
+interface TableCaptionCandidate { captionIndex: number; tableIndex: number }
+
+const tableCaptionStart = /^ {0,3}Table[ \t]+\d+[A-Za-z]?[.:][ \t]+\S/iu;
+
+function isWholeTableBlock(blocks: Block[], index: number): boolean {
+  const block = blocks[index];
+  if (block?.type !== "table") return false;
+  const previous = blocks[index - 1], next = blocks[index + 1];
+  return !(previous?.type === "table" && previous.end === block.start)
+    && !(next?.type === "table" && block.end === next.start);
+}
+
+function isWholeParagraphBlock(blocks: Block[], index: number): boolean {
+  const block = blocks[index];
+  if (block?.type !== "paragraph") return false;
+  const previous = blocks[index - 1], next = blocks[index + 1];
+  return !(previous?.type === "paragraph" && previous.end === block.start)
+    && !(next?.type === "paragraph" && block.end === next.start);
+}
+
+function onlyWhitespace(text: string, start: number, end: number): boolean {
+  return end >= start && /^\s*$/u.test(text.slice(start, end));
+}
+
+function joinAdjacentTableCaptions(text: string, blocks: Block[], characterRanges: CharacterRange[]): Block[] {
+  const candidates: TableCaptionCandidate[] = [];
+  for (let index = 0; index < blocks.length; index++) {
+    const block = blocks[index], range = characterRanges[index];
+    if (block?.type !== "paragraph" || range === undefined) continue;
+    const firstLine = text.slice(range.start, range.end).split(/\r\n|\r|\n/u, 1)[0] ?? "";
+    if (!tableCaptionStart.test(firstLine)) continue;
+
+    const previous = blocks[index - 1], previousRange = characterRanges[index - 1];
+    const next = blocks[index + 1], nextRange = characterRanges[index + 1];
+    const hasPreviousTable = previous?.type === "table" && previousRange !== undefined
+      && onlyWhitespace(text, previousRange.end, range.start);
+    const hasNextTable = next?.type === "table" && nextRange !== undefined
+      && onlyWhitespace(text, range.end, nextRange.start);
+
+    // A caption between two tables, or one without a neighboring table, has no safe association.
+    if (hasPreviousTable === hasNextTable) continue;
+    const tableIndex = hasPreviousTable ? index - 1 : index + 1;
+    if (!isWholeTableBlock(blocks, tableIndex) || !isWholeParagraphBlock(blocks, index)) continue;
+    candidates.push({ captionIndex: index, tableIndex });
+  }
+
+  const captionsByTable = new Map<number, number[]>();
+  for (const candidate of candidates) {
+    const captions = captionsByTable.get(candidate.tableIndex) ?? [];
+    captions.push(candidate.captionIndex);
+    captionsByTable.set(candidate.tableIndex, captions);
+  }
+
+  const rangesByTable = new Map<number, { start: number; end: number }>();
+  const joinedCaptions = new Set<number>();
+  for (const [tableIndex, captionIndexes] of captionsByTable) {
+    if (captionIndexes.length !== 1) continue;
+    const captionIndex = captionIndexes[0];
+    if (captionIndex === undefined) continue;
+    const table = blocks[tableIndex], caption = blocks[captionIndex];
+    if (table?.type !== "table" || caption?.type !== "paragraph") continue;
+    const start = Math.min(table.start, caption.start), end = Math.max(table.end, caption.end);
+    if (end - start > MAX_BLOCK_BYTES) continue;
+    rangesByTable.set(tableIndex, { start, end });
+    joinedCaptions.add(captionIndex);
+  }
+
+  if (joinedCaptions.size === 0) return blocks;
+  const result: Block[] = [];
+  for (const [index, block] of blocks.entries()) {
+    if (joinedCaptions.has(index)) continue;
+    const range = rangesByTable.get(index);
+    result.push({ ...block, id: result.length + 1, ...(range ?? {}) });
+  }
+  return result;
+}
+
 function* lines(text: string): Generator<Line> {
   let charStart = 0, start = 0;
   while (charStart < text.length) {
@@ -44,6 +122,7 @@ function* lines(text: string): Generator<Line> {
 
 export function scanBlocks(text: string): Block[] {
   const result: Block[] = [];
+  const characterRanges: CharacterRange[] = [];
   let heading: string | null = null;
   let pending: { type: Block["type"]; first: Line; last: Line } | undefined;
   let fence: { char: string; count: number } | undefined;
@@ -51,9 +130,11 @@ export function scanBlocks(text: string): Block[] {
     const size = last.end - first.start;
     if (size <= (type === "paragraph" ? 1536 : MAX_BLOCK_BYTES)) {
       result.push({ id: result.length + 1, type, start: first.start, end: last.end, heading });
+      characterRanges.push({ start: first.charStart, end: last.charEnd });
       return;
     }
     const bytes = encoder.encode(text.slice(first.charStart, last.charEnd));
+    let characterOffset = 0;
     for (let offset = 0; offset < bytes.length;) {
       let stop = Math.min(bytes.length, offset + (type === "paragraph" ? 1024 : MAX_BLOCK_BYTES));
       while (continuation(bytes[stop])) stop--;
@@ -72,7 +153,10 @@ export function scanBlocks(text: string): Block[] {
           if (bytes[point] === 10) { stop = point + 1; break; }
         }
       }
+      const chunkText = decoder.decode(bytes.subarray(offset, stop));
       result.push({ id: result.length + 1, type, start: first.start + offset, end: first.start + stop, heading });
+      characterRanges.push({ start: first.charStart + characterOffset, end: first.charStart + characterOffset + chunkText.length });
+      characterOffset += chunkText.length;
       offset = stop;
     }
   }
@@ -117,5 +201,5 @@ export function scanBlocks(text: string): Block[] {
     current = next;
   }
   flush();
-  return result;
+  return joinAdjacentTableCaptions(text, result, characterRanges);
 }

@@ -268,6 +268,12 @@ This is one reviewed full-PDF case, not full-corpus OCR quality or K2/K3 accepta
 `[start,end)` in `text.md`. Compute byte offsets, not JavaScript character indexes. Split prose near sentence boundaries;
 keep tables/code intact up to a bounded size.
 
+New scans join an explicit adjacent `Table <number>:` or `Table <number>.` caption with its sole neighboring
+whole table when the complete original span, including intervening whitespace, fits 4,096 bytes. A caption between
+two tables, a table with two candidate captions, or a caption/table split by the size bound stays separate. The
+joined block retains the original UTF-8 bytes and nearest heading; block IDs remain sequential. This changes only
+new readable representations. Existing stored block maps and citation identities are never rewritten.
+
 Turn/job labels are compact (`[S1:14]`) and frozen per operation. Persistent labels use the full revision UUID
 (`[R<revision-uuid>:14]`); UI may visually shorten them but stored identity never does. A citation stores full revision,
 block, byte range, source title and deleted flag. Server resolves labels, removes unknown/out-of-scope labels and counts

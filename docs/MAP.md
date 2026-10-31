@@ -126,6 +126,8 @@ its text preview, and Apply a new readable revision while retaining the original
   least 20 KiB and 50 blocks. The additional Russian scan fixture must settle as `needs_conversion`, keep the exact
   original and perform no OCR. The native Russian text fixture must make zero conversion calls.
 - Three random ranges per source exactly match slices of the downloaded whole text.
+- The native Markdown browser fixture keeps an unambiguous table caption and its rows in one bounded stored block;
+  opening its exact range shows both caption and rows, and the old range survives replacement.
 - Eval prints converter, original/text bytes, blocks, wall time and conversion tokens when Cloudflare returns them.
 - Owner opens three citations and one copied range link on phone.
 
