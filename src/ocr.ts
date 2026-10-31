@@ -4,7 +4,7 @@ import { scanBlocks } from "./blocks";
 import { readableTextWarning } from "./ingest";
 import { requireAvailableModel, modelTokenLimit, type ModelSpec } from "./models";
 import { assertProviderAllowance } from "./model-quota";
-import { OCR_LIMITS, type OcrJobView, type OcrState } from "./shared/api";
+import { OCR_LIMITS, ocrOutputLimit, type OcrJobView, type OcrState } from "./shared/api";
 
 export interface OcrScope { projectId: string; sourceId: string; jobId: string }
 export interface OcrPage { sha256: string; bytes: number; width: number; height: number }
@@ -71,7 +71,10 @@ function view(job: OcrRow): OcrJobView {
 }
 function imageModel(model: ModelSpec) {
   if ("supportsImages" in model && model.supportsImages === false) throw invalid("This model does not support image input.");
-  return model;
+  const outputReserveTokens = ocrOutputLimit(model);
+  if (outputReserveTokens === null || !Number.isSafeInteger(outputReserveTokens) || outputReserveTokens <= 0)
+    throw new LibraryError("unavailable", "The model has no usable OCR output limit.", 503);
+  return outputReserveTokens === model.outputReserveTokens ? model : { ...model, outputReserveTokens };
 }
 export async function createOcrJob(env: Env, actor: Actor, input: OcrScope & {
   baseRevisionId: string; model: string; pageCount: number; originalSha256: string;

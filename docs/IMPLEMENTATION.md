@@ -205,11 +205,20 @@ The owner API is rooted at `/api/projects/:projectId/sources/:sourceId/ocr`:
    Mark accepted pages dependent on the replaced readable current revision stale. A changed latest base or current
    conflicts instead of overwriting it; repeated Apply returns the job's existing `appliedRevisionId`.
    The new revision starts with understanding `none`; no conversion, OCR or distillation is triggered by Apply.
+   The reader invalidates the existing project Sources query after Apply. Opening the already applied current
+   revision closes the OCR dialog and retains loaded text/outline, without resetting pagination or selection.
 
 Shared bounds are 1–1,000 pages, at most 1 MiB PNG and 4,000,000 pixels per page, browser render long edge at most
 2,000 pixels, 90 seconds per page call, and 25 MiB for the complete/reviewed text. Admission stores
 `pageCount * modelTokenLimit(model)` as the job token bound and a finite deadline; these are job bounds, not provider
 prices or a billing guarantee. The ordinary 60-second `toMarkdown` conversion bound remains separate.
+OCR allocates output independently of the interactive chat reserve. The shared `ocrOutputLimit` used by admission
+and the Run preview selects at least 16,384 output tokens per page when published capacity permits, caps that
+allocation at capacity, and never reduces a larger reserve. Unknown capacity retains the existing usable reserve.
+Create and Start retain their existing validation; admitted legacy snapshots and counters are unchanged.
+Safe application failure causes are stored on the job before crossing a Workflow step boundary. Finalization keeps
+the recorded cause, including an incomplete page's finish reason, while existing R2 reports remain immutable.
+Opaque provider error bodies and headers are not retained.
 
 `pnpm eval k1 --ocr` uses explicitly supplied derivative fixture identities, selected model and complete page count;
 without `ELIOT_K1_OCR_MODEL=1` a fresh run performs read/reopen checks only. Paid Run is an explicit opt-in.
@@ -238,6 +247,20 @@ Actual usage across the two jobs was **two observed inference calls** against an
 usage; it was not rerun. Monetary cost and Neurons remain unknown; latency budgets are not established.
 Full PDF/corpus OCR transcription quality and deployed Access are **NOT_RUN**; owner semantic acceptance is not
 claimed. These local results do not accept K2/K3 or establish a complete fresh corpus OCR run.
+An additional complete-Transformer request on the selected free Nemotron route stopped at page 14: 14 calls,
+13 completed pages, 44,940 input and 32,145 output tokens, zero cached tokens. The failing page reports
+`finish=length`, 8,192 output tokens and zero text bytes in 36,686 ms. No complete preview or Apply occurred;
+its original report and counters remain retained. A fresh Nemotron run with the larger allocation stopped after
+four dispatches and three completed pages with an external request failure; its final token totals remain unknown.
+Neither failed run produced a complete preview or Apply.
+A separate explicit GLM run in the authorized standard mode completed all fifteen original pages in fifteen calls:
+62,145 input, 10,786 output and zero cached tokens. Its saved preview was reviewed against all original page images;
+four transcription corrections restored a margin stamp, two name details and missing diagram labels. Apply stored
+one new reviewed revision (42,771 UTF-8 bytes), retained the original PDF and old canonical/range bytes, and left
+understanding at `none`/zero calls. Repeat Apply returned that same revision without new inference or revision.
+The job took 202.325 seconds (one full-job sample). Per-page nearest-rank latency across fifteen calls was p50
+14.614 seconds and p95 25.923 seconds. Monetary cost, Neurons and remaining provider quota are unknown.
+This is one reviewed full-PDF case, not full-corpus OCR quality or K2/K3 acceptance.
 
 ## 5. Blocks, labels, citations and quote verification
 

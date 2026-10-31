@@ -13,6 +13,20 @@ const fail = (message: string) => new LibraryError("unavailable", message, 503);
 const count = (value: unknown): number | null => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 const total = (a: number | null, b: number | null) => a === null || b === null ? "unknown" : String(a + b);
 const storedCount = (value: string | undefined) => value === undefined || value === "unknown" ? null : count(Number(value));
+const safeFailure = (error: unknown) => error instanceof LibraryError ? error.message
+  : "OCR could not finish. Saved output is retained; no paid call is retried.";
+async function retainStepFailure<T>(env: Env, id: string, operation: () => Promise<T>): Promise<T> {
+  try { return await operation(); }
+  catch (error) {
+    const reason = safeFailure(error);
+    try {
+      await env.DB.prepare("UPDATE source_ocr_job SET error=COALESCE(error,?),updated_at=? WHERE id=? AND state IN ('queued','running','failed')")
+        .bind(reason, Date.now(), id).run();
+    } catch { /* Finalization still uses a safe fallback if the cause could not be stored. */ }
+    // Only the safe projection crosses the Workflow step boundary.
+    throw fail(reason);
+  }
+}
 interface Report {
   state: "ready" | "failed" | "cancelled"; error: string | null; finishedAt: number;
   previewSha256: string | null; previewSize: number | null; calls: number; completedPages: number;
@@ -121,7 +135,7 @@ async function finishJob(env: Env, id: string, failure?: unknown) {
       previewSha256 = await ocrHash(bytes); previewSize = bytes.length;
       await putOcrArtifact(env, ocrKey(job, "preview.md"), bytes);
     }
-    const error = failure instanceof LibraryError ? failure.message : failure ? "OCR could not finish. Saved output is retained; no paid call is retried." : job.error;
+    const error = job.error ?? (failure ? safeFailure(failure) : null);
     report = { state: job.state === "cancelled" ? "cancelled" : previewSha256 ? "ready" : "failed",
       error, finishedAt: Date.now(), previewSha256, previewSize, calls: job.calls, completedPages: job.completed_pages,
       model: job.model_route, pageCount: job.page_count, tokenLimit: job.token_limit,
@@ -129,7 +143,7 @@ async function finishJob(env: Env, id: string, failure?: unknown) {
     await putOcrArtifact(env, reportKey, JSON.stringify(report));
   }
   await env.DB.prepare("UPDATE source_ocr_job SET state=CASE WHEN state='cancelled' THEN state ELSE ? END, " +
-    "error=CASE WHEN state='cancelled' THEN error ELSE ? END,preview_sha256=?,preview_size=?,finished_at=?,updated_at=? " +
+    "error=CASE WHEN state='cancelled' THEN error ELSE COALESCE(error,?) END,preview_sha256=?,preview_size=?,finished_at=?,updated_at=? " +
     "WHERE id=? AND state IN ('queued','running','failed','cancelled')")
     .bind(report.state, report.error, report.previewSha256, report.previewSize, report.finishedAt, Date.now(), id).run();
 }
@@ -137,17 +151,17 @@ export class OcrWorkflow extends WorkflowEntrypoint<Env, { jobId: string }> {
   async run(event: Readonly<WorkflowEvent<{ jobId: string }>>, step: WorkflowStep) {
     const id = event.payload.jobId;
     try {
-      const pageCount = await step.do("begin OCR", ONCE, async () => {
+      const pageCount = await step.do("begin OCR", ONCE, () => retainStepFailure(this.env, id, async () => {
         const job = await loadOcrRow(this.env, id);
         frozenModel(job);
         const begun = await this.env.DB.prepare("UPDATE source_ocr_job SET state='running',updated_at=? WHERE id=? AND state='queued' AND deadline_at>?")
           .bind(Date.now(), id, Date.now()).run();
         if (!begun.meta.changes) throw fail("OCR is not queued or its deadline elapsed.");
         return job.page_count;
-      });
+      }));
       for (let ordinal = 1; ordinal <= pageCount; ordinal++)
-        await step.do("OCR page " + ordinal, ONCE, () => runPage(this.env, id, ordinal));
-      await step.do("assemble OCR preview", ONCE, () => finishJob(this.env, id));
+        await step.do("OCR page " + ordinal, ONCE, () => retainStepFailure(this.env, id, () => runPage(this.env, id, ordinal)));
+      await step.do("assemble OCR preview", ONCE, () => retainStepFailure(this.env, id, () => finishJob(this.env, id)));
     } catch (error) {
       try { await step.do("record OCR failure", ONCE, () => finishJob(this.env, id, error)); }
       catch {

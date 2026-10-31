@@ -247,7 +247,28 @@ export async function runK1OcrEval() {
     assert.equal(sha(await bytes('/api/revisions/' + applied.revisionId + '/text')), sha(preview));
     assert.equal(sha(await bytes('/api/revisions/' + applied.revisionId + '/original')), sha(original));
     assert.equal((await job(sourceId, ready.id)).calls, pages);
-    await pass('apply_storage_only', { revisionId: applied.revisionId, previewSha256: sha(preview), calls: pages });
+    await expect(dialog).not.toBeVisible();
+    const appliedPath = '/p/' + projectId + '/source/' + sourceId + '?revisionId=' + applied.revisionId;
+    await expect(page).toHaveURL(origin + appliedPath);
+    const sourceLink = page.getByRole('complementary', { name: 'Project sources', exact: true })
+      .locator('.er-sources-pane__row-title[href*="/source/' + sourceId + '?"]');
+    await expect(sourceLink).toHaveAttribute('href', appliedPath);
+    await expect(sourceLink.locator('..').locator('.er-lib__badge')).toHaveText('Not analyzed');
+    const readerText = page.locator('.er-lib__text');
+    await expect.poll(() => readerText.textContent()).toBe(preview);
+    const outlineLinks = page.getByRole('navigation', { name: 'Outline', exact: true }).locator('.er-lib__outline-list a');
+    const appliedOutline = await outlineLinks.allTextContents();
+    // Keep this Reader mounted: reloading would hide the same-revision content-clearing bug.
+    await page.getByRole('button', { name: 'OCR original PDF', exact: true }).click();
+    await expect(dialog).toBeVisible();
+    await dialog.locator('select[id$="-runs"]').selectOption(ready.id);
+    await dialog.getByRole('button', { name: 'Open applied text', exact: true }).click();
+    await expect(dialog).not.toBeVisible();
+    await expect(page).toHaveURL(origin + appliedPath);
+    await expect.poll(() => readerText.textContent()).toBe(preview);
+    await expect.poll(() => outlineLinks.allTextContents()).toEqual(appliedOutline);
+    await pass('apply_storage_only', { revisionId: applied.revisionId, previewSha256: sha(preview), calls: pages,
+      sourcePaneUpdated: true, openAppliedTextRetainsReader: true });
     currentAction = 'repeat_apply'; assert.deepEqual(await json(base(sourceId) + '/' + ready.id + '/apply', {}), applied);
     assert.deepEqual(await meta(sourceId), after); assert.equal((await job(sourceId, ready.id)).calls, pages);
     await pass('repeat_apply', { revisionId: applied.revisionId, extraRevisions: 0, extraCalls: 0 });

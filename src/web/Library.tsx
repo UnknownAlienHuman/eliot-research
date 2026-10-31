@@ -4,7 +4,7 @@
 // and owns routes/schema/shared/api. Ranges: UTF-8 bytes, end-exclusive.
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project, Revision, Source, SourceSelection } from "../shared/api";
 import { readableTextWarning } from "../ingest";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
@@ -495,6 +495,7 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
 }
 export function Reader() {
   const { projectId, sourceId } = useParams();
+  const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
   const revisionId = params.get("revisionId") ?? "";
   const sp = params.get("start"), ep = params.get("end");
@@ -604,7 +605,9 @@ export function Reader() {
           <div className="er-lib__actions"><button className="er-button er-button--tonal" type="button" onClick={copySelectionLink}>Copy link to selection</button>{activeRevision ? <a className="er-button er-button--text" href={"/api/revisions/" + encodeURIComponent(activeRevision) + "/original"}>Original</a> : null}{copied ? <span className="er-lib__hint" role="status">Link copied.</span> : null}</div>
           {projectId && sourceId && activeRevision && activeRevision === source.revisionId && rev?.originalMime === "application/pdf" && activeState !== "pending"
             ? <SourceOcr projectId={projectId} sourceId={sourceId} revisionId={activeRevision} onApplied={id => {
-              setText(""); setOutline([]); setLoadedRev(""); setParams({ revisionId: id });
+              void queryClient.invalidateQueries({ queryKey: ["sources", projectId], exact: true });
+              if (id !== activeRevision) { setText(""); setOutline([]); setLoadedRev(""); }
+              setParams({ revisionId: id });
             }} /> : null}
           <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void replaceFile(); }}>
             <label className="er-field__label" htmlFor="er-lib-replace">Replace source file</label><input id="er-lib-replace" type="file" onChange={(e) => setReplace(e.currentTarget.files?.[0] ?? null)} />
