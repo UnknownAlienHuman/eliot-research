@@ -13,8 +13,9 @@ import type { Block } from "./blocks.js";
  * declared reference tokens; splitDistillStatements keeps fenced code as one
  * unit. resultStatement formats one scalar result card and rejects it when
  * the composed task/dataset/conditions plus metric:valueText+unit lacks numeric
- * support. Direct dataset/quote split contradictions are rejected; other
- * task/metric/dataset semantics remain unchecked.
+ * support. Direct dataset/quote split contradictions and absent standalone
+ * uppercase dataset identifiers are rejected; other task/metric/dataset
+ * semantics remain unchecked.
  */
 
 export interface CandidateClaim {
@@ -458,6 +459,15 @@ export function verifyClaims(
   return { claims, dropped, clearedNumbers };
 }
 
+/** Only standalone uppercase ASCII dataset identifiers; presence does not prove row association. */
+function hasUppercaseDatasetIdentifier(dataset: string | null, quote: string): boolean {
+  if (dataset === null) return true;
+  const identifier = dataset.trim();
+  if (!/^[A-Z]{2,}$/u.test(identifier)) return true;
+  const boundary = "[^\\p{L}\\p{M}\\p{N}_]";
+  return new RegExp(`(?:^|${boundary})${identifier}(?=$|${boundary})`, "iu").test(quote);
+}
+
 /**
  * Format one stored result card after the normal verify step. Non-result
  * claims keep their original statement. A result claim must carry its
@@ -471,8 +481,10 @@ export function verifyClaims(
  * conditions plus metric:valueText+unit (joining, never doubling, the
  * unit) must be supported by the verified quote; valueText must be
  * supported by the statement; the statement must be supported by the
- * composed record. Callers run verifyClaims first; this formats, it does
- * not re-admit or infer conditions.
+ * composed record. A standalone uppercase ASCII dataset identifier must
+ * also occur as a whole word in the own quote; this spelling check does not
+ * prove semantic row association. Callers run verifyClaims first; this
+ * formats, it does not re-admit or infer conditions.
  */
 export function resultStatement(claim: VerifiedClaim): string | null {
   if (claim.kind !== "result") return claim.statement;
@@ -490,6 +502,7 @@ export function resultStatement(claim: VerifiedClaim): string | null {
   // quantity (compound powers count as one via the shared tokenizer).
   // Never split, relabel, or borrow conditions to repair a compound.
   if (countNumericQuantities(text) > 1) return null;
+  if (!hasUppercaseDatasetIdentifier(claim.dataset, claim.quote)) return null;
   const unit = clean(claim.unit);
   const scalar =
     unit === null || text.endsWith(unit) ? text : unit === "%" ? text + unit : text + " " + unit;

@@ -117,11 +117,15 @@ export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "out
 export function distillModelSpec(model: ModelSpec): ModelSpec;
 export function distillModelSpec(model: CatalogModel): CatalogModel;
 export function distillModelSpec(model: CatalogModel): CatalogModel {
-  if (!model.route.startsWith("workers-ai:") || !model.nativeReasoningEfforts?.includes("high")) return model;
-  const output = modelOutputLimit(model);
-  const outputReserveTokens = model.maxOutputTokens === null ? output
-    : Math.min(model.maxOutputTokens, Math.max(output, 16_384));
-  return { ...model, nativeReasoningEffort: "high", outputReserveTokens };
+  if (!model.route.startsWith("workers-ai:")) return model;
+  const nativeReasoningEffort = model.nativeReasoningEfforts?.includes("high") ? "high" : model.nativeReasoningEffort;
+  const outputReserveTokens = model.maxOutputTokens === null ? model.outputReserveTokens
+    : Math.min(model.maxOutputTokens, Math.max(modelOutputLimit(model), 16_384));
+  if (nativeReasoningEffort === model.nativeReasoningEffort && outputReserveTokens === model.outputReserveTokens) return model;
+  return { ...model,
+    ...(nativeReasoningEffort === undefined ? {} : { nativeReasoningEffort }),
+    ...(outputReserveTokens === undefined ? {} : { outputReserveTokens }),
+  };
 }
 function missingMetadata(model: CatalogModel): string | null {
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||

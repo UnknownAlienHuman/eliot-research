@@ -299,12 +299,11 @@ re-distilled automatically.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 
-K3 is not fully accepted or deployed. The ten baseline papers reached `done`; the unchanged-revision check dispatched
-no further inference. Required conditions for the French Transformer result and some LoRA anchors remain unresolved.
-All four real overflow answers used `claims` mode; statement-local numeric and citation support gates remain open.
-Semantic support for guide, digest and glossary
-content remains separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference
-and does not qualify K3.
+K3 remains unaccepted and undeployed. The bounded R5 LoRA run used two calls: exact quotes (16/16),
+numeric checks (36/36), browser/read and storage/history preservation, and unchanged A3 predicates (4/4) pass.
+All-card semantics fail on unsupported GLUE context; the guide/digest/glossary review fails. The canonical
+U+001C comparator remains unverified. Ten-source and overflow C1–C4 acceptance remains open.
+Storage-only Save/recheck does not qualify semantic acceptance.
 
 ---
 

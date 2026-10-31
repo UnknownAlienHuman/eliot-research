@@ -334,6 +334,10 @@ or selection reset. These reads never dispatch understanding.
 
 Each input block is a separate JSON record containing its exact `quoteBlock` and text, so a label does not implicitly
 name following blocks or an entire section. The first output requests the source guide before detailed claims.
+Both fresh model inputs reuse `readableTextWarning` to attach optional `readabilityWarning` metadata to each affected
+canonical block or frozen excerpt. Non-printing glyphs do not establish missing operators or conditions; readable
+parts remain usable. This input signal changes no canonical bytes, stored artifacts, labels or call bounds and does
+not by itself establish semantic quality.
 Each claim still selects one `quoteBlock` from the closed compact label set for that immutable revision. Code resolves
 it to the full original block as its own quote, preserving PDF line-break hyphens, brackets and Markdown bytes;
 the model does not transcribe canonical evidence. Claim quote/range and numeric checks remain against that one block,
@@ -381,6 +385,9 @@ semantic support is still a separate quality gate.
 Code also rejects a result whose simple literal dataset name carries one explicit data split while its own quote
 names that same dataset with a different unambiguous split. It does not rewrite fields or infer dataset aliases;
 ambiguous splits and other task/metric/dataset semantics remain for quality review.
+A standalone all-uppercase ASCII dataset identifier must occur as a whole word in that result's own quote,
+ignoring case and surrounding field whitespace. This spelling check does not infer aliases, verify table-row
+association or apply exact-phrase matching to descriptive dataset, task or metric text.
 New second-call additional claims require the same nullable structured fields as extraction. Cached outputs may
 omit these fields; storage-only rechecks retain that shape and treat omissions as null without inventing metadata.
 Store raw result/report in R2, compact verified claims in D1, and usage
@@ -599,8 +606,9 @@ New native K3 admissions select `high` only when the same catalogue snapshot adv
 snapshot's existing choice. With known published output capacity, their job reserve is at least 16,384 tokens, capped
 by that capacity and never reducing an existing larger reserve; unknown capacity retains its current reserve.
 The model, reserve and applicable call timeout are frozen before Workflow creation. Existing admitted parameters,
-Gateway routing and owner model selections are unchanged. This strategy is experimental; service completion and
-semantic quality under it are not yet verified.
+Gateway routing and owner model selections are unchanged. Successful service completion under these job bounds
+does not establish semantic acceptance; claims and synthesized prose retain the same own-quote, condition and
+full-contour quality gates.
 
 The existing Flash fallback's advertised output capacity is 1,048,576 tokens, checked from Cloudflare's marketplace
 model-search response on 2026-10-31; `max_output_length` is the protocol alias for completion/output tokens. This

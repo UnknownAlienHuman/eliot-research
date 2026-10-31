@@ -35,7 +35,7 @@ vi.mock("../models", async () => ({
 
 import { NoObjectGeneratedError, generateText, Output } from "ai";
 import { modelFailure, resolveModelTransport } from "../model-transport";
-import { availableModels, requireAvailableModel, requireCatalogModel } from "../models";
+import { availableModels, distillModelSpec, requireAvailableModel, requireCatalogModel } from "../models";
 import { discoverGatewayModels } from "../model-catalog";
 import { discoverNativeModels } from "../native-model-catalog";
 import { DistillWorkflow, hasAvailableUnderstanding, requestUnderstanding, scheduleDistillation } from "./distill";
@@ -221,15 +221,25 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
+  it("leaves Gateway model bounds and reasoning metadata unchanged", () => {
+    const gateway: ModelSpec = Object.freeze({ ...snapshot, maxOutputTokens: 65_536,
+      nativeReasoningEffort: "low", nativeReasoningEfforts: Object.freeze(["low", "high"]) });
+    expect(distillModelSpec(gateway)).toBe(gateway);
+  });
+
   it.each([
-    { capabilities: Object.freeze(["low", "high"]), effort: "high", capacity: null, reserve: 8192 },
-    { capabilities: undefined, effort: "low", capacity: null, reserve: 8192 },
-    { capabilities: Object.freeze(["low", "high"]), effort: "high", capacity: 1_048_576, reserve: 16_384 },
-  ] as const)("admits native $effort with reserve $reserve from published capacity $capacity", async ({ capabilities, effort, capacity, reserve }) => {
+    { capabilities: Object.freeze(["low", "high"]), effort: "high", capacity: null, currentReserve: 8192, reserve: 8192 },
+    { capabilities: undefined, effort: "low", capacity: null, currentReserve: 8192, reserve: 8192 },
+    { capabilities: Object.freeze(["low", "high"]), effort: "high", capacity: 1_048_576, currentReserve: 8192, reserve: 16_384 },
+    { capabilities: Object.freeze(["low"]), effort: "low", capacity: 1_048_576, currentReserve: 8192, reserve: 16_384 },
+    { capabilities: undefined, effort: "low", capacity: 1_048_576, currentReserve: 8192, reserve: 16_384 },
+    { capabilities: Object.freeze(["low"]), effort: "low", capacity: 8192, currentReserve: 8192, reserve: 8192 },
+    { capabilities: Object.freeze(["low", "high"]), effort: "high", capacity: 1_048_576, currentReserve: 32_768, reserve: 32_768 },
+  ] as const)("admits native $effort with reserve $reserve from published capacity $capacity", async ({ capabilities, effort, capacity, currentReserve, reserve }) => {
     const f = callerFixture();
     const published: ModelSpec = Object.freeze({
       route: "workers-ai:@cf/zai-org/glm-5.3-flash", id: "@cf/zai-org/glm-5.3-flash", label: "Native published fixture",
-      contextTokens: 1_048_576, maxOutputTokens: capacity, outputReserveTokens: 8192,
+      contextTokens: 1_048_576, maxOutputTokens: capacity, outputReserveTokens: currentReserve,
       nativeReasoningEffort: "low", ...(capabilities ? { nativeReasoningEfforts: capabilities } : {}),
       checkedOn: "2026-10-30", enabled: true,
     });
@@ -248,10 +258,11 @@ describe("DistillWorkflow admitted model snapshot", () => {
         params: { revisionId: explicitlySelectedRevisionId, model: expectedModel, ...(reserve > 8192 ? { callTimeoutMs: 300_000 } : {}) },
       });
       const admitted = f.createWorkflow.mock.calls[0]?.[0].params.model;
-      if (effort === "high") expect(admitted).not.toBe(published);
+      if (effort === published.nativeReasoningEffort && reserve === currentReserve) expect(admitted).toBe(published);
+      else expect(admitted).not.toBe(published);
       expect(admitted).toStrictEqual(expectedModel);
       expect(published.nativeReasoningEffort).toBe("low");
-      expect(published.outputReserveTokens).toBe(8192);
+      expect(published.outputReserveTokens).toBe(currentReserve);
       expect(f.db.prepare("SELECT distill_model AS model,distill_state AS state,distill_calls AS calls,distill_token_limit AS tokenLimit FROM source_revision WHERE id=?")
         .get(explicitlySelectedRevisionId)).toEqual({ model: published.route, state: "running", calls: 0, tokenLimit: 2 * (published.contextTokens + reserve) });
       expect(f.db.prepare("SELECT distill_model AS model,native_usage_mode AS mode FROM settings WHERE id=1").get())
