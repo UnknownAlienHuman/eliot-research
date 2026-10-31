@@ -300,6 +300,9 @@ must also be supported by the same quote, but remain the model's own-quote revie
 A missing literal percent sign alone does not establish a false number: a table may state its measurement in words.
 Unsupported scalar numeric metadata is cleared together with its unit. Numeric verification does not evaluate
 arbitrary mathematics or establish semantic support.
+An adjacent ASCII dash between complete unattached scalar operands is an infix separator for literal matching;
+range or subtraction meaning remains a semantic check. Unary and exponent signs retain their identity, and a
+standalone negative value cannot borrow the positive endpoint of a range.
 Explicit multiplication powers such as `7.6×10⁹` and `7.6×10^9` are checked as one token. Flattened `7.6×109`,
 or a mantissa and exponent found separately elsewhere in a passage, cannot support that scientific quantity.
 Balanced TeX integer powers (`10^{-6}`, `3.7×10^{4}`) and single-backslash `\times`/`\cdot` spellings use the same

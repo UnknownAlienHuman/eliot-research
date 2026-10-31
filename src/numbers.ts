@@ -89,11 +89,19 @@ function numericLiterals(text: string): Set<string> {
     for (const token of tokens) values.add(withParenthesizedSign(remaining, token));
     remaining = withoutCompoundPowers(remaining, tokens);
   }
+  // Treat only an adjacent ASCII minus after a standalone numeric token as an infix separator.
+  let previousNumericEnd: number = -1;
+  let previousNumericStartsUnattached: boolean = false;
   for (const match of remaining.matchAll(NUMERIC_LITERAL_RE)) {
     const start = match.index ?? 0;
+    const infixMinus: boolean = match[0].startsWith("-") && previousNumericEnd === start && previousNumericStartsUnattached;
+    const valueStart: number = start + (infixMinus ? 1 : 0);
+    const value: string = infixMinus ? match[0].slice(1) : match[0];
     values.add(withParenthesizedSign(remaining, {
-      value: normalizeNumericLiteral(match[0]), start, end: start + match[0].length,
+      value: normalizeNumericLiteral(value), start: valueStart, end: start + match[0].length,
     }));
+    previousNumericEnd = start + match[0].length;
+    previousNumericStartsUnattached = !/[\p{L}\p{M}\p{N}_]$/u.test(remaining.slice(0, valueStart));
   }
   return values;
 }
