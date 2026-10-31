@@ -96,6 +96,18 @@ describe("provider model catalogue discovery", () => {
     expect(models[0]).not.toHaveProperty("outputMicrousdPerMillion");
   });
 
+  it("preserves advertised image support and missing input capabilities from OpenRouter", async () => {
+    catalogues([], [
+      { id: "fixture/one", architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] } },
+      { id: "fixture/two", architecture: textChat },
+      { id: "fixture/three", architecture: { output_modalities: ["text"] } },
+    ]);
+    const models = await discoverGatewayModels(defaultProviders());
+    expect(models.map((model) => model.supportsImages)).toEqual([true, false, undefined]);
+    expect(models[2]).not.toHaveProperty("supportsImages");
+    expect(models.every((model) => model.enabled)).toBe(true);
+  });
+
   it("propagates temperature and optional reasoning only from advertised metadata", async () => {
     catalogues([], [
       { id: "provider/synth-both", context_length: 100000, architecture: textChat, supported_parameters: ["temperature", "reasoning"], reasoning: { mandatory: false } },
@@ -400,6 +412,30 @@ describe("go provider metadata catalogue", () => {
       throw new Error("Unexpected metadata endpoint");
     });
   }
+
+  it("enriches image support without turning missing modalities into false", async () => {
+    const limits = { limit: { context: 64000, output: 1024 } };
+    vi.stubGlobal("fetch", stubFeed([
+      { id: "fixture/one" },
+      { id: "fixture/two" },
+      { id: "fixture/three" },
+      { id: "fixture/four", architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] } },
+    ], {
+      "opencode-go": {
+        npm: "@ai-sdk/openai-compatible", api: GO_BASE + "/openai/v1",
+        models: {
+          "fixture/one": { ...limits, modalities: { input: ["text", "image"], output: ["text"] } },
+          "fixture/two": { ...limits, modalities: { input: ["text"], output: ["text"] } },
+          "fixture/three": limits,
+          "fixture/four": limits,
+        },
+      },
+    }));
+    const models = await discoverGatewayModels(goProviders());
+    expect(models.map((model) => model.supportsImages)).toEqual([true, false, undefined, true]);
+    expect(models[2]).not.toHaveProperty("supportsImages");
+    expect(models.every((model) => model.enabled)).toBe(true);
+  });
 
   it("joins published bounds, wire and api base for live rows only", async () => {
     vi.stubGlobal("fetch", stubFeed(liveRows(), feedDoc()));

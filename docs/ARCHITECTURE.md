@@ -15,6 +15,12 @@ the owner administer retrieval infrastructure.
 The ordinary path stays ordinary: select sources, ask a question, receive a streamed answer, open every citation at the
 exact passage. Long work is an explicit job with progress, limits and Stop. Conversion follows an upload; source
 understanding requires an explicit request. Page loads, reconnects and saves never start model work.
+Ordinary ingest never requests OCR. The owner may explicitly run PDF OCR with a selected model, review/edit its
+stored text preview, and Apply it as a new immutable readable revision; reading or applying the preview is storage only.
+OCR uses the source's latest live revision, whose original must be a PDF. That revision may be `needs_conversion`
+while an older readable revision remains current until Apply.
+The bounded local OCR control/storage journey is verified; full PDF/corpus OCR quality and deployed Access remain
+NOT_RUN. This does not establish owner semantic acceptance or close K2/K3 acceptance.
 
 ## Design principles
 
@@ -69,7 +75,8 @@ revision's `text.md`. Generated pages are derived material and never silently re
 ## Owner guarantees
 
 **Evidence survives derived systems.** A new conversion creates a new revision. Existing citations continue to point to
-the old text. AI Search can be deleted and rebuilt without changing source truth.
+the old text. Applying reviewed PDF OCR retains the original PDF and prior canonical bytes; it never retargets old
+citations or starts understanding. AI Search can be deleted and rebuilt without changing source truth.
 
 **Answers are honest.** Eliot distinguishes source statements from inference, says when selected sources do not contain
 the answer, and never invents page numbers, labels or source names. Every accepted citation is server-resolved.
@@ -84,8 +91,8 @@ service is unavailable or the budget is exhausted, the UI shows the blocked oper
 **Projects do not interfere.** There is no process-wide current project. Every route, chat, job and write carries its
 project or immutable revision. Removing a project membership never deletes the shared Library source.
 
-**Knowledge changes visibly.** Replacing or deleting a source marks dependent pages stale. Refresh writes a new page
-revision. Owner edits are not overwritten; agent output is proposed.
+**Knowledge changes visibly.** Replacing a source, applying PDF OCR or deleting a source marks dependent pages stale.
+Refresh writes a new page revision. Owner edits are not overwritten; agent output is proposed.
 
 **Practical security.** Cloudflare Access is the only login. A hostname-based Access application protects the UI/API
 and supports the chat WebSocket; the Worker validates the JWT. One owner sees all data. Agent service tokens can read

@@ -70,6 +70,35 @@ export interface Revision extends Pick<Source, "converter" | "conversionTokens" 
   revisionNo: number;
   readableState: Source["readableState"];
   createdAt: number;
+  originalMime?: string | null;
+  originalSha256?: string | null;
+  originalSize?: number | null;
+}
+
+export const OCR_LIMITS = { maxPages: 1000, pageBytes: 1024 * 1024, pagePixels: 4_000_000,
+  renderLongEdge: 2000, pageTimeoutMs: 90_000, previewBytes: 25 * 1024 * 1024 } as const;
+export type OcrState = "preparing" | "queued" | "running" | "ready" | "failed" | "cancelled" | "applied";
+export interface OcrJobView {
+  id: string;
+  projectId: string;
+  sourceId: string;
+  baseRevisionId: string;
+  state: OcrState;
+  modelRoute: string;
+  modelLabel: string;
+  pageCount: number;
+  uploadedPages: number[];
+  completedPages: number;
+  calls: number;
+  tokenLimit: number;
+  inputTokens: number | null;
+  cachedTokens: number | null;
+  outputTokens: number | null;
+  deadlineAt: number | null;
+  error: string | null;
+  appliedRevisionId: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface ApiError {

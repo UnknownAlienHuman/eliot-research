@@ -19,6 +19,7 @@ export interface ModelRoute {
   readonly maxOutputTokens: number | null;
   readonly mayTrainOnYourPrompts?: boolean;
   readonly outputReserveTokens?: number;
+  readonly supportsImages?: boolean;
   readonly checkedOn: string | null;
 }
 

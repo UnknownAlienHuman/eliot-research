@@ -66,6 +66,20 @@ styles were adapted from `packages/ui/src/features/sources/{projects,import,docu
 `library.css`, without runtime/query adapters. All of this legacy Eliot material is MIT. Callers are the K1 owner API,
 IngestWorkflow and reader; verification is the fixed-corpus `pnpm eval k1` plus focused UTF-8/URL tests.
 
+### Explicit OCR rasterization adoption
+
+The directly installed `pdfjs-dist@6.4.299` (Apache-2.0) is pinned to
+[`mozilla/pdf.js@d0991a0d53f3bb3a7307e3b83f279c1d117aafb3`](https://github.com/mozilla/pdf.js/tree/d0991a0d53f3bb3a7307e3b83f279c1d117aafb3).
+The npm `gitHead` and upstream tag `v6.4.299` match that commit, checked 2026-10-30. Inspected package paths are
+`build/pdf.mjs`, `build/pdf.worker.min.mjs`, `types/src/display/api.d.ts` and `LICENSE`.
+The explicit owner OCR UI calls `src/web/pdf-pages.ts` for lazy browser-only PDF page rasterization to bounded PNGs,
+using the public document/page/Canvas API and a same-origin bundled worker. The package is used directly, not copied
+or modified. Its viewer UI, text extraction, external font/CMap services and server canvas runtime are not adopted.
+PDF.js is not a canonical text converter; rasterization does not change original or existing canonical bytes.
+Verification checks the original SHA before worker transfer, complete page count, PNG dimensions/bytes and visible
+formula glyphs in a real browser. That renderer check does not establish OCR-model or full-source acceptance.
+The bundled Mozilla notices and Apache-2.0 attribution are recorded in `THIRD_PARTY_NOTICES.md`.
+
 ## Cloudflare primary donors
 
 ### K2 adoption

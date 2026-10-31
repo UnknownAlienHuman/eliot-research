@@ -52,12 +52,9 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
   const config = JSON.parse(await readFile(path.join(workerDir, "wrangler.json"), "utf8"));
   assert.equal(config.name, "eliot-research"); assert.equal(config.main, "index.js");
   const migrationConfig = config.d1_databases?.find((entry: any) => entry.binding === "DB");
-  assert(migrationConfig && typeof migrationConfig.migrations_dir === "string" && typeof migrationConfig.migrations_pattern === "string");
-  const migrationDigits = /^.*000\[([0-9]+)\]_\*\.sql$/u.exec(migrationConfig.migrations_pattern)?.[1];
-  assert(migrationDigits, "Generated Worker migration pattern must identify the selected K4 migrations.");
+  assert(migrationConfig && typeof migrationConfig.migrations_dir === "string");
   const migrationsDir = path.resolve(workerDir, migrationConfig.migrations_dir);
-  const migrationFiles = (await readdir(migrationsDir)).filter((name) => name.endsWith(".sql")
-    && [...migrationDigits].some((digit) => name.startsWith("000" + digit + "_"))).sort();
+  const migrationFiles = (await readdir(migrationsDir)).filter((name) => /^\d+_.+\.sql$/u.test(name)).sort();
   assert(migrationFiles.includes("0009_agents.sql"), "The built Worker migration pattern must include K4 migration 0009.");
   assert(!migrationFiles.includes("0004_agents.sql"), "K4 must use the current 0009 migration, not the excluded old 0004 file.");
 

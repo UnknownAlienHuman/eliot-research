@@ -81,6 +81,7 @@ export interface CatalogModel {
   responseFormat?: boolean;
   structuredOutputs?: boolean;
   supportsTemperature?: boolean;
+  supportsImages?: boolean;
   optionalReasoning?: boolean;
   apiProtocol?: "openai-chat" | "openai-responses" | "anthropic" | "google";
   apiBaseUrl?: string;
@@ -98,7 +99,7 @@ export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
 // Owner-selected native default metadata is a fallback, not a provider allowlist.
 export const MODELS: ModelSpec[] = [
   { route: DEFAULT_MODEL, id: "@cf/zai-org/glm-5.3-flash", label: "GLM 5.3 Flash", contextTokens: 1_048_576,
-    maxOutputTokens: null, outputReserveTokens: 8192, nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true },
+    maxOutputTokens: null, outputReserveTokens: 8192, supportsImages: true, nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true },
 ];
 export const modelOutputLimit = (model: Pick<CatalogModel, "outputReserveTokens" | "maxOutputTokens">) => {
   const bound = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
@@ -169,6 +170,7 @@ function isCatalogModel(value: unknown): value is CatalogModel {
   if (value.responseFormat !== undefined && typeof value.responseFormat !== "boolean") return false;
   if (value.structuredOutputs !== undefined && typeof value.structuredOutputs !== "boolean") return false;
   if (value.supportsTemperature !== undefined && typeof value.supportsTemperature !== "boolean") return false;
+  if (value.supportsImages !== undefined && typeof value.supportsImages !== "boolean") return false;
   if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
   if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low") return false;
   if (value.apiProtocol !== undefined && !["openai-chat", "openai-responses", "anthropic", "google"].includes(String(value.apiProtocol))) return false;
@@ -221,11 +223,12 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     const fallback = models.get(model.route);
     const visible: CatalogModel = { route: model.route, id: model.id, label: model.label, contextTokens: model.contextTokens,
       maxOutputTokens: model.maxOutputTokens, checkedOn: model.checkedOn, enabled: model.enabled };
-    for (const field of ["outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "optionalReasoning",
+    for (const field of ["outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning",
       "nativeReasoningEffort", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
       if (model[field] !== undefined) Object.assign(visible, { [field]: model[field] });
     }
     models.set(model.route, { ...visible, label: fallback?.label ?? model.label,
+      ...(visible.supportsImages === undefined && fallback?.supportsImages !== undefined ? { supportsImages: fallback.supportsImages } : {}),
       maxOutputTokens: model.maxOutputTokens ?? fallback?.maxOutputTokens ?? null });
   }
   for (const [route, model] of models) {

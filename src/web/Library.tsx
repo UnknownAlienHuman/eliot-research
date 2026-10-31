@@ -8,6 +8,7 @@ import type { Project, Revision, Source, SourceSelection } from "../shared/api";
 import { readableTextWarning } from "../ingest";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
 import { SourceUnderstanding } from "./Understanding";
+import { SourceOcr } from "./Ocr";
 export interface OutlineItem { label: string; start: number; end: number; }
 const FILE_LIMIT = 25 * 1024 * 1024;
 const POLL_MS = 3000;
@@ -603,6 +604,10 @@ export function Reader() {
         </nav>
         <div>
           <div className="er-lib__actions"><button className="er-button er-button--tonal" type="button" onClick={copySelectionLink}>Copy link to selection</button>{activeRevision ? <a className="er-button er-button--text" href={"/api/revisions/" + encodeURIComponent(activeRevision) + "/original"}>Original</a> : null}{copied ? <span className="er-lib__hint" role="status">Link copied.</span> : null}</div>
+          {projectId && sourceId && activeRevision && activeRevision === source.revisionId && rev?.originalMime === "application/pdf" && activeState !== "pending"
+            ? <SourceOcr projectId={projectId} sourceId={sourceId} revisionId={activeRevision} onApplied={id => {
+              setText(""); setOutline([]); setLoadedRev(""); setParams({ revisionId: id });
+            }} /> : null}
           <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void replaceFile(); }}>
             <label className="er-field__label" htmlFor="er-lib-replace">Replace source file</label><input id="er-lib-replace" type="file" onChange={(e) => setReplace(e.currentTarget.files?.[0] ?? null)} />
             <button className="er-button er-button--tonal" type="submit" disabled={!replace}>Upload new revision</button>

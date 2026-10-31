@@ -62,7 +62,7 @@ export async function getSource(env: Env, _actor: Actor, id: string, requestedRe
   const source = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION} WHERE s.id=? AND s.state!='deleted'`)
     .bind(id).first<Source>();
   if (!source) throw new LibraryError("not_found", "Source not found.", 404);
-  const fields = "id,revision_no AS revisionNo,readable_state AS readableState,created_at AS createdAt,converter,conversion_tokens AS conversionTokens,conversion_calls AS conversionCalls,conversion_ms AS conversionMs,warning_summary AS warningSummary,error";
+  const fields = "id,revision_no AS revisionNo,readable_state AS readableState,created_at AS createdAt,converter,conversion_tokens AS conversionTokens,conversion_calls AS conversionCalls,conversion_ms AS conversionMs,warning_summary AS warningSummary,error,original_mime AS originalMime,original_sha256 AS originalSha256,original_size AS originalSize";
   const revisions = await env.DB.prepare(`SELECT ${fields} FROM source_revision WHERE source_id=? AND deleted_at IS NULL ORDER BY revision_no DESC LIMIT 50`)
     .bind(id).all<Revision>();
   const selectedId = requestedRevisionId ?? source.currentRevisionId;

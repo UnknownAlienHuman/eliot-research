@@ -28,13 +28,14 @@ WebSocket, MCP, Durable Object and Workflow classes. HTTP, chat, MCP and Workflo
 | `src/auth.ts` | Access JWT and actors |
 | `src/cost.ts`, `src/models.ts` | usage, model bounds and provider admission |
 | `src/library.ts`, `src/ingest.ts`, `src/read.ts`, `src/blocks.ts` | Library and exact reading |
+| `src/ocr.ts`, `src/workflows/ocr.ts` | explicit PDF OCR, saved preview and storage-only Apply |
 | `src/context.ts`, `src/citations.ts`, `src/chat.ts` | cited answers |
-| `src/workflows/*.ts` | ingest, distill, project map, research |
+| `src/workflows/*.ts` | ingest, explicit OCR, distill, project map, research |
 | `src/tools/`, `src/mcp.ts`, `src/search.ts` | shared tools, MCP, optional AI Search |
 | `src/shared/`, `src/web/` | shared payloads and owner UI |
 | `migrations/`, `scripts/eval/` | contour schema and real acceptance |
 
-Bindings arrive only with their contour: K0 `ASSETS`; K1 `DB`, `BUCKET`, `AI`, `INGEST`; K2 `CHAT`; K3 `DISTILL`
+Bindings arrive only with their contour: K0 `ASSETS`; K1 `DB`, `BUCKET`, `AI`, `INGEST`, plus `OCR` for explicit PDF jobs; K2 `CHAT`; K3 `DISTILL`
 and reconciliation-only cron; K5 direct `SEARCH`; K6 `PROJECT_KNOWLEDGE`; K7 `RESEARCH` and optional `BROWSER`. Generate `Env` with
 Wrangler; never hand-write it.
 
@@ -99,15 +100,15 @@ Migrations own schema names:
 | `0001_library.sql` | project, source, immutable revision, membership |
 | `0002_ask.sql` | settings, chat/turn, page/revision, answer usage/cost |
 | `0003_distill.sql` | distillation state/usage, source metadata, typed claims |
-| `0004_agents.sql` | superseded K4 draft; excluded from migration selection |
 | `0005_model_gateway.sql` | nullable `settings.model_gateway_id`; existing-Gateway opt-in |
 | `0006_integrity.sql` | approved #420 guards for source/page ownership and terminal-turn/capture-identity immutability |
 | `0007_manual_understanding.sql` | explicit source understanding, removal of the automatic switch |
 | `0008_model_providers.sql` | provider configuration, owning-row token bounds and saved native usage choice; existing accounting data retained |
 | `0009_agents.sql` | trigram claim FTS/backfill and immutable proposal base revision |
+| `0010_source_ocr.sql` | owner-requested `source_ocr_job`, frozen PDF/model inputs, bounded page progress/usage, preview identity and applied revision |
 
-Current `migrations/000[12356789]_*.sql` selects `0001`–`0003` and `0005`–`0009`;
-the superseded `0004_agents.sql` draft remains excluded.
+Apply all active `migrations/*.sql` in filename order: currently `0001`–`0003` and `0005`–`0010`.
+The unaccepted `0004_agents.sql` draft is preserved at `infra/legacy-migrations/0004_agents.sql`, outside that selection.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:
 
@@ -147,7 +148,7 @@ embedded-image conversion are disabled. Output containing only page headings is 
 source evidence. Exactly one leading UTF-8 BOM is removed before canonical storage; readers preserve those stored bytes.
 
 `IngestWorkflow` converts native UTF-8 text locally. Cache `env.AI.toMarkdown().supported()` and call `toMarkdown` only
-for required document formats. K1 does not opt into model-assisted image/OCR conversion: retain scans/images and mark
+for required document formats. Ordinary ingest never invokes OCR or opts into model-assisted image conversion: retain scans/images and mark
 `needs_conversion`; owner-supplied Markdown creates a new revision. Static URL fetch is preferred; Browser Run is K7
 only. Validate non-empty UTF-8, write `text.md` and `blocks.json`, then advance readable state. AI Search OCR is never
 canonical source text.
@@ -159,14 +160,84 @@ K1 static capture uses HTTPS port 443, at most three redirects, a 15-second tota
 Hostname validation does not pin DNS resolution; DNS rebinding prevention is not claimed. No owner/model credentials
 are sent to captured sites or corpus download hosts. `ELIOT_REMOTE_BINDINGS=0 pnpm dev` disables remote services for
 local native-text work and CI; the production bindings and Access checks are unchanged. `pnpm db:local` applies pending
-`0001`–`0003` and `0005`–`0009` through `migrations/000[12356789]_*.sql`;
-the superseded `0004` draft stays excluded.
+active `migrations/*.sql` in filename order, including `0010_source_ocr.sql`; archived `0004` stays excluded.
 Remote D1/R2 provisioning and deployment are not run.
 
 Unexpected C0/DEL characters, excluding ordinary text whitespace, produce a readable-text warning without changing
 canonical bytes or ranges. New conversions persist `readable_with_warnings`; the reader applies the same check to
 the loaded active text of older revisions without a D1 write. This detects non-printing characters, not mathematical
 fidelity or every conversion loss; the original remains available for inspection.
+
+### Explicit PDF OCR and reviewed Apply
+
+The owner-approved exception is a separate PDF-only operation, never an ingest fallback. Migration
+`0010_source_ocr.sql` owns `source_ocr_job`; `src/shared/api.ts` owns `OCR_LIMITS`, `OcrState` and `OcrJobView`.
+States are `preparing|queued|running|ready|failed|cancelled|applied`. A job retains project/source/base revision,
+`base_current_revision_id`, `model_route`/`model_snapshot`, page inputs/count, dispatched calls, completed pages,
+token bound, nullable actual usage, `deadline_at`, preview SHA/size and `applied_revision_id`. R2 holds page inputs and
+saved OCR output below `source/<base-revision>/ocr/<job>/`; these are not canonical source evidence before Apply.
+
+The owner API is rooted at `/api/projects/:projectId/sources/:sourceId/ocr`:
+
+1. Explicit create (`POST` root) freezes `jobId`, `baseRevisionId`, selected `model`, complete `pageCount` and
+   `originalSha256` in a `preparing` job. Only the source's latest live (non-deleted) revision is eligible, and its
+   original must be a PDF. The reader passes `source.revisionId` as `baseRevisionId`, including at `needs_conversion`;
+   capture `source.currentRevisionId` separately in `base_current_revision_id`, even when it is an older readable
+   revision or null. Verify attached-source scope and the stored original PDF/hash. The browser
+   renders that original locally and uploads every page once as PNG (`PUT /:jobId/pages/:pageNumber`). Create/upload
+   perform no inference; no partial page selection silently replaces the document.
+2. Only explicit `POST /:jobId/start` admits paid work after all pages are present, the base is still the latest live
+   revision, and the separately captured current still matches. Selected-route, token/time/concurrency and
+   provider-allowance checks must also pass. Freeze the admitted model snapshot; no automatic model
+   substitution. Known non-image models are rejected; unknown image capability is not proof of support and a provider
+   rejection stops the job. `ocr-<jobId>` processes pages serially, at most one model call per page and `pageCount`
+   calls total. Count dispatch before the call; paid steps have no retry or automatic continuation after failure.
+3. `POST /:jobId/cancel` records Stop before another page dispatch. An in-flight page may finish and record usage;
+   it does not authorize the next page or Apply. Closing the dialog is not Stop. A failed/cancelled job is not resumed
+   by reading or reopening it; another paid run requires a new explicit owner action.
+4. `GET` root and `GET /:jobId` read stored jobs/progress; `GET /:jobId/preview` reads complete saved text for review
+   and editing. These reads never refresh models, start a Workflow or make an inference call. Record input/cached/output
+   usage when returned; unavailable usage remains null rather than zero or an invented Neurons/currency conversion.
+5. Only a `ready` preview may be applied (`POST /:jobId/apply`, optional reviewed `text`). Apply is storage only:
+   validate non-empty bounded text, write immutable `text.md` and exact UTF-8 `blocks.json`, then compare-and-set the
+   separately captured current in D1 only while the OCR base is still the latest live revision. Create a new readable
+   revision referencing the same original PDF/hash; retain every old revision, canonical byte range and citation target.
+   Mark accepted pages dependent on the replaced readable current revision stale. A changed latest base or current
+   conflicts instead of overwriting it; repeated Apply returns the job's existing `appliedRevisionId`.
+   The new revision starts with understanding `none`; no conversion, OCR or distillation is triggered by Apply.
+
+Shared bounds are 1–1,000 pages, at most 1 MiB PNG and 4,000,000 pixels per page, browser render long edge at most
+2,000 pixels, 90 seconds per page call, and 25 MiB for the complete/reviewed text. Admission stores
+`pageCount * modelTokenLimit(model)` as the job token bound and a finite deadline; these are job bounds, not provider
+prices or a billing guarantee. The ordinary 60-second `toMarkdown` conversion bound remains separate.
+
+`pnpm eval k1 --ocr` uses explicitly supplied derivative fixture identities, selected model and complete page count;
+without `ELIOT_K1_OCR_MODEL=1` a fresh run performs read/reopen checks only. Paid Run is an explicit opt-in.
+`pnpm eval k1 --ocr --resume-job=<UUID>` is an eval-only continuation for an existing ready job, not a product retry:
+it verifies `ELIOT_OCR_PRIOR_RESULT`, `ELIOT_OCR_PRIOR_EVIDENCE` range hashes and `ELIOT_OCR_ORIGINAL_SHA256`, then reads
+the saved preview and performs storage-only Apply/repeat-Apply. It never creates, uploads or starts that job again.
+The optional separate cancellation fixture still requires its explicit fixture scope and paid opt-in; it is not a
+retry of the retained job. No failed job is automatically resumed and no product continuation layer is added.
+
+Local real-service results (2026-10-31 UTC) verify this bounded control/storage journey on derivative scans:
+
+- `eval/out/k1-ocr/2026-10-31T00-52-32-409Z/result.json` remains **FAIL** at the preview UI label. Its retained
+  upload/Start/idempotence prefix passed: two Start requests dispatched one call; the one-page job reached `ready`.
+- The label fix's GET-only reopen loaded the exact stored preview without inference. The explicit continuation in
+  `eval/out/k1-ocr/2026-10-31T00-59-35-012Z/result.json` is **PASS_RESUMED**: saved preview, immutable Apply,
+  repeat-Apply with zero extra revisions/calls, and old-citation checks passed. Upload/Start were retained-prefix
+  evidence, not repeated actions. The separate two-page Stop fixture finished `cancelled` with one call/one completed
+  page, recording the in-flight result without dispatching page two.
+- `eval/out/k1-ocr-live/dependency-result-final.json` passed against the retained before baseline: one dependent page
+  became stale and one unrelated page stayed current; heads, body UTF-8, serialized citations API data and exact old
+  range bytes matched. This comparison made GET requests only.
+
+Actual usage across the two jobs was **two observed inference calls** against an admitted ceiling of **three calls**
+(one apply page plus two cancellation-fixture pages), input `3,783 + 3,783 = 7,566`, output
+`1,310 + 1,281 = 2,591` tokens, with zero reported cached tokens. The resumed Apply job kept its original one-call
+usage; it was not rerun. Monetary cost and Neurons remain unknown; latency budgets are not established.
+Full PDF/corpus OCR transcription quality and deployed Access are **NOT_RUN**; owner semantic acceptance is not
+claimed. These local results do not accept K2/K3 or establish a complete fresh corpus OCR run.
 
 ## 5. Blocks, labels, citations and quote verification
 
@@ -466,7 +537,7 @@ automatic data seeding. Test credentials are written only to a private ignored s
 disposes after 30 minutes. The ordinary signed fixture retains its five-minute credentials. This is local protocol
 and actor verification, not deployed Access acceptance.
 
-Workflow IDs are deterministic: `ingest-<revision>`, `distill-<revision>`,
+Workflow IDs are deterministic: `ingest-<revision>`, `ocr-<job>`, `distill-<revision>`,
 `project-<project>-<inputHash>`, `research-<job>`. Reuse an existing instance according to installed types. Each external
 call is one bounded step; paid model/search calls are not automatically repeated. Each deterministic write is a short
 separate step. Avoid fine-grained polling loops because
@@ -744,9 +815,9 @@ must remain intact.
 The proposed `unjs/unpdf@87c7edc43ee99a17d2aa20acf271c4889332720b` (`1.9.1`, MIT, `src/text.ts` and
 `examples/cloudflare/index.ts`) is not adopted. Its parallel page extraction would need measurement before replacing K1.
 
-| Choice needing owner decision | Implication |
+| Choice / current decision | Implication |
 |---|---|
 | Read API: `/text`, `/range`, `/outline` or PR `/text?start=&end=` and `/blocks` | Retain current callers unless an API change is explicitly accepted. |
 | Canonical converter: current K1 path or deterministic PDF/HTML extraction | A replacement needs an explicit converter decision and fresh K1 acceptance. |
-| Image evidence: no OCR or a separately accepted OCR/description path | Retain originals and `needs_conversion`; changed evidence needs a new revision and policy. |
+| Image evidence: explicit PDF OCR with preview/Apply is owner-approved | Use §4's separate selected-model job and immutable new revision. Ordinary ingest remains without OCR; the bounded local journey is verified, while full PDF/corpus OCR quality remains NOT_RUN. This does not adopt PR #419 or approve general image descriptions. |
 | Schema: revision-owned state or PR attempt/reservation tables | PR rewrites `0001`–`0004`, renames columns and adds run/reservation tables. These incompatible contracts require deliberate migration design; do not apply them to retained data. |

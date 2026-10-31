@@ -41,6 +41,7 @@ interface ProviderMetadataEntry {
   input: number | null;
   output: number | null;
   inText?: boolean;
+  inImage?: boolean;
   outText?: boolean;
   temperature?: boolean;
   structured?: boolean;
@@ -81,6 +82,7 @@ function parseMetadataEntry(value: unknown): ProviderMetadataEntry | null {
   if (typeof vendor.npm === "string" && vendor.npm !== "") entry.npm = vendor.npm;
   if (typeof vendor.api === "string" && vendor.api !== "") entry.api = vendor.api;
   if (inputModalities !== null) entry.inText = inputModalities.includes("text");
+  if (inputModalities !== null) entry.inImage = inputModalities.includes("image");
   if (outputModalities !== null) entry.outText = outputModalities.includes("text");
   if (row.temperature === true) entry.temperature = true;
   else if (row.temperature === false) entry.temperature = false;
@@ -136,6 +138,7 @@ function joinMetadata(model: CatalogModel, entry: ProviderMetadataEntry | undefi
   if (context !== null && entry.input !== null) context = Math.min(context, entry.input);
   if (context !== null) out.contextTokens = context;
   if (entry.output !== null) out.maxOutputTokens = entry.output;
+  if (entry.inImage !== undefined) out.supportsImages = entry.inImage;
   if (entry.temperature === true) out.supportsTemperature = true;
   if (entry.structured === true) {
     out.responseFormat = true;
@@ -239,6 +242,7 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
     responseFormat: parameters.includes("response_format"),
     structuredOutputs: parameters.includes("response_format") && parameters.includes("structured_outputs"),
     ...(supportsTemperature ? { supportsTemperature: true } : {}),
+    ...(Array.isArray(architecture?.input_modalities) ? { supportsImages: architecture.input_modalities.includes("image") } : {}),
     ...(optionalReasoning ? { optionalReasoning: true } : {}),
     checkedOn,
     enabled: unavailableReason === null, ...(unavailableReason ? { unavailableReason } : {}),
