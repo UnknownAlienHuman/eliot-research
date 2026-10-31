@@ -1,4 +1,4 @@
-import { numbersSupported } from "./numbers.js";
+import { countNumericQuantities, numbersSupported } from "./numbers.js";
 import { describe, expect, it } from "vitest";
 import { cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "./quotes.js";
 import type { CandidateClaim, VerifiedClaim } from "./quotes.js";
@@ -406,6 +406,40 @@ describe("numbersSupported", () => {
     expect(numbersSupported("Operations are 31·10^6.", "Operations are 31·10⁶.")).toBe(true);
     expect(numbersSupported("Maximum accuracy after 6 times 10^6 training steps.", "Maximum accuracy after 6 · 106 training steps; 10% dropout.")).toBe(false);
     expect(numbersSupported("Maximum accuracy after 6 times 10^6 training steps.", "Maximum accuracy after 6 · 10⁶ training steps.")).toBe(true);
+  });
+
+  it.each([
+    ["10^{-6}", "10^-6"],
+    ["10^{ +9 }", "10^+9"],
+    ["−10^{−6}", "-10^-6"],
+    ["2.7×10^{-6}", "2.7×10^-6"],
+    [String.raw`4.2\times 10^{+7}`, "4.2×10^7"],
+    [String.raw`6.3\cdot 10^{-4}`, "6.3·10^-4"],
+  ])("keeps balanced TeX scientific spelling as one quantity: %s", (tex, caret) => {
+    expect(countNumericQuantities(tex)).toBe(1);
+    expect(numbersSupported(tex, caret)).toBe(true);
+    expect(numbersSupported(caret, tex)).toBe(true);
+  });
+
+  it.each([
+    ["10^-6", "10^{-7}"],
+    ["10^{-6}", "10^6"],
+    ["10^{+6}", "10^{-6}"],
+    ["-10^{-6}", "10^-6"],
+    [String.raw`-4.2\times 10^{-6}`, "4.2×10^-6"],
+    ["2.7×10^-6", "2.7×10^{-5}"],
+    ["10^-6", "10^{-6"],
+    ["2.7×10^-6", String.raw`2.7\times 10^{-6`],
+    ["2.7×10^-6", "2.7 10^{-6}"],
+    ["1000000", "10^{6}"],
+  ])("rejects altered, incomplete or separately written powers: %s / %s", (value, quote) => {
+    expect(numbersSupported(value, quote)).toBe(false);
+  });
+
+  it("does not count incomplete braces or neighboring quantities as one scientific value", () => {
+    expect(countNumericQuantities("10^{-6")).toBeGreaterThan(1);
+    expect(countNumericQuantities(String.raw`2.7\times 10^{-6`)).toBeGreaterThan(1);
+    expect(countNumericQuantities("2.7 10^{-6}")).toBe(2);
   });
 
   it("verifies a nonatomic guide hypothesis against the union of declared quotes only", () => {
