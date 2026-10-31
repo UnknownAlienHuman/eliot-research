@@ -368,6 +368,8 @@ shape remains unchanged. An empty or incomplete selection remains partial or fai
 rules; schema conformance alone never establishes semantic support. Legacy cached artifacts without the private
 digest/glossary drafts retain their existing broad parser and storage-only recheck path. No third call, model change,
 table, migration or artifact-version registry is introduced.
+Fresh glossary draft validation rejects blank-after-trim English or Russian terms before call two, retaining the
+original spelling of valid terms. This does not reinterpret historical cached glossary output.
 Historical cached synthesis rechecks do not consume `Verified.guide` or expand its frozen evidence pool, so this new
 producer shape does not rebind or rewrite old artifacts. Raw selections are retained in R2, stored labels use the full
 revision UUID, and system instructions state the English/Russian response language in both calls. These
@@ -430,6 +432,12 @@ second call's supported selections/additions become cards; first-call draft cand
 empty final claim set. A readable zero-claim partial result is not full K3 acceptance or proof of semantic quality.
 Guide/digest describe the paper for the owner rather than candidate review or model reasoning. Conflicting source
 values remain attributed to their separate source passages instead of being silently reconciled.
+The existing GET-only `pnpm eval k3 --review-source` exports retained guide/digest/glossary text with its persisted
+labels and exact canonical excerpts for owner review. Shared citation/numeric helpers check invalid labels, uncited
+guide/digest statements and numbers against their selected quotes; violations fail the command after the artifact
+is written. Claim numeric validation includes task/metric/dataset/unit alongside the statement, value and conditions.
+These mechanical checks retain `semanticNOT_EVALUATED` and `fullK3Accepted:false`; all-card and prose meaning still
+require source-facing review. Frozen questions and anchor predicates are unchanged.
 Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels
 in guide/digest/glossary storage, including within sentence-level validation. Code literals remain literal; unknown
 annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.

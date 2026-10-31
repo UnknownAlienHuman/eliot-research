@@ -310,6 +310,11 @@ review. The new draft/selection producer and caption scanner do not regrade thos
 U+001C comparator, ten-source and overflow C1–C4 acceptance remain open. Storage-only Save/recheck and local schema
 checks do not qualify semantic acceptance.
 
+The subsequent same-original PaLM replacement used the new producer for two explicit Flash calls. Extraction and
+verification completed; the second call failed with provider HTTP 408 after 402,880 ms total. It retains zero final
+claims and unknown aggregate token usage; the first call's known provider usage remains recorded. The old failed
+revision and its two calls are retained. No retry, counter reset or K3 acceptance followed this service failure.
+
 ---
 
 ## K4 — Agents in

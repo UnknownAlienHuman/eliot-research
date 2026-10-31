@@ -734,6 +734,44 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
+  it("drops fresh glossary drafts with blank terms before call two and keeps valid tuples unchanged", async () => {
+    const { f, extraction, selection } = proseDraftFixture();
+    const validTuples = extraction.glossary.slice(0, 2);
+    extraction.glossary.push(
+      { labels: ["[S1:4]"], en: "", ru: "Гамма", definition: "Процесс используется при Condition Beta." },
+      { labels: ["[S1:4]"], en: "Gamma", ru: " \t ", definition: "Процесс используется при Condition Beta." },
+    );
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText)
+      .mockImplementationOnce(async (options) => ({ output: await parseGeneration(options, extraction), totalUsage: generationUsage } as never))
+      .mockImplementationOnce(async (options) => {
+        const content = options.messages?.[0]?.content;
+        if (typeof content !== "string") throw new Error("Call two prose drafts were not captured.");
+        const context = JSON.parse(content) as { proseDrafts: { glossary: unknown[] } };
+        expect(context.proseDrafts.glossary).toEqual(validTuples);
+        const valid = selection.glossary[0];
+        if (!valid) throw new Error("The fixture requires a valid glossary tuple.");
+        await expect(parseGeneration(options, { ...selection, glossary: [{ ...valid, en: "" }] }))
+          .rejects.toBeInstanceOf(NoObjectGeneratedError);
+        await expect(parseGeneration(options, { ...selection, glossary: [{ ...valid, ru: " \t " }] }))
+          .rejects.toBeInstanceOf(NoObjectGeneratedError);
+        return { output: await parseGeneration(options, selection), totalUsage: generationUsage } as never;
+      });
+    try {
+      await run(f);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
+      expect(verified.glossary).toEqual(validTuples);
+      expect(verified.dropped).toEqual(expect.arrayContaining([
+        { index: 3, reason: "glossary-unsupported-output" },
+        { index: 4, reason: "glossary-unsupported-output" },
+      ]));
+      expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual(selection.glossary.map((item) => ({
+        ...item, labels: item.labels.map((label) => label.replace("S1:", "R" + revisionId + ":")),
+      })));
+    } finally { f.db.close(); }
+  });
+
 
   it("passes the exact admitted context, reserve and checked date to transport without rediscovery", async () => {
     const f = fixture(snapshot.route);

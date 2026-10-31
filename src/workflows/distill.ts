@@ -267,6 +267,7 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
   const glossary = (raw.output.glossary ?? []).flatMap((item, index) => {
     const labels = [...new Set(item.labels)], quotes = ownQuotes(labels), cleaned = cleanDistillText(item.definition, labels, revisionId);
     if (quotes === null || cleaned.invalidReferences || !cleaned.text.trim()
+      || !item.en.trim() || !item.ru.trim()
       || !numbersSupported(item.en + " " + item.ru + " " + cleaned.text, quotes)) {
       draftDropped.push({ index, reason: "glossary-unsupported-output" }); return [];
     }

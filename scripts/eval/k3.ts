@@ -1,5 +1,5 @@
 import { unsupportedNumbers, parseSingleNumber, countNumericQuantities } from "../../src/numbers.ts";
-import { unsupportedNumericStatements } from "../../src/citations.ts";
+import { resolveCitations, uncitedStatements, unsupportedNumericStatements } from "../../src/citations.ts";
 import { assertEvalOrigin, fetchEval } from "./origin.mjs";
 // K3 Distill eval harness (docs/MAP.md K3; docs/IMPLEMENTATION.md 6, 8, 10, 11).
 // Interface assumptions (backend contract under test):
@@ -620,11 +620,62 @@ if (reviewSourceMode) {
   const anchorId = anchorIds[0];
   const missingAnchors = frozenChecks.filter((check) => !check.passed).map((check) => check.name);
 
+  const outline = await apiJson('/api/revisions/' + encodeURIComponent(reviewRevisionId) + '/outline');
+  assert.equal(outline.status, 200, 'GET prose review block map must be 200.');
+  assert(Array.isArray(outline.body?.blocks), 'Prose review needs the persisted block map.');
+  // An empty compact alias accepts only the persisted full-revision labels.
+  const proseScope = [{ sourceId: reviewSourceId, revisionId: reviewRevisionId, title: source.title,
+    alias: '', blocks: outline.body.blocks }];
+  async function proseEvidence(text, scope = proseScope) {
+    const resolved = resolveCitations(text, scope);
+    const quoteByLabel = new Map();
+    const citations = [];
+    for (const citation of resolved.citations) {
+      assert.equal(citation.revisionId, reviewRevisionId, 'Prose citations must stay in the selected revision.');
+      assert(Number.isSafeInteger(citation.start) && Number.isSafeInteger(citation.end) && citation.start >= 0
+        && citation.end > citation.start && citation.end <= canonical.bytes.length, 'Prose citation range must fit canonical bytes.');
+      const range = await apiBytes('/api/revisions/' + encodeURIComponent(reviewRevisionId) + '/range?start=' + citation.start + '&end=' + citation.end);
+      assert.equal(range.status, 200, 'GET prose citation range must be 200.');
+      assert(range.bytes.equals(canonical.bytes.subarray(citation.start, citation.end)), 'Prose citation must equal its canonical byte slice.');
+      const quote = range.bytes.toString('utf8');
+      quoteByLabel.set(citation.label, quote);
+      citations.push({ ...citation, quote });
+    }
+    return { persistedText: text, citations, invalidLabels: resolved.invalidLabels,
+      invalidLabelExamples: resolved.invalidLabelExamples ?? [],
+      unsupportedNumericStatements: unsupportedNumericStatements(resolved.text, resolved.citations, quoteByLabel) };
+  }
+  const guideReview = await proseEvidence(understanding.guide);
+  const digestReview = await proseEvidence(understanding.digest);
+  const guideUncitedStatements = uncitedStatements(guideReview.persistedText, guideReview.citations);
+  const digestUncitedStatements = uncitedStatements(digestReview.persistedText, digestReview.citations);
+  const glossaryReview = [];
+  for (const entry of understanding.glossary) {
+    const labels = Array.isArray(entry?.labels) ? entry.labels.filter((label) => typeof label === 'string') : [];
+    const selected = resolveCitations(labels.join(' '), proseScope);
+    const selectedBlocks = new Set(selected.citations.map((citation) => citation.block));
+    const scope = [{ ...proseScope[0], blocks: outline.body.blocks.filter((block) => selectedBlocks.has(block.id)) }];
+    const text = [entry?.en, entry?.ru, entry?.definition].filter((value) => typeof value === 'string').join('\n');
+    const evidence = await proseEvidence(text + '\n\n' + labels.join(' '), scope);
+    // Reuse the citation scanner to remove reference tokens in the validation copy only.
+    const numericText = resolveCitations(text, []).text;
+    glossaryReview.push({ persistedEntry: entry, citations: evidence.citations,
+      selectedLabelsInvalid: selected.invalidLabels, invalidLabels: evidence.invalidLabels,
+      invalidLabelExamples: evidence.invalidLabelExamples,
+      unsupportedNumbers: numericsUnsupported(evidence.citations.map((citation) => citation.quote).join('\n'), numericText, undefined) });
+  }
+  const proseReviewPath = outDir + '/k3-prose-review-' + reviewRevisionId + '.json';
+
   const reread = await apiJson(understandingPath);
   assert.equal(reread.status, 200, 'GET exact-revision reread must be 200.');
   assertUnderstanding(reread.body, 'targeted reread');
   assertUnderstandingIdentity(reread.body, reviewSourceId, reviewRevisionId, 'targeted reread');
   assert.deepEqual(reread.body, understanding, 'Read-only targeted review must preserve the exact retained terminal record.');
+  await writeFile(proseReviewPath, JSON.stringify({ scope: 'TARGETED_ONLY', sourceId: reviewSourceId, revisionId: reviewRevisionId,
+    semanticStatus: 'semanticNOT_EVALUATED', fullK3Accepted: false,
+    citationCheck: 'Shared persistent S/R resolver; code literals remain literal. Numeric results do not establish semantic support.',
+    guide: { ...guideReview, uncitedStatements: guideUncitedStatements },
+    digest: { ...digestReview, uncitedStatements: digestUncitedStatements }, glossary: glossaryReview }, null, 2) + EOL);
 
   const passedAnchors = frozenChecks.length - missingAnchors.length;
   const md = [
@@ -641,10 +692,16 @@ if (reviewSourceMode) {
     '- exact quote ranges: ' + ownQuotes.length + '/' + ownQuotes.length + '; same-card own-quote numeric checks: PASS for statement/task/metric/dataset/unit/conditions/valueText/valueNumber',
     '- frozen ' + anchorId + ' (' + selectedPaper.title + ') anchors: ' + passedAnchors + '/' + frozenChecks.length + (missingAnchors.length ? '; missing: ' + missingAnchors.join(', ') : ''),
     '- retained terminal record identical on reread: true',
+    '- owner prose review artifact: ' + proseReviewPath,
     '- semantic status: semanticNOT_EVALUATED',
     '- fullK3Accepted: false', '',
   ].join(EOL);
   console.log(md);
+  assert.equal(guideReview.invalidLabels + digestReview.invalidLabels
+    + guideReview.unsupportedNumericStatements + digestReview.unsupportedNumericStatements
+    + guideUncitedStatements + digestUncitedStatements
+    + glossaryReview.reduce((sum, entry) => sum + entry.selectedLabelsInvalid + entry.invalidLabels + entry.unsupportedNumbers.length, 0),
+  0, 'Prose mechanical citation/number checks failed; see ' + proseReviewPath);
   assert.equal(missingAnchors.length, 0, 'Selected frozen paper anchors are missing: ' + missingAnchors.join(', '));
   process.exit(0);
 }
@@ -896,7 +953,7 @@ if (nativeOnly) {
         for (const c of u1.claims) {
           assert(c && typeof c.quote === 'string' && c.quote.length > 0, 'Recovered claim needs a non-empty quote.');
           await assertStoredQuote(rev, c, '(recovered)');
-          const bad = [...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), ...compoundResultUnsupported(c)];
+          const bad = [...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.task, c.metric, c.dataset, c.unit, c.conditions), ...compoundResultUnsupported(c)];
           assert.deepEqual(bad, [], 'Recovered numeric must be quote-supported: ' + bad.join(','));
         }
         assert(u1.report && typeof u1.report === 'object', 'Recovered revision must carry its report.');
@@ -948,7 +1005,7 @@ if (nativeOnly) {
       assert(cseg.length >= 3 && cseg.length <= 5, 'Check guide must be 3-5 sentences, got ' + cseg.length + '.');
       for (const cc of cclaims) {
         await assertStoredQuote(crev, cc, '(check)');
-        assert.deepEqual([...numericsUnsupported(cc.quote, cc.valueText, cc.valueNumber, cc.statement, cc.conditions), ...compoundResultUnsupported(cc)], [], 'Check numeric must be quote-supported.');
+        assert.deepEqual([...numericsUnsupported(cc.quote, cc.valueText, cc.valueNumber, cc.statement, cc.task, cc.metric, cc.dataset, cc.unit, cc.conditions), ...compoundResultUnsupported(cc)], [], 'Check numeric must be quote-supported.');
       }
       const cmap = new Map((Array.isArray(cu.citations) ? cu.citations : []).map((b) => [b.block, b]));
       const cblocks = new Set();
@@ -1319,7 +1376,7 @@ if (!runModel) {
         violations.push(s.originalFilename + ': quote not byte-equal to stored range (' + (e.message || e) + ')');
         continue;
       }
-      for (const g of [...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), ...compoundResultUnsupported(c)]) violations.push(s.originalFilename + ': numeric ' + g + ' unsupported by quote');
+      for (const g of [...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.task, c.metric, c.dataset, c.unit, c.conditions), ...compoundResultUnsupported(c)]) violations.push(s.originalFilename + ': numeric ' + g + ' unsupported by quote');
       fileQuotes.push({ quote: c.quote, statement: c.statement });
     }
     byFile.set(s.originalFilename, fileQuotes);
@@ -1474,7 +1531,7 @@ async function distillOne(s) {
     const r = await apiBytes('/api/revisions/' + encodeURIComponent(rev) + '/range?start=' + st + '&end=' + en);
     assert.equal(r.status, 200, 'Each claim quote must open (GET range 200).');
     assert.equal(r.bytes.toString('utf8'), c.quote, 'Each claim quote must equal the range bytes exactly (' + s.originalFilename + ').');
-    assert.deepEqual([...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), ...compoundResultUnsupported(c)], [], 'Every numeric group must occur whole in its exact quote (' + s.originalFilename + ').');
+    assert.deepEqual([...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.task, c.metric, c.dataset, c.unit, c.conditions), ...compoundResultUnsupported(c)], [], 'Every numeric group must occur whole in its exact quote (' + s.originalFilename + ').');
     fileQuotes.push({ quote: c.quote, statement: c.statement });
   }
   paidByFile.set(s.originalFilename, fileQuotes);
