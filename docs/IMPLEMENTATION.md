@@ -364,6 +364,8 @@ facts from it. Historical verified candidate IDs are not recomputed during cache
 For fresh synthesis, rejected candidates contribute only their original allowed source labels as inspection cues,
 never rejected statements or values. Numeric outcomes stay separate; qualitative properties without a scalar use
 an existing non-result kind with absent numeric fields, without changing the deterministic result guards.
+Source-stated qualitative advantages and capabilities belong in their own supported claim entries, rather than
+appearing only in a guide, digest or another claim's condition.
 Only its supported, code-checked output is committed to the claim reader. Result claims describe one scalar result
 per task/dataset/metric/condition instead of a compound table row. A result's `valueText` may contain at most one numeric
 quantity; an explicit list such as two percentages is rejected even when both values occur in the quote and
@@ -585,9 +587,12 @@ call; an in-flight call may finish.
 
 ## 11. Models
 
-The native default's cold-start metadata includes its documented low reasoning effort, matching the existing native
-catalogue discovery policy. GLM 5.3 Flash supports low/high/max and defaults to max when effort is omitted; reasoning
-cannot be disabled. The admitted model keeps this parameter frozen with its context and output bounds.
+The native default's cold-start metadata selects low reasoning effort for interactive chat. GLM 5.3 Flash supports
+low/high/max and defaults to max when effort is omitted; reasoning cannot be disabled. New native K3 admissions omit
+the chat-specific effort override before freezing Workflow parameters; existing admitted parameters are untouched.
+This freezes the decision to use the provider default, not a promise about future provider defaults. Gateway routing,
+output reserves, token/call/time bounds and owner model selections are unchanged. This strategy is experimental;
+service completion and semantic quality under it are not yet verified.
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
