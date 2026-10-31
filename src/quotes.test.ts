@@ -351,6 +351,17 @@ describe("numbersSupported", () => {
     expect(numbersSupported("10,000", "10,000dollars")).toBe(true);
   });
 
+  it("treats an adjacent ASCII infix dash as a range separator between complete numeric endpoints", () => {
+    expect(numbersSupported("Training used 200-500 batches.", "Training used 200–500 batches.")).toBe(true);
+    expect(numbersSupported("Training used 200-501 batches.", "Training used 200–500 batches.")).toBe(false);
+    expect(numbersSupported("Range -200-500.", "Range -200–500.")).toBe(true);
+    expect(numbersSupported("Range 200--500.", "Range 200–-500.")).toBe(true);
+    expect(numbersSupported("-500", "Range 200–500.")).toBe(false);
+    expect(numbersSupported("Value 41,8", "Value 41.8")).toBe(true);
+    expect(numbersSupported("Value 1e-8", "Value 1e-8")).toBe(true);
+    expect(numbersSupported("Value 1e-8", "Value 1e-7")).toBe(false);
+  });
+
   it.each([
     ["50", "Training cost 0.50."],
     ["50", "Count 150."],
