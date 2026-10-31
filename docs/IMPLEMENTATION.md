@@ -296,6 +296,11 @@ against Workflow ID `distill-<revisionId>`; it never admits queued work. Migrati
 removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
 resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
 
+After a successful Understand or Save-existing POST the reader refreshes its workspace source metadata before the
+follow-up view GET by invalidating the active `sources` query for that project in the existing QueryClient. Infinite
+query pages retain loaded pagination; queued/running work is polled to its terminal state without a document reload
+or selection reset. These reads never dispatch understanding.
+
 `DistillWorkflow` uses two bounded calls:
 
 1. labelled canonical text → metadata, draft guide, 3–5 questions and candidate claims;
