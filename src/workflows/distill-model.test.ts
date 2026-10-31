@@ -9,6 +9,7 @@ import { LibraryError } from "../library";
 import type { ModelSpec } from "../models";
 import type * as Models from "../models";
 import type * as ModelTransport from "../model-transport";
+import type * as Ai from "ai";
 import type { DistillInput } from "../shared/api";
 import type { DistillReport } from "../understanding";
 
@@ -18,8 +19,8 @@ vi.mock("cloudflare:workers", () => ({
   },
 }));
 vi.mock("ai", async () => {
-  const actual = await vi.importActual<Record<string, unknown>>("ai");
-  return { ...actual, generateText: vi.fn(), Output: { object: vi.fn() } };
+  const actual = await vi.importActual<typeof Ai>("ai");
+  return { ...actual, generateText: vi.fn(), Output: { ...actual.Output, object: vi.fn(actual.Output.object) } };
 });
 vi.mock("../model-transport", async () => ({
   ...await vi.importActual<typeof ModelTransport>("../model-transport"),
@@ -93,6 +94,19 @@ function fixture(storedRoute: string, document?: { text: string; blocks: Block[]
   return { db, env, bodies, dispatchCAS };
 }
 
+function withBatch(target: ReturnType<typeof fixture>) {
+  const db = target.env.DB as unknown as {
+    batch(statements: Array<{ run(): Promise<{ meta: { changes: number } }> }>): Promise<{ meta: { changes: number } }[]>;
+  };
+  db.batch = async (statements) => {
+    const results = [];
+    for (const statement of statements) results.push(await statement.run());
+    return results;
+  };
+  return target;
+}
+
+
 const explicitlySelectedRevisionId = "148e1392-f987-4fc5-bc65-152c9000b4d8";
 const explicitlySelectedSourceId = "e61d9a7d-0817-4a9b-b46b-3f52ab3bd47f";
 const otherQueuedRevisionId = "3ba8fcb2-ddca-41b1-b901-00fdb4f76afd";
@@ -139,6 +153,59 @@ function documentWithBlocks(parts: Array<{ type: Block["type"]; text: string }>)
   });
   return { text: parts.map(({ text }) => text).join(""), blocks };
 }
+
+const generationUsage = { inputTokens: 12, inputTokenDetails: { noCacheTokens: 12, cacheReadTokens: 0, cacheWriteTokens: undefined },
+  outputTokens: 24, outputTokenDetails: { textTokens: 24, reasoningTokens: undefined }, totalTokens: 36 };
+function parseGeneration(options: Parameters<typeof generateText>[0], output: unknown) {
+  if (!options.output) throw new Error("The production call did not supply its output schema.");
+  return options.output.parseCompleteOutput({ text: JSON.stringify(output) }, {
+    response: { id: "fixture-response", timestamp: new Date(0), modelId: snapshot.id }, usage: generationUsage, finishReason: "stop",
+  });
+}
+function proseDraftFixture() {
+  const document = documentWithBlocks([
+    { type: "paragraph", text: "Method Alpha uses normalization.\n" },
+    { type: "paragraph", text: "The method applies only to Condition Beta.\n" },
+    { type: "paragraph", text: "The source notes a limitation.\n" },
+    { type: "paragraph", text: "Gamma is a process used under Condition Beta.\n" },
+  ]);
+  const f = withBatch(fixture(snapshot.route, document));
+  const extraction = {
+    guide: [
+      { labels: ["[S1:1]"], text: "Method Alpha uses normalization." },
+      { labels: ["[S1:1]"], text: "The method applies only to Condition Beta." },
+      { labels: ["[S1:3]"], text: "The source notes a limitation." },
+      { labels: ["[S1:1]"], text: "The method reports 99 outcomes." },
+    ],
+    digest: [
+      { labels: ["[S1:1]", "[S1:2]"], text: "Method Alpha uses normalization. The method applies only to Condition Beta." },
+      { labels: ["[S1:1]"], text: "The method reports 99 outcomes." },
+    ],
+    glossary: [
+      { labels: ["[S1:1]"], en: "normalization", ru: "нормализация", definition: "Метод использует нормализацию." },
+      { labels: ["[S1:4]"], en: "Gamma", ru: "Гамма", definition: "Процесс используется при Condition Beta." },
+      { labels: ["[S1:3]"], en: "count", ru: "число", definition: "Число равно 99." },
+    ],
+    claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "Method Alpha uses normalization.",
+      task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }],
+    questions: ["What method is described?", "What condition is stated?", "What limitation is noted?"],
+    authors: "", published: null,
+  };
+  const selection = {
+    supportedClaims: ["C0"],
+    additionalClaims: [{ quoteBlock: "[S1:3]", kind: "limitation", statement: "The source notes a limitation.",
+      task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }],
+    guide: extraction.guide.slice(0, 3).map((item, index) => ({ ...item, labels: index === 1 ? ["[S1:2]"] : item.labels })),
+    digest: [{ labels: ["[S1:2]"], text: "The method applies only to Condition Beta." }],
+    glossary: extraction.glossary.slice(0, 2),
+  };
+  const validatedDigest = [
+    { labels: ["[S1:1]", "[S1:2]"], text: "Method Alpha uses normalization." },
+    { labels: ["[S1:1]", "[S1:2]"], text: "The method applies only to Condition Beta." },
+  ];
+  return { f, document, extraction, selection, validatedDigest };
+}
+
 
 const forbiddenLookups = [requireAvailableModel, requireCatalogModel, availableModels,
   discoverGatewayModels, discoverNativeModels];
@@ -369,17 +436,6 @@ describe("DistillWorkflow admitted model snapshot", () => {
   });
 
   it("requires nullable additional-result metadata for new call two but still saves historical optional call-two output", async () => {
-    const withBatch = (target: ReturnType<typeof fixture>) => {
-      const db = target.env.DB as unknown as {
-        batch(statements: Array<{ run(): Promise<{ meta: { changes: number } }> }>): Promise<{ meta: { changes: number } }[]>;
-      };
-      db.batch = async (statements) => {
-        const results = [];
-        for (const statement of statements) results.push(await statement.run());
-        return results;
-      };
-      return target;
-    };
     const document = documentWithBlocks([
       { type: "paragraph", text: "Method Alpha uses a low-rank update.\n" },
       { type: "paragraph", text: "The source reports 3 and 5 examples. On Set 2021 Variant Alpha, the model scores 9.4 QScore, improving over the baseline by 1.7 QScore.\n" },
@@ -395,6 +451,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
         { labels: ["[S1:3]"], text: "The source notes a limitation." },
         { labels: ["[S1:4]"], text: "The source describes a related condition." },
       ],
+      digest: [{ labels: ["[S1:1]"], text: "The source describes method Alpha." }],
+      glossary: [],
       claims: [
         { quoteBlock: "[S1:3]", kind: "result", task: "outcomes", metric: "count", dataset: null,
           valueText: "9", unit: null, conditions: null, statement: "The source reports 9 outcomes." },
@@ -426,11 +484,11 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const capturedContext = JSON.parse(call2SourceContext) as {
         candidates: Array<{ id: string; statement: string; quote: string }>;
         evidence: Array<{ label: string; quote: string }>;
-        guideCandidates: Array<{ labels: string[] }>;
+        proseDrafts: { guide: Array<{ labels: string[]; text: string }>; digest: Array<{ labels: string[]; text: string }>; glossary: unknown[] };
       };
       expect(capturedContext.candidates).toEqual([{ id: "C0", statement: "Method Alpha uses a low-rank update.", quoteBlock: "[S1:1]", quote: "Method Alpha uses a low-rank update.\n", kind: "method",
         task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }]);
-      expect(capturedContext.guideCandidates).toEqual([{ labels: ["[S1:1]"] }, { labels: ["[S1:3]"] }, { labels: ["[S1:4]"] }]);
+      expect(capturedContext.proseDrafts).toEqual({ guide: extraction.guide, digest: extraction.digest, glossary: extraction.glossary });
       expect(capturedContext.evidence).toContainEqual({ label: "[S1:2]", block: 2,
         quote: "The source reports 3 and 5 examples. On Set 2021 Variant Alpha, the model scores 9.4 QScore, improving over the baseline by 1.7 QScore.\n" });
       const verifiedBody = f.bodies.get(prefix + "distill-verified.json");
@@ -545,6 +603,137 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(saved.dropped).toContainEqual({ index: 0, reason: "additional-missing-or-unsupported-primary-result" });
     } finally { cached.db.close(); }
   });
+
+  it("validates complete prose drafts and restricts the second response to unchanged text with corrected frozen labels", async () => {
+    const { f, document, extraction, selection, validatedDigest } = proseDraftFixture();
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText)
+      .mockImplementationOnce(async (options) => {
+        for (const invalid of [
+          { ...extraction, digest: undefined }, { ...extraction, glossary: undefined },
+          { ...extraction, guide: [{ labels: ["[S1:999]"], text: "Method Alpha uses normalization." }, ...extraction.guide.slice(1)] },
+        ]) await expect(parseGeneration(options, invalid)).rejects.toBeInstanceOf(NoObjectGeneratedError);
+        return { output: await parseGeneration(options, extraction), totalUsage: generationUsage } as never;
+      })
+      .mockImplementationOnce(async (options) => {
+        const content = options.messages?.[0]?.content;
+        if (typeof content !== "string" || !options.output) throw new Error("The second production request was not captured.");
+        const context = JSON.parse(content);
+        expect(context.proseDrafts).toEqual({ guide: extraction.guide.slice(0, 3), digest: validatedDigest, glossary: extraction.glossary.slice(0, 2) });
+        expect(context.evidence.map((item: { label: string }) => item.label)).toEqual(expect.arrayContaining(["[S1:2]", "[S1:4]"]));
+        expect(JSON.stringify(context)).not.toContain("99");
+        expect(await options.output.responseFormat).toMatchObject({ type: "json", schema: { type: "object" } });
+        const firstTerm = selection.glossary[0], secondTerm = selection.glossary[1];
+        if (!firstTerm || !secondTerm) throw new Error("The tuple fixture requires two distinct glossary entries.");
+        for (const invalid of [
+          { ...selection, guide: [{ ...selection.guide[0], text: "The method gains an unsupported explanation." }] },
+          { ...selection, digest: [{ labels: ["[S1:2]"], text: "The method gains an unsupported explanation." }] },
+          { ...selection, glossary: [{ ...firstTerm, definition: "Неподдержанное новое определение." }] },
+          { ...selection, glossary: [{ ...firstTerm, ru: secondTerm.ru }] },
+          { ...selection, guide: [{ ...selection.guide[0], labels: ["[S1:999]"] }] },
+          { ...selection, digest: [extraction.digest[1]] },
+        ]) await expect(parseGeneration(options, invalid)).rejects.toBeInstanceOf(NoObjectGeneratedError);
+        await expect(parseGeneration(options, { ...selection, guide: [], digest: [], glossary: [] })).resolves.toMatchObject({ guide: [], digest: [], glossary: [] });
+        return { output: await parseGeneration(options, selection), totalUsage: generationUsage } as never;
+      });
+    try {
+      await run(f);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      for (const [options] of vi.mocked(generateText).mock.calls) expect(options).toMatchObject({ maxRetries: 0, maxOutputTokens: snapshot.outputReserveTokens });
+      const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
+      expect(verified.digest).toEqual(validatedDigest);
+      expect(verified.glossary).toEqual(extraction.glossary.slice(0, 2));
+      expect(verified.dropped).toEqual(expect.arrayContaining([
+        { index: 3, reason: "guide-unsupported-statement-numbers" },
+        { index: 1, reason: "digest-unsupported-statement-numbers" },
+        { index: 2, reason: "glossary-unsupported-output" },
+      ]));
+      expect(f.bodies.get(prefix + "guide.md")).toContain("The method applies only to Condition Beta.\n\n[R" + revisionId + ":2]");
+      expect(f.bodies.get(prefix + "digest.md")).toContain("The method applies only to Condition Beta.");
+      expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual(selection.glossary.map((item) => ({
+        ...item, labels: item.labels.map((label) => label.replace("S1:", "R" + revisionId + ":")),
+      })));
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,claim_count AS claims FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "done", calls: 2, claims: 2 });
+      expect(f.bodies.get(prefix + "text.md")).toBe(document.text);
+      expect(f.bodies.get(prefix + "blocks.json")).toBe(JSON.stringify(document.blocks));
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(true);
+      const raw = f.bodies.get(prefix + "distill-call2.json");
+      if (!raw) throw new Error("The selected rich synthesis output was not retained.");
+      const altered = JSON.parse(raw);
+      altered.output.digest[0].text = "The method gains an unsupported explanation.";
+      f.bodies.set(prefix + "distill-call2.json", JSON.stringify(altered));
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
+      f.bodies.set(prefix + "distill-call2.json", raw);
+      const verifiedBody = f.bodies.get(prefix + "distill-verified.json");
+      if (!verifiedBody) throw new Error("Validated drafts were not retained.");
+      const incomplete = JSON.parse(verifiedBody);
+      delete incomplete.glossary;
+      f.bodies.set(prefix + "distill-verified.json", JSON.stringify(incomplete));
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
+      f.bodies.set(prefix + "distill-verified.json", verifiedBody);
+    } finally { f.db.close(); }
+  });
+
+  it("rejects a second-call response that authors new prose without starting another call", async () => {
+    const { f, extraction, selection } = proseDraftFixture();
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText)
+      .mockImplementationOnce(async (options) => ({ output: await parseGeneration(options, extraction), totalUsage: generationUsage } as never))
+      .mockImplementationOnce(async (options) => ({ output: await parseGeneration(options, {
+        ...selection, digest: [{ labels: ["[S1:2]"], text: "The method gains an unsupported explanation." }],
+      }), totalUsage: generationUsage } as never));
+    try {
+      await run(f);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "failed", calls: 2 });
+      expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null")).toMatchObject({ output: null });
+      expect(f.bodies.has(prefix + "guide.md")).toBe(false);
+      expect(f.bodies.has(prefix + "digest.md")).toBe(false);
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
+    } finally { f.db.close(); }
+  });
+
+  it.each(["guide", "digest"] as const)("stops before call two when every %s draft failed verification", async (category) => {
+    const { f, extraction } = proseDraftFixture();
+    extraction[category] = extraction[category].map((item) => ({ ...item, text: "The method reports 99 outcomes." }));
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText)
+      .mockImplementationOnce(async (options) => ({ output: await parseGeneration(options, extraction), totalUsage: generationUsage } as never));
+    try {
+      await run(f);
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(resolveModelTransport).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null")[category]).toEqual([]);
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "failed", calls: 1 });
+      expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
+      expect(f.bodies.has(prefix + "guide.md")).toBe(false);
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
+    } finally { f.db.close(); }
+  });
+
+  it("encodes an empty glossary as zero items and rejects replacement tuples", async () => {
+    const { f, extraction, selection } = proseDraftFixture();
+    extraction.glossary = [];
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText)
+      .mockImplementationOnce(async (options) => ({ output: await parseGeneration(options, extraction), totalUsage: generationUsage } as never))
+      .mockImplementationOnce(async (options) => {
+        expect(await options.output?.responseFormat).toMatchObject({ type: "json", schema: { type: "object" } });
+        await expect(parseGeneration(options, selection)).rejects.toBeInstanceOf(NoObjectGeneratedError);
+        return { output: await parseGeneration(options, { ...selection, glossary: [] }), totalUsage: generationUsage } as never;
+      });
+    try {
+      await run(f);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual([]);
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "done", calls: 2 });
+    } finally { f.db.close(); }
+  });
+
 
   it("passes the exact admitted context, reserve and checked date to transport without rediscovery", async () => {
     const f = fixture(snapshot.route);

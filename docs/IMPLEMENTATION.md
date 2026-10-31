@@ -268,6 +268,12 @@ This is one reviewed full-PDF case, not full-corpus OCR quality or K2/K3 accepta
 `[start,end)` in `text.md`. Compute byte offsets, not JavaScript character indexes. Split prose near sentence boundaries;
 keep tables/code intact up to a bounded size.
 
+New scans join an explicit adjacent `Table <number>:` or `Table <number>.` caption with its sole neighboring
+whole table when the complete original span, including intervening whitespace, fits 4,096 bytes. A caption between
+two tables, a table with two candidate captions, or a caption/table split by the size bound stays separate. The
+joined block retains the original UTF-8 bytes and nearest heading; block IDs remain sequential. This changes only
+new readable representations. Existing stored block maps and citation identities are never rewritten.
+
 Turn/job labels are compact (`[S1:14]`) and frozen per operation. Persistent labels use the full revision UUID
 (`[R<revision-uuid>:14]`); UI may visually shorten them but stored identity never does. A citation stores full revision,
 block, byte range, source title and deleted flag. Server resolves labels, removes unknown/out-of-scope labels and counts
@@ -329,8 +335,8 @@ or selection reset. These reads never dispatch understanding.
 
 `DistillWorkflow` uses two bounded calls:
 
-1. labelled canonical text → metadata, draft guide, 3–5 questions and candidate claims;
-2. verified original excerpts → supported claim selection, final 3–5 sentence guide, digest and EN/RU glossary.
+1. labelled canonical text → metadata, draft guide/digest/EN–RU glossary, 3–5 questions and candidate claims;
+2. verified original excerpts → semantic review and selection of those prose drafts and supported claims.
 
 Each input block is a separate JSON record containing its exact `quoteBlock` and text, so a label does not implicitly
 name following blocks or an entire section. The first output requests the source guide before detailed claims.
@@ -346,15 +352,22 @@ Fresh claim output selects its block and writes one atomic statement before extr
 fields from that statement and quote. In fresh synthesis each retained candidate carries its own exact canonical
 quote inline for review; this does not expand the frozen excerpt pool or add stored evidence copies.
 
-Draft guide items use `{ labels, text }`, with the closed `labels` array of 1–4 source-block selections before `text`.
-Code resolves every declared label to its exact canonical block and checks references and numbers against only the
-union of those selected quotes. It splits authored prose and retains at most the first numerically supported sentence
-per item, yielding at most five draft sentences; an early paragraph cannot consume the whole guide allowance.
-`Verified.guide` retains these `{ labels, text }` records as hypotheses. Fresh call two receives only each item's
-declared source-label cues, alongside candidate claims paired with their own original quotes; draft guide prose is
-not forwarded. Original excerpts remain the sole evidence. The retained excerpt pool is exactly the union of
-declared claim `quoteBlock` selections and guide `labels`; code adds no inferred evidence bindings. Final guide and
-digest items also use `{ labels, text }` with 1–4 selected excerpts; glossary records likewise select labels first.
+Draft guide/digest items use `{ labels, text }`, with the closed `labels` array of 1–4 source-block selections before
+`text`; glossary entries likewise select labels before their EN/RU terms and definition. Code resolves every declared
+label to its exact canonical block and checks references and numbers in each complete draft against only the union
+of those selected quotes. Private `Verified.guide`, `digest` and `glossary` retain these validated drafts as
+hypotheses. Fresh call two receives them alongside candidate claims paired with their own original quotes. Original
+excerpts remain the sole evidence. The frozen excerpt pool is exactly the union of declared claim and prose/glossary
+selections; code adds no inferred bindings.
+
+Call two must semantically review the statement, identities, conditions and qualifiers against each item's own
+selected quote union. Its section-specific text enums permit only selecting or rejecting the supplied guide/digest
+text verbatim; glossary choices retain each complete EN/RU/definition tuple. It may correct labels within the same
+frozen evidence pool, but cannot invent new prose or mix glossary fields across drafts. The final rich synthesis
+shape remains unchanged. An empty or incomplete selection remains partial or failed under the existing finish
+rules; schema conformance alone never establishes semantic support. Legacy cached artifacts without the private
+digest/glossary drafts retain their existing broad parser and storage-only recheck path. No third call, model change,
+table, migration or artifact-version registry is introduced.
 Historical cached synthesis rechecks do not consume `Verified.guide` or expand its frozen evidence pool, so this new
 producer shape does not rebind or rewrite old artifacts. Raw selections are retained in R2, stored labels use the full
 revision UUID, and system instructions state the English/Russian response language in both calls. These

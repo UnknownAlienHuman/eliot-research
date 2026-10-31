@@ -580,7 +580,13 @@ try {
   page.on('request', (request) => { if (request.method() === 'POST' && request.url().endsWith('/sources/file')) peakUploads = Math.max(peakUploads, ++activeUploads); });
   page.on('response', (response) => { if (response.request().method() === 'POST' && response.url().endsWith('/sources/file')) activeUploads--; });
   const text = '# Источник\n\nТочный русский текст и emoji 🙂.\n\n## Второй раздел\n\nВторой абзац.\n\n## Третий раздел\n\nТретий абзац.\n';
-  const batchFiles = [0, 1, 2].map((i) => ({ name: name + '-' + i + '.md', mimeType: 'text/markdown', buffer: Buffer.from(text + '\nФайл ' + i + '\n' + name) }));
+  const tableCaption = 'Table 1: Browser reader table fixture.';
+  const tableRows = '| Field | Value |\n|---|---|\n| caption-grouped | browser-visible-value |\n';
+  const tableFixture = tableCaption + '\n\n' + tableRows;
+  const batchFiles = [0, 1, 2].map((i) => ({
+    name: name + '-' + i + '.md', mimeType: 'text/markdown',
+    buffer: Buffer.from(text + '\nФайл ' + i + '\n' + name + (i === 0 ? '\n\n' + tableFixture : '')),
+  }));
   let addDialog = await openAddSources(page);
   await addDialog.getByLabel('Choose files', { exact: true }).setInputFiles(batchFiles);
   await addDialog.getByRole('button', { name: 'Close', exact: true }).click();
@@ -590,12 +596,28 @@ try {
   assert(revisionId, 'The reader must pin the full revision UUID.');
   const outline = await apiJson('/api/revisions/' + revisionId + '/outline');
   const whole = await apiBytes('/api/revisions/' + revisionId + '/text');
+  const tableBlocks = outline.body.blocks.filter((block: any) => block.type === 'table');
+  assert.equal(tableBlocks.length, 1, 'The uploaded Markdown fixture must have one captioned table block.');
+  const tableBlock = tableBlocks[0];
+  assert(tableBlock, 'The captioned table block must exist in the stored outline.');
+  assert(whole.bytes.subarray(tableBlock.start, tableBlock.end).equals(Buffer.from(tableFixture, 'utf8')),
+    'The stored table block must contain the exact caption and row bytes.');
   for (const block of outline.body.blocks.slice(0, 3)) {
     const link = new URL(reader);
     link.searchParams.set('start', block.start); link.searchParams.set('end', block.end);
     await page.goto(link.href);
     await expect(page.locator('.er-lib__excerpt pre')).toHaveText(new TextDecoder('utf-8', { ignoreBOM: true }).decode(whole.bytes.subarray(block.start, block.end)));
   }
+  await page.goto(reader.href);
+  const tableLink = new URL(reader);
+  tableLink.searchParams.set('start', String(tableBlock.start));
+  tableLink.searchParams.set('end', String(tableBlock.end));
+  await page.goto(tableLink.href);
+  await expect(page.locator('.er-lib__excerpt pre')).toContainText(tableCaption);
+  await expect(page.locator('.er-lib__excerpt pre')).toContainText('caption-grouped');
+  await expect(page.locator('.er-lib__text')).toContainText(tableCaption);
+  await expect(page.locator('.er-lib__text')).toContainText('caption-grouped');
+  await expect(page.locator('.er-lib__text')).toContainText('browser-visible-value');
   await page.goto(reader.href);
   // Reader chrome: status/filename visible, no storage/telemetry. Paper body excluded.
   {
@@ -807,6 +829,7 @@ const report = [
   '', '| source | converter | original | readable | blocks | calls | conversion tokens | ms |',
   '|---|---|---|---|---|---|---|---|', ...rows, '',
   'Exact ranges: ' + rangeTotal + '/' + (fx.filter((fixture) => fixture.expected !== 'needs_conversion').length * 4) + ' (prefix plus three random ranges per readable source).',
+  'Browser table: PASS, one stored outline block preserves exact caption+rows bytes; its exact range opened in Reader with caption and row visible.',
   'Phone: PASS, batch concurrency 2, exact links, old revision stable, offline recovery, explicit duplicate Attach.',
   'Duplicate text: explicit 409 plus Attach existing in the browser; attached revision matches the original; no new source or conversion.',
   urlResult,

@@ -126,6 +126,8 @@ its text preview, and Apply a new readable revision while retaining the original
   least 20 KiB and 50 blocks. The additional Russian scan fixture must settle as `needs_conversion`, keep the exact
   original and perform no OCR. The native Russian text fixture must make zero conversion calls.
 - Three random ranges per source exactly match slices of the downloaded whole text.
+- The native Markdown browser fixture keeps an unambiguous table caption and its rows in one bounded stored block;
+  opening its exact range shows both caption and rows, and the old range survives replacement.
 - Eval prints converter, original/text bytes, blocks, wall time and conversion tokens when Cloudflare returns them.
 - Owner opens three citations and one copied range link on phone.
 
@@ -249,9 +251,10 @@ re-distilled automatically.
    visibly `paused` until another explicit request. Cron only reconciles stale `running` rows against
    deterministic Workflow IDs; it never admits queued revisions.
    Keep an already queued model selection on repeat; reject a conflicting explicit model before dispatch.
-4. Use at most two bounded calls: labelled canonical text produces guide and candidate claims; code verifies
-   quotes/ranges/numbers; the second call receives only verified material and produces digest/glossary. Store raw
-   output/report in R2 and compact claims in D1. Paid calls do not retry.
+4. Use at most two bounded calls: labelled canonical text produces draft guide/digest/glossary and candidate claims;
+   code verifies their selected quotes/ranges/numbers. The second call semantically reviews each draft against its
+   own selected excerpts, selects or rejects its text verbatim and reviews candidate claims. It cannot author fresh
+   unreviewed prose. Store raw output/report in R2 and compact claims in D1. Paid calls do not retry.
    Preserve a safe failure reason for the reader without retaining raw provider errors or credentials.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
    an extra overview model call.
@@ -299,11 +302,13 @@ re-distilled automatically.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 
-K3 remains unaccepted and undeployed. The bounded R5 LoRA run used two calls: exact quotes (16/16),
-numeric checks (36/36), browser/read and storage/history preservation, and unchanged A3 predicates (4/4) pass.
-All-card semantics fail on unsupported GLUE context; the guide/digest/glossary review fails. The canonical
-U+001C comparator remains unverified. Ten-source and overflow C1–C4 acceptance remains open.
-Storage-only Save/recheck does not qualify semantic acceptance.
+K3 remains unaccepted and undeployed. The retained two-call R5 LoRA result passes exact quotes (16/16), numeric
+checks (36/36) and unchanged A3 predicates (4/4), but fails unsupported GLUE context and prose review. A subsequent
+two-call Transformer result over the reviewed 42,771-byte OCR text passes all 23 exact ranges/numeric checks and
+unchanged A1 predicates (3/3); five cards lack their own caption/task support and two digest items fail semantic
+review. The new draft/selection producer and caption scanner do not regrade those stored results. The old canonical
+U+001C comparator, ten-source and overflow C1–C4 acceptance remain open. Storage-only Save/recheck and local schema
+checks do not qualify semantic acceptance.
 
 ---
 
