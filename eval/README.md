@@ -51,6 +51,9 @@ The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `
 | `pnpm eval k4 --signed-agent-miniflare` | signed test-JWKS protocol and proposal fixture with no AI binding; not deployed Access acceptance |
 | `pnpm eval k4 --serve-signed-agent` | keep that fixture available to an external client for up to 30 minutes; explicit `ELIOT_MCP_ORIGIN=http://127.0.0.1:<port>` and `ELIOT_ORIGIN=http://localhost:<same-port>` are required; private credentials go only to ignored `eval/out/k4/session.json`; no automatic seeding, model calls or acceptance |
 
+Targeted source review selects the anchor set by the exact frozen filename in `sources.json`. Custom QA fixtures
+require an explicit `--paper-file arxiv-NN.pdf`; this selects checks without proving paper provenance.
+
 The model opt-ins `ELIOT_K2_MODEL=1` and `ELIOT_K3_MODEL=1` enable paid paths only when the root explicitly releases
 that run. K2/K3 reuse existing readable corpus revisions; they do not repeat ingestion/conversion to fill missing
 evidence. K3 checks known failed/paused revisions before admitting work and does not automatically retry them.

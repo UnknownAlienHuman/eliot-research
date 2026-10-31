@@ -50,6 +50,8 @@ function optionValue(name) {
 const reviewProjectId = reviewSourceMode ? optionValue('--project-id') : null;
 const reviewSourceId = reviewSourceMode ? optionValue('--source-id') : null;
 const reviewRevisionId = reviewSourceMode ? optionValue('--revision-id') : null;
+const reviewPaperFile = reviewSourceMode && process.argv.some((arg) => arg === '--paper-file' || arg.startsWith('--paper-file='))
+  ? optionValue('--paper-file') : null;
 const runModel = process.env.ELIOT_K3_MODEL === '1';
 assert(!unchangedOnly || !runModel, '--unchanged-only forbids model work.');
 assert(!reviewSourceMode || (!nativeOnly && !unchangedOnly && !readerBrowser), '--review-source is a standalone GET-only review mode.');
@@ -84,6 +86,15 @@ assert.deepEqual([...K3_ANCHOR_SOURCES.keys()].sort(), ['A1', 'A2', 'A3'], 'ques
 const baselineManifest = JSON.parse(await readFile(evalDir + '/arxiv-10/sources.json', 'utf8'));
 const overflowManifest = JSON.parse(await readFile(evalDir + '/arxiv-10/overflow.json', 'utf8'));
 const BASELINE_EXPECTED = baselineManifest.sources.map((s) => ({ filename: 'arxiv-' + s.id + '.pdf', title: s.title }));
+function reviewPaperForSource(source, explicitFilename) {
+  const sourcePaper = BASELINE_EXPECTED.find((paper) => paper.filename === source.originalFilename);
+  if (sourcePaper && explicitFilename !== null)
+    assert.equal(explicitFilename, sourcePaper.filename, '--paper-file must not substitute another paper for the source frozen filename.');
+  const filename = explicitFilename ?? sourcePaper?.filename;
+  const paper = BASELINE_EXPECTED.find((entry) => entry.filename === filename);
+  assert(paper, 'Selected source needs an exact frozen filename from sources.json; custom QA fixtures require --paper-file <arxiv-NN.pdf>.');
+  return paper;
+}
 const baselineSeedPath = process.env.ELIOT_K3_BASELINE_SEED_RESULT;
 const overflowStoragePath = process.env.ELIOT_K3_OVERFLOW_STORAGE_COMPLETION;
 assert(nativeOnly || unchangedOnly || reviewSourceMode || (baselineSeedPath && overflowStoragePath), 'Full K3 eval requires the caller-frozen ELIOT_K3_BASELINE_SEED_RESULT and ELIOT_K3_OVERFLOW_STORAGE_COMPLETION paths.');
@@ -600,16 +611,13 @@ if (reviewSourceMode) {
     ownQuotes.push({ statement: claim.statement, quote: claim.quote });
   }
 
-  const foldName = (value) => String(value || '').normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
-  const sourceName = foldName([source.title, source.originalFilename].filter(Boolean).join(' '));
-  const matchedAnchors = [...K3_ANCHOR_SOURCES].filter(([, paper]) => sourceName.includes(foldName(paper)));
-  assert.equal(matchedAnchors.length, 1, 'Selected source must resolve to exactly one frozen paper anchor from questions.md.');
-  const [anchorId, paper] = matchedAnchors[0];
-  const matchingPapers = baselineManifest.sources.filter((entry) => foldName(entry.title).includes(foldName(paper)));
-  assert.equal(matchingPapers.length, 1, 'Frozen paper anchor must resolve to exactly one paper in sources.json.');
-  const anchorFile = 'arxiv-' + matchingPapers[0].id + '.pdf';
+  const selectedPaper = reviewPaperForSource(source, reviewPaperFile);
+  const anchorFile = selectedPaper.filename;
   const frozenChecks = anchorChecks(new Map([[anchorFile, ownQuotes]]), [anchorFile]);
   assert(frozenChecks.length > 0, 'The selected frozen paper must have anchor predicates.');
+  const anchorIds = [...new Set(frozenChecks.map((check) => check.name.split('-')[0]))];
+  assert(anchorIds.length === 1 && K3_ANCHOR_SOURCES.has(anchorIds[0]), 'Frozen checks must resolve to one anchor defined in questions.md.');
+  const anchorId = anchorIds[0];
   const missingAnchors = frozenChecks.filter((check) => !check.passed).map((check) => check.name);
 
   const reread = await apiJson(understandingPath);
@@ -624,13 +632,14 @@ if (reviewSourceMode) {
     '- scope: TARGETED_ONLY',
     '- project/source/revision: ' + reviewProjectId + ' / ' + reviewSourceId + ' / ' + reviewRevisionId,
     '- source: ' + (source.title || source.originalFilename) + '; revision state: ' + understanding.state,
-    '- paper provenance: UNVERIFIED; source title selects the frozen anchor set but does not prove canonical paper identity',
+    '- frozen paper filename: ' + anchorFile + '; selection: ' + (reviewPaperFile === null ? 'exact source originalFilename' : 'explicit --paper-file'),
+    '- paper provenance: UNVERIFIED; frozen filename selects the anchor set but does not prove canonical paper identity',
     '- API methods: GET only; model calls and POSTs by this mode: 0',
     '- recorded calls: ' + record.calls + '/2; tokenLimit: ' + report.usage.tokenLimit + '; wallMs: ' + report.usage.wallMs,
     '- token usage (input/cached/output): ' + [report.usage.inputTokens, report.usage.cachedTokens, report.usage.outputTokens].map((value) => value === null ? 'unknown' : value).join('/'),
     '- canonical text: ' + canonical.bytes.length + ' bytes; sha256: ' + sha256(canonical.bytes),
     '- exact quote ranges: ' + ownQuotes.length + '/' + ownQuotes.length + '; same-card own-quote numeric checks: PASS for statement/task/metric/dataset/unit/conditions/valueText/valueNumber',
-    '- frozen ' + anchorId + ' (' + paper + ') anchors: ' + passedAnchors + '/' + frozenChecks.length + (missingAnchors.length ? '; missing: ' + missingAnchors.join(', ') : ''),
+    '- frozen ' + anchorId + ' (' + selectedPaper.title + ') anchors: ' + passedAnchors + '/' + frozenChecks.length + (missingAnchors.length ? '; missing: ' + missingAnchors.join(', ') : ''),
     '- retained terminal record identical on reread: true',
     '- semantic status: semanticNOT_EVALUATED',
     '- fullK3Accepted: false', '',
