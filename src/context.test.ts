@@ -159,6 +159,17 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
   return { env: { DB, BUCKET } as unknown as Env, reads: () => reads, requested };
 }
 
+interface SourceContextRecord {
+  alias: string;
+  title: string;
+  availableLabels: string[];
+  blocks: Array<{ quoteBlock: string; text: string }>;
+}
+function sourceEvidenceRecords(content: string): SourceContextRecord[] {
+  const start = content.indexOf("{");
+  return start < 0 ? [] : content.slice(start).split(NL).filter(Boolean).map((line) => JSON.parse(line) as SourceContextRecord);
+}
+
 function twoSourceEnv() {
   const textA = "Intro A." + NL + NL + "Second A." + NL;
   const textB = "Paper B body." + NL;
@@ -281,10 +292,15 @@ describe("buildContext K2 whole scope", () => {
     expect(resolved.invalidLabels).toBe(1);
     expect(res.messages[0]?.role).toBe("system");
     expect(res.messages[1]).toMatchObject({ role: "user" });
+    const sourceRecords = sourceEvidenceRecords(res.messages[1]?.content ?? "");
+    expect(sourceRecords.map((record) => [record.alias, record.title, record.availableLabels])).toEqual([
+      ["S1", "Paper A", ["[S1:1]", "[S1:2]"]], ["S2", "Paper B", ["[S2:1]"]],
+    ]);
+    expect(sourceRecords[0]?.blocks).toEqual([
+      { quoteBlock: "[S1:1]", text: "Intro A." }, { quoteBlock: "[S1:2]", text: "Second A." },
+    ]);
+    expect(sourceRecords[1]?.blocks).toEqual([{ quoteBlock: "[S2:1]", text: "Paper B body.\n" }]);
     const body = res.messages.map((m) => m.content).join(NL);
-    expect(body).toContain("[S1:1] Intro A.");
-    expect(body).toContain("[S1:2] Second A.");
-    expect(body).toContain("[S2:1] Paper B body.");
     expect(body).not.toContain("[S9:9]");
     expect(body).not.toContain("[S9]");
     expect(body).toContain("Old answer");
@@ -326,21 +342,22 @@ describe("buildContext K2 whole scope", () => {
     ]);
     expect(res.sources[1]?.blocks).toEqual([secondBlock]);
     const source = res.messages[1]?.content ?? "";
-    const secondSourceStart = source.indexOf("Source S2 — Paper B");
-    const firstSource = source.slice(source.indexOf("Source S1 — Paper A"), secondSourceStart);
-    const secondSource = source.slice(secondSourceStart);
-    expect(firstSource).toContain("Citable labels for S1 (block IDs; gaps are intentional): [S1:2], [S1:3].");
-    expect(firstSource).not.toContain("### Page 1\n");
-    expect(firstSource).not.toContain("### Страница 2\n");
-    expect(firstSource).not.toContain("Page 3\n");
+    const records = sourceEvidenceRecords(source);
+    const firstSource = records[0], secondSource = records[1];
+    if (!firstSource || !secondSource) throw new Error("Expected both whole-source JSON records.");
+    expect(firstSource).toMatchObject({ alias: "S1", title: "Paper A", availableLabels: ["[S1:2]", "[S1:3]"] });
+    expect(firstSource.blocks).toEqual([
+      { quoteBlock: "[S1:2]", text: "## Методы 🌿\n" },
+      { quoteBlock: "[S1:3]", text: "Les mesures de la Page 1 sont exactes.\n" },
+    ]);
+    expect(source).not.toContain("### Page 1\n");
+    expect(source).not.toContain("### Страница 2\n");
+    expect(source).not.toContain("Page 3\n");
     for (const unavailable of ["[S1:1]", "[S1:4]", "[S1:5]", "[S1:132]", "[S7:132]", "[S2:7]"]) {
-      expect(firstSource).not.toContain(unavailable);
+      expect(firstSource.availableLabels).not.toContain(unavailable);
     }
-    expect(firstSource).toContain("[S1:2] ## Методы 🌿");
-    expect(firstSource).toContain("[S1:3] Les mesures de la Page 1 sont exactes.");
-    expect(secondSource).toContain("Citable labels for S2 (block IDs; gaps are intentional): [S2:7].");
-    expect(secondSource).toContain("[S2:7] " + secondText);
-    expect(secondSource).not.toContain("[S1:2]");
+    expect(secondSource).toMatchObject({ alias: "S2", title: "Paper B", availableLabels: ["[S2:7]"] });
+    expect(secondSource.blocks).toEqual([{ quoteBlock: "[S2:7]", text: secondText }]);
     const system = res.messages[0]?.content ?? "";
     expect(system).toContain("The N in [Sx:N] is an exact source block ID, not a page, section, footnote or bibliography number; gaps are intentional.");
     expect(system).toContain("If no listed label supports a claim, omit it rather than infer an ID.");
@@ -484,15 +501,21 @@ describe("buildContext K2 whole scope", () => {
 
   it("uses exact citable projection before rejecting a marker-heavy unprocessed source", async () => {
     const encoder = new TextEncoder();
-    const pageMarkers = Array.from({ length: 2000 }, (_value, index) => "### Page " + (index + 1)).join(NL + NL);
-    const pageText = pageMarkers + NL + NL + "Small citable paragraph." + NL;
+    const pageCount = 2000;
+    const pageMarkers = Array.from({ length: pageCount }, (_value, index) => "### Page " + (index + 1)).join(NL + NL);
+    const nextBlockLabel = "[S1:" + (pageCount + 2) + "]";
+    const firstCitable = "Small citable paragraph includes literal " + nextBlockLabel + ".";
+    const nextCitable = "The schedule uses d_model^-0.5 * min(step_num^-0.5, step_num * warmup_steps^-1.5), warmup_steps=4000; JavaScript: const rate = Math.min(step_num ** -0.5, step_num * warmup_steps ** -1.5).";
+    const pageText = pageMarkers + NL + NL + firstCitable + NL + NL + nextCitable + NL;
     const pageBlocks = scanBlocks(pageText);
-    const originalBlock = pageBlocks[pageBlocks.length - 1];
-    if (!originalBlock) throw new Error("Expected the whole source to retain its final citable paragraph.");
+    const originalBlock = pageBlocks[pageBlocks.length - 2], boundaryBlock = pageBlocks[pageBlocks.length - 1];
+    if (!originalBlock || !boundaryBlock || boundaryBlock.id !== pageCount + 2) {
+      throw new Error("Expected the two final citable blocks after the page markers.");
+    }
     const largeRevision = "22222222-2222-4222-8222-222222222222";
     const pageRevision = "11111111-1111-4111-8111-111111111111";
     const largePrefix = "Background " + "b".repeat(9000);
-    const compactQuote = "The result is 3 times.";
+    const compactQuote = "The compact source preserves d_model^-0.5 * min(step_num^-0.5, step_num * warmup_steps^-1.5), warmup_steps=4000.";
     const largeText = largePrefix + NL + NL + compactQuote + NL;
     const prefixBytes = encoder.encode(largePrefix).byteLength;
     const quoteStart = prefixBytes + encoder.encode(NL + NL).byteLength;
@@ -528,16 +551,27 @@ describe("buildContext K2 whole scope", () => {
     expect(res.mode).toBe("claims");
     expect(res.revisionIds).toEqual([pageRevision, largeRevision]);
     expect(res.sources.map((source) => source.alias)).toEqual(["S1", "S2"]);
-    expect(res.sources[0]?.blocks).toEqual([originalBlock]);
+    expect(res.sources[0]?.blocks).toEqual([originalBlock, boundaryBlock]);
     expect(res.sources[1]?.blocks).toEqual([compactBlock]);
     const sourcesText = res.messages[1]?.content ?? "";
-    expect(sourcesText).toContain("[S1:" + originalBlock.id + "] Small citable paragraph.");
-    expect(sourcesText).not.toContain("[S1:1]");
-    expect(sourcesText).toContain("[S2:2] " + compactQuote);
+    const records = sourceEvidenceRecords(sourcesText);
+    const originalRecord = records[0], compactRecord = records[1];
+    if (!originalRecord || !compactRecord) throw new Error("Expected two per-source JSON records.");
+    const firstPassage = sliceUtf8(pageText, originalBlock.start, originalBlock.end);
+    const nextPassage = sliceUtf8(pageText, boundaryBlock.start, boundaryBlock.end);
+    expect(originalRecord.availableLabels).toEqual(["[S1:" + originalBlock.id + "]", nextBlockLabel]);
+    expect(originalRecord.blocks).toEqual([
+      { quoteBlock: "[S1:" + originalBlock.id + "]", text: firstPassage },
+      { quoteBlock: nextBlockLabel, text: nextPassage },
+    ]);
+    expect(compactRecord.blocks).toEqual([{ quoteBlock: "[S2:2]", text: compactQuote }]);
+    expect(sourcesText).toContain('"quoteBlock":"' + nextBlockLabel + '"');
+    expect(sourcesText).toContain("literal \\u005bS1:" + (pageCount + 2) + "\\u005d");
+    expect(sourcesText).not.toContain("literal " + nextBlockLabel);
     expect(sourcesText).not.toContain("b".repeat(1000));
-    const citations = resolveCitations("Whole [S1:" + originalBlock.id + "] and compact [S2:2].", res.sources);
+    const citations = resolveCitations("Whole " + nextBlockLabel + " and compact [S2:2].", res.sources);
     expect(citations.citations.map((citation) => [citation.sourceId, citation.revisionId, citation.block, citation.start, citation.end])).toEqual([
-      ["s1", pageRevision, originalBlock.id, originalBlock.start, originalBlock.end],
+      ["s1", pageRevision, boundaryBlock.id, boundaryBlock.start, boundaryBlock.end],
       ["s2", largeRevision, compactBlock.id, compactBlock.start, compactBlock.end],
     ]);
     expect(citations.invalidLabels).toBe(0);
@@ -633,9 +667,13 @@ describe("buildContext K3 claims fallback", () => {
     expect(res.sources[0]?.blocks.map((b) => b.id)).toEqual([2, 3]);
     expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
     expect(res.messages[1]).toMatchObject({ role: "user" });
+    const sourceRecord = sourceEvidenceRecords(res.messages[1]?.content ?? "")[0];
+    if (!sourceRecord) throw new Error("Expected one compact source record.");
+    expect(sourceRecord.availableLabels).toEqual(["[S1:2]", "[S1:3]"]);
+    expect(sourceRecord.blocks).toContainEqual({ quoteBlock: "[S1:2]", text: "quoted one" });
+    expect(sourceRecord.blocks).toContainEqual({ quoteBlock: "[S1:3]", text: "quoted two" });
+    expect(sourceRecord.blocks.some((block) => block.text.includes("First finding"))).toBe(false);
     const body = res.messages.map((m) => m.content).join(NL);
-    expect(res.messages[1]?.content).toContain("[S1:2] quoted one");
-    expect(res.messages[1]?.content).not.toContain("First finding");
     expect(res.messages[2]?.content).toContain("First finding");
     expect(body).not.toContain("S9:9");
     expect(body).not.toContain("Guide A.");
@@ -665,12 +703,14 @@ describe("buildContext K3 claims fallback", () => {
     expect(res.sources[0]?.blocks).toEqual([fixture.firstBlock]);
     expect(res.sources[1]?.blocks).toEqual([compactBlock]);
     expect(res.sources[11]?.blocks).toEqual([fixture.lastBlock]);
-    const sourceText = res.messages[1]?.content ?? "";
-    expect(sourceText).toContain("[S1:" + fixture.firstBlock.id + "] " + smallQuote);
-    expect(sourceText).toContain("[S2:" + compactBlock.id + "] " + compactQuote);
-    expect(sourceText).toContain("[S12:" + fixture.lastBlock.id + "] " + lastQuote);
-    const s2 = sourceText.slice(sourceText.indexOf("Paper 2"), sourceText.indexOf("Paper 3"));
-    expect(s2).not.toContain("x".repeat(1000));
+    const sourceRecords = sourceEvidenceRecords(res.messages[1]?.content ?? "");
+    const first = sourceRecords[0], second = sourceRecords[1], last = sourceRecords[11];
+    if (!first || !second || !last) throw new Error("Expected all twelve source records in frozen order.");
+    expect(first.blocks).toEqual([{ quoteBlock: "[S1:" + fixture.firstBlock.id + "]", text: smallQuote }]);
+    expect(second.availableLabels).toEqual(["[S2:" + compactBlock.id + "]"]);
+    expect(second.blocks).toEqual([{ quoteBlock: "[S2:" + compactBlock.id + "]", text: compactQuote }]);
+    expect(last.blocks).toEqual([{ quoteBlock: "[S12:" + fixture.lastBlock.id + "]", text: lastQuote }]);
+    expect(second.blocks.some((block) => block.text.includes("x".repeat(1000)))).toBe(false);
     const resolved = resolveCitations(
       "First [S1:" + fixture.firstBlock.id + "], compact [S2:" + compactBlock.id + "], final [S12:" + fixture.lastBlock.id + "].",
       res.sources,
@@ -791,10 +831,16 @@ describe("buildContext K3 claims fallback", () => {
     expect(res.mode).toBe("claims");
     expect(res.sources[0]?.blocks).toEqual([heading, body]);
     const source = res.messages[1]?.content ?? "";
-    expect(source).toContain("[S1:2] ## Методы 🌿");
-    expect(source).toContain("[S1:3] Les mesures sont exactes.");
-    expect(source).not.toContain("[S1:1]");
-    expect(source).not.toContain("[S1:4]");
+    const record = sourceEvidenceRecords(source)[0];
+    if (!record) throw new Error("Expected a compact JSON record for the source.");
+    expect(record.availableLabels).toEqual(["[S1:2]", "[S1:3]"]);
+    expect(record.blocks).toHaveLength(3);
+    expect(record.blocks).toContainEqual({ quoteBlock: "[S1:2]", text: "## Методы 🌿\n" });
+    expect(record.blocks).toContainEqual({ quoteBlock: "[S1:3]", text: "Les mesures sont exactes.\n" });
+    expect(record.blocks).toContainEqual({ quoteBlock: "[S1:3]", text: "Les mesures sont exactes." });
+    expect(source).not.toContain("### Page 1");
+    expect(source).not.toContain("### Страница 2");
+    expect(source).not.toContain("Page 3");
     expect(res.messages[2]?.content).toContain("The passage reports measurements.");
     expect(res.messages[2]?.content).not.toContain("A page marker is present.");
     expect(requested.filter((key) => key.startsWith(`source/${revisionId}/text.md#r`))).toHaveLength(4);
@@ -836,13 +882,16 @@ describe("buildContext K3 claims fallback", () => {
     expect(res.sources[0]?.blocks).toEqual([{ id: 2, type: "paragraph", start: 0, end: passageEnd, heading: null }]);
     expect(res.messages[1]?.role).toBe("user");
     const source = res.messages[1]?.content ?? "";
-    expect(source).toContain("[S1:2] " + quote);
-    expect(source).toContain("[S1:2] " + otherQuote);
-    expect(source.split(quote).length - 1).toBe(1);
-    expect(source.split(otherQuote).length - 1).toBe(1);
-    expect(source).not.toContain(wrongStatement);
-    expect(source).not.toContain(wrongConditions);
-    expect(source).not.toContain("A derived");
+    const sourceRecord = sourceEvidenceRecords(source)[0];
+    if (!sourceRecord) throw new Error("Expected one compact source record.");
+    expect(sourceRecord.availableLabels).toEqual(["[S1:2]"]);
+    expect(sourceRecord.blocks).toEqual([
+      { quoteBlock: "[S1:2]", text: quote },
+      { quoteBlock: "[S1:2]", text: otherQuote },
+    ]);
+    expect(JSON.stringify(sourceRecord)).not.toContain(wrongStatement);
+    expect(JSON.stringify(sourceRecord)).not.toContain(wrongConditions);
+    expect(JSON.stringify(sourceRecord)).not.toContain("A derived");
     expect(res.messages[2]?.role).toBe("user");
     const orientation = res.messages[2]?.content ?? "";
     expect(orientation).toMatch(/orientation/i);
@@ -859,12 +908,13 @@ describe("buildContext K3 claims fallback", () => {
   });
 
   it("reserved caller text pushes whole over cap and chooses claims", async () => {
-    const body = "T".repeat(600);
+    const body = "T".repeat(1800);
+    const bodyBytes = new TextEncoder().encode(body).byteLength;
     const { env, requested } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
-      revisions: [{ id: "r9", readableState: "readable", readableSize: 600, distillState: "done", guideSummary: "Guide: G.", deletedAt: null, claimCount: 2 }],
-      texts: { r9: { text: body, guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 300, heading: null }, { id: 2, type: "paragraph", start: 300, end: 600, heading: null }] } },
+      revisions: [{ id: "r9", readableState: "readable", readableSize: bodyBytes, distillState: "done", guideSummary: "Guide: G.", deletedAt: null, claimCount: 2 }],
+      texts: { r9: { text: body, guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 900, heading: null }, { id: 2, type: "paragraph", start: 900, end: bodyBytes, heading: null }] } },
       claims: { r9: [{ ordinal: 1, statement: "Finding one", quote: "quoted one", conditions: null, blockIndex: 2, ambiguous: 0 }] },
     });
     const question = "Q" + "q".repeat(459), instructions = "I" + "i".repeat(459), outputTokens = 100;
@@ -874,7 +924,7 @@ describe("buildContext K3 claims fallback", () => {
     });
     const systemTokens = estimateTokens(measuredSystem.messages[0]?.content ?? "");
     const callerTokens = estimateTokens(question) + estimateTokens(instructions);
-    const wholePrefitTokens = Math.ceil(600 / 3) + systemTokens + callerTokens + outputTokens;
+    const wholePrefitTokens = Math.ceil(bodyBytes / 3) + systemTokens + callerTokens + outputTokens;
     // Place the existing 60% cap one token below the current whole-prefit estimate;
     // claims must still fit after its smaller labelled excerpts are estimated.
     const contextTokens = Math.floor((wholePrefitTokens - 1) / 0.6);
@@ -889,8 +939,10 @@ describe("buildContext K3 claims fallback", () => {
     expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
     expect(res.messages[1]).toMatchObject({ role: "user" });
     const text = res.messages.map((m) => m.content).join(NL);
-    expect(res.messages[1]?.content).toContain("[S1:2] quoted one");
-    expect(res.messages[1]?.content).not.toContain("Finding one");
+    const sourceRecord = sourceEvidenceRecords(res.messages[1]?.content ?? "")[0];
+    if (!sourceRecord) throw new Error("Expected one compact JSON source record.");
+    expect(sourceRecord.blocks).toContainEqual({ quoteBlock: "[S1:2]", text: "quoted one" });
+    expect(sourceRecord.blocks.some((block) => block.text.includes("Finding one"))).toBe(false);
     expect(res.messages[2]?.content).toContain("Finding one");
     expect(text).not.toContain("qqqq");
     expect(res.estimatedInputTokens).toBeGreaterThan(0);
@@ -975,8 +1027,13 @@ describe("buildContext K3 claims fallback", () => {
     expect(res.mode).toBe("claims");
     expect(res.sources[0]?.blocks.map((b) => b.id)).toEqual([2, 3]);
     expect(requested.filter((k) => k.includes("text.md"))).toEqual(["source/" + rev + "/text.md#r10-19"]);
-    const body = res.messages.map((m) => m.content).join(NL);
-    expect(body).toContain("[S1:2] 012345678");
+    const sourceRecord = sourceEvidenceRecords(res.messages[1]?.content ?? "")[0];
+    if (!sourceRecord) throw new Error("Expected the report-guided JSON source record.");
+    expect(sourceRecord.availableLabels).toEqual(["[S1:2]", "[S1:3]"]);
+    expect(sourceRecord.blocks).toEqual([
+      { quoteBlock: "[S1:2]", text: "012345678" },
+      { quoteBlock: "[S1:3]", text: "quoted" },
+    ]);
     const resolved = resolveCitations("Guide says [S1:2] but not [S1:1].", res.sources);
     expect(resolved.citations.length).toBe(1);
     expect(resolved.citations[0]?.sourceId).toBe("s1");
@@ -1074,9 +1131,13 @@ describe("buildContext K3 report artifact guide", () => {
     expect(requested).toContain(checkedKey);
     expect(requested.some((k) => k === "source/" + rev + "/guide.md")).toBe(false);
     expect(requested.filter((k) => k.includes("text.md"))).toEqual(["source/" + rev + "/text.md#r10-20"]);
-    const body = res.messages.map((m) => m.content).join(NL);
-    expect(body).toContain("[S1:2] BBBBBBBBBB");
-    expect(body).not.toContain("AAAAAAAAAA");
+    const sourceRecord = sourceEvidenceRecords(res.messages[1]?.content ?? "")[0];
+    if (!sourceRecord) throw new Error("Expected the checked guide's source record.");
+    expect(sourceRecord.availableLabels).toEqual(["[S1:2]", "[S1:3]"]);
+    expect(sourceRecord.blocks).toEqual([
+      { quoteBlock: "[S1:2]", text: "BBBBBBBBBB" },
+      { quoteBlock: "[S1:3]", text: "quoted" },
+    ]);
   });
   it("missing pointed report is actionable unavailable", async () => {
     const { env } = reportEnv({ legacyGuide: "Old [R" + rev + ":1] end." });
@@ -1118,7 +1179,10 @@ describe("orientation from stored guides", () => {
     expect(res.messages.length).toBe(3);
     expect(res.messages[1]).toMatchObject({ role: "user" });
     expect(res.messages[2]).toMatchObject({ role: "user" });
-    expect(res.messages[1]?.content).toContain("[S1:1] Alpha.");
+    const record = sourceEvidenceRecords(res.messages[1]?.content ?? "")[0];
+    if (!record) throw new Error("Expected the whole-source JSON record.");
+    expect(record).toMatchObject({ alias: "S1", title: "Paper A", availableLabels: ["[S1:1]"] });
+    expect(record.blocks).toEqual([{ quoteBlock: "[S1:1]", text: "Alpha." }]);
     const orient = res.messages[2]?.content ?? "";
     expect(orient).toContain("Derived orientation only");
     expect(orient).toContain("Guide text here.");
@@ -1152,7 +1216,9 @@ describe("orientation from stored guides", () => {
     const body = res.messages.map((m) => m.content).join(NL);
     expect(body).not.toContain("Derived orientation");
     expect(body).not.toContain("GGGGGGGG");
-    expect(body).toContain("[S1:1] Alpha.");
+    const sourceRecord = sourceEvidenceRecords(res.messages[1]?.content ?? "")[0];
+    if (!sourceRecord) throw new Error("Expected the whole-source JSON record.");
+    expect(sourceRecord.blocks).toEqual([{ quoteBlock: "[S1:1]", text: "Alpha." }]);
   });
   it("never promotes partial gists to orientation", async () => {
     const { env } = orientEnv("partial", "Partial gist here.");
@@ -1178,10 +1244,13 @@ describe("bare-label header regression", () => {
     expect(res.mode).toBe("whole");
     const sourceText = res.messages[1]?.content ?? "";
     const orientText = res.messages[2]?.content ?? "";
-    expect(sourceText).toContain("[S1:1] Alpha [S1] literal.");
-    expect(sourceText).toContain("Source S1");
-    expect(sourceText).toContain("Paper A");
-    expect(sourceText).not.toMatch(/^\[S\d+\] /m);
+    const record = sourceEvidenceRecords(sourceText)[0];
+    if (!record) throw new Error("Expected the whole-source JSON record.");
+    expect(record).toMatchObject({ alias: "S1", title: "Paper A", availableLabels: ["[S1:1]"] });
+    expect(record.blocks).toEqual([{ quoteBlock: "[S1:1]", text: literalText }]);
+    expect(sourceText).toContain('"quoteBlock":"[S1:1]"');
+    expect(sourceText).toContain("Alpha \\u005bS1\\u005d literal.");
+    expect(sourceText).not.toContain("Alpha [S1] literal.");
     expect(orientText).toContain("Derived orientation only");
     expect(orientText).toContain("Source S1");
     expect(orientText).toContain("overview");
@@ -1214,13 +1283,13 @@ describe("bare-label header regression", () => {
     expect(res.mode).toBe("claims");
     const sourceText = res.messages[1]?.content ?? "";
     const orientText = res.messages[2]?.content ?? "";
-    expect(sourceText).toContain("[S1:2] " + passage);
-    expect(sourceText).toContain("Citable labels for S1 (block IDs; gaps are intentional): [S1:2].");
-    expect(sourceText).not.toContain("[S1:1]");
-    expect(sourceText).not.toContain("[S1:3]");
-    expect(sourceText).toContain("Source S1");
-    expect(sourceText).toContain("Paper A");
-    expect(sourceText).not.toMatch(/^\[S\d+\] /m);
+    const record = sourceEvidenceRecords(sourceText)[0];
+    if (!record) throw new Error("Expected the compact JSON source record.");
+    expect(record).toMatchObject({ alias: "S1", title: "Paper A", availableLabels: ["[S1:2]"] });
+    expect(record.blocks).toEqual([{ quoteBlock: "[S1:2]", text: passage }]);
+    expect(sourceText).toContain('"quoteBlock":"[S1:2]"');
+    expect(sourceText).toContain("Model Alpha uses \\u005bS1\\u005d literal.");
+    expect(sourceText).not.toContain("Model Alpha uses [S1] literal.");
     expect(orientText).toContain("Source S1");
     expect(orientText).toContain("Finding");
     expect(orientText).not.toMatch(/\[S\d+\]/);
