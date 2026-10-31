@@ -54,6 +54,22 @@ export function sourceContextJson(value: Record<string, unknown>, authorityLabel
       : token.replaceAll("[", "\\u005b").replaceAll("]", "\\u005d"));
 }
 
+/** Rejected claims contribute source-label cues only, never their draft facts. */
+export function unresolvedClaimBlocks(
+  candidates: readonly { quoteBlock: string }[],
+  dropped: readonly { index: number; reason: string }[],
+  allowed: ReadonlySet<string>,
+): string[] {
+  const rejected = new Set(dropped
+    .filter(({ index, reason }) => !reason.startsWith("guide-") && Number.isInteger(index) && index >= 0 && index < candidates.length)
+    .map(({ index }) => index));
+  const blocks = new Set<string>();
+  candidates.forEach(({ quoteBlock }, index) => {
+    if (rejected.has(index) && allowed.has(quoteBlock)) blocks.add(quoteBlock);
+  });
+  return [...blocks];
+}
+
 interface Fence {
   char: string;
   count: number;

@@ -1,6 +1,6 @@
 import { countNumericQuantities, numbersSupported } from "./numbers.js";
 import { describe, expect, it } from "vitest";
-import { cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "./quotes.js";
+import { cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, unresolvedClaimBlocks, verifyClaims } from "./quotes.js";
 import type { CandidateClaim, VerifiedClaim } from "./quotes.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
@@ -486,6 +486,37 @@ describe("sourceContextJson", () => {
     expect(projected).toContain("Embedded \\u005bS1:7\\u005d");
     expect(projected).toContain("undeclared \\u005bS1:70\\u005d");
     expect(projected).toContain("Array \\u005b1, 2\\u005d");
+  });
+});
+
+describe("unresolvedClaimBlocks", () => {
+  it("cues rejected claims' own allowed blocks in candidate order without forwarding draft facts", () => {
+    const candidates = [
+      { quoteBlock: "[S1:7]", statement: "Unverified compound result: 12% and 19%.", valueText: "12% and 19%" },
+      { quoteBlock: "[S1:8]" },
+      { quoteBlock: "[S1:7]" },
+      { quoteBlock: "[S1:9]" },
+      { quoteBlock: "[S2:7]" },
+      { quoteBlock: "[S1:10]" },
+    ] as const;
+    const dropped = [
+      { index: 2, reason: "unsupported-condition-numbers" },
+      { index: 1, reason: "unmatched" },
+      { index: 3, reason: "guide-unsupported-statement-numbers" },
+      { index: 0, reason: "pre-synthesis-missing-or-unsupported-primary-result" },
+      { index: 4, reason: "unknown-block" },
+      { index: 0, reason: "guide-invalid-reference" },
+    ] as const;
+    expect(unresolvedClaimBlocks(candidates, dropped, new Set(["[S1:7]", "[S1:8]", "[S1:9]", "[S1:10]"])))
+      .toEqual(["[S1:7]", "[S1:8]"]);
+  });
+
+  it("ignores guide-only collisions and invalid claim indices", () => {
+    const candidates = [{ quoteBlock: "[S1:7]" }];
+    const dropped = [-1, 0.5, 1, NaN, Infinity, Number.MAX_SAFE_INTEGER]
+      .map((index) => ({ index, reason: "unmatched" }));
+    dropped.push({ index: 0, reason: "guide-invalid-reference" });
+    expect(unresolvedClaimBlocks(candidates, dropped, new Set(["[S1:7]"]))).toEqual([]);
   });
 });
 
