@@ -588,11 +588,12 @@ call; an in-flight call may finish.
 ## 11. Models
 
 The native default's cold-start metadata selects low reasoning effort for interactive chat. GLM 5.3 Flash supports
-low/high/max and defaults to max when effort is omitted; reasoning cannot be disabled. New native K3 admissions omit
-the chat-specific effort override before freezing Workflow parameters; existing admitted parameters are untouched.
-This freezes the decision to use the provider default, not a promise about future provider defaults. Gateway routing,
-output reserves, token/call/time bounds and owner model selections are unchanged. This strategy is experimental;
-service completion and semantic quality under it are not yet verified.
+low/high/max and defaults to max when effort is omitted; reasoning cannot be disabled. Native catalogue discovery
+preserves published `supported_efforts` as optional `nativeReasoningEfforts`; missing or malformed values stay unknown.
+New native K3 admissions select `high` only when the same catalogue snapshot advertises it, otherwise retaining that
+snapshot's existing choice. The chosen value is frozen in Workflow parameters. Existing admitted parameters, Gateway
+routing, output reserves, token/call/time bounds and owner model selections are unchanged. This strategy is
+experimental; service completion and semantic quality under it are not yet verified.
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban

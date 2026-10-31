@@ -221,19 +221,22 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
-  it("admits a fresh native provider-default snapshot without mutating the published low-effort model", async () => {
+  it.each([
+    { capabilities: Object.freeze(["low", "high"]), effort: "high" },
+    { capabilities: undefined, effort: "low" },
+  ] as const)("admits native $effort effort from published capabilities without mutating the low-effort model", async ({ capabilities, effort }) => {
     const f = callerFixture();
     const published: ModelSpec = Object.freeze({
       route: "workers-ai:@cf/zai-org/glm-5.3-flash", id: "@cf/zai-org/glm-5.3-flash", label: "Native published fixture",
       contextTokens: 1_048_576, maxOutputTokens: null, outputReserveTokens: 8192,
-      nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true,
+      nativeReasoningEffort: "low", ...(capabilities ? { nativeReasoningEfforts: capabilities } : {}),
+      checkedOn: "2026-10-30", enabled: true,
     });
-    const { nativeReasoningEffort: originalEffort, ...expectedModel } = published;
+    const expectedModel = { ...published, nativeReasoningEffort: effort };
     vi.mocked(requireAvailableModel).mockResolvedValue(published);
     try {
       f.db.prepare("UPDATE settings SET native_usage_mode='standard',distill_model=? WHERE id=1").run(snapshot.route);
       f.db.prepare("UPDATE source_revision SET distill_model=? WHERE id=?").run(published.route, explicitlySelectedRevisionId);
-      expect(originalEffort).toBe("low");
       await requestUnderstanding(f.env, { type: "owner" } as Actor, {
         sourceId: explicitlySelectedSourceId, revisionId: explicitlySelectedRevisionId, model: published.route,
       });
@@ -244,9 +247,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
         params: { revisionId: explicitlySelectedRevisionId, model: expectedModel },
       });
       const admitted = f.createWorkflow.mock.calls[0]?.[0].params.model;
-      expect(admitted).not.toBe(published);
+      if (effort === "high") expect(admitted).not.toBe(published);
       expect(admitted).toStrictEqual(expectedModel);
-      expect(admitted).not.toHaveProperty("nativeReasoningEffort");
       expect(published.nativeReasoningEffort).toBe("low");
       expect(f.db.prepare("SELECT distill_model AS model,distill_state AS state,distill_calls AS calls,distill_token_limit AS tokenLimit FROM source_revision WHERE id=?")
         .get(explicitlySelectedRevisionId)).toEqual({ model: published.route, state: "running", calls: 0, tokenLimit: 2_113_536 });

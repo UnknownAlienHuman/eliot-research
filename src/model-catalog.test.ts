@@ -506,15 +506,39 @@ describe("go provider metadata catalogue", () => {
   });
 });
 
-describe("native contradictory catalogue entries", () => {
+describe("native catalogue metadata", () => {
+  type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
+  const row = (properties: unknown[]): NativeRow => ({ id: "catalogue-uuid", name: "@cf/vendor/new-chat-model",
+    task: { name: "Text Generation" }, properties } as unknown as NativeRow);
+
   it("does not choose one of contradictory property entries", () => {
-    type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
-    const row = (properties: unknown[]): NativeRow => ({ id: "catalogue-uuid", name: "@cf/vendor/new-chat-model",
-      task: { name: "Text Generation" }, properties } as unknown as NativeRow);
     expect(nativeModel(row([
       { property_id: "context_window", value: "1048576" },
       { property_id: "context_window", value: "128000" },
     ]), "2026-10-27")?.contextTokens).toBeNull();
+  });
+
+  it("preserves advertised reasoning efforts without changing the interactive low choice", () => {
+    expect(nativeModel(row([
+      { property_id: "reasoning_effort", value: { supported_efforts: ["low", "high", "max"] } },
+    ]), "2026-10-31")).toMatchObject({ nativeReasoningEfforts: ["low", "high", "max"], nativeReasoningEffort: "low" });
+    const highOnly = nativeModel(row([
+      { property_id: "reasoning_effort", value: { supported_efforts: ["high", "max"] } },
+    ]), "2026-10-31");
+    expect(highOnly?.nativeReasoningEfforts).toEqual(["high", "max"]);
+    expect(highOnly).not.toHaveProperty("nativeReasoningEffort");
+  });
+
+  it("keeps missing, malformed or contradictory reasoning efforts unknown", () => {
+    expect(nativeModel(row([]), "2026-10-31")).not.toHaveProperty("nativeReasoningEfforts");
+    for (const value of [null, {}, { supported_efforts: "high" }, { supported_efforts: ["high", 3] }]) {
+      expect(nativeModel(row([{ property_id: "reasoning_effort", value }]), "2026-10-31"))
+        .not.toHaveProperty("nativeReasoningEfforts");
+    }
+    expect(nativeModel(row([
+      { property_id: "reasoning_effort", value: { supported_efforts: ["high"] } },
+      { property_id: "reasoning_effort", value: { supported_efforts: ["low"] } },
+    ]), "2026-10-31")).not.toHaveProperty("nativeReasoningEfforts");
   });
 });
 

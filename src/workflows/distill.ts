@@ -472,9 +472,8 @@ export async function scheduleDistillation(env: Env, targetRevisionId?: string) 
         .bind(error instanceof LibraryError ? error.message : "Model configuration is unavailable. Resume explicitly after reconnecting.", row.id).run();
       continue;
     }
-    if (model.route.startsWith("workers-ai:")) {
-      model = { ...model };
-      delete model.nativeReasoningEffort;
+    if (model.route.startsWith("workers-ai:") && model.nativeReasoningEfforts?.includes("high")) {
+      model = { ...model, nativeReasoningEffort: "high" as const };
     }
     if (!await admitDistill(env, row.id, model)) continue;
     try { await env.DISTILL.create({ id: `distill-${row.id}`, params: { revisionId: row.id, model } }); }

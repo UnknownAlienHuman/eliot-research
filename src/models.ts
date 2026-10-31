@@ -86,7 +86,8 @@ export interface CatalogModel {
   apiProtocol?: "openai-chat" | "openai-responses" | "anthropic" | "google";
   apiBaseUrl?: string;
   mayTrainOnYourPrompts?: boolean;
-  nativeReasoningEffort?: "low";
+  nativeReasoningEffort?: "low" | "high";
+  nativeReasoningEfforts?: readonly string[];
   checkedOn: string;
   enabled: boolean;
   unavailableReason?: string;
@@ -172,7 +173,9 @@ function isCatalogModel(value: unknown): value is CatalogModel {
   if (value.supportsTemperature !== undefined && typeof value.supportsTemperature !== "boolean") return false;
   if (value.supportsImages !== undefined && typeof value.supportsImages !== "boolean") return false;
   if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
-  if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low") return false;
+  if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low" && value.nativeReasoningEffort !== "high") return false;
+  if (value.nativeReasoningEfforts !== undefined && (!Array.isArray(value.nativeReasoningEfforts)
+    || value.nativeReasoningEfforts.some(effort => typeof effort !== "string"))) return false;
   if (value.apiProtocol !== undefined && !["openai-chat", "openai-responses", "anthropic", "google"].includes(String(value.apiProtocol))) return false;
   if (value.apiBaseUrl !== undefined && typeof value.apiBaseUrl !== "string") return false;
   if (value.mayTrainOnYourPrompts !== undefined && typeof value.mayTrainOnYourPrompts !== "boolean") return false;
@@ -224,7 +227,7 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     const visible: CatalogModel = { route: model.route, id: model.id, label: model.label, contextTokens: model.contextTokens,
       maxOutputTokens: model.maxOutputTokens, checkedOn: model.checkedOn, enabled: model.enabled };
     for (const field of ["outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning",
-      "nativeReasoningEffort", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
+      "nativeReasoningEffort", "nativeReasoningEfforts", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
       if (model[field] !== undefined) Object.assign(visible, { [field]: model[field] });
     }
     models.set(model.route, { ...visible, label: fallback?.label ?? model.label,
