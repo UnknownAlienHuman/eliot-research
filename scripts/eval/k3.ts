@@ -37,27 +37,58 @@ if (process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.e
 const nativeOnly = process.argv.includes('--native-only');
 const unchangedOnly = process.argv.includes('--unchanged-only');
 const readerBrowser = process.argv.includes('--reader-browser');
+const reviewSourceMode = process.argv.includes('--review-source');
+function optionValue(name) {
+  const inline = process.argv.filter((arg) => arg.startsWith(name + '='));
+  const plain = process.argv.map((arg, index) => arg === name ? index : -1).filter((index) => index >= 0);
+  assert.equal(inline.length + plain.length, 1, '--review-source requires ' + name + ' exactly once.');
+  if (inline.length === 1) return inline[0].slice(name.length + 1);
+  const value = process.argv[plain[0] + 1];
+  assert(typeof value === 'string' && value.length > 0 && !value.startsWith('--'), name + ' needs a value.');
+  return value;
+}
+const reviewProjectId = reviewSourceMode ? optionValue('--project-id') : null;
+const reviewSourceId = reviewSourceMode ? optionValue('--source-id') : null;
+const reviewRevisionId = reviewSourceMode ? optionValue('--revision-id') : null;
 const runModel = process.env.ELIOT_K3_MODEL === '1';
 assert(!unchangedOnly || !runModel, '--unchanged-only forbids model work.');
+assert(!reviewSourceMode || (!nativeOnly && !unchangedOnly && !readerBrowser), '--review-source is a standalone GET-only review mode.');
+assert(!reviewSourceMode || !runModel, '--review-source forbids ELIOT_K3_MODEL=1.');
+if (reviewSourceMode) {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  for (const [label, value] of [['project', reviewProjectId], ['source', reviewSourceId], ['revision', reviewRevisionId]])
+    assert(uuid.test(value), '--review-source requires an explicit UUID ' + label + ' ID.');
+}
 const outDir = fileURLToPath(new URL('../../eval/out/k3/', import.meta.url));
 await mkdir(outDir, { recursive: true });
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
 const CLAIM_ORDER = ['C1', 'C2', 'C3', 'C4'];
 const CLAIM_Q = new Map();
-for (const line of (await readFile(evalDir + '/arxiv-10/questions.md', 'utf8')).split(EOL)) {
+const questionsText = await readFile(evalDir + '/arxiv-10/questions.md', 'utf8');
+for (const line of questionsText.split(EOL)) {
   const parts = line.split('|').map((p) => p.trim());
   if (parts.length >= 3 && CLAIM_ORDER.includes(parts[1]) && parts[2]) CLAIM_Q.set(parts[1], parts[2]);
 }
 assert.equal(CLAIM_Q.size, 4, 'questions.md must define C1-C4.');
 const CLAIM_QUESTIONS = CLAIM_ORDER.map((k) => CLAIM_Q.get(k));
+const K3_ANCHOR_SOURCES = new Map();
+let inK3Anchors = false;
+for (const line of questionsText.split(EOL)) {
+  if (line.startsWith('## K3')) { inK3Anchors = true; continue; }
+  if (inK3Anchors && line.startsWith('## ')) break;
+  if (!inK3Anchors) continue;
+  const parts = line.split('|').map((p) => p.trim());
+  if (parts.length >= 3 && /^A\d+$/.test(parts[1]) && parts[2]) K3_ANCHOR_SOURCES.set(parts[1], parts[2]);
+}
+assert.deepEqual([...K3_ANCHOR_SOURCES.keys()].sort(), ['A1', 'A2', 'A3'], 'questions.md must retain the three frozen K3 paper anchors.');
 const baselineManifest = JSON.parse(await readFile(evalDir + '/arxiv-10/sources.json', 'utf8'));
 const overflowManifest = JSON.parse(await readFile(evalDir + '/arxiv-10/overflow.json', 'utf8'));
 const BASELINE_EXPECTED = baselineManifest.sources.map((s) => ({ filename: 'arxiv-' + s.id + '.pdf', title: s.title }));
 const baselineSeedPath = process.env.ELIOT_K3_BASELINE_SEED_RESULT;
 const overflowStoragePath = process.env.ELIOT_K3_OVERFLOW_STORAGE_COMPLETION;
-assert(nativeOnly || unchangedOnly || (baselineSeedPath && overflowStoragePath), 'Full K3 eval requires the caller-frozen ELIOT_K3_BASELINE_SEED_RESULT and ELIOT_K3_OVERFLOW_STORAGE_COMPLETION paths.');
-const baselineSeed = !nativeOnly && !unchangedOnly && baselineSeedPath ? JSON.parse(await readFile(baselineSeedPath, 'utf8')) : null;
-const overflowStorage = !nativeOnly && !unchangedOnly && overflowStoragePath ? JSON.parse(await readFile(overflowStoragePath, 'utf8')) : null;
+assert(nativeOnly || unchangedOnly || reviewSourceMode || (baselineSeedPath && overflowStoragePath), 'Full K3 eval requires the caller-frozen ELIOT_K3_BASELINE_SEED_RESULT and ELIOT_K3_OVERFLOW_STORAGE_COMPLETION paths.');
+const baselineSeed = !nativeOnly && !unchangedOnly && !reviewSourceMode && baselineSeedPath ? JSON.parse(await readFile(baselineSeedPath, 'utf8')) : null;
+const overflowStorage = !nativeOnly && !unchangedOnly && !reviewSourceMode && overflowStoragePath ? JSON.parse(await readFile(overflowStoragePath, 'utf8')) : null;
 const OVERFLOW_EXPECTED = overflowManifest.sources.map((s) => ({ id: s.id, title: s.title, arxiv: s.arxiv }));
 assert.deepEqual(BASELINE_EXPECTED.map((s) => s.filename), Array.from({ length: 10 }, (_, i) => 'arxiv-' + String(i + 1).padStart(2, '0') + '.pdf'), 'K3 baseline manifest must name each arxiv-01..10 PDF once.');
 assert.deepEqual(overflowManifest.sources.map((s) => s.id).slice().sort(), ['gpt3', 'palm'], 'K3 overflow manifest must remain the two approved papers.');
@@ -462,25 +493,30 @@ assert.equal(pairedAnchor([
   { statement: 'the method reformulates stacked layers as residual functions.', quote: 'we let stacked layers fit residual functions.' },
 ], a2ResidualMapping), true, 'Harness selftest: legacy English residual functions wording remains accepted.');
 
-function checkAnchors(byFile) {
-  const missing = [];
-  // Every independent anchor must be stated by one owner-visible card and supported by that card's own exact quote.
+function anchorChecks(byFile, selectedFiles = ['arxiv-01.pdf', 'arxiv-03.pdf', 'arxiv-07.pdf']) {
+  // Keep the existing full-corpus predicates intact; targeted review selects only one frozen paper's checks.
+  const selected = new Set(selectedFiles);
   const cards = anchorHay(byFile);
-  const q01 = cards('arxiv-01.pdf'), q03 = cards('arxiv-03.pdf'), q07 = cards('arxiv-07.pdf');
+  const checks = [];
+  const add = (file, name, statementPredicate, quotePredicate = statementPredicate) => {
+    if (selected.has(file)) checks.push({ name, passed: pairedAnchor(cards(file), statementPredicate, quotePredicate) });
+  };
   const wmt = (q) => /wmt\s*(?:2014|14)/.test(q);
-  const paired = pairedAnchor;
-  if (!paired(q01, (q) => q.includes('28.4') && q.includes('bleu') && wmt(q) && /english.{0,25}german|en[-– ]de/.test(q))) missing.push('A1-English-German-28.4-BLEU');
-  if (!paired(q01, (q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && frenchTranslation(q))) missing.push('A1-English-French-41.8-BLEU');
-  if (!paired(q01, a1ComputeStatement, a1ComputeQuote)) missing.push('A1-compute(3.5d/8GPU-for-French-result)');
-  if (!paired(q03, a2ResidualMapping)) missing.push('A2-residual-functions');
-  if (!paired(q03, (q) => runsOf(q).includes('152') && /layer/.test(q))) missing.push('A2-152-layers');
-  if (!paired(q03, (q) => q.includes('3.57') && q.includes('ensemble') && q.includes('imagenet') && q.includes('test') && q.includes('error'))) missing.push('A2-ensemble-3.57%-ImageNet-test-error');
-  if (!paired(q07, (q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q))) missing.push('A3-frozen-weights-trained-lowrank');
+  add('arxiv-01.pdf', 'A1-English-German-28.4-BLEU', (q) => q.includes('28.4') && q.includes('bleu') && wmt(q) && /english.{0,25}german|en[-– ]de/.test(q));
+  add('arxiv-01.pdf', 'A1-English-French-41.8-BLEU', (q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && frenchTranslation(q));
+  add('arxiv-01.pdf', 'A1-compute(3.5d/8GPU-for-French-result)', a1ComputeStatement, a1ComputeQuote);
+  add('arxiv-03.pdf', 'A2-residual-functions', a2ResidualMapping);
+  add('arxiv-03.pdf', 'A2-152-layers', (q) => runsOf(q).includes('152') && /layer/.test(q));
+  add('arxiv-03.pdf', 'A2-ensemble-3.57%-ImageNet-test-error', (q) => q.includes('3.57') && q.includes('ensemble') && q.includes('imagenet') && q.includes('test') && q.includes('error'));
+  add('arxiv-07.pdf', 'A3-frozen-weights-trained-lowrank', (q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q));
   const gpt = (q) => /gpt[- ]?3/.test(q) && /175\s*b/.test(q);
-  if (!paired(q07, (q) => gpt(q) && /10[, ]*000/.test(q) && q.includes('trainable') && q.includes('parameter'))) missing.push('A3-GPT3-175B-10000x-trainable-params');
-  if (!paired(q07, (q) => gpt(q) && /(?:\b3\b|\bthree\b).{0,20}(?:times|[x×]|fold)/.test(q) && q.includes('gpu') && q.includes('memory'))) missing.push('A3-GPT3-175B-3x-GPU-memory');
-  if (!paired(q07, (q) => /(?:\bno\b|without|does not|do not).{0,80}latency/.test(q) && q.includes('inference'))) missing.push('A3-no-additional-inference-latency');
-  return missing;
+  add('arxiv-07.pdf', 'A3-GPT3-175B-10000x-trainable-params', (q) => gpt(q) && /10[, ]*000/.test(q) && q.includes('trainable') && q.includes('parameter'));
+  add('arxiv-07.pdf', 'A3-GPT3-175B-3x-GPU-memory', (q) => gpt(q) && /(?:\b3\b|\bthree\b).{0,20}(?:times|[x×]|fold)/.test(q) && q.includes('gpu') && q.includes('memory'));
+  add('arxiv-07.pdf', 'A3-no-additional-inference-latency', (q) => /(?:\bno\b|without|does not|do not).{0,80}latency/.test(q) && q.includes('inference'));
+  return checks;
+}
+function checkAnchors(byFile) {
+  return anchorChecks(byFile).filter((check) => !check.passed).map((check) => check.name);
 }
 const TERMINAL = new Set(['done', 'partial', 'failed']);
 const POLL_MS = 5000;
@@ -510,6 +546,99 @@ assert.throws(() => assertUnderstandingIdentity({ sourceId: 's1', revisionId: 'o
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
+if (reviewSourceMode) {
+  const projectSources = await readClaimSources(reviewProjectId, 'K3 targeted review');
+  const ownedSources = projectSources.filter((source) => source && source.id === reviewSourceId);
+  assert.equal(ownedSources.length, 1, 'The explicit source must appear exactly once in the explicit project.');
+  const source = ownedSources[0];
+  assert(['readable', 'readable_with_warnings'].includes(source.readableState), 'The selected source must remain readable.');
+
+  const understandingPath = '/api/sources/' + encodeURIComponent(reviewSourceId) + '/understanding?revisionId=' + encodeURIComponent(reviewRevisionId);
+  const first = await apiJson(understandingPath);
+  assert.equal(first.status, 200, 'GET exact-revision understanding must be 200.');
+  const understanding = first.body;
+  assertUnderstanding(understanding, 'targeted revision');
+  assertUnderstandingIdentity(understanding, reviewSourceId, reviewRevisionId, 'targeted revision');
+  assert(understanding.state === 'done' || understanding.state === 'partial', 'Targeted stored review requires a retained terminal state; no inference is started.');
+  assert(typeof understanding.guide === 'string' && understanding.guide.length > 0, 'Terminal understanding must retain its guide.');
+  assert(typeof understanding.digest === 'string' && understanding.digest.length > 0, 'Terminal understanding must retain its digest.');
+  assert(understanding.claims.length <= 32, 'Stored claims must remain within the 32-row bound.');
+
+  const record = storedRevisionSnapshot(understanding, 'targeted stored revision');
+  const report = understanding.report;
+  assert(report && typeof report === 'object', 'Terminal understanding must retain its report.');
+  assert.equal(record.calls, report.usage.calls, 'Owning progress and report call counts must agree.');
+  assert(record.calls !== null && record.calls <= 2, 'Recorded calls must be known and within the two-call maximum.');
+  assert(Number.isSafeInteger(report.usage.tokenLimit) && report.usage.tokenLimit >= 0, 'Recorded tokenLimit must be a nonnegative integer.');
+  assert(typeof report.usage.wallMs === 'number' && Number.isFinite(report.usage.wallMs) && report.usage.wallMs >= 0, 'Recorded wallMs must be a nonnegative number.');
+  for (const key of ['inputTokens', 'cachedTokens', 'outputTokens'])
+    assert(isTokenObservation(report.usage[key]), 'Recorded usage.' + key + ' must be a nonnegative integer or null unknown.');
+  assert.equal(report.kept, understanding.claims.length, 'Report kept count must equal the retained claim rows.');
+  assert(Array.isArray(report.dropped), 'Report must retain dropped-claim diagnostics.');
+  assert(typeof report.clearedNumbers === 'number', 'Report must retain the clearedNumbers count.');
+
+  const canonical = await apiBytes('/api/revisions/' + encodeURIComponent(reviewRevisionId) + '/text');
+  assert.equal(canonical.status, 200, 'GET canonical revision text must be 200.');
+  assert(Buffer.from(canonical.bytes.toString('utf8'), 'utf8').equals(canonical.bytes), 'Canonical revision bytes must decode and re-encode as exact UTF-8.');
+  const ownQuotes = [];
+  for (const claim of understanding.claims) {
+    assert(claim && typeof claim.statement === 'string' && claim.statement.length > 0, 'Every retained claim needs its owner-visible statement.');
+    assert(typeof claim.quote === 'string' && claim.quote.length > 0, 'Every retained claim needs its own quote.');
+    for (const key of ['task', 'metric', 'dataset', 'unit', 'conditions', 'valueText'])
+      assert(claim[key] === undefined || claim[key] === null || typeof claim[key] === 'string', 'Claim ' + key + ' must be a string or null when present.');
+    assert(claim.valueNumber === undefined || claim.valueNumber === null || (typeof claim.valueNumber === 'number' && Number.isFinite(claim.valueNumber)),
+      'Claim valueNumber must be a finite number or null when present.');
+    assert(Number.isSafeInteger(claim.start) && Number.isSafeInteger(claim.end) && claim.start >= 0 && claim.end > claim.start && claim.end <= canonical.bytes.length,
+      'Every retained claim needs an in-bounds UTF-8 byte range.');
+    const exactSlice = canonical.bytes.subarray(claim.start, claim.end);
+    const range = await apiBytes('/api/revisions/' + encodeURIComponent(reviewRevisionId) + '/range?start=' + claim.start + '&end=' + claim.end);
+    assert.equal(range.status, 200, 'GET claim range must be 200.');
+    assert(range.bytes.equals(exactSlice), 'GET claim range must equal the exact canonical byte slice.');
+    assert(range.bytes.equals(Buffer.from(claim.quote, 'utf8')), 'Stored claim quote must equal the exact canonical range bytes.');
+    assert.deepEqual([...numericsUnsupported(claim.quote, claim.valueText, claim.valueNumber, claim.statement, claim.task, claim.metric, claim.dataset, claim.unit, claim.conditions), ...compoundResultUnsupported(claim)], [],
+      'Statement, task, metric, dataset, unit, conditions, valueText and valueNumber must be supported by that same claim quote.');
+    ownQuotes.push({ statement: claim.statement, quote: claim.quote });
+  }
+
+  const foldName = (value) => String(value || '').normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const sourceName = foldName([source.title, source.originalFilename].filter(Boolean).join(' '));
+  const matchedAnchors = [...K3_ANCHOR_SOURCES].filter(([, paper]) => sourceName.includes(foldName(paper)));
+  assert.equal(matchedAnchors.length, 1, 'Selected source must resolve to exactly one frozen paper anchor from questions.md.');
+  const [anchorId, paper] = matchedAnchors[0];
+  const matchingPapers = baselineManifest.sources.filter((entry) => foldName(entry.title).includes(foldName(paper)));
+  assert.equal(matchingPapers.length, 1, 'Frozen paper anchor must resolve to exactly one paper in sources.json.');
+  const anchorFile = 'arxiv-' + matchingPapers[0].id + '.pdf';
+  const frozenChecks = anchorChecks(new Map([[anchorFile, ownQuotes]]), [anchorFile]);
+  assert(frozenChecks.length > 0, 'The selected frozen paper must have anchor predicates.');
+  const missingAnchors = frozenChecks.filter((check) => !check.passed).map((check) => check.name);
+
+  const reread = await apiJson(understandingPath);
+  assert.equal(reread.status, 200, 'GET exact-revision reread must be 200.');
+  assertUnderstanding(reread.body, 'targeted reread');
+  assertUnderstandingIdentity(reread.body, reviewSourceId, reviewRevisionId, 'targeted reread');
+  assert.deepEqual(reread.body, understanding, 'Read-only targeted review must preserve the exact retained terminal record.');
+
+  const passedAnchors = frozenChecks.length - missingAnchors.length;
+  const md = [
+    '# K3 targeted stored-source review', '',
+    '- scope: TARGETED_ONLY',
+    '- project/source/revision: ' + reviewProjectId + ' / ' + reviewSourceId + ' / ' + reviewRevisionId,
+    '- source: ' + (source.title || source.originalFilename) + '; revision state: ' + understanding.state,
+    '- paper provenance: UNVERIFIED; source title selects the frozen anchor set but does not prove canonical paper identity',
+    '- API methods: GET only; model calls and POSTs by this mode: 0',
+    '- recorded calls: ' + record.calls + '/2; tokenLimit: ' + report.usage.tokenLimit + '; wallMs: ' + report.usage.wallMs,
+    '- token usage (input/cached/output): ' + [report.usage.inputTokens, report.usage.cachedTokens, report.usage.outputTokens].map((value) => value === null ? 'unknown' : value).join('/'),
+    '- canonical text: ' + canonical.bytes.length + ' bytes; sha256: ' + sha256(canonical.bytes),
+    '- exact quote ranges: ' + ownQuotes.length + '/' + ownQuotes.length + '; same-card own-quote numeric checks: PASS for statement/task/metric/dataset/unit/conditions/valueText/valueNumber',
+    '- frozen ' + anchorId + ' (' + paper + ') anchors: ' + passedAnchors + '/' + frozenChecks.length + (missingAnchors.length ? '; missing: ' + missingAnchors.join(', ') : ''),
+    '- retained terminal record identical on reread: true',
+    '- semantic status: semanticNOT_EVALUATED',
+    '- fullK3Accepted: false', '',
+  ].join(EOL);
+  console.log(md);
+  assert.equal(missingAnchors.length, 0, 'Selected frozen paper anchors are missing: ' + missingAnchors.join(', '));
+  process.exit(0);
+}
 const title = process.env.ELIOT_EVAL_PROJECT || (nativeOnly ? 'k1-eval' : (baselineSeed?.project?.title || 'Библиотека — PDF и точные ссылки'));
 let projects = [], cursor = undefined;
 for (let i = 0; i < 5; i++) {
@@ -687,12 +816,11 @@ assert(Number.isSafeInteger(distillMeta.contextTokens) && distillMeta.contextTok
 const distillOutputBound = outputBound(distillMeta);
 assert(Number.isSafeInteger(distillOutputBound) && distillOutputBound > 0, 'Selected distillModel output bound must be known.');
 const answerCallTokenLimit = answerMeta.contextTokens + answerOutputBound;
-const distillCallTokenLimit = distillMeta.contextTokens + distillOutputBound;
 const runCallCeiling = nativeOnly ? 0 : scoped.length * 2 + CLAIM_ORDER.length;
 const revisionRecordsBefore = new Map();
 const boundReport = nativeOnly
   ? 'K3 native-only: zero model calls.'
-  : 'K3 eval command call ceiling: baseline ' + scoped.length + '*2 + C1-C4 ' + CLAIM_ORDER.length + ' = ' + runCallCeiling + ' calls; overflow papers are separately prepared. Distill per-call limit ' + distillCallTokenLimit + ' (ctx+output, ' + SELECTED_DISTILL_MODEL + '), answer per-call limit ' + answerCallTokenLimit + ' (ctx+output, ' + SELECTED_ANSWER_MODEL + '). Historical calls are not counted as fresh; models are frozen from stored settings.';
+  : 'K3 eval command call ceiling: baseline ' + scoped.length + '*2 + C1-C4 ' + CLAIM_ORDER.length + ' = ' + runCallCeiling + ' calls; overflow papers are separately prepared. Distill bounds remain revision-scoped in progress.maximumTokens/report.usage.tokenLimit; no global per-call estimate is reported. Answer per-call limit ' + answerCallTokenLimit + ' (ctx+output, ' + SELECTED_ANSWER_MODEL + '). Historical calls are not counted as fresh; models are frozen from stored settings.';
 console.log(boundReport);
 if (nativeOnly) {
   assert(understandingWired && overviewWired, 'K3 native smoke requires the actual understanding and overview routes.');
