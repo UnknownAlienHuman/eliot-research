@@ -1,12 +1,12 @@
 // Shared source-number verification for distillation, Wiki and real eval callers.
 const NUMERIC_TOKEN_RE = /[0-9]+(?:[.,][0-9]+)*(?:[eE][+\-\u2212]?[0-9]+)?/g;
 const NUMERIC_LITERAL_RE = /(?:[+\-\u2212][ \t\u00a0\u2009]*)?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+)(?:[eE][+\-\u2212]?[0-9]+)?/g;
-const COMPOUND_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])(?<mantissa>[+\-\u2212]?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+))[ \t\u00a0\u2009]*(?:[×·*]|times)[ \t\u00a0\u2009]*10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
+const COMPOUND_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])(?<mantissa>[+\-\u2212]?(?:[0-9]+(?:[.,][0-9]+)*|\.[0-9]+))[ \t\u00a0\u2009]*(?:[×·*]|times|\\(?:times|cdot))[ \t\u00a0\u2009]*10(?<power>\^[ \t\u00a0\u2009]*(?:\{[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+[ \t\u00a0\u2009]*\}|[+\-\u2212]?[0-9]+)|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
 const SINGLE_NUMBER_RE = /^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
-// Bare 10^N / 10-superscript without a mantissa x (for example 10^-8):
+// Bare 10^N / 10^{N} / 10-superscript without a mantissa x (for example 10^-8):
 // one unambiguous scientific quantity, not two numbers. Shares the
 // same power suffix logic as compound powers; no paper pattern is added.
-const BARE_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])(?<sign>[+\-\u2212]?)10(?<power>\^[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
+const BARE_POWER_RE = /(?<![\p{L}\p{N}.,_+\-\u2212])(?<sign>[+\-\u2212]?)10(?<power>\^[ \t\u00a0\u2009]*(?:\{[ \t\u00a0\u2009]*[+\-\u2212]?[0-9]+[ \t\u00a0\u2009]*\}|[+\-\u2212]?[0-9]+)|[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)(?![\p{L}\p{N}])/giu;
 
 function normalizeNumericLiteral(value: string): string {
   const [raw = "", exponent] = value.replace(/[ \t\u00a0\u2009]/g, "").replace(/\u2212/g, "-").toLowerCase().split("e");
@@ -26,7 +26,7 @@ interface CompoundPowerToken { readonly value: string; readonly start: number; r
 
 function normalizePower(raw: string): string {
   const text = raw.startsWith("^")
-    ? raw.slice(1).replace(/[ \t\u00a0\u2009]/g, "").replace("\u2212", "-")
+    ? raw.slice(1).replace(/[ \t\u00a0\u2009]/g, "").replace("\u2212", "-").replace(/^\{([+-]?[0-9]+)\}$/u, "$1")
     : [...raw].map((char) => char === "⁻" ? "-" : char === "⁺" ? "+" : SUPER_DIGITS[char] ?? char).join("");
   const sign = text.startsWith("-") ? "-" : "";
   return sign + (text.replace(/^[+-]/, "").replace(/^0+(?=\d)/, "") || "0");

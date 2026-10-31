@@ -273,6 +273,9 @@ Unsupported scalar numeric metadata is cleared together with its unit. Numeric v
 arbitrary mathematics or establish semantic support.
 Explicit multiplication powers such as `7.6×10⁹` and `7.6×10^9` are checked as one token. Flattened `7.6×109`,
 or a mantissa and exponent found separately elsewhere in a passage, cannot support that scientific quantity.
+Balanced TeX integer powers (`10^{-6}`, `3.7×10^{4}`) and single-backslash `\times`/`\cdot` spellings use the same
+token identity as their explicit caret forms. Incomplete braces and separately written quantities are not repaired;
+canonical text and citation ranges remain unchanged.
 The production verifier and K3 stored eval share `src/numbers.ts`; the eval does not keep a weaker numeric checker.
 
 The verifier stores the original canonical slice, including original whitespace and punctuation, after normalized
