@@ -1,6 +1,6 @@
 import { countNumericQuantities, numbersSupported } from "./numbers.js";
 import { describe, expect, it } from "vitest";
-import { cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "./quotes.js";
+import { cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, unresolvedClaimBlocks, verifyClaims } from "./quotes.js";
 import type { CandidateClaim, VerifiedClaim } from "./quotes.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
@@ -500,6 +500,37 @@ describe("sourceContextJson", () => {
   });
 });
 
+describe("unresolvedClaimBlocks", () => {
+  it("cues rejected claims' own allowed blocks in candidate order without forwarding draft facts", () => {
+    const candidates = [
+      { quoteBlock: "[S1:7]", statement: "Unverified compound result: 12% and 19%.", valueText: "12% and 19%" },
+      { quoteBlock: "[S1:8]" },
+      { quoteBlock: "[S1:7]" },
+      { quoteBlock: "[S1:9]" },
+      { quoteBlock: "[S2:7]" },
+      { quoteBlock: "[S1:10]" },
+    ] as const;
+    const dropped = [
+      { index: 2, reason: "unsupported-condition-numbers" },
+      { index: 1, reason: "unmatched" },
+      { index: 3, reason: "guide-unsupported-statement-numbers" },
+      { index: 0, reason: "pre-synthesis-missing-or-unsupported-primary-result" },
+      { index: 4, reason: "unknown-block" },
+      { index: 0, reason: "guide-invalid-reference" },
+    ] as const;
+    expect(unresolvedClaimBlocks(candidates, dropped, new Set(["[S1:7]", "[S1:8]", "[S1:9]", "[S1:10]"])))
+      .toEqual(["[S1:7]", "[S1:8]"]);
+  });
+
+  it("ignores guide-only collisions and invalid claim indices", () => {
+    const candidates = [{ quoteBlock: "[S1:7]" }];
+    const dropped = [-1, 0.5, 1, NaN, Infinity, Number.MAX_SAFE_INTEGER]
+      .map((index) => ({ index, reason: "unmatched" }));
+    dropped.push({ index: 0, reason: "guide-invalid-reference" });
+    expect(unresolvedClaimBlocks(candidates, dropped, new Set(["[S1:7]"]))).toEqual([]);
+  });
+});
+
 describe("resolveQuoteBlock", () => {
   it("returns exact canonical bytes for an S1 label, keeping hard hyphens and brackets", () => {
     const text = "Intro.\n\nThe state-\nof-the-art [MASK] model.\n";
@@ -734,6 +765,60 @@ describe("resultStatement", () => {
     expect(
       resultStatement({ ...syntheticClaim, task: "classification", metric: "accuracy", dataset: "Dataset A", conditions: null, quote, statement, valueText: "84.2", unit: "%", valueNumber: 84.2 }),
     ).toBeNull();
+  });
+
+  it("rejects the retained R5 GLUE result when its own quote omits the standalone dataset identifier", () => {
+    const quote = `Model & Method # Trainable
+Parameters MNLI SST-2 MRPC CoLA QNLI QQP RTE STS-B Avg.
+RoBbase (FT)* 125.0M 87.6 94.8 90.2 63.6 92.8 91.9 78.7 91.2 86.4
+RoBbase (BitFit)* 0.1M 84.7 93.7 92.7 62.0 91.8 84.0 81.5 90.8 85.2
+RoBbase (AdptD)* 0.3M 87.1±.0 94.2±.1 88.5±1.1 60.8±.4 93.1±.1 90.2±.0 71.5±2.7 89.7±.3 84.4
+RoBbase (AdptD)* 0.9M 87.3±.1 94.7±.3 88.4±.1 62.6±.9 93.0±.2 90.6±.0 75.9±2.2 90.3±.1 85.4
+RoBbase (LoRA) 0.3M 87.5±.3 95.1±.2 89.7±.7 63.4±1.2 93.3±.3 90.8±.1 86.6±.7 91.5±.2 87.2RoBlarge (FT)* 355.0M 90.2 96.4 90.9 68.0 94.7 92.2 86.6 92.4 88.9
+RoBlarge (LoRA) 0.8M 90.6±.2 96.2±.5 90.9±1.2 68.2±1.9 94.9±.3 91.6±.1 87.4±2.5 92.6±.2 89.0RoBlarge (AdptP)† 3.0M 90.2±.3 96.1±.3 90.2±.7 68.3±1.0 94.8±.2 91.9±.1 83.8±2.9 92.1±.7 88.4
+RoBlarge (AdptP)† 0.8M 90.5±.3 96.6±.2 89.7±1.2 67.8±2.5 94.8±.3 91.7±.2 80.1±2.9 91.9±.4 87.9
+RoBlarge (AdptH)† 6.0M 89.9±.5 96.2±.3 88.7±2.9 66.5±4.4 94.7±.2 92.1±.1 83.4±1.1 91.0±1.7 87.8
+RoBlarge (AdptH)† 0.8M `.replace(/\r\n/g, "\n");
+    const claim: VerifiedClaim = {
+      ...syntheticClaim,
+      block: 36,
+      start: 19346,
+      end: 20368,
+      quote,
+      task: "GLUE",
+      metric: "average score",
+      dataset: "GLUE",
+      statement: "RoBERTa base with LoRA and 0.3M trainable parameters achieves a GLUE average of 87.2, versus 86.4 for RoBERTa base full fine-tuning with 125.0M trainable parameters.",
+      valueText: "87.2",
+      unit: null,
+      conditions: "model: RoBERTa base (LoRA, 0.3M parameters); comparison: RoBERTa base FT (125.0M parameters) at 86.4",
+      valueNumber: 87.2,
+    };
+    expect(resultStatement(claim)).toBeNull();
+    expect(resultStatement({ ...claim, dataset: " GLUE " })).toBeNull();
+  });
+
+  it("requires a whole-word match and accepts case variation for uppercase dataset identifiers", () => {
+    const quote = "On the glue benchmark, Model Alpha reaches 87.2 accuracy.";
+    const statement = "Model Alpha reaches 87.2 accuracy on GLUE.";
+    const claim: VerifiedClaim = {
+      ...syntheticClaim,
+      statement,
+      quote,
+      task: null,
+      metric: "accuracy",
+      dataset: "GLUE",
+      valueText: "87.2",
+      unit: null,
+      conditions: null,
+      start: 0,
+      end: TE.encode(quote).byteLength,
+      valueNumber: 87.2,
+    };
+    expect(resultStatement(claim)).toBe(statement);
+
+    const embeddedQuote = "On λGLUE, GLUE2, or GLUE_name, Model Alpha reaches 87.2 accuracy.";
+    expect(resultStatement({ ...claim, quote: embeddedQuote })).toBeNull();
   });
 });
 

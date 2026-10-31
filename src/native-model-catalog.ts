@@ -19,10 +19,14 @@ export function nativeModel(row: NativeRow, checkedOn: string): CatalogModel | n
   // or per-token units) are ignored. Old snapshots may retain extra rate fields;
   // this boundary never reads them and performs no neuron conversion.
   const effort = property("reasoning_effort");
-  const lowEffort = effort !== null && typeof effort === "object" && "supported_efforts" in effort &&
-    Array.isArray(effort.supported_efforts) && effort.supported_efforts.includes("low");
+  const supportedEfforts = effort !== null && typeof effort === "object" && "supported_efforts" in effort
+    ? effort.supported_efforts : undefined;
+  const nativeReasoningEfforts = Array.isArray(supportedEfforts) &&
+    supportedEfforts.every((value: unknown) => typeof value === "string") ? [...supportedEfforts] : undefined;
+  const lowEffort = Array.isArray(supportedEfforts) && supportedEfforts.includes("low");
   return { route: "workers-ai:" + row.name, id: row.name, label: row.name, enabled: true,
     contextTokens, maxOutputTokens: null, outputReserveTokens: 8192,
+    ...(nativeReasoningEfforts ? { nativeReasoningEfforts } : {}),
     ...(lowEffort ? { nativeReasoningEffort: "low" as const } : {}),
     checkedOn };
 }

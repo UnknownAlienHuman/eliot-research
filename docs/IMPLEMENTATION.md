@@ -241,6 +241,14 @@ Local real-service results (2026-10-31 UTC) verify this bounded control/storage 
   became stale and one unrelated page stayed current; heads, body UTF-8, serialized citations API data and exact old
   range bytes matched. This comparison made GET requests only.
 
+The full 26-page LoRA PDF run subsequently completed 26 calls, recording 107,718 input and 28,926 output tokens,
+zero cached tokens. All pages were visually checked before Apply; merged table cells were transcribed into explicit
+Shared columns rather than attributed to the first task. The reviewed canonical text is 94,701 bytes, with the same
+original PDF and immutable old ranges. Repeat Apply returned the same new revision and kept the OCR call count at
+26; understanding remained `none`, zero calls. Saved per-page timings have nearest-rank p50 22,633 ms and p95
+35,578 ms (n=26). Their sum is 627,256 ms, not a separately reported end-to-end duration. Neurons and money remain
+unknown for this OCR run. These observations do not establish full-corpus OCR or K3 semantic acceptance.
+
 Actual usage across the two jobs was **two observed inference calls** against an admitted ceiling of **three calls**
 (one apply page plus two cancellation-fixture pages), input `3,783 + 3,783 = 7,566`, output
 `1,310 + 1,281 = 2,591` tokens, with zero reported cached tokens. The resumed Apply job kept its original one-call
@@ -338,27 +346,44 @@ or selection reset. These reads never dispatch understanding.
 
 `DistillWorkflow` uses two bounded calls:
 
-1. labelled canonical text → metadata, draft guide, 3–5 questions and candidate claims;
-2. verified original excerpts → supported claim selection, final 3–5 sentence guide, digest and EN/RU glossary.
+1. labelled canonical text → metadata, draft guide/digest/EN–RU glossary, 3–5 questions and candidate claims;
+2. verified original excerpts → semantic review and selection of those prose drafts and supported claims.
 
 Each input block is a separate JSON record containing its exact `quoteBlock` and text, so a label does not implicitly
 name following blocks or an entire section. The first output requests the source guide before detailed claims.
+Both fresh model inputs reuse `readableTextWarning` to attach optional `readabilityWarning` metadata to each affected
+canonical block or frozen excerpt. Non-printing glyphs do not establish missing operators or conditions; readable
+parts remain usable. This input signal changes no canonical bytes, stored artifacts, labels or call bounds and does
+not by itself establish semantic quality.
 Each claim still selects one `quoteBlock` from the closed compact label set for that immutable revision. Code resolves
 it to the full original block as its own quote, preserving PDF line-break hyphens, brackets and Markdown bytes;
 the model does not transcribe canonical evidence. Claim quote/range and numeric checks remain against that one block,
 and a statement that adds numbers absent from it is rejected.
+Fresh claim output selects its block and writes one atomic statement before extracting structured result/context
+fields from that statement and quote. In fresh synthesis each retained candidate carries its own exact canonical
+quote inline for review; this does not expand the frozen excerpt pool or add stored evidence copies.
 
-Draft guide items use `{ labels, text }`, with the closed `labels` array of 1–4 source-block selections before `text`.
-Code resolves every declared label to its exact canonical block and checks references and numbers against only the
-union of those selected quotes. It splits authored prose and retains at most the first numerically supported sentence
-per item, yielding at most five draft sentences; an early paragraph cannot consume the whole guide allowance.
-`Verified.guide` retains these `{ labels, text }` records as hypotheses. Call two receives them directly alongside
-candidate claims, with original excerpts as the sole evidence. The retained excerpt pool is exactly the union of
-declared claim `quoteBlock` selections and guide `labels`; code adds no inferred evidence bindings. Final guide and
-digest items also use `{ labels, text }` with 1–4 selected excerpts; glossary records likewise select labels first.
+Draft guide/digest items use `{ labels, text }`, with the closed `labels` array of 1–4 source-block selections before
+`text`; glossary entries likewise select labels before their EN/RU terms and definition. Code resolves every declared
+label to its exact canonical block and checks references and numbers in each complete draft against only the union
+of those selected quotes. Private `Verified.guide`, `digest` and `glossary` retain these validated drafts as
+hypotheses. Fresh call two receives them alongside candidate claims paired with their own original quotes. Original
+excerpts remain the sole evidence. The frozen excerpt pool is exactly the union of declared claim and prose/glossary
+selections; code adds no inferred bindings.
+
+Call two must semantically review the statement, identities, conditions and qualifiers against each item's own
+selected quote union. Its section-specific text enums permit only selecting or rejecting the supplied guide/digest
+text verbatim; glossary choices retain each complete EN/RU/definition tuple. It may correct labels within the same
+frozen evidence pool, but cannot invent new prose or mix glossary fields across drafts. The final rich synthesis
+shape remains unchanged. An empty or incomplete selection remains partial or failed under the existing finish
+rules; schema conformance alone never establishes semantic support. Legacy cached artifacts without the private
+digest/glossary drafts retain their existing broad parser and storage-only recheck path. No third call, model change,
+table, migration or artifact-version registry is introduced.
+Fresh glossary draft validation rejects blank-after-trim English or Russian terms before call two, retaining the
+original spelling of valid terms. This does not reinterpret historical cached glossary output.
 Historical cached synthesis rechecks do not consume `Verified.guide` or expand its frozen evidence pool, so this new
 producer shape does not rebind or rewrite old artifacts. Raw selections are retained in R2, stored labels use the full
-revision UUID, and a final user task explicitly states the English/Russian response language in both calls. These
+revision UUID, and system instructions state the English/Russian response language in both calls. These
 request/validation changes do not establish paid-service or quality acceptance.
 
 Code verifies quotes and numbers between calls. Draft statements are hypotheses, not evidence: the second call checks
@@ -366,6 +391,11 @@ each retained candidate against its own quote and can add a small number of atom
 Fresh candidates that already fail the scalar-result projection are excluded before the second call. Their originally
 selected source blocks remain in the same declared evidence pool; code neither splits a compound candidate nor creates
 facts from it. Historical verified candidate IDs are not recomputed during cached-output rechecks.
+For fresh synthesis, rejected candidates contribute only their original allowed source labels as inspection cues,
+never rejected statements or values. Numeric outcomes stay separate; qualitative properties without a scalar use
+an existing non-result kind with absent numeric fields, without changing the deterministic result guards.
+Source-stated qualitative advantages and capabilities belong in their own supported claim entries, rather than
+appearing only in a guide, digest or another claim's condition.
 Only its supported, code-checked output is committed to the claim reader. Result claims describe one scalar result
 per task/dataset/metric/condition instead of a compound table row. A result's `valueText` may contain at most one numeric
 quantity; an explicit list such as two percentages is rejected even when both values occur in the quote and
@@ -381,6 +411,9 @@ semantic support is still a separate quality gate.
 Code also rejects a result whose simple literal dataset name carries one explicit data split while its own quote
 names that same dataset with a different unambiguous split. It does not rewrite fields or infer dataset aliases;
 ambiguous splits and other task/metric/dataset semantics remain for quality review.
+A standalone all-uppercase ASCII dataset identifier must occur as a whole word in that result's own quote,
+ignoring case and surrounding field whitespace. This spelling check does not infer aliases, verify table-row
+association or apply exact-phrase matching to descriptive dataset, task or metric text.
 New second-call additional claims require the same nullable structured fields as extraction. Cached outputs may
 omit these fields; storage-only rechecks retain that shape and treat omissions as null without inventing metadata.
 Store raw result/report in R2, compact verified claims in D1, and usage
@@ -390,6 +423,9 @@ Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.pr
 as a JSON object or null. A typed structured-output failure retains `output: null` and known usage in the same immutable
 artifact. Its safe failure cause is exposed by the owning report; request bodies, headers and private protocol fields
 are excluded.
+Failed structured responses may also retain `finishReason` and numeric `visibleTextBytes`. An unknown byte count is
+omitted, never recorded as zero. No partial response text is retained or parsed into claims; zero visible bytes do
+not by themselves establish a thinking-only cause. A failed first call never starts the second call.
 It remains failed and unavailable for Save unless complete compatible output exists. The final report retains
 `usage.providerUsage` as an array of at most two such entries for
 saved call responses; older artifacts may omit the field. This is provider usage telemetry, not request bodies,
@@ -407,13 +443,19 @@ second call's supported selections/additions become cards; first-call draft cand
 empty final claim set. A readable zero-claim partial result is not full K3 acceptance or proof of semantic quality.
 Guide/digest describe the paper for the owner rather than candidate review or model reasoning. Conflicting source
 values remain attributed to their separate source passages instead of being silently reconciled.
+The existing GET-only `pnpm eval k3 --review-source` exports retained guide/digest/glossary text with its persisted
+labels and exact canonical excerpts for owner review. Shared citation/numeric helpers check invalid labels, uncited
+guide/digest statements and numbers against their selected quotes; violations fail the command after the artifact
+is written. Claim numeric validation includes task/metric/dataset/unit alongside the statement, value and conditions.
+These mechanical checks retain `semanticNOT_EVALUATED` and `fullK3Accepted:false`; all-card and prose meaning still
+require source-facing review. Frozen questions and anchor predicates are unchanged.
 Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels
 in guide/digest/glossary storage, including within sentence-level validation. Code literals remain literal; unknown
 annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.
 
 K3 records `distill_calls` (hard maximum two), `distill_started_at` and `distill_ms` on the owning revision. Admission
 records both full-context call bounds before dispatch, with at most two revisions running. Each
-new internal `DistillInput` is `{ revisionId, model: ModelSpec }`: after admission and before Workflow creation,
+new internal `DistillInput` is `{ revisionId, model: ModelSpec, callTimeoutMs? }`: after admission and before Workflow creation,
 snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
 The reader's `progress.maximumTokens` uses the owning revision's recorded admission bound, with its retained report
 as the historical fallback. Only unstarted work without a recorded bound may forecast from its stored selected route
@@ -428,8 +470,10 @@ completed or unchanged work is not automatically re-distilled, and failed paid w
 pipeline uses at most two bounded model calls with zero paid-step retries. Completed/partial revisions return existing
 artifacts on repeat. Budget-paused work resumes
 only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
-Each background distillation call has a 180 s deadline (native paid-step deadline 4 minutes); the K2 chat ceiling stays
-90 s. The owner reader shows availability, progress, useful model names and verification caveats. Calls, reservations,
+Legacy jobs and unchanged budgets retain a 180 s call deadline and 4-minute paid step. New larger-budget native jobs
+freeze `callTimeoutMs=300000` and a 6-minute paid step; missing timeout fields use the legacy bound. Each call also
+respects the remaining 15-minute job deadline. The K2 chat ceiling stays 90 s. The owner reader shows availability,
+progress, useful model names and verification caveats. Calls, reservations,
 token counts and wall time remain in API/eval diagnostics rather than the reading interface. Long papers can use the
 same bounded two-call pipeline without a chat-sized timeout or a reduced quality target.
 An unconfirmed Workflow dispatch with zero paid calls is terminalized by a `running AND distill_calls=0` compare-and-set,
@@ -587,16 +631,30 @@ call; an in-flight call may finish.
 
 ## 11. Models
 
-The native default's cold-start metadata includes its documented low reasoning effort, matching the existing native
-catalogue discovery policy. GLM 5.3 Flash supports low/high/max and defaults to max when effort is omitted; reasoning
-cannot be disabled. The admitted model keeps this parameter frozen with its context and output bounds.
+The native default's cold-start metadata selects low reasoning effort for interactive chat. GLM 5.3 Flash supports
+low/high/max and defaults to max when effort is omitted; reasoning cannot be disabled. Native catalogue discovery
+preserves published `supported_efforts` as optional `nativeReasoningEfforts`; missing or malformed values stay unknown.
+New native K3 admissions select `high` only when the same catalogue snapshot advertises it, otherwise retaining that
+snapshot's existing choice. With known published output capacity, their job reserve is at least 16,384 tokens, capped
+by that capacity and never reducing an existing larger reserve; unknown capacity retains its current reserve.
+The model, reserve and applicable call timeout are frozen before Workflow creation. Existing admitted parameters,
+Gateway routing and owner model selections are unchanged. Successful service completion under these job bounds
+does not establish semantic acceptance; claims and synthesized prose retain the same own-quote, condition and
+full-contour quality gates.
+
+The existing Flash fallback's advertised output capacity is 1,048,576 tokens, checked from Cloudflare's marketplace
+model-search response on 2026-10-31; `max_output_length` is the protocol alias for completion/output tokens. This
+ceiling shares the context window with input and is not the requested job reserve or a completion-size guarantee.
+The model input schema also advertises temperature 0–2, so the existing source-faithful temperature-0 policy applies
+when capability metadata is known; an explicit negative capability in a snapshot is not overwritten.
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
 selection. Paid admission requires usable context/output bounds and provider allowance, without a price lookup or a
 locally invented monthly allowance. Record `modelTokenLimit = contextTokens + outputLimit` before dispatch (twice for
-two-call distillation), freeze the admitted `ModelSpec`, and retain unknown usage as unknown. The 8,192-token job
-output bound is separate from published model capacity. Provider errors/limits remain visible; there is no artificial
+two-call distillation), freeze the admitted `ModelSpec`, and retain unknown usage as unknown. Interactive chat retains
+its 8,192-token reserve; the native K3 reserve above is a separate job allocation, not a new provider quota. Provider
+errors/limits remain visible; there is no artificial
 quota, paid fallback or model-name allowlist/banlist.
 
 **Providers.** Migration `0008_model_providers.sql` stores the editable provider configuration in

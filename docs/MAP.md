@@ -251,9 +251,10 @@ re-distilled automatically.
    visibly `paused` until another explicit request. Cron only reconciles stale `running` rows against
    deterministic Workflow IDs; it never admits queued revisions.
    Keep an already queued model selection on repeat; reject a conflicting explicit model before dispatch.
-4. Use at most two bounded calls: labelled canonical text produces guide and candidate claims; code verifies
-   quotes/ranges/numbers; the second call receives only verified material and produces digest/glossary. Store raw
-   output/report in R2 and compact claims in D1. Paid calls do not retry.
+4. Use at most two bounded calls: labelled canonical text produces draft guide/digest/glossary and candidate claims;
+   code verifies their selected quotes/ranges/numbers. The second call semantically reviews each draft against its
+   own selected excerpts, selects or rejects its text verbatim and reviews candidate claims. It cannot author fresh
+   unreviewed prose. Store raw output/report in R2 and compact claims in D1. Paid calls do not retry.
    Preserve a safe failure reason for the reader without retaining raw provider errors or credentials.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
    an extra overview model call.
@@ -301,12 +302,24 @@ re-distilled automatically.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 
-K3 is not fully accepted or deployed. The ten baseline papers reached `done`; the unchanged-revision check dispatched
-no further inference. Required conditions for the French Transformer result and some LoRA anchors remain unresolved.
-All four real overflow answers used `claims` mode; statement-local numeric and citation support gates remain open.
-Semantic support for guide, digest and glossary
-content remains separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference
-and does not qualify K3.
+K3 remains unaccepted and undeployed. The retained two-call R5 LoRA result passes exact quotes (16/16), numeric
+checks (36/36) and unchanged A3 predicates (4/4), but fails unsupported GLUE context and prose review. A subsequent
+two-call Transformer result over the reviewed 42,771-byte OCR text passes all 23 exact ranges/numeric checks and
+unchanged A1 predicates (3/3); five cards lack their own caption/task support and two digest items fail semantic
+review. The new draft/selection producer and caption scanner do not regrade those stored results. The old canonical
+U+001C comparator, ten-source and overflow C1–C4 acceptance remain open. Storage-only Save/recheck and local schema
+checks do not qualify semantic acceptance.
+
+The subsequent same-original PaLM replacement used the new producer for two explicit Flash calls. Extraction and
+verification completed; the second call failed with provider HTTP 408 after 402,880 ms total. It retains zero final
+claims and unknown aggregate token usage; the first call's known provider usage remains recorded. The old failed
+revision and its two calls are retained. No retry, counter reset or K3 acceptance followed this service failure.
+
+The subsequent LoRA PDF OCR completed all 26 pages in 26 calls. A full page-image review corrected transcription
+errors and merged-cell scope before storage-only Apply. The new 94,701-byte readable revision retains the original
+PDF, while the old 83,785-byte text, report, seven claims, two calls and old exact ranges are preserved. Its guide and
+claims are not yet generated: understanding remains `none`, zero calls. This repairs the citable input, not K3 quality
+acceptance; no new understanding trial or automatic continuation was started.
 
 ---
 

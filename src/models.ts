@@ -86,7 +86,8 @@ export interface CatalogModel {
   apiProtocol?: "openai-chat" | "openai-responses" | "anthropic" | "google";
   apiBaseUrl?: string;
   mayTrainOnYourPrompts?: boolean;
-  nativeReasoningEffort?: "low";
+  nativeReasoningEffort?: "low" | "high";
+  nativeReasoningEfforts?: readonly string[];
   checkedOn: string;
   enabled: boolean;
   unavailableReason?: string;
@@ -99,7 +100,8 @@ export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
 // Owner-selected native default metadata is a fallback, not a provider allowlist.
 export const MODELS: ModelSpec[] = [
   { route: DEFAULT_MODEL, id: "@cf/zai-org/glm-5.3-flash", label: "GLM 5.3 Flash", contextTokens: 1_048_576,
-    maxOutputTokens: null, outputReserveTokens: 8192, supportsImages: true, nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true },
+    maxOutputTokens: 1_048_576, outputReserveTokens: 8192, supportsImages: true, supportsTemperature: true,
+    nativeReasoningEffort: "low", checkedOn: "2026-10-31", enabled: true },
 ];
 export const modelOutputLimit = (model: Pick<CatalogModel, "outputReserveTokens" | "maxOutputTokens">) => {
   const bound = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
@@ -111,6 +113,19 @@ export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "out
     !Number.isSafeInteger(output) || output <= 0 || !Number.isSafeInteger(total))
     throw new LibraryError("unavailable", "The model has no usable input/output limits.", 503);
   return total;
+}
+export function distillModelSpec(model: ModelSpec): ModelSpec;
+export function distillModelSpec(model: CatalogModel): CatalogModel;
+export function distillModelSpec(model: CatalogModel): CatalogModel {
+  if (!model.route.startsWith("workers-ai:")) return model;
+  const nativeReasoningEffort = model.nativeReasoningEfforts?.includes("high") ? "high" : model.nativeReasoningEffort;
+  const outputReserveTokens = model.maxOutputTokens === null ? model.outputReserveTokens
+    : Math.min(model.maxOutputTokens, Math.max(modelOutputLimit(model), 16_384));
+  if (nativeReasoningEffort === model.nativeReasoningEffort && outputReserveTokens === model.outputReserveTokens) return model;
+  return { ...model,
+    ...(nativeReasoningEffort === undefined ? {} : { nativeReasoningEffort }),
+    ...(outputReserveTokens === undefined ? {} : { outputReserveTokens }),
+  };
 }
 function missingMetadata(model: CatalogModel): string | null {
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
@@ -172,7 +187,9 @@ function isCatalogModel(value: unknown): value is CatalogModel {
   if (value.supportsTemperature !== undefined && typeof value.supportsTemperature !== "boolean") return false;
   if (value.supportsImages !== undefined && typeof value.supportsImages !== "boolean") return false;
   if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
-  if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low") return false;
+  if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low" && value.nativeReasoningEffort !== "high") return false;
+  if (value.nativeReasoningEfforts !== undefined && (!Array.isArray(value.nativeReasoningEfforts)
+    || value.nativeReasoningEfforts.some(effort => typeof effort !== "string"))) return false;
   if (value.apiProtocol !== undefined && !["openai-chat", "openai-responses", "anthropic", "google"].includes(String(value.apiProtocol))) return false;
   if (value.apiBaseUrl !== undefined && typeof value.apiBaseUrl !== "string") return false;
   if (value.mayTrainOnYourPrompts !== undefined && typeof value.mayTrainOnYourPrompts !== "boolean") return false;
@@ -224,11 +241,12 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     const visible: CatalogModel = { route: model.route, id: model.id, label: model.label, contextTokens: model.contextTokens,
       maxOutputTokens: model.maxOutputTokens, checkedOn: model.checkedOn, enabled: model.enabled };
     for (const field of ["outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning",
-      "nativeReasoningEffort", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
+      "nativeReasoningEffort", "nativeReasoningEfforts", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
       if (model[field] !== undefined) Object.assign(visible, { [field]: model[field] });
     }
     models.set(model.route, { ...visible, label: fallback?.label ?? model.label,
       ...(visible.supportsImages === undefined && fallback?.supportsImages !== undefined ? { supportsImages: fallback.supportsImages } : {}),
+      ...(visible.supportsTemperature === undefined && fallback?.supportsTemperature !== undefined ? { supportsTemperature: fallback.supportsTemperature } : {}),
       maxOutputTokens: model.maxOutputTokens ?? fallback?.maxOutputTokens ?? null });
   }
   for (const [route, model] of models) {

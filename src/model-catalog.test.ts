@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { discoverGatewayModels } from "./model-catalog";
-import { getModelProviders, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, saveModelProviders } from "./models";
+import { DEFAULT_MODEL, getModelProviders, modelOutputLimit, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, saveModelProviders } from "./models";
 import type { ModelProvider } from "./models";
 import { nativeModel } from "./native-model-catalog";
 import { resolveModelTransport } from "./model-transport";
@@ -506,15 +506,39 @@ describe("go provider metadata catalogue", () => {
   });
 });
 
-describe("native contradictory catalogue entries", () => {
+describe("native catalogue metadata", () => {
+  type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
+  const row = (properties: unknown[]): NativeRow => ({ id: "catalogue-uuid", name: "@cf/vendor/new-chat-model",
+    task: { name: "Text Generation" }, properties } as unknown as NativeRow);
+
   it("does not choose one of contradictory property entries", () => {
-    type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
-    const row = (properties: unknown[]): NativeRow => ({ id: "catalogue-uuid", name: "@cf/vendor/new-chat-model",
-      task: { name: "Text Generation" }, properties } as unknown as NativeRow);
     expect(nativeModel(row([
       { property_id: "context_window", value: "1048576" },
       { property_id: "context_window", value: "128000" },
     ]), "2026-10-27")?.contextTokens).toBeNull();
+  });
+
+  it("preserves advertised reasoning efforts without changing the interactive low choice", () => {
+    expect(nativeModel(row([
+      { property_id: "reasoning_effort", value: { supported_efforts: ["low", "high", "max"] } },
+    ]), "2026-10-31")).toMatchObject({ nativeReasoningEfforts: ["low", "high", "max"], nativeReasoningEffort: "low" });
+    const highOnly = nativeModel(row([
+      { property_id: "reasoning_effort", value: { supported_efforts: ["high", "max"] } },
+    ]), "2026-10-31");
+    expect(highOnly?.nativeReasoningEfforts).toEqual(["high", "max"]);
+    expect(highOnly).not.toHaveProperty("nativeReasoningEffort");
+  });
+
+  it("keeps missing, malformed or contradictory reasoning efforts unknown", () => {
+    expect(nativeModel(row([]), "2026-10-31")).not.toHaveProperty("nativeReasoningEfforts");
+    for (const value of [null, {}, { supported_efforts: "high" }, { supported_efforts: ["high", 3] }]) {
+      expect(nativeModel(row([{ property_id: "reasoning_effort", value }]), "2026-10-31"))
+        .not.toHaveProperty("nativeReasoningEfforts");
+    }
+    expect(nativeModel(row([
+      { property_id: "reasoning_effort", value: { supported_efforts: ["high"] } },
+      { property_id: "reasoning_effort", value: { supported_efforts: ["low"] } },
+    ]), "2026-10-31")).not.toHaveProperty("nativeReasoningEfforts");
   });
 });
 
@@ -702,6 +726,28 @@ describe("stored catalogue with provider snapshot", () => {
     expect(read.snapshot.refreshNeeded).toBe(true);
     expect(read.warnings.join(" ").toLowerCase()).toContain("refresh");
     expect(read.models.some((m) => m.route === "workers-ai:@cf/zai-org/glm-5.3-flash")).toBe(true);
+    const fallback = read.models.find((model) => model.route === DEFAULT_MODEL);
+    if (!fallback) throw new Error("The owner-selected native fallback is missing.");
+    expect(fallback).toMatchObject({ maxOutputTokens: 1048576, outputReserveTokens: 8192, supportsTemperature: true });
+    expect(modelOutputLimit(fallback)).toBe(8192);
+  });
+
+  it.each([
+    { label: "unknown temperature", temperature: undefined, expected: true },
+    { label: "explicit false temperature", temperature: false, expected: false },
+  ])("merges published fallback metadata with snapshot $label without raising the interactive reserve", async ({ temperature, expected }) => {
+    const bucket = fakeBucket({ updatedAt: "2026-10-31T03:13:22.243Z", warnings: [], providers: defaultProviders(),
+      models: [{ route: DEFAULT_MODEL, id: DEFAULT_MODEL.slice("workers-ai:".length), label: "Stored native model",
+        contextTokens: 1048576, maxOutputTokens: null, outputReserveTokens: 8192, checkedOn: "2026-10-31", enabled: true,
+        ...(temperature === undefined ? {} : { supportsTemperature: temperature }) }] });
+    const env = fixtureEnv(bucket.binding);
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("snapshot read must not discover models"); }));
+    const read = await readModelCatalog(env);
+    const model = read.models.find((entry) => entry.route === DEFAULT_MODEL);
+    if (!model) throw new Error("The stored owner-selected native model is missing.");
+    expect(model).toMatchObject({ maxOutputTokens: 1048576, outputReserveTokens: 8192, supportsTemperature: expected });
+    expect(modelOutputLimit(model)).toBe(8192);
+    expect(bucket.put).not.toHaveBeenCalled();
   });
 
   it("reports a corrupt snapshot visibly and refuses to overwrite it on refresh", async () => {

@@ -47,8 +47,12 @@ The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `
 | `pnpm eval k3 --native-only` | explicitly limited storage smoke, zero model calls; optional cached-output checks are separate fixtures |
 | `pnpm eval k3` without model opt-in | stored hard-gate validation; nonzero on missing/failed work, unsupported quotes/numbers, missing anchors or unverified claim-mode C1–C4 |
 | `pnpm eval k3 --unchanged-only` | preflight ten terminal revisions, submit each exact revision once and verify unchanged reports, claims, call counts and usage; no inference |
+| `pnpm eval k3 --review-source --project-id <id> --source-id <id> --revision-id <id>` | GET-only checks of one retained revision's quotes, numbers, usage and frozen paper anchors; exports persisted prose with exact cited excerpts and fails invalid/missing citations or unsupported numbers; `TARGETED_ONLY`, source provenance unverified and semantic quality not evaluated; not full K3 acceptance |
 | `pnpm eval k4 --signed-agent-miniflare` | signed test-JWKS protocol and proposal fixture with no AI binding; not deployed Access acceptance |
 | `pnpm eval k4 --serve-signed-agent` | keep that fixture available to an external client for up to 30 minutes; explicit `ELIOT_MCP_ORIGIN=http://127.0.0.1:<port>` and `ELIOT_ORIGIN=http://localhost:<same-port>` are required; private credentials go only to ignored `eval/out/k4/session.json`; no automatic seeding, model calls or acceptance |
+
+Targeted source review selects the anchor set by the exact frozen filename in `sources.json`. Custom QA fixtures
+require an explicit `--paper-file arxiv-NN.pdf`; this selects checks without proving paper provenance.
 
 The model opt-ins `ELIOT_K2_MODEL=1` and `ELIOT_K3_MODEL=1` enable paid paths only when the root explicitly releases
 that run. K2/K3 reuse existing readable corpus revisions; they do not repeat ingestion/conversion to fill missing

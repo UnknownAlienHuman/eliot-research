@@ -13,7 +13,7 @@ export function isOpenRouterApiBase(value: string | null | undefined): boolean {
   } catch { return false; }
 }
 
-export interface DistillInput { revisionId: string; model: ModelSpec }
+export interface DistillInput { revisionId: string; model: ModelSpec; callTimeoutMs?: 180_000 | 300_000 }
 
 export interface OwnerActor {
   type: "owner";
