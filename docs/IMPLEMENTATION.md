@@ -210,6 +210,13 @@ Shared bounds are 1–1,000 pages, at most 1 MiB PNG and 4,000,000 pixels per pa
 2,000 pixels, 90 seconds per page call, and 25 MiB for the complete/reviewed text. Admission stores
 `pageCount * modelTokenLimit(model)` as the job token bound and a finite deadline; these are job bounds, not provider
 prices or a billing guarantee. The ordinary 60-second `toMarkdown` conversion bound remains separate.
+OCR allocates output independently of the interactive chat reserve. The shared `ocrOutputLimit` used by admission
+and the Run preview selects at least 16,384 output tokens per page when published capacity permits, caps that
+allocation at capacity, and never reduces a larger reserve. Unknown capacity retains the existing usable reserve.
+Create and Start retain their existing validation; admitted legacy snapshots and counters are unchanged.
+Safe application failure causes are stored on the job before crossing a Workflow step boundary. Finalization keeps
+the recorded cause, including an incomplete page's finish reason, while existing R2 reports remain immutable.
+Opaque provider error bodies and headers are not retained.
 
 `pnpm eval k1 --ocr` uses explicitly supplied derivative fixture identities, selected model and complete page count;
 without `ELIOT_K1_OCR_MODEL=1` a fresh run performs read/reopen checks only. Paid Run is an explicit opt-in.
@@ -238,6 +245,11 @@ Actual usage across the two jobs was **two observed inference calls** against an
 usage; it was not rerun. Monetary cost and Neurons remain unknown; latency budgets are not established.
 Full PDF/corpus OCR transcription quality and deployed Access are **NOT_RUN**; owner semantic acceptance is not
 claimed. These local results do not accept K2/K3 or establish a complete fresh corpus OCR run.
+An additional complete-Transformer request on the selected free Nemotron route stopped at page 14: 14 calls,
+13 completed pages, 44,940 input and 32,145 output tokens, zero cached tokens. The failing page reports
+`finish=length`, 8,192 output tokens and zero text bytes in 36,686 ms. No complete preview or Apply occurred;
+its original report and counters remain retained. The larger fresh OCR allocation above still requires a real
+complete-document run and preview review; this failed control is not OCR quality acceptance.
 
 ## 5. Blocks, labels, citations and quote verification
 

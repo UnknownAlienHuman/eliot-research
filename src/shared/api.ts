@@ -77,6 +77,14 @@ export interface Revision extends Pick<Source, "converter" | "conversionTokens" 
 
 export const OCR_LIMITS = { maxPages: 1000, pageBytes: 1024 * 1024, pagePixels: 4_000_000,
   renderLongEdge: 2000, pageTimeoutMs: 90_000, previewBytes: 25 * 1024 * 1024 } as const;
+export function ocrOutputLimit(model: Pick<ModelSpec, "outputReserveTokens" | "maxOutputTokens"> | undefined): number | null {
+  const output = model?.outputReserveTokens ?? model?.maxOutputTokens;
+  if (output == null || !Number.isSafeInteger(output) || output <= 0) return null;
+  const capacity = model?.maxOutputTokens;
+  if (capacity != null && (!Number.isSafeInteger(capacity) || capacity <= 0)) return null;
+  const reserve = capacity == null ? output : Math.max(output, 16_384);
+  return Math.min(reserve, capacity ?? reserve);
+}
 export type OcrState = "preparing" | "queued" | "running" | "ready" | "failed" | "cancelled" | "applied";
 export interface OcrJobView {
   id: string;

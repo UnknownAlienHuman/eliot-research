@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { CatalogModel } from '../models';
-import { OCR_LIMITS } from '../shared/api';
+import { OCR_LIMITS, ocrOutputLimit } from '../shared/api';
 import type { OcrJobView } from '../shared/api';
 import { ModelPicker, modelCatalogEntryKey } from './ModelPicker';
 import { loadPdfPages } from './pdf-pages';
@@ -34,12 +34,6 @@ const post = (body: object, signal: AbortSignal): RequestInit => ({ method: 'POS
   headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const active = (job: OcrJobView) => ['preparing', 'queued', 'running'].includes(job.state);
 const messageOf = (error: unknown) => error instanceof Error ? error.message : 'Could not complete this OCR action.';
-function outputBound(model: CatalogModel | undefined): number | null {
-  const value = model?.outputReserveTokens ?? model?.maxOutputTokens;
-  if (value == null || !Number.isSafeInteger(value) || value <= 0) return null;
-  const bound = Math.min(value, model?.maxOutputTokens ?? value);
-  return Number.isSafeInteger(bound) && bound > 0 ? bound : null;
-}
 
 export function SourceOcr(props: SourceOcrProps) {
   return <OcrDialog key={props.projectId + ':' + props.sourceId + ':' + props.revisionId} {...props} />;
@@ -181,7 +175,7 @@ function OcrDialog({ projectId, sourceId, revisionId, onApplied }: SourceOcrProp
   const matching = choices.filter(model => model.route === modelRoute);
   const chosen = matching.length === 1 ? matching[0] : undefined;
   const uniqueChoice = chosen !== undefined && choices.filter(model => modelCatalogEntryKey(model) === modelCatalogEntryKey(chosen)).length === 1;
-  const output = outputBound(chosen);
+  const output = ocrOutputLimit(chosen);
   const busy = stage !== '' || action !== '';
   const hasActiveRun = jobs.some(active) || (job !== null && active(job));
   const canRun = jobsLoaded && pdfInfo !== null && !pdfLoading && catalogError === '' && !catalogLoading
@@ -282,7 +276,7 @@ function OcrDialog({ projectId, sourceId, revisionId, onApplied }: SourceOcrProp
         </fieldset>
         {chosen && chosen.supportsImages === undefined ? <p role='note'>Image support is not published for this model. The API may reject the run; OCR will not switch models or retry automatically.</p> : null}
         {pdfInfo ? <p className='er-ocr__bound'>Complete PDF: {pdfInfo.pageCount.toLocaleString()} page{pdfInfo.pageCount === 1 ? '' : 's'} · at most {pdfInfo.pageCount.toLocaleString()} model call{pdfInfo.pageCount === 1 ? '' : 's'}.
-          {' '}{output === null ? 'The output bound is unknown; the API must validate it before starting.' : 'Output bound: ' + output.toLocaleString() + ' tokens per page, at most ' + (output * pdfInfo.pageCount).toLocaleString() + ' for this PDF.'}</p> : null}
+          {' '}{output === null ? 'The output bound is unknown; the API must validate it before starting.' : 'Next Run output bound: ' + output.toLocaleString() + ' tokens per page, at most ' + (output * pdfInfo.pageCount).toLocaleString() + ' for this PDF.'}</p> : null}
         {jobs.length ? <label className='er-field' htmlFor={id + '-runs'}><span>Recent OCR runs</span>
           <select id={id + '-runs'} value={job?.id ?? ''} disabled={busy || unconfirmed}
             onChange={event => { const next = jobs.find(item => item.id === event.currentTarget.value); if (next && !work.current && !mutationLock.current) { jobVersion.current++; selectedId.current = next.id; setJob(next); setError(''); } }}>
