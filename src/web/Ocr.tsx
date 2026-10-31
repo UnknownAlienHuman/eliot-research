@@ -294,7 +294,7 @@ function OcrDialog({ projectId, sourceId, revisionId, onApplied }: SourceOcrProp
           {job.error ? <p role='alert'>{job.error}</p> : null}
           {['failed', 'cancelled'].includes(job.state) && job.completedPages > 0 ? <p>Partial output has not been applied. Another attempt requires a new explicit Run.</p> : null}
           {job.baseRevisionId !== revisionId ? <p>This run belongs to an earlier original revision and cannot replace the current source from this dialog.</p> : null}
-          {job.state === 'applied' && job.appliedRevisionId ? <button type='button' className='er-button er-button--text' onClick={() => { if (job.appliedRevisionId) onApplied(job.appliedRevisionId); }}>Open applied text</button> : null}
+          {job.state === 'applied' && job.appliedRevisionId ? <button type='button' className='er-button er-button--text' onClick={() => { if (job.appliedRevisionId) { dialog.current?.close(); onApplied(job.appliedRevisionId); } }}>Open applied text</button> : null}
         </section> : null}
         {stage ? <p role='status'>{stage}</p> : null}
         {error ? <p className='er-status er-status--error' role='alert'>{error}</p> : null}

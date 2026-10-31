@@ -19,8 +19,8 @@ Ordinary ingest never requests OCR. The owner may explicitly run PDF OCR with a 
 stored text preview, and Apply it as a new immutable readable revision; reading or applying the preview is storage only.
 OCR uses the source's latest live revision, whose original must be a PDF. That revision may be `needs_conversion`
 while an older readable revision remains current until Apply.
-The bounded local OCR control/storage journey is verified; full PDF/corpus OCR quality and deployed Access remain
-NOT_RUN. This does not establish owner semantic acceptance or close K2/K3 acceptance.
+The bounded local OCR journey and one complete public-PDF preview/reviewed-Apply path are verified. Full-corpus OCR
+quality and deployed Access remain unverified. This does not establish owner semantic acceptance or close K2/K3.
 
 ## Design principles
 

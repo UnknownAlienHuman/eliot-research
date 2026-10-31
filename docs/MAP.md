@@ -33,7 +33,7 @@ quotas.
 ## Current state
 
 - K0 keeps the accepted Material shell with hostname Access auth: `/api/me`, Projects/Settings navigation and System/Light/Dark appearance verified locally on 1440/390 px with Cyrillic fonts, and all assets pass through auth. Live Access and deployed acceptance are not claimed.
-- K1 implements projects, the shared Library with immutable revisions, and exact UTF-8 reading (outline, whole text, ranges, original download). Exact text/URL duplicates return 409 with explicit Attach existing, reusing the stored revision with no silent merge. Ordinary conversion stays on the current path: native text locally, Workers AI `toMarkdown` where a document format requires it. Explicit PDF OCR with preview/Apply has a verified bounded local real-service journey; full PDF/corpus OCR quality and deployed Access remain NOT_RUN. AI Search and later-contour bindings remain absent.
+- K1 implements projects, the shared Library with immutable revisions, and exact UTF-8 reading (outline, whole text, ranges, original download). Exact text/URL duplicates return 409 with explicit Attach existing, reusing the stored revision with no silent merge. Ordinary conversion stays on the current path: native text locally, Workers AI `toMarkdown` where a document format requires it. Explicit PDF OCR has a verified bounded journey and one complete fifteen-page public-PDF preview/reviewed-Apply case; full-corpus OCR quality and deployed Access remain unverified. AI Search and later-contour bindings remain absent.
 - K2 has a local Markdown chat path with frozen source scope, server-resolved citations, Stop/reconnect and storage-only Save, plus the R2 model snapshot with the owner-only refresh route. K2 and K3 are not fully accepted; their remaining quality and claim-mode gates stay open in their contour sections below.
 - K4 is implemented in main. Its signed-agent read, proposal and owner-decision path is verified locally with test
   JWKS; deployed Access remains unverified. K6 is frozen until K2/K3 acceptance.
@@ -148,8 +148,10 @@ replayed or regraded as a fresh complete run. A separate two-page cancellation f
 completed page. Final dependency comparison passed: one affected page stale, one unrelated page current, unchanged
 page heads/body/citations and exact old range bytes. Across both jobs there were two observed inference calls;
 the admitted ceiling was three (one apply page plus two cancellation-fixture pages). Usage and retained artifacts
-are in IMPLEMENTATION §4. Full PDF/corpus OCR quality and deployed Access remain NOT_RUN; owner semantic acceptance
-is not claimed, and K2/K3 remain unaccepted. Monetary cost is unknown and latency budgets are unestablished.
+are in IMPLEMENTATION §4. An additional original fifteen-page Transformer PDF completed on GLM with fifteen calls;
+reviewed corrections were applied as one new readable revision, repeated Apply added no revision or call, and old
+canonical/range/original bytes were preserved. Full-corpus OCR quality, deployed Access and owner semantic acceptance
+remain unverified; K2/K3 remain unaccepted. Monetary cost is unknown and latency regression budgets are unestablished.
 
 **Not now.** Automatic OCR, search, claims, model answer, bulk direct-to-R2 uploads above 25 MiB.
 
