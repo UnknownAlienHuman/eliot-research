@@ -15,10 +15,13 @@ import { getOverview, getUnderstanding } from "./understanding";
 import { safeErrorLogProjection } from "./model-transport";
 import { handleMcp } from "./mcp";
 import { decideProposal, getProposal, listProposals } from "./proposals";
+import { applyOcrJob, cancelOcrJob, createOcrJob, getOcrJob, listOcrJobs, readOcrPreview, startOcrJob, uploadOcrPage } from "./ocr";
+import { OCR_LIMITS } from "./shared/api";
 
 export { IngestWorkflow } from "./workflows/ingest";
 export { ChatAgent } from "./chat";
 export { DistillWorkflow } from "./workflows/distill";
+export { OcrWorkflow } from "./workflows/ocr";
 
 const app = new Hono<{ Bindings: Env; Variables: { actor: Actor } }>();
 
@@ -204,6 +207,45 @@ app.post("/api/projects/:id/sources/url", async (c) => {
   }), 202);
 });
 app.get("/api/sources/:id", async (c) => c.json(await getSource(c.env, c.get("actor"), uuid.parse(c.req.param("id")), uuid.optional().parse(c.req.query("revisionId")))));
+const ocrBase = "/api/projects/:id/sources/:sourceId/ocr";
+app.get(ocrBase, async (c) => c.json({ jobs: await listOcrJobs(c.env, c.get("actor"), {
+  projectId: uuid.parse(c.req.param("id")), sourceId: uuid.parse(c.req.param("sourceId")),
+}) }));
+app.post(ocrBase, async (c) => {
+  const input = z.object({ jobId: uuid, baseRevisionId: uuid, model: z.string().min(1),
+    pageCount: z.number().int().min(1).max(OCR_LIMITS.maxPages), originalSha256: z.string().regex(/^[a-f0-9]{64}$/u) }).strict().parse(await c.req.json());
+  return c.json({ job: await createOcrJob(c.env, c.get("actor"), {
+    projectId: uuid.parse(c.req.param("id")), sourceId: uuid.parse(c.req.param("sourceId")), ...input,
+  }) }, 201);
+});
+app.put(ocrBase + "/:jobId/pages/:pageNumber", async (c) => c.json({ job: await uploadOcrPage(c.env, c.get("actor"), {
+  projectId: uuid.parse(c.req.param("id")), sourceId: uuid.parse(c.req.param("sourceId")), jobId: uuid.parse(c.req.param("jobId")),
+  pageNumber: z.coerce.number().int().min(1).max(OCR_LIMITS.maxPages).parse(c.req.param("pageNumber")), request: c.req.raw,
+}) }));
+app.get(ocrBase + "/:jobId", async (c) => c.json({ job: await getOcrJob(c.env, c.get("actor"), {
+  projectId: uuid.parse(c.req.param("id")), sourceId: uuid.parse(c.req.param("sourceId")), jobId: uuid.parse(c.req.param("jobId")),
+}) }));
+app.get(ocrBase + "/:jobId/preview", async (c) => c.json({ text: await readOcrPreview(c.env, c.get("actor"), {
+  projectId: uuid.parse(c.req.param("id")), sourceId: uuid.parse(c.req.param("sourceId")), jobId: uuid.parse(c.req.param("jobId")),
+}) }));
+app.post(ocrBase + "/:jobId/start", async (c) => {
+  z.object({}).strict().parse(await c.req.json());
+  return c.json({ job: await startOcrJob(c.env, c.get("actor"), {
+    projectId: uuid.parse(c.req.param("id")), sourceId: uuid.parse(c.req.param("sourceId")), jobId: uuid.parse(c.req.param("jobId")),
+  }) }, 202);
+});
+app.post(ocrBase + "/:jobId/cancel", async (c) => {
+  z.object({}).strict().parse(await c.req.json());
+  return c.json({ job: await cancelOcrJob(c.env, c.get("actor"), {
+    projectId: uuid.parse(c.req.param("id")), sourceId: uuid.parse(c.req.param("sourceId")), jobId: uuid.parse(c.req.param("jobId")),
+  }) });
+});
+app.post(ocrBase + "/:jobId/apply", async (c) => {
+  const input = z.object({ text: z.string().min(1).optional() }).strict().parse(await c.req.json());
+  return c.json(await applyOcrJob(c.env, c.get("actor"), {
+    projectId: uuid.parse(c.req.param("id")), sourceId: uuid.parse(c.req.param("sourceId")), jobId: uuid.parse(c.req.param("jobId")), ...input,
+  }));
+});
 app.get("/api/sources/:id/understanding", async (c) => c.json(await getUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), revisionId: uuid.optional().parse(c.req.query("revisionId")) })));
 app.post("/api/sources/:id/understanding", async (c) => {
   const input = z.object({ revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional() }).strict().parse(await c.req.json());

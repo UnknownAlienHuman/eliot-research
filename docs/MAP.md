@@ -33,7 +33,7 @@ quotas.
 ## Current state
 
 - K0 keeps the accepted Material shell with hostname Access auth: `/api/me`, Projects/Settings navigation and System/Light/Dark appearance verified locally on 1440/390 px with Cyrillic fonts, and all assets pass through auth. Live Access and deployed acceptance are not claimed.
-- K1 implements projects, the shared Library with immutable revisions, and exact UTF-8 reading (outline, whole text, ranges, original download). Exact text/URL duplicates return 409 with explicit Attach existing, reusing the stored revision with no silent merge. Conversion stays on the current path: native text locally, Workers AI `toMarkdown` where a document format requires it. AI Search and later-contour bindings remain absent.
+- K1 implements projects, the shared Library with immutable revisions, and exact UTF-8 reading (outline, whole text, ranges, original download). Exact text/URL duplicates return 409 with explicit Attach existing, reusing the stored revision with no silent merge. Ordinary conversion stays on the current path: native text locally, Workers AI `toMarkdown` where a document format requires it. Explicit PDF OCR with preview/Apply has a verified bounded local real-service journey; full PDF/corpus OCR quality and deployed Access remain NOT_RUN. AI Search and later-contour bindings remain absent.
 - K2 has a local Markdown chat path with frozen source scope, server-resolved citations, Stop/reconnect and storage-only Save, plus the R2 model snapshot with the owner-only refresh route. K2 and K3 are not fully accepted; their remaining quality and claim-mode gates stay open in their contour sections below.
 - K4 is implemented in main. Its signed-agent read, proposal and owner-decision path is verified locally with test
   JWKS; deployed Access remains unverified. K6 is frozen until K2/K3 acceptance.
@@ -91,7 +91,8 @@ desktop and phone, with working light/dark themes and `/api/me` showing the auth
 ## K1 — Read
 
 **Owner outcome.** Create a project, choose many files in one browser action, add URL/text, watch conversion state and
-open any readable source with outline and exact passage links.
+open any readable source with outline and exact passage links. Explicitly run PDF OCR with a selected model, review
+its text preview, and Apply a new readable revision while retaining the original and old citation targets.
 
 **Build**
 
@@ -102,7 +103,7 @@ open any readable source with outline and exact passage links.
 4. Hash, store original under an immutable R2 key, create pending rows and start deterministic
    `ingest-<revisionId>`. Exact duplicates are reported with Attach; never silently merged.
 5. Convert native UTF-8 text locally. Use cached `env.AI.toMarkdown().supported()` only for document formats that
-   require it. Do not opt into model-assisted image/OCR conversion in K1; scans retain the original and show
+   require it. Ordinary ingest never invokes OCR; scans retain the original and show
    `needs_conversion`. Write canonical `text.md`, exact `blocks.json`, state/warnings and current readable revision.
    Flag unexpected non-printing text characters without rewriting evidence; older readable revisions show the same
    reader warning on load without mutating their metadata or starting conversion.
@@ -111,6 +112,12 @@ open any readable source with outline and exact passage links.
    `src/web/api.ts`. Show filenames, readable states and human revision labels; keep immutable IDs and exact ranges in
    links/API data, and conversion telemetry in eval output.
 8. Add block/range/URL-guard tests and `pnpm eval k1`.
+9. Add the owner-only PDF OCR path under `migrations/0010_source_ocr.sql` and IMPLEMENTATION §4: explicit
+   create/upload/Start, serial pages with at most one call per page, selected model and bounded usage. Stop prevents
+   the next call; no paid retry or automatic continuation. Preview/read/Apply are storage only. Apply creates a new
+   immutable revision and marks dependent pages stale; ordinary ingest and source understanding remain separate.
+   Use the latest live PDF revision as the OCR base, even at `needs_conversion`, and capture the current readable
+   revision separately. Start/Apply require an unchanged latest base and the captured current revision.
 
 **Hard acceptance — `pnpm eval k1`**
 
@@ -133,7 +140,18 @@ conversion/model work; the URL guard remains in force.
 **Measured budget.** Peak Worker memory is inspected during the 25 MiB case; no exceeded-memory event. Conversion count
 must equal the number of files that actually require conversion.
 
-**Not now.** OCR pipeline for scans, search, claims, model answer, bulk direct-to-R2 uploads above 25 MiB.
+**Explicit PDF OCR acceptance — bounded local journey verified.** `pnpm eval k1 --ocr` retained a real-service
+upload/Start/idempotence PASS prefix with one call, then failed at the preview UI label. After the label fix, GET-only
+reopen matched the stored preview. Explicit `--resume-job=<UUID>` continued that ready job through storage-only
+preview/Apply/repeat-Apply and old-citation checks with no additional inference for it; the retained prefix was not
+replayed or regraded as a fresh complete run. A separate two-page cancellation fixture stopped after one call and one
+completed page. Final dependency comparison passed: one affected page stale, one unrelated page current, unchanged
+page heads/body/citations and exact old range bytes. Across both jobs there were two observed inference calls;
+the admitted ceiling was three (one apply page plus two cancellation-fixture pages). Usage and retained artifacts
+are in IMPLEMENTATION §4. Full PDF/corpus OCR quality and deployed Access remain NOT_RUN; owner semantic acceptance
+is not claimed, and K2/K3 remain unaccepted. Monetary cost is unknown and latency budgets are unestablished.
+
+**Not now.** Automatic OCR, search, claims, model answer, bulk direct-to-R2 uploads above 25 MiB.
 
 ---
 
