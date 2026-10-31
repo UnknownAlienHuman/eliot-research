@@ -4,6 +4,7 @@
 // and owns routes/schema/shared/api. Ranges: UTF-8 bytes, end-exclusive.
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import type { Project, Revision, Source, SourceSelection } from "../shared/api";
 import { readableTextWarning } from "../ingest";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
@@ -203,31 +204,32 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
   const urlTitleId = useId();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const dialogHeadingRef = useRef<HTMLHeadingElement | null>(null);
-  const [sources, setSources] = useState<Source[] | undefined>(undefined);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [failure, setFailure] = useState("");
+  const [actionFailure, setFailure] = useState("");
   const [rows, setRows] = useState<UploadRow[]>([]);
   const [uploading, setUploading] = useState(false);
   const [textTitle, setTextTitle] = useState("");
   const [textBody, setTextBody] = useState("");
   const [url, setUrl] = useState("");
   const [urlTitle, setUrlTitle] = useState("");
-  const load = useMemo(() => async () => {
-    if (!projectId) return;
-    try {
-      const d = await apiJson<{ sources: Source[]; nextCursor: string | null }>("/api/projects/" + encodeURIComponent(projectId) + "/sources");
-      setSources(d.sources);
-      setCursor(d.nextCursor);
-      setFailure("");
-    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not load sources."); }
-  }, [projectId]);
-  useEffect(() => { void load(); }, [load]);
+  const sourceQuery = useInfiniteQuery({
+    queryKey: ["sources", projectId],
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam, signal }) => apiJson<{ sources: Source[]; nextCursor: string | null }>(
+      "/api/projects/" + encodeURIComponent(projectId) + "/sources" + (pageParam ? "?cursor=" + encodeURIComponent(pageParam) : ""), { signal }),
+    getNextPageParam: page => page.nextCursor ?? undefined,
+    enabled: projectId !== "",
+    networkMode: "always",
+    refetchInterval: query => query.state.data?.pages.some(page => page.sources.some(source =>
+      source.readableState === "pending" || source.distillState === "queued" || source.distillState === "running")) ? POLL_MS : false,
+  });
+  const sources = useMemo(() => sourceQuery.data?.pages.flatMap(page => page.sources), [sourceQuery.data]);
+  const cursor = sourceQuery.data?.pages.at(-1)?.nextCursor ?? null;
+  const failure = actionFailure || sourceQuery.error?.message || "";
+  async function load() {
+    const result = await sourceQuery.refetch();
+    setFailure(result.error?.message ?? "");
+  }
   useEffect(() => { dialogRef.current?.close(); }, [projectId]);
-  useEffect(() => {
-    if (!sources?.some((s) => s.readableState === "pending" || s.distillState === "queued" || s.distillState === "running")) return;
-    const timer = window.setInterval(() => { void load(); }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [sources, load]);
   const projectDefaultIds = useMemo(
     () => (sources ?? []).filter((s) => isReadableSource(s) && s.enabled !== false).map((s) => s.id),
     [sources],
@@ -270,13 +272,9 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
     dialogHeadingRef.current?.focus();
   }
   async function loadMore() {
-    if (!cursor) return;
-    try {
-      const d = await apiJson<{ sources: Source[]; nextCursor: string | null }>("/api/projects/" + encodeURIComponent(projectId) + "/sources?cursor=" + encodeURIComponent(cursor));
-      setSources((previous) => [...(previous ?? []), ...d.sources]);
-      setCursor(d.nextCursor);
-      setFailure("");
-    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not load more sources."); }
+    if (!cursor || sourceQuery.isFetching) return;
+    const result = await sourceQuery.fetchNextPage({ cancelRefetch: false });
+    setFailure(result.error?.message ?? "");
   }
   async function uploadOne(file: File, index: number): Promise<void> {
     const mark = (patch: Partial<UploadRow>) => setRows((previous) => previous.map((row, i) => (i === index ? { ...row, ...patch } : row)));

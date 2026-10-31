@@ -4,6 +4,7 @@
 // contract src/understanding.ts. All reads are storage-only GETs; the only
 // paid trigger is the explicit Understand button.
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { Markdown } from './Markdown';
 import { ModelPicker, type ModelRoute } from './ModelPicker';
@@ -50,6 +51,7 @@ function stateLabel(s: DistillState): string {
   return 'Not yet understood';
 }
 export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTitle }: { readonly projectId: string; readonly sourceId: string; readonly revisionId: string; readonly sourceTitle: string }) {
+  const queryClient = useQueryClient();
   const [view, setView] = useState<Understanding | undefined>(undefined);
   const [failure, setFailure] = useState('');
   const [busy, setBusy] = useState(false);
@@ -99,6 +101,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     setNote('');
     try {
       await apiJson(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(modelChoice === '' ? { revisionId } : { revisionId, model: modelChoice }) });
+      void queryClient.invalidateQueries({ queryKey: ['sources', projectId], exact: true });
       const d = await apiJson<Understanding>(url);
       setView(d);
       setFailure('');
@@ -111,6 +114,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     setNote('');
     try {
       await apiJson(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionId, saveAvailable: true }) });
+      void queryClient.invalidateQueries({ queryKey: ['sources', projectId], exact: true });
       const d = await apiJson<Understanding>(url);
       setView(d);
       setFailure('');
