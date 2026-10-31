@@ -6,7 +6,7 @@ import { LibraryError } from "./library";
 import type { Actor } from "./auth";
 import type { Block } from "./blocks";
 import type { JSONObject } from "@ai-sdk/provider";
-import { modelTokenLimit, readModelCatalog } from "./models";
+import { distillModelSpec, modelTokenLimit, readModelCatalog } from "./models";
 import { hasAvailableUnderstanding } from "./workflows/distill";
 
 export type DistillState = "none" | "queued" | "running" | "paused" | "done" | "partial" | "failed";
@@ -84,7 +84,7 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
       const catalog = await readModelCatalog(env);
       const entry = catalog.models.find((m) => m.route === forecastModel);
       if (entry && entry.enabled) {
-        const bound = 2 * modelTokenLimit(entry);
+        const bound = 2 * modelTokenLimit(distillModelSpec(entry));
         if (Number.isSafeInteger(bound)) maximumTokens = bound;
       }
     } catch { maximumTokens = null; }

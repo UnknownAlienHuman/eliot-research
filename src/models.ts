@@ -100,7 +100,8 @@ export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
 // Owner-selected native default metadata is a fallback, not a provider allowlist.
 export const MODELS: ModelSpec[] = [
   { route: DEFAULT_MODEL, id: "@cf/zai-org/glm-5.3-flash", label: "GLM 5.3 Flash", contextTokens: 1_048_576,
-    maxOutputTokens: null, outputReserveTokens: 8192, supportsImages: true, nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true },
+    maxOutputTokens: 1_048_576, outputReserveTokens: 8192, supportsImages: true, supportsTemperature: true,
+    nativeReasoningEffort: "low", checkedOn: "2026-10-31", enabled: true },
 ];
 export const modelOutputLimit = (model: Pick<CatalogModel, "outputReserveTokens" | "maxOutputTokens">) => {
   const bound = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
@@ -112,6 +113,15 @@ export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "out
     !Number.isSafeInteger(output) || output <= 0 || !Number.isSafeInteger(total))
     throw new LibraryError("unavailable", "The model has no usable input/output limits.", 503);
   return total;
+}
+export function distillModelSpec(model: ModelSpec): ModelSpec;
+export function distillModelSpec(model: CatalogModel): CatalogModel;
+export function distillModelSpec(model: CatalogModel): CatalogModel {
+  if (!model.route.startsWith("workers-ai:") || !model.nativeReasoningEfforts?.includes("high")) return model;
+  const output = modelOutputLimit(model);
+  const outputReserveTokens = model.maxOutputTokens === null ? output
+    : Math.min(model.maxOutputTokens, Math.max(output, 16_384));
+  return { ...model, nativeReasoningEffort: "high", outputReserveTokens };
 }
 function missingMetadata(model: CatalogModel): string | null {
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
@@ -232,6 +242,7 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     }
     models.set(model.route, { ...visible, label: fallback?.label ?? model.label,
       ...(visible.supportsImages === undefined && fallback?.supportsImages !== undefined ? { supportsImages: fallback.supportsImages } : {}),
+      ...(visible.supportsTemperature === undefined && fallback?.supportsTemperature !== undefined ? { supportsTemperature: fallback.supportsTemperature } : {}),
       maxOutputTokens: model.maxOutputTokens ?? fallback?.maxOutputTokens ?? null });
   }
   for (const [route, model] of models) {

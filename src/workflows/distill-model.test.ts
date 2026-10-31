@@ -115,7 +115,7 @@ function callerFixture() {
   insertSource(explicitlySelectedSourceId, "Selected", explicitlySelectedRevisionId, "queued", 2);
   insertSource(otherQueuedSourceId, "Older queued source", otherQueuedRevisionId, "queued", 1);
 
-  const createWorkflow = vi.fn(async (_input: { id: string; params: { revisionId: string; model: ModelSpec } }) => ({ id: "stubbed-workflow" }));
+  const createWorkflow = vi.fn(async (_input: { id: string; params: DistillInput }) => ({ id: "stubbed-workflow" }));
   const env = { DB: {
     prepare(sql: string) {
       const operations = (args: SQLInputValue[]) => ({
@@ -149,7 +149,7 @@ beforeEach(() => {
   for (const lookup of forbiddenLookups) vi.mocked(lookup).mockReset().mockRejectedValue(new Error("Unexpected catalogue lookup"));
 });
 
-async function run(f: ReturnType<typeof fixture>, serializeErrors = false) {
+async function run(f: ReturnType<typeof fixture>, serializeErrors = false, input: DistillInput = { revisionId, model: snapshot }) {
   const stepDo = vi.fn(async (_name: string, _options: unknown, callback: () => Promise<unknown>) => {
     try { return await callback(); } catch (error) {
       // eslint-disable-next-line preserve-caught-error -- Simulate Workflow serialization stripping the error class and cause.
@@ -158,7 +158,7 @@ async function run(f: ReturnType<typeof fixture>, serializeErrors = false) {
     }
   });
   await new DistillWorkflow({} as ExecutionContext, f.env).run(
-    { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>,
+    { payload: input } as WorkflowEvent<DistillInput>,
     { do: stepDo } as unknown as WorkflowStep);
   return stepDo;
 }
@@ -222,17 +222,18 @@ describe("DistillWorkflow admitted model snapshot", () => {
   });
 
   it.each([
-    { capabilities: Object.freeze(["low", "high"]), effort: "high" },
-    { capabilities: undefined, effort: "low" },
-  ] as const)("admits native $effort effort from published capabilities without mutating the low-effort model", async ({ capabilities, effort }) => {
+    { capabilities: Object.freeze(["low", "high"]), effort: "high", capacity: null, reserve: 8192 },
+    { capabilities: undefined, effort: "low", capacity: null, reserve: 8192 },
+    { capabilities: Object.freeze(["low", "high"]), effort: "high", capacity: 1_048_576, reserve: 16_384 },
+  ] as const)("admits native $effort with reserve $reserve from published capacity $capacity", async ({ capabilities, effort, capacity, reserve }) => {
     const f = callerFixture();
     const published: ModelSpec = Object.freeze({
       route: "workers-ai:@cf/zai-org/glm-5.3-flash", id: "@cf/zai-org/glm-5.3-flash", label: "Native published fixture",
-      contextTokens: 1_048_576, maxOutputTokens: null, outputReserveTokens: 8192,
+      contextTokens: 1_048_576, maxOutputTokens: capacity, outputReserveTokens: 8192,
       nativeReasoningEffort: "low", ...(capabilities ? { nativeReasoningEfforts: capabilities } : {}),
       checkedOn: "2026-10-30", enabled: true,
     });
-    const expectedModel = { ...published, nativeReasoningEffort: effort };
+    const expectedModel = { ...published, nativeReasoningEffort: effort, outputReserveTokens: reserve };
     vi.mocked(requireAvailableModel).mockResolvedValue(published);
     try {
       f.db.prepare("UPDATE settings SET native_usage_mode='standard',distill_model=? WHERE id=1").run(snapshot.route);
@@ -244,14 +245,15 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(requireAvailableModel).toHaveBeenCalledExactlyOnceWith(f.env, published.route);
       expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({
         id: `distill-${explicitlySelectedRevisionId}`,
-        params: { revisionId: explicitlySelectedRevisionId, model: expectedModel },
+        params: { revisionId: explicitlySelectedRevisionId, model: expectedModel, ...(reserve > 8192 ? { callTimeoutMs: 300_000 } : {}) },
       });
       const admitted = f.createWorkflow.mock.calls[0]?.[0].params.model;
       if (effort === "high") expect(admitted).not.toBe(published);
       expect(admitted).toStrictEqual(expectedModel);
       expect(published.nativeReasoningEffort).toBe("low");
+      expect(published.outputReserveTokens).toBe(8192);
       expect(f.db.prepare("SELECT distill_model AS model,distill_state AS state,distill_calls AS calls,distill_token_limit AS tokenLimit FROM source_revision WHERE id=?")
-        .get(explicitlySelectedRevisionId)).toEqual({ model: published.route, state: "running", calls: 0, tokenLimit: 2_113_536 });
+        .get(explicitlySelectedRevisionId)).toEqual({ model: published.route, state: "running", calls: 0, tokenLimit: 2 * (published.contextTokens + reserve) });
       expect(f.db.prepare("SELECT distill_model AS model,native_usage_mode AS mode FROM settings WHERE id=1").get())
         .toEqual({ model: snapshot.route, mode: "standard" });
       expect(generateText).not.toHaveBeenCalled();
@@ -626,24 +628,40 @@ describe("DistillWorkflow admitted model snapshot", () => {
     expect(resolveModelTransport).not.toHaveBeenCalled();
   });
 
-  it("retains typed structured-output failure telemetry and cause across serialized steps", async () => {
+  it.each([undefined, 300_000] as const)("retains typed failure telemetry with frozen timeout %s and no raw text", async (callTimeoutMs) => {
     // Does not reproduce eval/out/openrouter-20261028/resnet-trace (generic External failure, distill-call2.json 404, unrecoverable).
     // It covers the proven pinned ai@7.0.152 shape in isolation: NoObjectGeneratedError carries usage/finishReason.
-    const f = fixture(snapshot.route);
+    const model: ModelSpec = callTimeoutMs === undefined ? snapshot : Object.freeze({
+      route: "workers-ai:@cf/zai-org/glm-5.3-flash", id: "@cf/zai-org/glm-5.3-flash", label: "Frozen native profile",
+      contextTokens: 1_048_576, maxOutputTokens: 1_048_576, outputReserveTokens: 16_384,
+      nativeReasoningEffort: "high", checkedOn: "2026-10-31", enabled: true,
+    });
+    const input: DistillInput = Object.freeze({ revisionId, model, ...(callTimeoutMs === undefined ? {} : { callTimeoutMs }) });
+    const originalInput = structuredClone(input);
+    const f = fixture(model.route);
+    const timeout = vi.spyOn(AbortSignal, "timeout");
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
     const rawProviderUsage = { prompt_tokens: 1200, completion_tokens: 34, total_tokens: 1234 };
     const sdkUsage = { inputTokens: 1200, inputTokenDetails: { noCacheTokens: 1200, cacheReadTokens: 0, cacheWriteTokens: undefined }, outputTokens: 34, outputTokenDetails: { textTokens: 34, reasoningTokens: undefined }, totalTokens: 1234, raw: rawProviderUsage };
-    const sdkError = new NoObjectGeneratedError({ message: "No object generated: response did not match schema.", text: '{"guide":', response: { id: "resp-typed-1", timestamp: new Date(), modelId: "fixture/admitted" }, usage: sdkUsage, finishReason: "length" });
+    const visibleText = '{"guide":"synthetic-visible-Ж🙂';
+    const sdkError = new NoObjectGeneratedError({ message: "No object generated: response did not match schema.", text: visibleText, response: { id: "resp-typed-1", timestamp: new Date(), modelId: model.id }, usage: sdkUsage, finishReason: "length" });
     vi.mocked(generateText).mockRejectedValueOnce(sdkError);
     try {
-      const steps = await run(f, true);
+      const steps = await run(f, true, input);
       expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
+      expect(steps.mock.calls[0]?.[1]).toMatchObject({ retries: { limit: 0 } });
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(callTimeoutMs ?? 180_000);
+      expect(input).toStrictEqual(originalInput);
       expect(generateText).toHaveBeenCalledTimes(1);
+      expect(generateText).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0, maxOutputTokens: model.outputReserveTokens }));
       expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
       const rawBody = f.bodies.get(prefix + "distill-call1.json");
       if (!rawBody) throw new Error("Typed failure did not retain its per-call artifact.");
-      const stored = JSON.parse(rawBody) as { output: null; usage: { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage: unknown } };
+      const stored = JSON.parse(rawBody) as { output: null; finishReason: string; visibleTextBytes: number; usage: { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage: unknown } };
       expect(stored.output).toBeNull();
+      expect(Object.keys(stored).sort()).toEqual(["finishReason", "output", "usage", "visibleTextBytes"]);
+      expect(stored.finishReason).toBe("length");
+      expect(stored.visibleTextBytes).toBe(new TextEncoder().encode(visibleText).byteLength);
       expect(stored).not.toHaveProperty("error");
       expect(JSON.stringify(stored)).not.toContain('{"guide":');
       expect(stored.usage.inputTokens).toBe(1200);
@@ -665,7 +683,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
       const row = f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_error AS error FROM source_revision WHERE id=?").get(revisionId);
       expect(row).toEqual({ state: "failed", calls: 1, error: report.error });
-    } finally { f.db.close(); }
+    } finally { timeout.mockRestore(); f.db.close(); }
   });
 
   it("preserves only the safe provider failure across a serialized step with unknown usage", async () => {

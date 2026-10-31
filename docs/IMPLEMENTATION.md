@@ -390,6 +390,9 @@ Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.pr
 as a JSON object or null. A typed structured-output failure retains `output: null` and known usage in the same immutable
 artifact. Its safe failure cause is exposed by the owning report; request bodies, headers and private protocol fields
 are excluded.
+Failed structured responses may also retain `finishReason` and numeric `visibleTextBytes`. An unknown byte count is
+omitted, never recorded as zero. No partial response text is retained or parsed into claims; zero visible bytes do
+not by themselves establish a thinking-only cause. A failed first call never starts the second call.
 It remains failed and unavailable for Save unless complete compatible output exists. The final report retains
 `usage.providerUsage` as an array of at most two such entries for
 saved call responses; older artifacts may omit the field. This is provider usage telemetry, not request bodies,
@@ -413,7 +416,7 @@ annotations still reject the item. This avoids erasing an inline citation and le
 
 K3 records `distill_calls` (hard maximum two), `distill_started_at` and `distill_ms` on the owning revision. Admission
 records both full-context call bounds before dispatch, with at most two revisions running. Each
-new internal `DistillInput` is `{ revisionId, model: ModelSpec }`: after admission and before Workflow creation,
+new internal `DistillInput` is `{ revisionId, model: ModelSpec, callTimeoutMs? }`: after admission and before Workflow creation,
 snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
 The reader's `progress.maximumTokens` uses the owning revision's recorded admission bound, with its retained report
 as the historical fallback. Only unstarted work without a recorded bound may forecast from its stored selected route
@@ -428,8 +431,10 @@ completed or unchanged work is not automatically re-distilled, and failed paid w
 pipeline uses at most two bounded model calls with zero paid-step retries. Completed/partial revisions return existing
 artifacts on repeat. Budget-paused work resumes
 only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
-Each background distillation call has a 180 s deadline (native paid-step deadline 4 minutes); the K2 chat ceiling stays
-90 s. The owner reader shows availability, progress, useful model names and verification caveats. Calls, reservations,
+Legacy jobs and unchanged budgets retain a 180 s call deadline and 4-minute paid step. New larger-budget native jobs
+freeze `callTimeoutMs=300000` and a 6-minute paid step; missing timeout fields use the legacy bound. Each call also
+respects the remaining 15-minute job deadline. The K2 chat ceiling stays 90 s. The owner reader shows availability,
+progress, useful model names and verification caveats. Calls, reservations,
 token counts and wall time remain in API/eval diagnostics rather than the reading interface. Long papers can use the
 same bounded two-call pipeline without a chat-sized timeout or a reduced quality target.
 An unconfirmed Workflow dispatch with zero paid calls is terminalized by a `running AND distill_calls=0` compare-and-set,
@@ -591,16 +596,25 @@ The native default's cold-start metadata selects low reasoning effort for intera
 low/high/max and defaults to max when effort is omitted; reasoning cannot be disabled. Native catalogue discovery
 preserves published `supported_efforts` as optional `nativeReasoningEfforts`; missing or malformed values stay unknown.
 New native K3 admissions select `high` only when the same catalogue snapshot advertises it, otherwise retaining that
-snapshot's existing choice. The chosen value is frozen in Workflow parameters. Existing admitted parameters, Gateway
-routing, output reserves, token/call/time bounds and owner model selections are unchanged. This strategy is
-experimental; service completion and semantic quality under it are not yet verified.
+snapshot's existing choice. With known published output capacity, their job reserve is at least 16,384 tokens, capped
+by that capacity and never reducing an existing larger reserve; unknown capacity retains its current reserve.
+The model, reserve and applicable call timeout are frozen before Workflow creation. Existing admitted parameters,
+Gateway routing and owner model selections are unchanged. This strategy is experimental; service completion and
+semantic quality under it are not yet verified.
+
+The existing Flash fallback's advertised output capacity is 1,048,576 tokens, checked from Cloudflare's marketplace
+model-search response on 2026-10-31; `max_output_length` is the protocol alias for completion/output tokens. This
+ceiling shares the context window with input and is not the requested job reserve or a completion-size guarantee.
+The model input schema also advertises temperature 0–2, so the existing source-faithful temperature-0 policy applies
+when capability metadata is known; an explicit negative capability in a snapshot is not overwritten.
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
 selection. Paid admission requires usable context/output bounds and provider allowance, without a price lookup or a
 locally invented monthly allowance. Record `modelTokenLimit = contextTokens + outputLimit` before dispatch (twice for
-two-call distillation), freeze the admitted `ModelSpec`, and retain unknown usage as unknown. The 8,192-token job
-output bound is separate from published model capacity. Provider errors/limits remain visible; there is no artificial
+two-call distillation), freeze the admitted `ModelSpec`, and retain unknown usage as unknown. Interactive chat retains
+its 8,192-token reserve; the native K3 reserve above is a separate job allocation, not a new provider quota. Provider
+errors/limits remain visible; there is no artificial
 quota, paid fallback or model-name allowlist/banlist.
 
 **Providers.** Migration `0008_model_providers.sql` stores the editable provider configuration in

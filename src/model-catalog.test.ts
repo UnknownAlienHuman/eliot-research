@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { discoverGatewayModels } from "./model-catalog";
-import { getModelProviders, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, saveModelProviders } from "./models";
+import { DEFAULT_MODEL, getModelProviders, modelOutputLimit, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, saveModelProviders } from "./models";
 import type { ModelProvider } from "./models";
 import { nativeModel } from "./native-model-catalog";
 import { resolveModelTransport } from "./model-transport";
@@ -726,6 +726,28 @@ describe("stored catalogue with provider snapshot", () => {
     expect(read.snapshot.refreshNeeded).toBe(true);
     expect(read.warnings.join(" ").toLowerCase()).toContain("refresh");
     expect(read.models.some((m) => m.route === "workers-ai:@cf/zai-org/glm-5.3-flash")).toBe(true);
+    const fallback = read.models.find((model) => model.route === DEFAULT_MODEL);
+    if (!fallback) throw new Error("The owner-selected native fallback is missing.");
+    expect(fallback).toMatchObject({ maxOutputTokens: 1048576, outputReserveTokens: 8192, supportsTemperature: true });
+    expect(modelOutputLimit(fallback)).toBe(8192);
+  });
+
+  it.each([
+    { label: "unknown temperature", temperature: undefined, expected: true },
+    { label: "explicit false temperature", temperature: false, expected: false },
+  ])("merges published fallback metadata with snapshot $label without raising the interactive reserve", async ({ temperature, expected }) => {
+    const bucket = fakeBucket({ updatedAt: "2026-10-31T03:13:22.243Z", warnings: [], providers: defaultProviders(),
+      models: [{ route: DEFAULT_MODEL, id: DEFAULT_MODEL.slice("workers-ai:".length), label: "Stored native model",
+        contextTokens: 1048576, maxOutputTokens: null, outputReserveTokens: 8192, checkedOn: "2026-10-31", enabled: true,
+        ...(temperature === undefined ? {} : { supportsTemperature: temperature }) }] });
+    const env = fixtureEnv(bucket.binding);
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("snapshot read must not discover models"); }));
+    const read = await readModelCatalog(env);
+    const model = read.models.find((entry) => entry.route === DEFAULT_MODEL);
+    if (!model) throw new Error("The stored owner-selected native model is missing.");
+    expect(model).toMatchObject({ maxOutputTokens: 1048576, outputReserveTokens: 8192, supportsTemperature: expected });
+    expect(modelOutputLimit(model)).toBe(8192);
+    expect(bucket.put).not.toHaveBeenCalled();
   });
 
   it("reports a corrupt snapshot visibly and refuses to overwrite it on refresh", async () => {

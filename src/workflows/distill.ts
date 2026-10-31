@@ -7,7 +7,7 @@ import { z } from "zod";
 import { isCitableBlock, type Block } from "../blocks";
 import { admitDistill, failUndispatchedDistill } from "../cost";
 import { LibraryError } from "../library";
-import { modelOutputLimit, modelTokenLimit, requireAvailableModel } from "../models";
+import { distillModelSpec, modelOutputLimit, modelTokenLimit, requireAvailableModel } from "../models";
 import type { ModelSpec } from "../models";
 import type { DistillInput } from "../shared/api";
 import { modelFailure, resolveModelTransport, safeErrorLogProjection } from "../model-transport";
@@ -34,7 +34,7 @@ function extractionSchema(labels: [string, ...string[]]) {
 }
 type Extraction = z.infer<ReturnType<typeof extractionSchema>>;
 interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage?: JSONObject | null }
-interface Raw<T> { output: T | null; usage: Usage; validation?: { dropped: { index: number; reason: string }[] } }
+interface Raw<T> { output: T | null; usage: Usage; finishReason?: string | null; visibleTextBytes?: number; validation?: { dropped: { index: number; reason: string }[] } }
 interface Evidence { label: string; block: number; quote: string }
 interface GuideItem { labels: string[]; text: string }
 interface Verified { claims: VerifiedClaim[]; guide: GuideItem[]; evidence: Evidence[]; questions: string[]; dropped: { index: number; reason: string }[]; clearedNumbers: number }
@@ -86,12 +86,13 @@ function toStoredUsage(usage: GeneratedUsage | null | undefined, model: ModelSpe
   const raw = usage?.raw;
   return { inputTokens, cachedTokens, outputTokens, tokenLimit: modelTokenLimit(model), providerUsage: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as JSONObject) : null };
 }
-function structuredFailureDetail(error: unknown, result: { finishReason: string; totalUsage: GeneratedUsage } | undefined): { usage: GeneratedUsage | undefined; finishReason: string | null } | null {
+function structuredFailureDetail(error: unknown, result: { finishReason: string; totalUsage: GeneratedUsage; text: string } | undefined): { usage: GeneratedUsage | undefined; finishReason: string | null; visibleTextBytes: number | undefined } | null {
   if (NoObjectGeneratedError.isInstance(error)) {
-    return { usage: error.usage, finishReason: error.finishReason ?? null };
+    return { usage: error.usage, finishReason: error.finishReason ?? null,
+      visibleTextBytes: error.text === undefined ? undefined : new TextEncoder().encode(error.text).byteLength };
   }
   if (result && NoOutputGeneratedError.isInstance(error)) {
-    return { usage: result.totalUsage, finishReason: result.finishReason };
+    return { usage: result.totalUsage, finishReason: result.finishReason, visibleTextBytes: new TextEncoder().encode(result.text).byteLength };
   }
   return null;
 }
@@ -106,7 +107,7 @@ export async function hasAvailableUnderstanding(env: Env, revisionId: string): P
   } catch { return false; }
 }
 
-async function call<T>(env: Env, revisionId: string, ordinal: number, instructions: string, content: string, schema: z.ZodType<T>, language: "English" | "Russian", model: ModelSpec): Promise<Raw<T>> {
+async function call<T>(env: Env, revisionId: string, ordinal: number, instructions: string, content: string, schema: z.ZodType<T>, language: "English" | "Russian", model: ModelSpec, callTimeoutMs: 180_000 | 300_000 = 180_000): Promise<Raw<T>> {
   const row = await env.DB.prepare("SELECT distill_model,distill_started_at FROM source_revision WHERE id=? AND distill_state='running'")
     .bind(revisionId).first<{ distill_model: string; distill_started_at: number }>();
   if (!row) throw new Error("Source understanding is no longer running.");
@@ -129,7 +130,7 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   try {
     result = await generateText({ model: transport,
       instructions: modelInstructions, messages: [{ role: "user", content }, { role: "user", content: "Perform the source-understanding task above. Return only the requested structured output." }], output: Output.object({ schema }),
-      maxOutputTokens: modelOutputLimit(model), maxRetries: 0, ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
+      maxOutputTokens: modelOutputLimit(model), maxRetries: 0, ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: AbortSignal.timeout(Math.min(callTimeoutMs, remaining)) });
     const output = result.output as T;
     const usage = result.totalUsage;
     const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
@@ -139,10 +140,12 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
     const detail = structuredFailureDetail(error, result);
     let failure: string;
     if (detail) {
-      const failed = { output: null, usage: toStoredUsage(detail.usage, model) };
+      const failed = { output: null, usage: toStoredUsage(detail.usage, model), finishReason: detail.finishReason,
+        ...(detail.visibleTextBytes === undefined ? {} : { visibleTextBytes: detail.visibleTextBytes }) };
       try { await put(env, revisionId, artifactName, failed); } catch { /* Preserve the failure without repeating inference if storage is unavailable. */ }
       failure = detail.finishReason === "length" ? "model reached output bound before complete output"
         : "model returned incomplete or invalid structured output";
+      if (detail.visibleTextBytes === 0) failure += " (no visible generated text)";
     } else {
       // Provider errors can contain credentials; retain only the fixed safe projection.
       failure = modelFailure(error, model);
@@ -157,7 +160,7 @@ function documentLanguage(text: string): "English" | "Russian" {
   return (text.match(/[А-Яа-яЁё]/gu)?.length ?? 0) > (text.match(/[A-Za-z]/gu)?.length ?? 0) ? "Russian" : "English";
 }
 
-async function extract(env: Env, revisionId: string, model: ModelSpec) {
+async function extract(env: Env, revisionId: string, model: ModelSpec, callTimeoutMs: 180_000 | 300_000 = 180_000) {
   const row = await env.DB.prepare("SELECT readable_size,distill_model FROM source_revision WHERE id=? AND distill_state='running'")
     .bind(revisionId).first<{ readable_size: number; distill_model: string }>();
   if (!row) throw new Error("Source understanding is no longer running.");
@@ -191,7 +194,7 @@ async function extract(env: Env, revisionId: string, model: ModelSpec) {
     "When a source block links a scalar result to an experiment-specific condition or comparative qualifier, include that link in the same claim's statement and structured conditions and choose that block as quoteBlock. Do not move a result-specific condition into a separate general setup claim or bridge it through another block or guide; if no single block states the link, omit the condition from that result claim. " +
     "Split different result rows into separate claims; do not put multiple results in valueText. Copy source digits and units without conversion. " +
     "Keep task, metric, dataset and valueText in the source language; do not convert units or generalize a particular result. Authors and publication dates must be copied from the source, otherwise use empty/null.",
-    content, extractionSchema(labels), documentLanguage(citable.map(({ passage }) => passage).join("\n")), model);
+    content, extractionSchema(labels), documentLanguage(citable.map(({ passage }) => passage).join("\n")), model, callTimeoutMs);
   await put(env, revisionId, "distill-call1.json", raw);
 }
 async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
@@ -246,7 +249,7 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
       .bind(text.includes(raw.output.authors) ? raw.output.authors : "", raw.output.published && text.includes(raw.output.published) ? raw.output.published : null, owner.source_id, revisionId)]);
   return { kept: verified.claims.length, dropped: verified.dropped.length };
 }
-async function synthesize(env: Env, revisionId: string, model: ModelSpec) {
+async function synthesize(env: Env, revisionId: string, model: ModelSpec, callTimeoutMs: 180_000 | 300_000 = 180_000) {
   const verified = await json<Verified>(env, revisionId, "distill-verified.json");
   if (!verified.evidence.length) throw new Error("No verified source excerpts are available for synthesis.");
   const labels = verified.evidence.map((item) => item.label) as [string, ...string[]];
@@ -270,7 +273,7 @@ async function synthesize(env: Env, revisionId: string, model: ModelSpec) {
     "Describe the source's contribution or purpose, methods, assumptions, findings, conditions and limitations without review narration or candidate IDs. Preserve disagreements with their own citations instead of reconciling them. Put supplied authority citation labels only in labels arrays, never in prose. Copy numeric spellings, including powers of ten, exactly from the quoted block. Keep each value with its dataset, method and conditions; do not add unsupported facts or generalize beyond the source.",
     sourceContextJson({ evidence: verified.evidence, unresolvedEvidence, guideCandidates: verified.guide.map(item => ({ labels: item.labels })),
       candidates: claims }, new Set(labels)), synthesisSchema(labels, claims.map((item) => item.id), true),
-    documentLanguage(verified.evidence.map((item) => item.quote).join("\n")), model);
+    documentLanguage(verified.evidence.map((item) => item.quote).join("\n")), model, callTimeoutMs);
   await put(env, revisionId, "distill-call2.json", raw);
 }
 async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared> {
@@ -417,11 +420,13 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
 }
 export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillInput> {
   async run(event: Readonly<WorkflowEvent<DistillInput>>, step: WorkflowStep) {
-    const { revisionId: id, model } = event.payload;
+    const { revisionId: id, model, callTimeoutMs = 180_000 } = event.payload;
     try {
-      await step.do("extract source", once, () => extract(this.env, id, model));
+      if (callTimeoutMs !== 180_000 && callTimeoutMs !== 300_000) throw new Error("The admitted source-understanding call timeout is invalid. No model call was started.");
+      const paidStep = callTimeoutMs === 300_000 ? { ...once, timeout: "6 minutes" as const } : once;
+      await step.do("extract source", paidStep, () => extract(this.env, id, model, callTimeoutMs));
       await step.do("verify source excerpts", store, () => verifyAndStore(this.env, id, model));
-      await step.do("review and synthesize", once, () => synthesize(this.env, id, model));
+      await step.do("review and synthesize", paidStep, () => synthesize(this.env, id, model, callTimeoutMs));
       const projection = await step.do("store understanding", store, () => commitSynthesis(this.env, id));
       await step.do("finish understanding", store, () => finish(this.env, id, undefined, projection));
     } catch (error) { await finish(this.env, id, error); }
@@ -472,11 +477,10 @@ export async function scheduleDistillation(env: Env, targetRevisionId?: string) 
         .bind(error instanceof LibraryError ? error.message : "Model configuration is unavailable. Resume explicitly after reconnecting.", row.id).run();
       continue;
     }
-    if (model.route.startsWith("workers-ai:") && model.nativeReasoningEfforts?.includes("high")) {
-      model = { ...model, nativeReasoningEffort: "high" as const };
-    }
+    model = distillModelSpec(model);
     if (!await admitDistill(env, row.id, model)) continue;
-    try { await env.DISTILL.create({ id: `distill-${row.id}`, params: { revisionId: row.id, model } }); }
+    try { await env.DISTILL.create({ id: `distill-${row.id}`, params: { revisionId: row.id, model,
+      ...(model.route.startsWith("workers-ai:") && modelOutputLimit(model) > 8192 ? { callTimeoutMs: 300_000 as const } : {}) } }); }
     catch (error) {
       const detail = `Workflow dispatch could not be confirmed: ${message(error)}. No duplicate call is dispatched.`;
       if (!await failUndispatchedDistill(env, row.id, detail)) await env.DB.prepare("UPDATE source_revision SET distill_error=? WHERE id=? AND distill_state='running'").bind(detail, row.id).run();
