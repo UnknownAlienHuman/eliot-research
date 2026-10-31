@@ -241,6 +241,14 @@ Local real-service results (2026-10-31 UTC) verify this bounded control/storage 
   became stale and one unrelated page stayed current; heads, body UTF-8, serialized citations API data and exact old
   range bytes matched. This comparison made GET requests only.
 
+The full 26-page LoRA PDF run subsequently completed 26 calls, recording 107,718 input and 28,926 output tokens,
+zero cached tokens. All pages were visually checked before Apply; merged table cells were transcribed into explicit
+Shared columns rather than attributed to the first task. The reviewed canonical text is 94,701 bytes, with the same
+original PDF and immutable old ranges. Repeat Apply returned the same new revision and kept the OCR call count at
+26; understanding remained `none`, zero calls. Saved per-page timings have nearest-rank p50 22,633 ms and p95
+35,578 ms (n=26). Their sum is 627,256 ms, not a separately reported end-to-end duration. Neurons and money remain
+unknown for this OCR run. These observations do not establish full-corpus OCR or K3 semantic acceptance.
+
 Actual usage across the two jobs was **two observed inference calls** against an admitted ceiling of **three calls**
 (one apply page plus two cancellation-fixture pages), input `3,783 + 3,783 = 7,566`, output
 `1,310 + 1,281 = 2,591` tokens, with zero reported cached tokens. The resumed Apply job kept its original one-call
@@ -300,6 +308,9 @@ must also be supported by the same quote, but remain the model's own-quote revie
 A missing literal percent sign alone does not establish a false number: a table may state its measurement in words.
 Unsupported scalar numeric metadata is cleared together with its unit. Numeric verification does not evaluate
 arbitrary mathematics or establish semantic support.
+An adjacent ASCII dash between complete unattached scalar operands is an infix separator for literal matching;
+range or subtraction meaning remains a semantic check. Unary and exponent signs retain their identity, and a
+standalone negative value cannot borrow the positive endpoint of a range.
 Explicit multiplication powers such as `7.6×10⁹` and `7.6×10^9` are checked as one token. Flattened `7.6×109`,
 or a mantissa and exponent found separately elsewhere in a passage, cannot support that scientific quantity.
 Balanced TeX integer powers (`10^{-6}`, `3.7×10^{4}`) and single-backslash `\times`/`\cdot` spellings use the same

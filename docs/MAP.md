@@ -315,6 +315,12 @@ verification completed; the second call failed with provider HTTP 408 after 402,
 claims and unknown aggregate token usage; the first call's known provider usage remains recorded. The old failed
 revision and its two calls are retained. No retry, counter reset or K3 acceptance followed this service failure.
 
+The subsequent LoRA PDF OCR completed all 26 pages in 26 calls. A full page-image review corrected transcription
+errors and merged-cell scope before storage-only Apply. The new 94,701-byte readable revision retains the original
+PDF, while the old 83,785-byte text, report, seven claims, two calls and old exact ranges are preserved. Its guide and
+claims are not yet generated: understanding remains `none`, zero calls. This repairs the citable input, not K3 quality
+acceptance; no new understanding trial or automatic continuation was started.
+
 ---
 
 ## K4 — Agents in
