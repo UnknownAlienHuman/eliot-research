@@ -133,9 +133,10 @@ function makeHarness(quote = "A source", instructions = "") {
   db.exec("CREATE TABLE chat(id TEXT PRIMARY KEY,project_id TEXT NOT NULL)");
   db.prepare("INSERT INTO chat VALUES ('wire-chat',?)").run(projectId);
   const d1 = new DatabaseSync(":memory:");
-  d1.exec("CREATE TABLE chat(id TEXT PRIMARY KEY,project_id TEXT NOT NULL)");
-  d1.prepare("INSERT INTO chat VALUES ('wire-chat',?)").run(projectId);
+  d1.exec("CREATE TABLE chat(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,updated_at INTEGER)");
+  d1.prepare("INSERT INTO chat(id,project_id) VALUES ('wire-chat',?)").run(projectId);
   d1.exec("CREATE TABLE chat_turn(chat_id TEXT, turn_id TEXT, model TEXT, scope_mode TEXT, scope_json TEXT, context_mode TEXT, state TEXT, input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER, token_limit INTEGER CHECK (token_limit IS NULL OR token_limit >= 0), estimated_cost_microusd INTEGER, citations INTEGER, invalid_labels INTEGER, first_token_ms INTEGER, total_ms INTEGER, error TEXT, created_at INTEGER, PRIMARY KEY(chat_id, turn_id))");
+  d1.exec("CREATE TRIGGER chat_turn_terminal_immutable BEFORE UPDATE ON chat_turn WHEN OLD.state IN ('completed','partial','failed','cancelled') BEGIN SELECT RAISE(ABORT,'terminal_chat_turn_is_immutable'); END");
   const env = {
     DB: {
       prepare(sql: string) {
@@ -145,16 +146,12 @@ function makeHarness(quote = "A source", instructions = "") {
             first: async (): Promise<unknown> => null,
             bind: (...args: SQLInputValue[]) => ({
               first: async (): Promise<unknown> => {
-                try {
-                  const stmt = d1.prepare(sql);
-                  return stmt.columns().length ? (stmt.get(...args) as unknown) : null;
-                } catch { return null; }
+                const stmt = d1.prepare(sql);
+                return stmt.columns().length ? (stmt.get(...args) as unknown) : null;
               },
               run: async () => {
-                try {
-                  const info = d1.prepare(sql).run(...args);
-                  return { meta: { changes: Number(info.changes) } };
-                } catch { return { meta: { changes: 1 } }; }
+                const info = d1.prepare(sql).run(...args);
+                return { meta: { changes: Number(info.changes) } };
               },
               all: async () => ({ results: [] as unknown[] }),
             }),
@@ -493,6 +490,212 @@ describe("ChatAgent interrupted queue recovery", () => {
       expect(snapshot.queued).toBeNull();
       expect(fetchCalls).toBe(1);
     } finally { releaseRead?.(); h.db.close(); h.d1.close(); }
+  });
+});
+
+describe("ChatAgent terminal D1 settlement", () => {
+  const id = "aaaaaaaa-aaaa-4aaa-8aaa-000000000040";
+  const input: RunTurnInput = { projectId, chatId, turnId: id, question: "Preserve this completed answer.", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" };
+  async function seeded(state: TurnView["state"] = "completed", active: string | null = id) {
+    const h = makeHarness();
+    await h.agent.onStart();
+    const turn: TurnView = { turnId: id, question: input.question, model: "gateway:command-code/native-beam", answer: "Saved answer [S1:1].", state,
+      scopeMode: "explicit", sourceIds: ["s1"], revisionIds: ["r1"], contextMode: "whole", citations: [{ revisionId: "r1", sourceId: "s1", block: 1, start: 0, end: 8, sourceTitle: "Paper", deleted: false, label: "[S1:1]" }],
+      invalidLabels: 0, inputTokens: null, cachedTokens: null, outputTokens: 5, tokenLimit: TOKEN_BOUND, firstTokenMs: 12, totalMs: 45, error: null, settlementPending: true };
+    h.db.prepare("INSERT INTO turns VALUES(?,?,100)").run(id, JSON.stringify(turn));
+    h.d1.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,input_tokens,cached_tokens,output_tokens,token_limit,citations,invalid_labels,first_token_ms,total_ms,error,created_at,estimated_cost_microusd)
+      VALUES(?,?,?,?,?,?,'started',NULL,NULL,NULL,?,0,0,NULL,NULL,NULL,100,12345)`).run(chatId, id, turn.model, turn.scopeMode, JSON.stringify(turn.revisionIds), turn.contextMode ?? "none", TOKEN_BOUND);
+    h.agent.setState({ active, queued: null, stopRequested: false });
+    return { ...h, turn };
+  }
+  function noDispatch() {
+    expect(requireAvailableModel).not.toHaveBeenCalled(); expect(admitTurn).not.toHaveBeenCalled();
+    expect(buildContext).not.toHaveBeenCalled(); expect(fetchCalls).toBe(0);
+  }
+  function terminalFault(h: ReturnType<typeof makeHarness>) {
+    h.d1.exec("CREATE TRIGGER fail_settlement BEFORE UPDATE ON chat_turn WHEN NEW.state<>'started' BEGIN SELECT RAISE(ABORT,'fixture D1 terminal write failure'); END");
+  }
+  function replay(h: ReturnType<typeof makeHarness>, state: WireAgentState) {
+    const agent = new ChatAgent({ database: h.db } as unknown as ConstructorParameters<typeof ChatAgent>[0], h.env);
+    agent.setState(structuredClone(state));
+    return agent;
+  }
+  it("preserves a pending completed A and queued B in the same object, then settles without dispatching either again", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart(); terminalFault(h);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const ai = h.env.AI as unknown as { fetch: (url: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
+      const fetch = ai.fetch.bind(ai);
+      vi.spyOn(ai, "fetch").mockImplementationOnce(async (...args) => { await gate; return fetch(...args); });
+      nextSSE = sse([chunk({ content: "Saved answer [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 5, total_tokens: 13 })]);
+      await h.agent.submitTurn(input, false);
+      const task = (h.agent as unknown as { current: Promise<TurnView> }).current;
+      const bInput = { ...input, turnId: "bbbbbbbb-bbbb-4bbb-8bbb-000000000041", question: "Never dispatch queued B." };
+      expect(await h.agent.submitTurn(bInput, false)).toMatchObject({ queued: true });
+      release(); const a = await task;
+      expect(a).toMatchObject({ state: "completed", settlementPending: true, settlementError: expect.stringContaining("usage could not be confirmed"), inputTokens: 8, outputTokens: 5 });
+      expect(h.agent.state).toEqual({ active: id, queued: null, stopRequested: false });
+      expect(h.d1.prepare("SELECT state FROM chat_turn WHERE turn_id=?").get(id)).toEqual({ state: "started" });
+      expect(h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(bInput.turnId)).toBeUndefined();
+      const b = JSON.parse((h.db.prepare("SELECT payload FROM turns WHERE id=?").get(bInput.turnId) as { payload: string }).payload) as TurnView;
+      expect(b).toMatchObject({ state: "failed", inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0 });
+      expect(b.settlementPending).toBeUndefined();
+      expect(fetchCalls).toBe(1); vi.clearAllMocks(); fetchCalls = 0;
+      await h.agent.getSnapshot(projectId); noDispatch();
+      h.d1.exec("DROP TRIGGER fail_settlement");
+      const snapshot = await h.agent.getSnapshot(projectId);
+      expect(snapshot.turns.find((turn) => turn.turnId === id)).toMatchObject({ state: "completed", inputTokens: 8, outputTokens: 5, answer: a.answer });
+      expect(snapshot.turns.find((turn) => turn.turnId === id)?.settlementPending).toBeUndefined();
+      expect(h.agent.state.active).toBeNull();
+      expect(h.d1.prepare("SELECT state,input_tokens,output_tokens FROM chat_turn WHERE turn_id=?").get(id)).toEqual({ state: "completed", input_tokens: 8, output_tokens: 5 });
+      expect(await h.agent.submitTurn(bInput, true)).toEqual({ ...b, input: bInput });
+      const before = h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id);
+      await h.agent.getSnapshot(projectId); await h.agent.submitTurn(input, true);
+      expect(h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id)).toEqual(before);
+      expect(() => h.d1.prepare("UPDATE chat_turn SET state=state WHERE turn_id=?").run(id)).toThrow("terminal_chat_turn_is_immutable");
+      noDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("replays a failed startup interruption across a second restart, retaining unknown usage and known D1 scope/bound", async () => {
+    const h = await seeded("started");
+    try {
+      const behind = { ...h.turn, tokenLimit: null, revisionIds: [], contextMode: undefined, outputTokens: null, totalMs: null };
+      h.db.prepare("UPDATE turns SET payload=? WHERE id=?").run(JSON.stringify(behind), id);
+      terminalFault(h);
+      const first = replay(h, h.agent.state); await first.onStart();
+      expect(first.state.active).toBe(id);
+      const interrupted = (await first.getTurns(projectId)).find((turn) => turn.turnId === id);
+      expect(interrupted).toMatchObject({ state: "partial", answer: h.turn.answer, inputTokens: null, cachedTokens: null, outputTokens: null,
+        tokenLimit: TOKEN_BOUND, revisionIds: ["r1"], contextMode: "whole", settlementPending: true });
+      h.d1.exec("DROP TRIGGER fail_settlement");
+      const second = replay(h, first.state); await second.onStart();
+      const turn = (await second.getTurns(projectId)).find((item) => item.turnId === id);
+      expect(turn).toMatchObject({ state: "partial", inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: TOKEN_BOUND });
+      expect(turn?.settlementPending).toBeUndefined();
+      expect(h.d1.prepare("SELECT state,input_tokens,cached_tokens,output_tokens,token_limit,scope_json,estimated_cost_microusd FROM chat_turn WHERE turn_id=?").get(id))
+        .toEqual({ state: "partial", input_tokens: null, cached_tokens: null, output_tokens: null, token_limit: TOKEN_BOUND, scope_json: '["r1"]', estimated_cost_microusd: 12345 });
+      expect(second.state.active).toBeNull(); noDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it.each(["insert-before", "insert-after", "terminal-after"])("handles %s failure without a replacement execution or fabricated D1 row", async (fault) => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      if (fault === "insert-before") h.d1.exec("CREATE TRIGGER fail_insert BEFORE INSERT ON chat_turn BEGIN SELECT RAISE(ABORT,'fixture insert unavailable'); END");
+      else {
+        const prepare = h.env.DB.prepare.bind(h.env.DB);
+        let failed = false;
+        vi.spyOn(h.env.DB, "prepare").mockImplementation((sql) => {
+          const statement = prepare(sql);
+          if (failed || !(fault === "insert-after" ? sql.startsWith("INSERT INTO chat_turn") : sql.startsWith("UPDATE chat_turn SET state="))) return statement;
+          const bind = statement.bind.bind(statement);
+          statement.bind = (...args) => {
+            const bound = bind(...args), run = bound.run.bind(bound);
+            bound.run = async <T = Record<string, unknown>>() => { const result = await run<T>(); if (!failed) { failed = true; throw new Error("fixture acknowledgement lost"); } return result; };
+            return bound;
+          };
+          return statement;
+        });
+      }
+      nextSSE = sse([chunk({ content: "Saved answer [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 5, total_tokens: 13 })]);
+      const turn = requireTurn(await h.agent.submitTurn(input, true));
+      expect(turn.settlementPending).toBeUndefined();
+      expect(turn.settlementError).toBeUndefined();
+      const row = h.d1.prepare("SELECT state,input_tokens,output_tokens,token_limit FROM chat_turn WHERE turn_id=?").get(id);
+      if (fault === "insert-before") expect(row).toBeUndefined();
+      else expect(row).toMatchObject(fault === "insert-after" ? { state: "failed", input_tokens: 0, output_tokens: 0, token_limit: 0 } : { state: "completed", input_tokens: 8, output_tokens: 5, token_limit: TOKEN_BOUND });
+      expect(fetchCalls).toBe(fault === "terminal-after" ? 1 : 0);
+      if (fault !== "terminal-after") expect(admitTurn).not.toHaveBeenCalled();
+      vi.clearAllMocks(); fetchCalls = 0;
+      await h.agent.getSnapshot(projectId); await h.agent.submitTurn(input, true); noDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("finds a pending terminal result outside the latest 50 turns after active was cleared", async () => {
+    const h = await seeded("completed", null);
+    try {
+      for (let n = 0; n < 51; n++) h.db.prepare("INSERT INTO turns VALUES(?,?,?)").run("later-" + n, JSON.stringify({ ...h.turn, turnId: "later-" + n, settlementPending: undefined }), 200 + n);
+      const snapshot = await h.agent.getSnapshot(projectId);
+      expect(snapshot.turns).toHaveLength(50); expect(snapshot.turns.some((turn) => turn.turnId === id)).toBe(false);
+      expect(h.d1.prepare("SELECT state,input_tokens,cached_tokens,output_tokens,estimated_cost_microusd FROM chat_turn WHERE turn_id=?").get(id))
+        .toEqual({ state: "completed", input_tokens: null, cached_tokens: null, output_tokens: 5, estimated_cost_microusd: 12345 });
+      expect(JSON.parse((h.db.prepare("SELECT payload FROM turns WHERE id=?").get(id) as { payload: string }).payload).settlementPending).toBeUndefined();
+      noDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("clears a pre-INSERT restart without fabricating an admission row or treating a read error as absence", async () => {
+    const h = await seeded("started");
+    try {
+      h.d1.prepare("DELETE FROM chat_turn WHERE turn_id=?").run(id);
+      h.db.prepare("UPDATE turns SET payload=? WHERE id=?").run(JSON.stringify({ ...h.turn, answer: "", revisionIds: [], citations: [],
+        tokenLimit: null, inputTokens: null, cachedTokens: null, outputTokens: null, firstTokenMs: null, totalMs: null }), id);
+      const prepare = h.env.DB.prepare.bind(h.env.DB);
+      const failedRead = vi.spyOn(h.env.DB, "prepare").mockImplementation((sql) => {
+        if (sql.includes("FROM chat_turn WHERE")) throw new Error("fixture read unavailable");
+        return prepare(sql);
+      });
+      const agent = replay(h, h.agent.state); await agent.onStart();
+      expect(agent.state.active).toBe(id);
+      const pending = JSON.parse((h.db.prepare("SELECT payload FROM turns WHERE id=?").get(id) as { payload: string }).payload) as TurnView;
+      expect(pending).toMatchObject({ settlementPending: true, tokenLimit: null, inputTokens: null });
+      failedRead.mockRestore();
+      const turn = (await agent.getTurns(projectId)).find((item) => item.turnId === id);
+      expect(turn).toMatchObject({ state: "failed", tokenLimit: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0 });
+      expect(turn?.settlementPending).toBeUndefined(); expect(agent.state.active).toBeNull();
+      expect(h.d1.prepare("SELECT * FROM chat_turn").all()).toEqual([]); noDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("retains pending after a confirmed D1 commit if clearing the local marker fails", async () => {
+    const h = await seeded();
+    try {
+      h.db.exec("CREATE TRIGGER fail_marker_clear BEFORE INSERT ON turns WHEN NEW.id='" + id + "' AND json_extract(NEW.payload,'$.settlementPending') IS NULL BEGIN SELECT RAISE(ABORT,'fixture DO clear failed'); END");
+      const turn = (await h.agent.getTurns(projectId)).find((item) => item.turnId === id);
+      expect(turn?.settlementPending).toBe(true);
+      expect(h.d1.prepare("SELECT state FROM chat_turn WHERE turn_id=?").get(id)).toEqual({ state: "completed" });
+      h.db.exec("DROP TRIGGER fail_marker_clear"); executedSql.length = 0;
+      expect((await h.agent.getTurns(projectId)).find((item) => item.turnId === id)?.settlementPending).toBeUndefined();
+      expect(executedSql.filter((sql) => sql.startsWith("UPDATE chat_turn"))).toEqual([]); noDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("limits recovery to eight indexed owning turns per read without requiring an active pointer", async () => {
+    const h = await seeded("completed", null);
+    try {
+      for (let n = 1; n <= 8; n++) {
+        const next = "pending-" + n;
+        h.db.prepare("INSERT INTO turns VALUES(?,?,?)").run(next, JSON.stringify({ ...h.turn, turnId: next }), 100 + n);
+        h.d1.prepare("INSERT INTO chat_turn SELECT chat_id,?,model,scope_mode,scope_json,context_mode,state,input_tokens,cached_tokens,output_tokens,token_limit,estimated_cost_microusd,citations,invalid_labels,first_token_ms,total_ms,error,created_at FROM chat_turn WHERE turn_id=?").run(next, id);
+      }
+      expect(h.db.prepare("EXPLAIN QUERY PLAN SELECT id FROM turns WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 8").all())
+        .toContainEqual(expect.objectContaining({ detail: expect.stringContaining("turns_pending_settlement") }));
+      executedSql.length = 0; await h.agent.getTurns(projectId);
+      expect(executedSql.filter((sql) => sql.startsWith("UPDATE chat_turn"))).toHaveLength(8);
+      expect(h.db.prepare("SELECT count(*) AS n FROM turns WHERE json_extract(payload,'$.settlementPending')=1").get()).toEqual({ n: 1 });
+      await h.agent.getTurns(projectId);
+      expect(h.db.prepare("SELECT count(*) AS n FROM turns WHERE json_extract(payload,'$.settlementPending')=1").get()).toEqual({ n: 0 }); noDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it.each([
+    ["state", "partial"], ["model", "different-model"], ["scope_mode", "empty"], ["scope_json", '["other-revision"]'], ["context_mode", "claims"],
+    ["input_tokens", 0], ["cached_tokens", 0], ["output_tokens", 6], ["token_limit", 999], ["citations", 2], ["invalid_labels", 1],
+    ["first_token_ms", 13], ["total_ms", 46], ["error", "different-error"], ["matching", null],
+  ])("compares terminal D1 %s exactly without issuing another UPDATE", async (column, value) => {
+    const h = await seeded();
+    try {
+      h.d1.prepare("UPDATE chat_turn SET state='completed',citations=1,invalid_labels=0,first_token_ms=12,total_ms=45,output_tokens=5").run();
+      // Direct fixture preparation before installing the real terminal trigger again.
+      h.d1.exec("DROP TRIGGER chat_turn_terminal_immutable");
+      if (column !== "matching") h.d1.prepare('UPDATE chat_turn SET ' + column + '=? WHERE turn_id=?').run(value, id);
+      h.d1.exec("CREATE TRIGGER chat_turn_terminal_immutable BEFORE UPDATE ON chat_turn WHEN OLD.state IN ('completed','partial','failed','cancelled') BEGIN SELECT RAISE(ABORT,'terminal_chat_turn_is_immutable'); END");
+      const before = h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id);
+      executedSql.length = 0;
+      const turn = (await h.agent.getTurns(projectId)).find((item) => item.turnId === id);
+      if (column === "matching") { expect(turn?.settlementPending).toBeUndefined(); expect(turn?.settlementError).toBeUndefined(); }
+      else { expect(turn?.settlementPending).toBe(true); expect(turn?.settlementError).toContain("does not match"); }
+      expect(executedSql.filter((sql) => sql.startsWith("UPDATE chat_turn"))).toEqual([]);
+      await h.agent.getSnapshot(projectId);
+      expect(h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id)).toEqual(before); noDispatch();
+    } finally { h.db.close(); h.d1.close(); }
   });
 });
 

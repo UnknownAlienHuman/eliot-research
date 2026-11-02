@@ -534,8 +534,9 @@ The HTTP Send handler and synchronous eval share `runTurn`: persist the started 
 provider admission, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
 citation, token, timing, invalid-label and terminal-state fields. Historical currency columns remain unchanged.
 WebSocket frames and reconnect expose state snapshots and never enqueue or dispatch paid work. An authorised history
-read/reconnect may finish the idempotent local save of an already accepted, proven-undispatched self-handoff, as
-specified below; it does not admit work or change an admitted/terminal result. GET, history, reconnect and Save never start model/search work. One active turn
+read/reconnect may finish the idempotent local save of an already accepted, proven-undispatched self-handoff or settle
+an already stored answer's D1 projection, as specified below; it does not admit work or change terminal D1 accounting.
+GET, history, reconnect and Save never start model/search work. One active turn
 and one queued submission are allowed; the next returns `409/busy`. Stop stores partial text, closing a tab does not
 cancel, and failed streams are not automatically continued. Retry is a new owner submission.
 The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
@@ -641,14 +642,35 @@ The materialization bound below is implemented by the current repair slice; chat
   `writeTurn` already preserves `created_at` on conflict: retain that ordering, add no second message store. Prepend
   pages chronologically and merge by turn ID so streaming/reconnect cannot erase loaded older pages or duplicate turns.
   An old saved answer keeps its original citations. Browsable history and bounded model-history selection are separate.
-- **Terminal settlement — `chat.ts`.** A terminal DO payload currently precedes its D1 write, while startup repairs
-  only payloads still marked `started`. Keep an unfinished D1 update discoverable on the owning stored turn after
-  active execution ends. Settle from that durable payload with a bounded, idempotent storage-only path, including
-  startup/replay; adopt an existing terminal D1 result only after its stored fields match the terminal DO projection.
-  Preserve and report any terminal mismatch instead of silently declaring convergence. Update only a D1 row
-  still `started`, respecting migration `0006` rather than rewriting terminal history. Preserve known usage and nulls.
-  A failed client notification must not prevent persistence. Recovery neither dispatches inference nor starts the
-  queued question; use the interrupted-queue rule above, without an effects ledger or generic retry service.
+- **Terminal settlement — `chat.ts`.** The owning DO payload has optional `settlementPending: true` before the D1
+  INSERT attempt; an INSERT may commit without acknowledging it. A terminal result retains that marker until a D1
+  primary-binding read confirms its projection. `active` names an execution **or unfinished settlement**: release the
+  volatile task/controller when execution ends, retain the pointer while settlement is pending, and do not replace it
+  with another Send. If queued B exists, save B as never dispatched under the interrupted-queue rule before clearing
+  it. B has known zero usage and no D1 row, and never receives a settlement marker. Storage recovery never promotes B.
+  Startup and authorised history/reconnect, repeat-ID, Stop and Save reads perform storage-only recovery. One action
+  selects at most **eight** marked IDs via the partial `turns_pending_settlement` DO index, prioritising the active ID.
+  This also finds marked results outside the latest-50 history window or with a cleared pointer. An unresolved marked
+  orphan becomes the active settlement pointer. Historical **unmarked** terminal orphans whose pointer was already
+  lost are not backfilled by this slice; it does not scan all historical payloads or add a second turn store.
+  For each selected turn, read D1 once; update at most once and only with `WHERE state='started'` plus model/scope-mode
+  identity guards, then read back once, including after an update error or zero changes. An already-terminal row is
+  read and compared without issuing an UPDATE, respecting migration `0006`. Exact comparison covers model, scope
+  mode, ordered revision JSON, context mode, state, input/cached/output counts, token bound, citation/invalid-label
+  counts, first-token/total timing and error. Historical currency, pricing date and creation time remain untouched.
+  A started D1 row can be ahead of a DO checkpoint: recover its known token counts/bound and frozen scope when the DO
+  value is still unknown/uninitialised; persist those values before terminalising D1. Null remains null when neither
+  record knows usage. Scope is checkpointed in DO before its D1 write. A confirmed missing row at the pristine
+  pre-INSERT checkpoint means no admission/dispatch and known zero; no D1 receipt is invented. A read failure does
+  not prove absence. Missing rows with evidence of execution remain pending and visible.
+  On exact confirmation, clear the marker and error locally, then release the pointer. An ambiguous committed update
+  converges by read-back; a local marker-clear failure retries that confirmation without updating terminal D1. Storage
+  failure or terminal mismatch retains the marker, payload and pointer, with a safe `settlementError` in the existing
+  reader; an older hidden turn's error is also exposed by the snapshot and existing history Retry control. Mismatched
+  terminal rows are never overwritten or silently adopted. One action has no retry loop, timer, model lookup,
+  admission or inference. Notifications remain best-effort. Checked 2026-11-02 against pinned Agents `0.30.1`, Workers
+  types `5.20261024.1`, the official [D1 prepared-statement contract](https://developers.cloudflare.com/d1/worker-api/prepared-statements/)
+  and [DO SQLite contract](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/).
 
 ## 9. AI Search projection — K5 only
 
