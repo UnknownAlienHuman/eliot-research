@@ -15,6 +15,19 @@ import type { RunTurnInput, TurnView } from "./shared/api";
 
 interface ChatState { active: string | null; queued: RunTurnInput | null; stopRequested: boolean }
 interface StoredInput { projectId: string; chatId: string; hasModel: boolean; hasSourceIds: boolean }
+interface D1TurnProjection {
+  model: string; scopeMode: TurnView["scopeMode"]; scopeJson: string; contextMode: string; state: TurnView["state"];
+  inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null;
+  citations: number; invalidLabels: number; firstTokenMs: number | null; totalMs: number | null; error: string | null;
+}
+function turnProjection(turn: TurnView): D1TurnProjection {
+  return { model: turn.model, scopeMode: turn.scopeMode, scopeJson: JSON.stringify(turn.revisionIds), contextMode: turn.contextMode ?? "none",
+    state: turn.state, inputTokens: turn.inputTokens, cachedTokens: turn.cachedTokens, outputTokens: turn.outputTokens,
+    tokenLimit: turn.tokenLimit, citations: turn.citations.length, invalidLabels: turn.invalidLabels,
+    firstTokenMs: turn.firstTokenMs, totalMs: turn.totalMs, error: turn.error };
+}
+const SETTLEMENT_PENDING = "This answer is saved, but its usage could not be confirmed. Reopen this conversation to try saving usage again; the answer will not be sent again.";
+const SETTLEMENT_MISMATCH = "This answer's stored usage does not match its recorded result. Both records were preserved; no answer was sent again. The records need review.";
 function parseStoredTurn(payload: string): TurnView {
   const { input, ...turn } = JSON.parse(payload) as Omit<TurnView, "input"> & { input?: StoredInput };
   return { ...turn, tokenLimit: turn.tokenLimit ?? null, ...(input ? { input:
@@ -34,6 +47,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
   private current: Promise<TurnView> | undefined;
   async onStart() {
     void this.sql`CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL)`;
+    void this.sql`CREATE INDEX IF NOT EXISTS turns_pending_settlement ON turns(created_at,id) WHERE json_extract(payload,'$.settlementPending')=1`;
     const queued = this.state.queued;
     if (queued) {
       // A queued question has never entered model admission. Preserve its accepted
@@ -46,12 +60,17 @@ export class ChatAgent extends Agent<Env, ChatState> {
       if (turn?.state === "started") {
         turn.state = turn.answer ? "partial" : "failed";
         turn.error = "The stream was interrupted. Retry starts a new turn; it will not continue automatically.";
+        turn.settlementPending = true;
         this.writeTurn(turn);
-        await this.env.DB.prepare("UPDATE chat_turn SET state=?,error=? WHERE chat_id=? AND turn_id=? AND state='started'")
-          .bind(turn.state, turn.error, this.name, turn.turnId).run();
+      } else if (turn && !turn.input) {
+        // Covers a terminal payload written by an older worker before D1 confirmed it.
+        turn.settlementPending = true;
+        this.writeTurn(turn);
       }
     }
-    if (this.state.active || queued) this.setState({ active: null, queued: null, stopRequested: false });
+    const active = this.state.active ? this.readTurn(this.state.active) : undefined;
+    if (this.state.active || queued) this.setState({ active: active?.settlementPending ? active.turnId : null, queued: null, stopRequested: false });
+    await this.recoverFinishedTurn();
   }
   shouldConnectionBeReadonly() { return true; }
   shouldSendProtocolMessages() { return false; }
@@ -112,6 +131,103 @@ export class ChatAgent extends Agent<Env, ChatState> {
   private requireRecoveredHandoff() {
     if (!this.recoverStoppedHandoff()) throw new LibraryError("unavailable", "The queued question could not be saved yet. Reopen this conversation to try the storage operation again.", 503);
   }
+  private settlementRow(turnId: string) {
+    return this.env.DB.prepare(`SELECT model,scope_mode AS scopeMode,scope_json AS scopeJson,context_mode AS contextMode,state,
+      input_tokens AS inputTokens,cached_tokens AS cachedTokens,output_tokens AS outputTokens,token_limit AS tokenLimit,
+      citations,invalid_labels AS invalidLabels,first_token_ms AS firstTokenMs,total_ms AS totalMs,error
+      FROM chat_turn WHERE chat_id=? AND turn_id=?`).bind(this.name, turnId).first<D1TurnProjection>();
+  }
+  private async settleTurn(turn: TurnView): Promise<TurnView> {
+    if (!turn.settlementPending || turn.state === "started") return turn;
+    let failure = SETTLEMENT_PENDING;
+    try {
+      let row = await this.settlementRow(turn.turnId);
+      if (row?.state === "started") {
+        // A D1 admission/scope write may have committed before the DO checkpoint.
+        // Recover known values from that uncompleted row; never replace known usage with null.
+        turn.model ||= row.model;
+        turn.tokenLimit ??= row.tokenLimit;
+        turn.inputTokens ??= row.inputTokens; turn.cachedTokens ??= row.cachedTokens; turn.outputTokens ??= row.outputTokens;
+        if (turn.revisionIds.length === 0 && row.scopeJson !== "[]") {
+          const revisions: unknown = JSON.parse(row.scopeJson);
+          if (!Array.isArray(revisions) || !revisions.every((id) => typeof id === "string")) throw new Error("Invalid frozen scope");
+          turn.revisionIds = revisions;
+          if (!["none", "whole", "claims"].includes(row.contextMode)) throw new Error("Invalid frozen context mode");
+          turn.contextMode = row.contextMode as NonNullable<TurnView["contextMode"]>;
+        }
+        if (row.model !== turn.model || row.scopeMode !== turn.scopeMode) failure = SETTLEMENT_MISMATCH;
+        else {
+          this.writeTurn(turn, false); // Keep recovered known values durable before terminalising D1.
+          const p = turnProjection(turn);
+          try {
+            await this.env.DB.prepare(`UPDATE chat_turn SET state=?,scope_json=?,context_mode=?,input_tokens=?,cached_tokens=?,output_tokens=?,token_limit=?,
+              citations=?,invalid_labels=?,first_token_ms=?,total_ms=?,error=? WHERE chat_id=? AND turn_id=? AND state='started' AND model=? AND scope_mode=?`)
+              .bind(p.state, p.scopeJson, p.contextMode, p.inputTokens, p.cachedTokens, p.outputTokens, p.tokenLimit, p.citations,
+                p.invalidLabels, p.firstTokenMs, p.totalMs, p.error, this.name, turn.turnId, p.model, p.scopeMode).run();
+          } catch { /* The update may have committed. One read-back below decides; never repeat it here. */ }
+          row = await this.settlementRow(turn.turnId);
+        }
+      }
+      if (!row && turn.tokenLimit === null && turn.inputTokens === null && turn.cachedTokens === null && turn.outputTokens === null
+        && turn.answer === "" && turn.firstTokenMs === null && turn.revisionIds.length === 0) {
+        // The pre-INSERT checkpoint cannot have dispatched. A successful primary read
+        // confirms that no admission row exists; do not invent one just to settle it.
+        turn.tokenLimit = 0; turn.inputTokens = 0; turn.cachedTokens = 0; turn.outputTokens = 0;
+      }
+      const expected = turnProjection(turn);
+      const matches = row && Object.entries(expected).every(([key, value]) => row[key as keyof D1TurnProjection] === value);
+      const noAdmission = !row && turn.tokenLimit === 0 && turn.inputTokens === 0 && turn.cachedTokens === 0 && turn.outputTokens === 0;
+      if (matches || noAdmission) {
+        delete turn.settlementPending; delete turn.settlementError;
+        this.writeTurn(turn);
+        return turn;
+      }
+      if (row && row.state !== "started") failure = SETTLEMENT_MISMATCH;
+    } catch { /* Keep the owning result and active pointer discoverable for the next storage-only action. */ }
+    const latest = this.readTurn(turn.turnId);
+    if (!latest?.settlementPending) return latest ?? turn;
+    latest.settlementError = failure;
+    this.writeTurn(latest);
+    return latest;
+  }
+  private preserveWaitingQuestion() {
+    const queued = this.state.queued;
+    if (queued && queued.turnId !== this.state.active) {
+      this.preserveUndispatched(queued, "This queued question was not sent to the model because the previous answer could not finish saving. Send it again as a new question to retry.");
+      this.setState({ ...this.state, queued: null });
+      this.notify(JSON.stringify({ type: "queued", queued: null }));
+    }
+  }
+  private async recoverFinishedTurn() {
+    const active = this.state.active;
+    if (!this.current && active && this.state.queued?.turnId !== active) {
+      const turn = this.readTurn(active);
+      if (turn && (turn.state !== "started" || turn.settlementPending)) this.preserveWaitingQuestion();
+    }
+    // The partial index finds older pending results even after active was cleared.
+    // One action handles at most eight turns, with one conditional update/read-back each.
+    const rows = this.sql<{ id: string }>`SELECT id FROM turns WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 8`;
+    const ids = [...new Set([...(active && this.readTurn(active)?.settlementPending ? [active] : []), ...rows.map((row) => row.id)])].slice(0, 8);
+    for (const id of ids) {
+      if (this.current && this.state.active === id) continue;
+      const turn = this.readTurn(id);
+      if (!turn?.settlementPending) continue;
+      if (turn.state === "started") {
+        turn.state = turn.answer ? "partial" : "failed";
+        turn.error = "The stream was interrupted. Retry starts a new turn; it will not continue automatically.";
+        this.writeTurn(turn);
+      }
+      await this.settleTurn(turn);
+    }
+    if (active && this.state.active === active && !this.current && this.state.queued?.turnId !== active) {
+      const turn = this.readTurn(active);
+      if (turn && turn.state !== "started" && !turn.settlementPending) this.setState({ active: null, queued: null, stopRequested: false });
+    }
+    if (!this.current && !this.state.active) {
+      const pending = this.sql<{ id: string }>`SELECT id FROM turns WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 1`[0];
+      if (pending) { this.preserveWaitingQuestion(); this.setState({ active: pending.id, queued: null, stopRequested: false }); }
+    }
+  }
   private async ensureProject(projectId: string) {
     const row = await this.env.DB.prepare("SELECT project_id FROM chat WHERE id=?").bind(this.name).first<{ project_id: string }>();
     if (!row || row.project_id !== projectId) throw new LibraryError("not_found", "Chat not found in this project.", 404);
@@ -119,16 +235,21 @@ export class ChatAgent extends Agent<Env, ChatState> {
   async getTurns(projectId: string): Promise<TurnView[]> {
     await this.ensureProject(projectId);
     this.requireRecoveredHandoff();
+    await this.recoverFinishedTurn();
     return this.sql<{ payload: string }>`SELECT payload FROM turns ORDER BY created_at DESC,id DESC LIMIT 50`
       .reverse().map((row) => parseStoredTurn(row.payload));
   }
   async getSnapshot(projectId: string) {
     const turns = await this.getTurns(projectId);
     const { queued, active } = this.state;
-    return { turns, queued: queued && queued.turnId !== active ? { turnId: queued.turnId, question: queued.question } : null };
+    const older = this.sql<{ id: string; error: string | null }>`SELECT id,json_extract(payload,'$.settlementError') AS error FROM turns
+      WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 1`[0];
+    return { turns, queued: queued && queued.turnId !== active ? { turnId: queued.turnId, question: queued.question } : null,
+      settlementError: older && !turns.some((turn) => turn.turnId === older.id) ? older.error : null };
   }
   async getStoredTurn(projectId: string, turnId: string) {
     await this.ensureProject(projectId);
+    await this.recoverFinishedTurn();
     const turn = this.readTurn(turnId);
     if (!turn || !["completed", "partial"].includes(turn.state) || !turn.answer.trim()) throw new LibraryError("conflict", "This answer is not ready to save.", 409);
     const saved = persistentResolvedAnswer(turn.answer, turn.citations);
@@ -154,6 +275,10 @@ export class ChatAgent extends Agent<Env, ChatState> {
     // A failed self-handoff only finishes storage. Never dispatch it again; keep
     // its durable input if storage is still unavailable so a read can recover it.
     if (queued?.turnId === finishedTurnId) { this.recoverStoppedHandoff(); return; }
+    if (this.readTurn(finishedTurnId)?.settlementPending) {
+      try { this.preserveWaitingQuestion(); } catch { /* Keep accepted input until a later storage-only read can save it. */ }
+      return;
+    }
     if (!queued) {
       this.setState({ active: null, queued: null, stopRequested: false });
       this.notify(JSON.stringify({ type: "queued", queued: null }));
@@ -171,10 +296,13 @@ export class ChatAgent extends Agent<Env, ChatState> {
     await this.ensureProject(input.projectId);
     if (input.chatId !== this.name) throw new LibraryError("invalid", "Chat identity mismatch.", 400);
     this.requireRecoveredHandoff();
+    await this.recoverFinishedTurn();
     const prior = this.readTurn(input.turnId);
     if (prior) return wait && this.state.active === input.turnId && this.current ? this.current : prior;
     if (this.state.active === input.turnId) return wait && this.current ? this.current : { turnId: input.turnId };
     if (this.state.active) {
+      const settlementError = this.readTurn(this.state.active)?.settlementError;
+      if (!this.current && settlementError) return { busy: true, message: settlementError };
       if (wait) return { busy: true, message: "Another answer is running. Wait or stop it first." };
       if (this.state.queued) {
         if (this.state.queued.turnId !== input.turnId) return { busy: true, message: "One question is already queued." };
@@ -191,6 +319,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
   async stopTurn(projectId: string, turnId: string) {
     await this.ensureProject(projectId);
     this.requireRecoveredHandoff();
+    await this.recoverFinishedTurn();
     if (this.state.queued?.turnId === turnId && this.state.active !== turnId) { this.setState({ ...this.state, queued: null }); this.notify(JSON.stringify({ type: "queued", queued: null })); }
     if (this.state.active === turnId) { this.setState({ ...this.state, stopRequested: true }); this.controller?.abort(); }
     return { turnId };
@@ -218,7 +347,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     if (this.state.stopRequested) controller.abort();
     // First abort wins: an owner Stop that already aborted must not be overwritten by the deadline.
     const timer = setTimeout(() => { if (controller.signal.aborted) return; timedOut = true; controller.abort(); }, 90_000);
-    let dispatched = false, rowInserted = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
+    let dispatched = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
     let labelSources: LabelSource[] = [], sourceMode = "none", streamError = "";
     try {
       const settings = await this.env.DB.prepare(`SELECT COALESCE(p.answer_model,s.answer_model) AS model,p.instructions
@@ -228,9 +357,10 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const model = await requireAvailableModel(this.env, turn.model);
       selectedModel = model;
       const commandCode = model.routing?.provider.gatewaySlug === "custom-command-code";
+      turn.settlementPending = true;
+      this.writeTurn(turn, false); // An INSERT can commit even when its acknowledgement is lost.
       await this.env.DB.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at)
         VALUES(?,?,?,?,?,'none','started',?)`).bind(this.name, turn.turnId, turn.model, turn.scopeMode, "[]", started).run();
-      rowInserted = true;
       turn.tokenLimit = await admitTurn(this.env, this.name, turn.turnId, model);
       this.writeTurn(turn);
       const priorTurns = (await this.getTurns(input.projectId)).filter((item) => item.turnId !== turn.turnId
@@ -261,9 +391,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
       messages.push({ role: "user", content: input.question });
       const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages })).byteLength / 3) + messages.length * 32 + 1024;
       if (inputTokens + modelOutputLimit(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
+      this.writeTurn(turn);
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
         .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
-      this.writeTurn(turn);
       if (controller.signal.aborted) throw new Error(this.state.stopRequested && !timedOut ? "Stopped before dispatch." : "Time bound exceeded before dispatch.");
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
@@ -357,11 +487,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
     turn.totalMs = Date.now() - started;
     if (turn.totalMs > 90000 && turn.state === "completed") { turn.state = "partial"; turn.error = "The answer exceeded the time bound."; }
     this.writeTurn(turn);
-    if (rowInserted) await this.env.DB.prepare(`UPDATE chat_turn SET state=?,input_tokens=?,cached_tokens=?,output_tokens=?,token_limit=?,
-      citations=?,invalid_labels=?,first_token_ms=?,total_ms=?,error=? WHERE chat_id=? AND turn_id=?`)
-      .bind(turn.state, turn.inputTokens, turn.cachedTokens, turn.outputTokens, turn.tokenLimit, turn.citations.length, turn.invalidLabels,
-        turn.firstTokenMs, turn.totalMs, turn.error, this.name, turn.turnId).run();
+    const settled = await this.settleTurn(turn);
     await this.env.DB.prepare("UPDATE chat SET updated_at=? WHERE id=?").bind(Date.now(), this.name).run();
-    return turn;
+    return settled;
   }
 }

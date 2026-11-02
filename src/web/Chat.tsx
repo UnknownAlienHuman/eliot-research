@@ -249,13 +249,13 @@ export function ChatView({
     setTurnsError('');
     setChatReady(requestChat === undefined);
     if (requestChat !== undefined) {
-      void apiJson<{ chat: ChatRow; turns: TurnView[]; queued?: QueuedTurn | null }>(
+      void apiJson<{ chat: ChatRow; turns: TurnView[]; queued?: QueuedTurn | null; settlementError?: string | null }>(
         '/api/projects/' + encodeURIComponent(requestProject) + '/chats/' + encodeURIComponent(requestChat),
       )
         .then((data) => {
           if (!live || historySeq.current !== sequence || projectRef.current !== requestProject || chatRef.current !== requestChat) return;
           setTurns(data.turns);
-          setTurnsError('');
+          setTurnsError(data.settlementError ?? '');
           setQueued(data.queued ?? null);
           const last = data.turns[data.turns.length - 1];
           if (last !== undefined && selectionChangeSeq.current === requestSelectionSequence) {
@@ -321,10 +321,12 @@ export function ChatView({
             turns?: TurnView[];
             queued?: QueuedTurn | null;
             turn?: TurnView;
+            settlementError?: string | null;
           };
           if (message.type === 'snapshot' && Array.isArray(message.turns)) {
             setTurns(message.turns);
             setQueued(message.queued ?? null);
+            setTurnsError(message.settlementError ?? '');
           } else if (message.type === 'queued') {
             setQueued(message.queued ?? null);
           } else if (message.type === 'turn' && message.turn !== undefined) {
@@ -551,6 +553,7 @@ export function ChatView({
                   : <Markdown text={turn.answer} references={collectRefs(projectId, turn.citations)} />}
               </div>
               {turn.error ? <p className='er-chat__hint' role='status'>{turn.error}</p> : null}
+              {turn.settlementError ? <p className='er-chat__hint' role='status'>{turn.settlementError}</p> : null}
               <p className='er-chat__meta'>
                 <span>{stateLabel(turn.state)}</span>
                 <span>{scopeLabel(turn.scopeMode)}</span>

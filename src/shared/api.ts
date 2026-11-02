@@ -156,6 +156,9 @@ export interface TurnView {
   firstTokenMs: number | null;
   totalMs: number | null;
   error: string | null;
+  /** Owning DO result still awaits confirmation of its D1 accounting projection. */
+  settlementPending?: true;
+  settlementError?: string;
 }
 
 export interface RunTurnInput {
