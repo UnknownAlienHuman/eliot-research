@@ -1,4 +1,4 @@
-import { Agent } from "agents";
+import { Agent, getAgentByName } from "agents";
 import type { Connection, ConnectionContext } from "agents";
 import { streamText } from "ai";
 import type { LanguageModelUsage } from "ai";
@@ -60,7 +60,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
   }
   async onConnect(connection: Connection, context: ConnectionContext) {
     const projectId = new URL(context.request.url).searchParams.get("projectId") ?? "";
-    connection.send(JSON.stringify({ type: "snapshot", ...await this.getSnapshot(projectId) }));
+    // Storage-only recovery runs through server RPC: the SDK forbids setState in a readonly connection context.
+    const snapshot = await (await getAgentByName(this.env.CHAT, this.name)).getSnapshot(projectId);
+    connection.send(JSON.stringify({ type: "snapshot", ...snapshot }));
   }
   private readTurn(id: string): TurnView | undefined {
     const row = this.sql<{ payload: string }>`SELECT payload FROM turns WHERE id=${id}`[0];

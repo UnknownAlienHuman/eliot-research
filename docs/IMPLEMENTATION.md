@@ -627,8 +627,9 @@ The materialization bound below is implemented by the current repair slice; chat
   Persist the failed, never-dispatched turn before clearing the self-handoff. While storage remains unavailable,
   return a clear `503/unavailable` rather than hide the question or discard its input. Once recovered, reconnect and
   repeat-ID return the stored outcome and a new explicit Send can use the freed slot without restarting the object.
-  The authorised WebSocket route performs this check through server RPC before upgrading: the pinned Agents SDK
-  forbids `setState` inside its readonly connection context. Connections remain readonly; no client mutation is enabled.
+  The authorised WebSocket connection obtains its snapshot through server RPC: the pinned Agents SDK forbids
+  `setState` inside its readonly connection context. This also covers a handoff failing while the connection opens.
+  Connections remain readonly; no client mutation is enabled.
   A retained self-handoff with only an empty, unadmitted `started` row is also recovered as known zero, retaining
   its creation time and original queued input. Terminal or already-admitted rows are never rewritten by this repair.
   Client notifications are best-effort so a disconnected reader cannot interrupt persistence or queue handoff;

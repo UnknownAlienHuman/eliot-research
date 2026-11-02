@@ -13,6 +13,7 @@ interface WireSentMessage { role: string; content?: unknown; reasoning_content?:
 interface WireSentBody { messages?: WireSentMessage[]; model?: unknown; [key: string]: unknown }
 
 vi.mock("agents", () => ({
+  getAgentByName: vi.fn(),
   Agent: class {
     readonly name = "wire-chat";
     state: WireAgentState = { active: null, queued: null, stopRequested: false };
@@ -95,6 +96,7 @@ vi.mock("./context", async () => ({
 }));
 
 import { ChatAgent } from "./chat";
+import { getAgentByName } from "agents";
 import { buildContext } from "./context";
 import { admitTurn } from "./cost";
 import { assertProviderAllowance } from "./model-quota";
@@ -265,6 +267,7 @@ describe("ChatAgent interrupted queue recovery", () => {
       await replay.onStart();
       expect(h.db.prepare("SELECT payload,created_at FROM turns WHERE id=?").get(queuedId)).toEqual(rowBefore);
       const send = vi.fn();
+      vi.mocked(getAgentByName).mockResolvedValue(replay as never);
       await replay.onConnect({ send } as unknown as Parameters<ChatAgent["onConnect"]>[0],
         { request: new Request("http://localhost/?projectId=" + projectId) } as Parameters<ChatAgent["onConnect"]>[1]);
       expect(JSON.parse(send.mock.calls[0]?.[0] as string).turns).toContainEqual(b);
@@ -447,6 +450,7 @@ describe("ChatAgent interrupted queue recovery", () => {
       if (fault === "write") h.db.exec("DROP TRIGGER fail_live_handoff");
       broken = false;
       const send = vi.fn();
+      vi.mocked(getAgentByName).mockResolvedValue(agent as never);
       await agent.onConnect({ send } as unknown as Parameters<ChatAgent["onConnect"]>[0],
         { request: new Request("http://localhost/?projectId=" + projectId) } as Parameters<ChatAgent["onConnect"]>[1]);
       const snapshot = await agent.getSnapshot(projectId);
