@@ -26,14 +26,17 @@ WebSocket, MCP, Durable Object and Workflow classes. HTTP, chat, MCP and Workflo
 |---|---|
 | `src/index.ts` | routes, errors, DO/Workflow exports |
 | `src/auth.ts` | Access JWT and actors |
-| `src/cost.ts`, `src/models.ts` | usage, model bounds and provider admission |
+| `src/cost.ts`, `src/models.ts`, `src/model-{catalog,quota,transport}.ts`, `src/native-model-catalog.ts` | usage, catalogues, model bounds and provider admission/transport |
 | `src/library.ts`, `src/ingest.ts`, `src/read.ts`, `src/blocks.ts` | Library and exact reading |
 | `src/ocr.ts`, `src/workflows/ocr.ts` | explicit PDF OCR, saved preview and storage-only Apply |
 | `src/context.ts`, `src/citations.ts`, `src/chat.ts` | cited answers |
-| `src/workflows/*.ts` | ingest, explicit OCR, distill, project map, research |
-| `src/tools/`, `src/mcp.ts`, `src/search.ts` | shared tools, MCP, optional AI Search |
+| `src/workflows/ingest.ts`, `src/workflows/ocr.ts`, `src/workflows/distill.ts` | implemented ingest, explicit OCR and distillation workflows |
+| `src/tools.ts`, `src/mcp.ts`, `src/proposals.ts` | shared tools, MCP and owner-reviewed proposals |
 | `src/shared/`, `src/web/` | shared payloads and owner UI |
 | `migrations/`, `scripts/eval/` | contour schema and real acceptance |
+
+This table names current owners. AI Search (`src/search.ts`, K5), project-knowledge and research workflows (K6/K7)
+are planned only; their files and bindings are not part of the current replacement. Add them only at their MAP gate.
 
 Bindings arrive only with their contour: K0 `ASSETS`; K1 `DB`, `BUCKET`, `AI`, `INGEST`, plus `OCR` for explicit PDF jobs; K2 `CHAT`; K3 `DISTILL`
 and reconciliation-only cron; K5 direct `SEARCH`; K6 `PROJECT_KNOWLEDGE`; K7 `RESEARCH` and optional `BROWSER`. Generate `Env` with
@@ -336,6 +339,13 @@ follow-up view GET by invalidating the active `sources` query for that project i
 query pages retain loaded pagination; queued/running work is polled to its terminal state without a document reload
 or selection reset. These reads never dispatch understanding.
 
+**Proposed metadata repair — open.** `verifyAndStore` currently checks authors/publication with source-wide
+`text.includes`, which verifies occurrence but not field attribution. Stop promoting these guesses into `source`
+metadata. Populate a field only from explicit source bibliographic metadata with an identifiable field boundary;
+until that input exists, leave new authors empty and publication null. Do not add a generic name/date parser or a
+paid metadata pass. A name/date occurring only in a reference or body sentence must not qualify. Historical stored
+values are not silently rewritten by GET or cached-output reuse; any correction needs its own explicit stored-data change.
+
 `DistillWorkflow` uses two bounded calls:
 
 1. labelled canonical text → metadata, draft guide, 3–5 questions and candidate claims;
@@ -538,6 +548,32 @@ network event. Keep recorded token bounds, actual token counts and any historica
 distinct; missing usage remains unknown. Private turn telemetry exposes only the allowlisted `inputTokens`, `outputTokens`, `totalTokens`,
 `cachedTokens` and `reasoningTokens`, each null when missing or invalid. Eval may reuse only completed turns
 with exact frozen source/revision sets; a non-reusable question stays manual and resume never dispatches a replacement.
+
+### Proposed context and chat repairs — open
+
+These changes are not implemented at `98ebdc21`; [MAP's repair order](MAP.md#active-repair-order) owns their status.
+
+- **Materialization bound — `context.ts`.** Decide eligible whole/compact representations from metadata before
+  loading their bodies. Introduce one cumulative byte ceiling for this assembly, separate from the model token cap;
+  include block maps and projected-text allocations, and leave room for the rest of the Worker. `readable_size` is
+  preflight metadata, not an exact token count or a lower bound on projected text, which omits some markers. Reject
+  an obviously oversized noncompressible selection before reading its text bodies. Enforce the ceiling on actual
+  R2 bytes with bounded reads before `arrayBuffer`/concatenation; unknown or mismatched sizes cannot bypass it. Abort
+  before fetching the remaining bodies when exhausted. Preserve frozen scope/order; return the existing narrow-scope
+  or understanding-needed error without dispatching inference or automatically distilling. The implementation PR
+  records the chosen byte ceiling and peak-memory evidence; an unbounded metadata/claim list is not a substitute.
+- **Interrupted queue — `chat.ts`.** Before clearing persisted `queued`, store its unchanged turn ID/question/input
+  in the existing DO turn history as `failed` with an explicit never-dispatched message and zero token usage/bound.
+  Do not resolve a new model or invent frozen revision IDs for a question that never started. Persist this recovery
+  before clearing the queue; repeat recovery must preserve an already recorded turn. Retain the active turn's partial
+  text and unknown usage as today. GET, onStart and reconnect never start either model call. Repeating the queued ID
+  returns the stored result; retry through a new Send has a new ID. Update the existing reader to make this outcome visible.
+- **Older turns — `chat.ts`, `index.ts`, `shared/api.ts`, `web/Chat.tsx`.** Add a bounded GET on the existing
+  `/api/projects/:id/chats/:chatId/turns` resource with a validated older-than `(created_at,id)` cursor and next cursor.
+  Keep project validation and the initial latest-50 snapshot; return older pages through the same turn projection.
+  `writeTurn` already preserves `created_at` on conflict: retain that ordering, add no second message store. Prepend
+  pages chronologically and merge by turn ID so streaming/reconnect cannot erase loaded older pages or duplicate turns.
+  An old saved answer keeps its original citations. Browsable history and bounded model-history selection are separate.
 
 ## 9. AI Search projection — K5 only
 
@@ -814,6 +850,15 @@ without sending an explicit override. Settings keeps human provider names and kn
 with provider addresses and Gateway routing in connection dialogs. Both owner billing and data-use choices remain.
 Unknown metadata stays visible, and model-job admission remains separate
 from selection.
+
+**Proposed decomposition — open.** Start with `ChatView`: separate the chat-history list/older-message reader and the
+active conversation's socket lifecycle from presentational composer/actions. Each route, connection and source selection
+keeps one state owner; preserve stale-response cancellation, queued status and current Material layout. Use existing
+React/QueryClient facilities where they remove current duplication. In `ChatAgent.runTurn`, keep admission → frozen
+context → dispatch → settlement visible in one orchestrator; extract only deterministic citation/completion and usage
+projection helpers, keeping stop/deadline ordering intact. Then review `SourcesPane`, `OcrDialog` and `ModelSettings`
+for similarly independent responsibilities when touching them. Function length locates review targets; it is not a
+quota or justification for a hook hierarchy, generic lifecycle framework, new provider layer or mass file splitting.
 
 ## 14. Lifecycle and export
 

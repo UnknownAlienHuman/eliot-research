@@ -28,6 +28,20 @@ does not close them.
 PDFs are downloaded from `sources.json`; do not commit them. Cache downloads under `eval/cache/` (git-ignored) by
 SHA-256 so repeated runs do not redownload unchanged material.
 
+### Comparison evidence
+
+`arxiv-10/baseline.md` is a tracked summary, not the full NotebookLM answer export. The full 2026-10-26 export was
+retained in ignored `eval/out/notebooklm-20261026/answers.md` and is absent from a clean checkout. K2 reads that path
+or `ELIOT_K2_NOTEBOOKLM_ANSWERS`; if missing, it uses recorded summaries and placeholders for missing question text.
+This fallback keeps automated fact/citation checks runnable but is not a complete answer-by-answer comparison.
+
+Open repair: recover the exact retained export, preserve it in a durable owner-accessible location, and record that
+location and access instructions in the existing baseline file. A second checkout must be able to obtain it and set
+`ELIOT_K2_NOTEBOOKLM_ANSWERS`. Keep private notebook data outside public Git unless publication is explicitly intended.
+If the original is unavailable, mark full comparison evidence missing; do not reconstruct answers from summaries or
+silently substitute a new run under the old date. Report full-export versus summary-only evidence per question, so a
+partly loaded export cannot be described as complete. Owner review remains open until its required answers are available.
+
 ## Runtime
 
 The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `pnpm eval`. Implemented scripts are

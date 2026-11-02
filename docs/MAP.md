@@ -41,6 +41,27 @@ quotas.
 - Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
 - PR #417 is the authoritative replacement-documentation history and supersedes the stacked plan in PR #416.
 
+### Active repair order
+
+Rechecked at `98ebdc21` on 2026-11-02. The rows below are **open proposals**, not delivered fixes. Implement one usable
+slice at a time in this order; update its owning contract and this row when evidence closes it. Code changes come first;
+the closure cases below describe later acceptance, not permission to start paid runs or a new test framework.
+
+| Order | Problem and implementation owner | Closure |
+|---|---|---|
+| 1 · K2 | `context.ts` loads an oversized undistilled scope before rejecting it. Add bounded materialization in [IMPLEMENTATION §8](IMPLEMENTATION.md#8-ask-and-context). | Oversized scopes stop before unbounded R2 reads/allocation; fitting mixed scopes retain every frozen source and exact citation; zero inference on rejection. |
+| 2 · K2 | `chat.ts:onStart` clears an accepted queued question. Preserve it as visibly undispatched; never launch it from recovery. | After restart, active A is interrupted and queued B remains readable with zero usage; reopening and repeating B's ID cause no model call. A new Send is explicit. |
+| 3 · K2 | `getTurns` exposes only the latest 50 turns. Add older-turn pagination through the existing API and `web/Chat.tsx`. | More than 50 turns remain reachable without gaps/duplicates through reconnect; an older answer can be opened and saved. Model context stays separately bounded. |
+| 4 · K3 | `workflows/distill.ts:verifyAndStore` accepts author/date attribution from a substring anywhere in the source. Apply the metadata repair in [§6](IMPLEMENTATION.md#6-one-time-distillation). | A bibliography/body mention cannot become source authorship/date; unavailable metadata stays empty/null, without another model call. |
+| 5 · K2/K3 | Complete comparison evidence is local-only. Recover the retained NotebookLM export and document its durable location/access in the existing [baseline](../eval/arxiv-10/baseline.md). | A second checkout can obtain the exact retained answers via the documented path; absent or summary-only answers remain explicitly incomplete for full comparison. |
+| 6 · K2/K3 | `ChatView` combines unrelated UI lifecycles; `runTurn` mixes orchestration and deterministic settlement. Follow the limited decomposition in [§13](IMPLEMENTATION.md#13-owner-interface). | Route changes, source selection, queue, Stop/reconnect/Save and model admission retain their behavior; the PR accounts for added and removed code. |
+| 7 · K2/K3 | Citation identity and numeric occurrence still do not establish source meaning or fact coverage. Finish the quality repairs below against unchanged questions and anchors. | K2 facts/citations/latency and owner comparison; K3 all-source reuse/anchors, semantic support for claims/guide/digest/glossary and real claim-mode C1–C4 pass their existing gates. Targeted runs cannot establish full acceptance. |
+| 8 · K0/K4 | Deployed Access remains unverified. After an authorized deployment, check the existing owner/agent boundary and WebSocket path. | Owner browser/token work; invalid or wrong-audience JWTs fail; agents read/propose but cannot accept or invoke owner-only paid work. Local JWKS evidence alone cannot close this row. |
+
+Automatic `fast-ci` covers lint/types/build and local native/MCP journeys. Its K2/K3 native modes do not close semantic,
+full-corpus or deployed-Access gates. Legacy deletion remains K10, after accepted import; retained donor code is not
+part of the active replacement runtime.
+
 ## Contour overview
 
 | # | Owner capability | Depends on | Primary paid effect | Budget |
@@ -57,7 +78,10 @@ quotas.
 | K9 | Lifecycle and export | K6 | none in ordinary use | 600 |
 | K10 | Legacy import/retirement | K9 | one-off script | script |
 
-K4 may proceed after K3. K5 is not a mandatory prerequisite for K6 when whole/claim retrieval passes the project eval.
+Dependencies are acceptance gates for further contour expansion. The existing K4 local slice landed against available
+K3 read/claim contracts before K3 acceptance; retain it as an implemented-but-unaccepted exception and fix its defects
+without treating K3 as accepted. Further K4 expansion and K6 work wait for K2/K3 acceptance. K5 is not a mandatory
+prerequisite for K6 when whole/claim retrieval passes the project eval.
 
 ---
 
@@ -233,8 +257,10 @@ comparable runs rather than making one provider fluctuation invalidate the archi
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
 K2 is not fully accepted or deployed: citation validity, latency and owner quality review remain open. The unchanged
-twelve-question NotebookLM baseline is retained at `eval/out/notebooklm-20261026/answers.md`; comparison results belong
-in the PR, and do not replace these gates. Neither K2 nor K3 is deployed.
+twelve-question benchmark uses the tracked [baseline summary](../eval/arxiv-10/baseline.md). Full NotebookLM answers
+were retained under the git-ignored `eval/out/notebooklm-20261026/answers.md`; they are absent from a fresh checkout.
+See [evidence availability](../eval/README.md#comparison-evidence) for recovery and the summary fallback. Comparison
+results belong in the PR and do not replace these gates. Neither K2 nor K3 is deployed.
 
 ## K3 — Distill
 
@@ -307,6 +333,18 @@ All four real overflow answers used `claims` mode; statement-local numeric and c
 Semantic support for guide, digest and glossary
 content remains separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference
 and does not qualify K3.
+
+**Remaining quality repairs (proposed).** Diagnose each failure against its exact source revision: incorrect canonical
+text, wrong/missing selected evidence, lost statement conditions, numeric-format rejection or unsupported prose.
+Repair defective PDF text only through the existing reviewed OCR/immutable Apply path; preserve old bytes and citations.
+For correct input, keep candidate statements atomic and complete, then review each against its own frozen evidence
+within the existing two calls. Guide/digest/glossary prose needs the same semantic scrutiny; adding a third verifier,
+paper-specific prompts or weakening anchors is not a remedy. Fix numeric-format regressions narrowly, without inferring
+units or conditions. [#430](https://github.com/UnknownAlienHuman/eliot-research/pull/430),
+[#454](https://github.com/UnknownAlienHuman/eliot-research/pull/454) and
+[#459](https://github.com/UnknownAlienHuman/eliot-research/pull/459) are unaccepted attempts at the checked commit;
+reuse only applicable changes after reading their failed observations. K6 stays frozen. Reusing stored output must not
+regrade historical failures or trigger a new paid job.
 
 ---
 
