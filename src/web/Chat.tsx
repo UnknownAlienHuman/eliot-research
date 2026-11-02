@@ -550,6 +550,7 @@ export function ChatView({
                     : <p className='er-chat__hint'>No answer available.</p>)
                   : <Markdown text={turn.answer} references={collectRefs(projectId, turn.citations)} />}
               </div>
+              {turn.error ? <p className='er-chat__hint' role='status'>{turn.error}</p> : null}
               <p className='er-chat__meta'>
                 <span>{stateLabel(turn.state)}</span>
                 <span>{scopeLabel(turn.scopeMode)}</span>

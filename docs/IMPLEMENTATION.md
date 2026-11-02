@@ -609,7 +609,22 @@ The materialization bound below is implemented by the current repair slice; chat
   Do not resolve a new model or invent frozen revision IDs for a question that never started. Persist this recovery
   before clearing the queue; repeat recovery must preserve an already recorded turn. Retain the active turn's partial
   text and unknown usage as today. GET, onStart and reconnect never start either model call. Repeating the queued ID
-  returns the stored result; retry through a new Send has a new ID. Update the existing reader to make this outcome visible.
+  returns the stored result; retry through a new Send has a new ID. The existing reader shows the saved failure reason.
+  The original request is retained in optional `TurnView.input` inside that existing DO payload. `model` keeps only
+  an explicitly requested route, or an empty string when none was chosen; no default/catalogue lookup or revision
+  freeze is performed. A never-started queued turn has no D1 admission row. Its DO usage and token bound are known zero,
+  while an interrupted active turn retains its existing known values and nulls.
+  Shared question/selection/model fields are stored once on the turn; compact input metadata retains project/chat
+  identity and optional-field presence, and reads reconstruct the exact request. This avoids doubling a long accepted
+  question within the platform's [2 MB SQLite row limit](https://developers.cloudflare.com/durable-objects/platform/limits/).
+  During ordinary handoff, retain B's input in `queued` while `active=B` until project validation and the first DO
+  payload write finish; snapshots do not present that retained input as a second waiting question. Stop preserves this
+  recovery input while aborting the active handoff. A validation failure records B as undispatched without a model call.
+  If its local write fails, retained input survives for startup rather than being automatically resubmitted.
+  A retained self-handoff with only an empty, unadmitted `started` row is also recovered as known zero, retaining
+  its creation time and original queued input. Terminal or already-admitted rows are never rewritten by this repair.
+  Client notifications are best-effort so a disconnected reader cannot interrupt persistence or queue handoff;
+  reconnect reads the stored snapshot. This does not implement terminal D1 settlement/reconciliation below.
 - **Older turns — `chat.ts`, `index.ts`, `shared/api.ts`, `web/Chat.tsx`.** Add a bounded GET on the existing
   `/api/projects/:id/chats/:chatId/turns` resource with a validated older-than `(created_at,id)` cursor and next cursor.
   Keep project validation and the initial latest-50 snapshot; return older pages through the same turn projection.

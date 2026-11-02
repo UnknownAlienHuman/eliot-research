@@ -6,7 +6,7 @@ import { buildContext } from "./context";
 import { answerWarnings, numericCitationLabels, persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn } from "./cost";
-import { DEFAULT_MODEL, modelOutputLimit, requireAvailableModel } from "./models";
+import { modelOutputLimit, requireAvailableModel } from "./models";
 import type { ModelSpec } from "./models";
 import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
 import { LibraryError } from "./library";
@@ -14,6 +14,14 @@ import { readText } from "./read";
 import type { RunTurnInput, TurnView } from "./shared/api";
 
 interface ChatState { active: string | null; queued: RunTurnInput | null; stopRequested: boolean }
+interface StoredInput { projectId: string; chatId: string; hasModel: boolean; hasSourceIds: boolean }
+function parseStoredTurn(payload: string): TurnView {
+  const { input, ...turn } = JSON.parse(payload) as Omit<TurnView, "input"> & { input?: StoredInput };
+  return { ...turn, tokenLimit: turn.tokenLimit ?? null, ...(input ? { input:
+    { projectId: input.projectId, chatId: input.chatId, turnId: turn.turnId, question: turn.question, scopeMode: turn.scopeMode,
+      ...(input.hasModel ? { model: turn.model } : {}), ...(input.hasSourceIds ? { sourceIds: turn.sourceIds } : {}) }
+    } : {}) };
+}
 const PARTIAL_HISTORY_NOTICE = "An earlier assistant answer was partial. Its unfinished text and omissions are not conclusions; ground this answer in the current frozen evidence.";
 function sameTurnRequest(a: RunTurnInput, b: RunTurnInput): boolean {
   return a.projectId === b.projectId && a.chatId === b.chatId && a.turnId === b.turnId
@@ -26,6 +34,13 @@ export class ChatAgent extends Agent<Env, ChatState> {
   private current: Promise<TurnView> | undefined;
   async onStart() {
     void this.sql`CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL)`;
+    const queued = this.state.queued;
+    if (queued) {
+      // A queued question has never entered model admission. Preserve its accepted
+      // input before any await or state clear, including a promotion interrupted
+      // while runTurn was still validating the project.
+      this.preserveUndispatched(queued, "This queued question was not sent to the model because the conversation restarted. Send it again as a new question to retry.");
+    }
     if (this.state.active) {
       const turn = this.readTurn(this.state.active);
       if (turn?.state === "started") {
@@ -35,8 +50,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
         await this.env.DB.prepare("UPDATE chat_turn SET state=?,error=? WHERE chat_id=? AND turn_id=? AND state='started'")
           .bind(turn.state, turn.error, this.name, turn.turnId).run();
       }
-      this.setState({ active: null, queued: null, stopRequested: false });
     }
+    if (this.state.active || queued) this.setState({ active: null, queued: null, stopRequested: false });
   }
   shouldConnectionBeReadonly() { return true; }
   shouldSendProtocolMessages() { return false; }
@@ -50,14 +65,36 @@ export class ChatAgent extends Agent<Env, ChatState> {
   private readTurn(id: string): TurnView | undefined {
     const row = this.sql<{ payload: string }>`SELECT payload FROM turns WHERE id=${id}`[0];
     if (!row) return undefined;
-    const parsed = JSON.parse(row.payload) as TurnView & { tokenLimit?: unknown };
-    if (parsed.tokenLimit === undefined) parsed.tokenLimit = null;
-    return parsed as TurnView;
+    return parseStoredTurn(row.payload);
   }
-  private writeTurn(turn: TurnView) {
-    void this.sql`INSERT INTO turns(id,payload,created_at) VALUES(${turn.turnId},${JSON.stringify(turn)},${Date.now()})
+  private writeTurn(turn: TurnView, notify = true) {
+    // Shared request fields already live on the turn. Do not duplicate a large
+    // accepted question/source selection inside the same 2 MB SQLite row.
+    const input: StoredInput | undefined = turn.input ? { projectId: turn.input.projectId, chatId: turn.input.chatId,
+      hasModel: turn.input.model !== undefined, hasSourceIds: turn.input.sourceIds !== undefined } : undefined;
+    const payload = JSON.stringify(turn.input ? { ...turn, input } : turn);
+    void this.sql`INSERT INTO turns(id,payload,created_at) VALUES(${turn.turnId},${payload},${Date.now()})
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`;
-    this.broadcast(JSON.stringify({ type: "turn", turn }));
+    if (notify) this.notify(JSON.stringify({ type: "turn", turn }));
+  }
+  private notify(payload: string) {
+    try { this.broadcast(payload); }
+    catch { /* A disconnected reader must not interrupt persistence or queue handoff; reconnect reads the stored snapshot. */ }
+  }
+  private preserveUndispatched(input: RunTurnInput, error: string): TurnView {
+    const prior = this.readTurn(input.turnId);
+    // This retained self-handoff is cleared before admission. A first started
+    // payload may have committed just before that clear failed; it is still
+    // known undispatched. Never rewrite a terminal or already-admitted result.
+    const handoff = this.state.active === input.turnId && this.state.queued?.turnId === input.turnId
+      && prior?.state === "started" && prior.answer === "" && prior.tokenLimit == null && prior.revisionIds.length === 0;
+    if (prior && !handoff) return prior;
+    const turn: TurnView = { turnId: input.turnId, question: input.question, input,
+      answer: "", state: "failed", model: input.model ?? "", scopeMode: input.scopeMode,
+      sourceIds: input.sourceIds ?? [], revisionIds: [], contextMode: "none", citations: [], invalidLabels: 0,
+      inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0, firstTokenMs: null, totalMs: null, error };
+    this.writeTurn(turn);
+    return turn;
   }
   private async ensureProject(projectId: string) {
     const row = await this.env.DB.prepare("SELECT project_id FROM chat WHERE id=?").bind(this.name).first<{ project_id: string }>();
@@ -66,14 +103,11 @@ export class ChatAgent extends Agent<Env, ChatState> {
   async getTurns(projectId: string): Promise<TurnView[]> {
     await this.ensureProject(projectId);
     return this.sql<{ payload: string }>`SELECT payload FROM turns ORDER BY created_at DESC,id DESC LIMIT 50`
-      .reverse().map((row) => {
-        const parsed = JSON.parse(row.payload) as TurnView & { tokenLimit?: unknown };
-        if (parsed.tokenLimit === undefined) parsed.tokenLimit = null;
-        return parsed as TurnView;
-      });
+      .reverse().map((row) => parseStoredTurn(row.payload));
   }
   async getSnapshot(projectId: string) {
-    return { turns: await this.getTurns(projectId), queued: this.state.queued ? { turnId: this.state.queued.turnId, question: this.state.queued.question } : null };
+    const queued = this.state.queued;
+    return { turns: await this.getTurns(projectId), queued: queued && queued.turnId !== this.state.active ? { turnId: queued.turnId, question: queued.question } : null };
   }
   async getStoredTurn(projectId: string, turnId: string) {
     await this.ensureProject(projectId);
@@ -97,17 +131,20 @@ export class ChatAgent extends Agent<Env, ChatState> {
   private advanceQueue(finishedTurnId: string) {
     if (this.state.active !== finishedTurnId) return;
     const queued = this.state.queued;
+    // Retained input for a starting turn is recovery data, not another turn to
+    // dispatch if its storage write fails. Startup will preserve it for the owner.
+    if (queued?.turnId === finishedTurnId) return;
     this.current = undefined;
     this.controller = undefined;
     if (!queued) {
       this.setState({ active: null, queued: null, stopRequested: false });
-      this.broadcast(JSON.stringify({ type: "queued", queued: null }));
+      this.notify(JSON.stringify({ type: "queued", queued: null }));
       return;
     }
     // Claim the queued ID synchronously before runTurn performs its first await.
     // A concurrent submit therefore cannot jump ahead or replace this payload.
-    this.setState({ active: queued.turnId, queued: null, stopRequested: false });
-    this.broadcast(JSON.stringify({ type: "queued", queued: null }));
+    this.setState({ active: queued.turnId, queued, stopRequested: false });
+    this.notify(JSON.stringify({ type: "queued", queued: null }));
     const task = this.runTurn(queued);
     this.current = task;
     this.ctx.waitUntil(task.finally(() => this.advanceQueue(queued.turnId)));
@@ -126,7 +163,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
         return { turnId: input.turnId, queued: true };
       }
       this.setState({ ...this.state, queued: input });
-      this.broadcast(JSON.stringify({ type: "queued", queued: { turnId: input.turnId, question: input.question } }));
+      this.notify(JSON.stringify({ type: "queued", queued: { turnId: input.turnId, question: input.question } }));
       return { turnId: input.turnId, queued: true };
     }
     const task = this.startTurn(input);
@@ -134,18 +171,27 @@ export class ChatAgent extends Agent<Env, ChatState> {
   }
   async stopTurn(projectId: string, turnId: string) {
     await this.ensureProject(projectId);
-    if (this.state.queued?.turnId === turnId) { this.setState({ ...this.state, queued: null }); this.broadcast(JSON.stringify({ type: "queued", queued: null })); }
+    if (this.state.queued?.turnId === turnId && this.state.active !== turnId) { this.setState({ ...this.state, queued: null }); this.notify(JSON.stringify({ type: "queued", queued: null })); }
     if (this.state.active === turnId) { this.setState({ ...this.state, stopRequested: true }); this.controller?.abort(); }
     return { turnId };
   }
   async runTurn(input: RunTurnInput): Promise<TurnView> {
-    await this.ensureProject(input.projectId);
+    try { await this.ensureProject(input.projectId); }
+    catch (error) {
+      const queued = this.state.queued;
+      if (!queued || this.state.active !== input.turnId || !sameTurnRequest(queued, input)) throw error;
+      const turn = this.preserveUndispatched(queued, "This queued question was not sent to the model because its conversation could not be validated. Reopen the conversation before sending a new question.");
+      this.setState({ ...this.state, queued: null });
+      return turn;
+    }
     if (this.state.active !== input.turnId) throw new LibraryError("conflict", "Turn was not admitted by this chat.", 409);
     const started = Date.now();
-    const turn: TurnView = { turnId: input.turnId, question: input.question, answer: "", state: "started", model: input.model ?? DEFAULT_MODEL,
+    const turn: TurnView = { turnId: input.turnId, question: input.question, answer: "", state: "started", model: input.model ?? "",
       scopeMode: input.scopeMode, revisionIds: [], sourceIds: input.sourceIds ?? [], citations: [], invalidLabels: 0, inputTokens: null, cachedTokens: null, outputTokens: null,
       tokenLimit: null, firstTokenMs: null, totalMs: null, error: null };
-    this.writeTurn(turn);
+    this.writeTurn(turn, false);
+    if (this.state.queued?.turnId === input.turnId) this.setState({ ...this.state, queued: null });
+    this.notify(JSON.stringify({ type: "turn", turn }));
     const controller = new AbortController();
     this.controller = controller;
     let timedOut = false;
