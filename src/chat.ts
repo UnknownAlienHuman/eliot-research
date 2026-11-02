@@ -96,18 +96,34 @@ export class ChatAgent extends Agent<Env, ChatState> {
     this.writeTurn(turn);
     return turn;
   }
+  private recoverStoppedHandoff(): boolean {
+    const queued = this.state.queued;
+    if (this.current || !queued || this.state.active !== queued.turnId) return true;
+    try {
+      const turn = this.preserveUndispatched(queued, "This queued question was not sent to the model because it could not be saved before starting. Send it again as a new question to retry.");
+      if (turn.state === "started") return false; // Never regrade already-admitted work.
+      this.setState({ active: null, queued: null, stopRequested: false });
+      this.notify(JSON.stringify({ type: "queued", queued: null }));
+      return true;
+    } catch { return false; } // Retain input for one storage-only attempt on the next authorised read/submit.
+  }
+  private requireRecoveredHandoff() {
+    if (!this.recoverStoppedHandoff()) throw new LibraryError("unavailable", "The queued question could not be saved yet. Reopen this conversation to try the storage operation again.", 503);
+  }
   private async ensureProject(projectId: string) {
     const row = await this.env.DB.prepare("SELECT project_id FROM chat WHERE id=?").bind(this.name).first<{ project_id: string }>();
     if (!row || row.project_id !== projectId) throw new LibraryError("not_found", "Chat not found in this project.", 404);
   }
   async getTurns(projectId: string): Promise<TurnView[]> {
     await this.ensureProject(projectId);
+    this.requireRecoveredHandoff();
     return this.sql<{ payload: string }>`SELECT payload FROM turns ORDER BY created_at DESC,id DESC LIMIT 50`
       .reverse().map((row) => parseStoredTurn(row.payload));
   }
   async getSnapshot(projectId: string) {
-    const queued = this.state.queued;
-    return { turns: await this.getTurns(projectId), queued: queued && queued.turnId !== this.state.active ? { turnId: queued.turnId, question: queued.question } : null };
+    const turns = await this.getTurns(projectId);
+    const { queued, active } = this.state;
+    return { turns, queued: queued && queued.turnId !== active ? { turnId: queued.turnId, question: queued.question } : null };
   }
   async getStoredTurn(projectId: string, turnId: string) {
     await this.ensureProject(projectId);
@@ -131,11 +147,11 @@ export class ChatAgent extends Agent<Env, ChatState> {
   private advanceQueue(finishedTurnId: string) {
     if (this.state.active !== finishedTurnId) return;
     const queued = this.state.queued;
-    // Retained input for a starting turn is recovery data, not another turn to
-    // dispatch if its storage write fails. Startup will preserve it for the owner.
-    if (queued?.turnId === finishedTurnId) return;
     this.current = undefined;
     this.controller = undefined;
+    // A failed self-handoff only finishes storage. Never dispatch it again; keep
+    // its durable input if storage is still unavailable so a read can recover it.
+    if (queued?.turnId === finishedTurnId) { this.recoverStoppedHandoff(); return; }
     if (!queued) {
       this.setState({ active: null, queued: null, stopRequested: false });
       this.notify(JSON.stringify({ type: "queued", queued: null }));
@@ -152,6 +168,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
   async submitTurn(input: RunTurnInput, wait = false): Promise<TurnView | { turnId: string; queued?: boolean } | { busy: true; message: string }> {
     await this.ensureProject(input.projectId);
     if (input.chatId !== this.name) throw new LibraryError("invalid", "Chat identity mismatch.", 400);
+    this.requireRecoveredHandoff();
     const prior = this.readTurn(input.turnId);
     if (prior) return wait && this.state.active === input.turnId && this.current ? this.current : prior;
     if (this.state.active === input.turnId) return wait && this.current ? this.current : { turnId: input.turnId };
@@ -171,6 +188,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
   }
   async stopTurn(projectId: string, turnId: string) {
     await this.ensureProject(projectId);
+    this.requireRecoveredHandoff();
     if (this.state.queued?.turnId === turnId && this.state.active !== turnId) { this.setState({ ...this.state, queued: null }); this.notify(JSON.stringify({ type: "queued", queued: null })); }
     if (this.state.active === turnId) { this.setState({ ...this.state, stopRequested: true }); this.controller?.abort(); }
     return { turnId };

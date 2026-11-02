@@ -151,6 +151,8 @@ app.post("/api/projects/:id/chats/:chatId/turns/:turnId/stop", async (c) => {
 });
 app.get("/agents/chat-agent/:chatId", async (c) => {
   const chatId = uuid.parse(c.req.param("chatId")), projectId = uuid.parse(c.req.query("projectId")); await chatRecord(c.env, projectId, chatId);
+  // Finish any undispatched handoff through server RPC before the SDK enters its readonly connection context.
+  await (await getAgentByName(c.env.CHAT, chatId)).getTurns(projectId);
   return await routeAgentRequest(c.req.raw, { ChatAgent: c.env.CHAT }) ?? c.json({ error: { code: "not_found", message: "Chat connection not found." } } satisfies ApiError, 404);
 });
 app.post("/api/projects/:id/pages/from-turn", async (c) => {

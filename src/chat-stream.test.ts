@@ -378,26 +378,18 @@ describe("ChatAgent interrupted queue recovery", () => {
       expectNoDispatch();
     } finally { h.db.close(); h.d1.close(); }
   });
-  it("recovers a started handoff row after state clear fails, without mixing it with admitted usage", async () => {
+  it("recovers a retained first handoff payload as known zero without changing its creation time", async () => {
     const h = await recoveryHarness();
     try {
-      h.agent.setState(h.state);
-      const setState = h.agent.setState.bind(h.agent);
-      vi.spyOn(h.agent, "setState").mockImplementation((state) => {
-        if (state.active === queuedId && state.queued === null) throw new Error("fixture state-clear failure");
-        setState(state);
-      });
-      (h.agent as unknown as { advanceQueue(id: string): void }).advanceQueue(activeId);
-      await expect((h.agent as unknown as { current: Promise<TurnView> }).current).rejects.toThrow("state-clear failure");
-      const before = h.db.prepare("SELECT payload,created_at FROM turns WHERE id=?").get(queuedId) as { payload: string; created_at: number };
-      expect(JSON.parse(before.payload)).toMatchObject({ state: "started", tokenLimit: null, revisionIds: [] });
-      expect(h.agent.state).toMatchObject({ active: queuedId, queued: queuedInput() });
-      const replay = restart(h, h.agent.state);
+      const initial = { ...h.active, turnId: queuedId, question: queuedInput().question, answer: "", model: "",
+        sourceIds: queuedInput().sourceIds, revisionIds: [], citations: [], tokenLimit: null, firstTokenMs: null };
+      h.db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,200)").run(queuedId, JSON.stringify(initial));
+      const replay = restart(h, { active: queuedId, queued: queuedInput(), stopRequested: false });
       await replay.onStart();
       const b = (await replay.getTurns(projectId)).find((turn) => turn.turnId === queuedId);
       expect(b).toMatchObject({ state: "failed", input: queuedInput(), inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0,
         error: expect.stringContaining("not sent to the model") });
-      expect(h.db.prepare("SELECT created_at FROM turns WHERE id=?").get(queuedId)).toEqual({ created_at: before.created_at });
+      expect(h.db.prepare("SELECT created_at FROM turns WHERE id=?").get(queuedId)).toEqual({ created_at: 200 });
       expectNoDispatch();
     } finally { h.db.close(); h.d1.close(); }
   });
@@ -413,6 +405,90 @@ describe("ChatAgent interrupted queue recovery", () => {
       expect((await agent.getTurns(projectId)).find((turn) => turn.turnId === queuedId)?.input).toEqual(input);
       expectNoDispatch();
     } finally { h.db.close(); h.d1.close(); }
+  });
+  it.each([
+    { fault: "write", persistent: false }, { fault: "state-clear", persistent: false },
+    { fault: "write", persistent: true }, { fault: "state-clear", persistent: true },
+  ])("recovers a live handoff after $fault failure (persistent=$persistent) without creating another Agent", async ({ fault, persistent }) => {
+    const h = await recoveryHarness();
+    try {
+      const agent = h.agent;
+      agent.setState(h.state);
+      let broken = true, failedWrites = 0;
+      if (fault === "write") {
+        h.db.function("fail_queued_handoff", () => {
+          if (persistent || failedWrites === 0) { failedWrites++; throw new Error("fixture transient write failure"); }
+          return 0;
+        });
+        h.db.exec("CREATE TRIGGER fail_live_handoff BEFORE INSERT ON turns WHEN NEW.id='" + queuedId + "' BEGIN SELECT fail_queued_handoff(); END;");
+      } else {
+        const setState = agent.setState.bind(agent);
+        vi.spyOn(agent, "setState").mockImplementation((state) => {
+          if (broken && (persistent || failedWrites === 0) && state.queued === null && agent.state.queued?.turnId === queuedId) {
+            failedWrites++; throw new Error("fixture transient state-clear failure");
+          }
+          setState(state);
+        });
+      }
+      (agent as unknown as { advanceQueue(id: string): void }).advanceQueue(activeId);
+      const task = (agent as unknown as { current: Promise<TurnView> }).current;
+      await expect(task).rejects.toThrow();
+      expect((agent as unknown as { current?: Promise<TurnView>; controller?: AbortController }).current).toBeUndefined();
+      expect((agent as unknown as { controller?: AbortController }).controller).toBeUndefined();
+      if (persistent) {
+        await expect(agent.getSnapshot(projectId)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+        expect(failedWrites).toBe(3); // Initial operation, completion, then one explicit read; no loop.
+        expect(agent.state).toMatchObject({ active: queuedId, queued: queuedInput() });
+      } else {
+        expect(failedWrites).toBe(1);
+        expect(agent.state).toEqual({ active: null, queued: null, stopRequested: false });
+      }
+      expectNoDispatch();
+      if (fault === "write") h.db.exec("DROP TRIGGER fail_live_handoff");
+      broken = false;
+      const send = vi.fn();
+      await agent.onConnect({ send } as unknown as Parameters<ChatAgent["onConnect"]>[0],
+        { request: new Request("http://localhost/?projectId=" + projectId) } as Parameters<ChatAgent["onConnect"]>[1]);
+      const snapshot = await agent.getSnapshot(projectId);
+      const b = snapshot.turns.find((turn) => turn.turnId === queuedId);
+      expect(b).toMatchObject({ state: "failed", input: queuedInput(), inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0 });
+      expect(JSON.parse(send.mock.calls[0]?.[0] as string).turns).toContainEqual(b);
+      expect(snapshot.queued).toBeNull();
+      expect(agent.state).toEqual({ active: null, queued: null, stopRequested: false });
+      const stored = h.db.prepare("SELECT payload,created_at FROM turns WHERE id=?").get(queuedId);
+      expect(await agent.submitTurn(queuedInput(), true)).toEqual(b);
+      expect(await agent.submitTurn(queuedInput(), false)).toEqual(b);
+      expect(h.db.prepare("SELECT payload,created_at FROM turns WHERE id=?").get(queuedId)).toEqual(stored);
+      expectNoDispatch();
+      nextSSE = sse([chunk({ content: "New explicit answer [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 5, total_tokens: 13 })]);
+      const c = requireTurn(await agent.submitTurn({ ...queuedInput(), turnId: "cccccccc-cccc-4ccc-8ccc-000000000003",
+        question: "New explicit question.", model: "gateway:command-code/native-beam" }, true));
+      expect(c.state).toBe("completed");
+      expect(fetchCalls).toBe(1); // Only C's explicit Send reaches the synthetic transport.
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("does not resurrect queued B in a snapshot whose history read was delayed until B finished", async () => {
+    const h = await recoveryHarness();
+    let releaseRead: (() => void) | undefined;
+    try {
+      const agent = h.agent;
+      agent.setState(h.state);
+      const getTurns = agent.getTurns.bind(agent);
+      vi.spyOn(agent, "getTurns").mockImplementationOnce(async (id) => {
+        await new Promise<void>((resolve) => { releaseRead = resolve; });
+        return getTurns(id);
+      });
+      const pendingSnapshot = agent.getSnapshot(projectId);
+      nextSSE = sse([chunk({ content: "B finished [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 })]);
+      (agent as unknown as { advanceQueue(id: string): void }).advanceQueue(activeId);
+      await (agent as unknown as { current: Promise<TurnView> }).current;
+      expect(agent.state).toEqual({ active: null, queued: null, stopRequested: false });
+      releaseRead?.();
+      const snapshot = await pendingSnapshot;
+      expect(snapshot.turns.find((turn) => turn.turnId === queuedId)?.state).toBe("completed");
+      expect(snapshot.queued).toBeNull();
+      expect(fetchCalls).toBe(1);
+    } finally { releaseRead?.(); h.db.close(); h.d1.close(); }
   });
 });
 
