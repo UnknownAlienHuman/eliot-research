@@ -533,8 +533,9 @@ Resolve one `ModelSpec` for each turn and freeze it across admission, context li
 The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, record the token bound after
 provider admission, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
 citation, token, timing, invalid-label and terminal-state fields. Historical currency columns remain unchanged.
-WebSocket frames and reconnect expose
-read-only state snapshots; they never enqueue or dispatch paid work. GET, history, reconnect and Save never start model/search work. One active turn
+WebSocket frames and reconnect expose state snapshots and never enqueue or dispatch paid work. An authorised history
+read/reconnect may finish the idempotent local save of an already accepted, proven-undispatched self-handoff, as
+specified below; it does not admit work or change an admitted/terminal result. GET, history, reconnect and Save never start model/search work. One active turn
 and one queued submission are allowed; the next returns `409/busy`. Stop stores partial text, closing a tab does not
 cancel, and failed streams are not automatically continued. Retry is a new owner submission.
 The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
@@ -609,7 +610,31 @@ The materialization bound below is implemented by the current repair slice; chat
   Do not resolve a new model or invent frozen revision IDs for a question that never started. Persist this recovery
   before clearing the queue; repeat recovery must preserve an already recorded turn. Retain the active turn's partial
   text and unknown usage as today. GET, onStart and reconnect never start either model call. Repeating the queued ID
-  returns the stored result; retry through a new Send has a new ID. Update the existing reader to make this outcome visible.
+  returns the stored result; retry through a new Send has a new ID. The existing reader shows the saved failure reason.
+  The original request is retained in optional `TurnView.input` inside that existing DO payload. `model` keeps only
+  an explicitly requested route, or an empty string when none was chosen; no default/catalogue lookup or revision
+  freeze is performed. A never-started queued turn has no D1 admission row. Its DO usage and token bound are known zero,
+  while an interrupted active turn retains its existing known values and nulls.
+  Shared question/selection/model fields are stored once on the turn; compact input metadata retains project/chat
+  identity and optional-field presence, and reads reconstruct the exact request. This avoids doubling a long accepted
+  question within the platform's [2 MB SQLite row limit](https://developers.cloudflare.com/durable-objects/platform/limits/).
+  During ordinary handoff, retain B's input in `queued` while `active=B` until project validation and the first DO
+  payload write finish; snapshots do not present that retained input as a second waiting question. Stop preserves this
+  recovery input while aborting the active handoff. A validation failure records B as undispatched without a model call.
+  If its local write or queue-state clear fails, release the settled in-memory task/controller and retain the input.
+  Make one storage-only recovery attempt when that task ends. A subsequent authorised history read/reconnect, submit
+  or Stop may make one further attempt after project validation; no timer, background loop or automatic Send is added.
+  Persist the failed, never-dispatched turn before clearing the self-handoff. While storage remains unavailable,
+  return a clear `503/unavailable` rather than hide the question or discard its input. Once recovered, reconnect and
+  repeat-ID return the stored outcome and a new explicit Send can use the freed slot without restarting the object.
+  The authorised WebSocket connection obtains its snapshot through server RPC: the pinned Agents SDK forbids
+  `setState` inside its readonly connection context. This also covers a handoff failing while the connection opens.
+  Connections remain readonly; no client mutation is enabled.
+  A retained self-handoff with only an empty, unadmitted `started` row is also recovered as known zero, retaining
+  its creation time and original queued input. Terminal or already-admitted rows are never rewritten by this repair.
+  Client notifications are best-effort so a disconnected reader cannot interrupt persistence or queue handoff;
+  reconnect reads the stored snapshot. Read queue/active state together after awaiting history, so a delayed history
+  read cannot resurrect a question that finished meanwhile. This does not implement terminal D1 settlement/reconciliation below.
 - **Older turns — `chat.ts`, `index.ts`, `shared/api.ts`, `web/Chat.tsx`.** Add a bounded GET on the existing
   `/api/projects/:id/chats/:chatId/turns` resource with a validated older-than `(created_at,id)` cursor and next cursor.
   Keep project validation and the initial latest-50 snapshot; return older pages through the same turn projection.

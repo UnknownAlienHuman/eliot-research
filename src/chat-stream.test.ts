@@ -13,6 +13,7 @@ interface WireSentMessage { role: string; content?: unknown; reasoning_content?:
 interface WireSentBody { messages?: WireSentMessage[]; model?: unknown; [key: string]: unknown }
 
 vi.mock("agents", () => ({
+  getAgentByName: vi.fn(),
   Agent: class {
     readonly name = "wire-chat";
     state: WireAgentState = { active: null, queued: null, stopRequested: false };
@@ -95,9 +96,11 @@ vi.mock("./context", async () => ({
 }));
 
 import { ChatAgent } from "./chat";
+import { getAgentByName } from "agents";
 import { buildContext } from "./context";
 import { admitTurn } from "./cost";
 import { assertProviderAllowance } from "./model-quota";
+import { requireAvailableModel } from "./models";
 import { LibraryError } from "./library";
 
 type SubmitResult = Awaited<ReturnType<ChatAgent["submitTurn"]>>;
@@ -205,6 +208,292 @@ beforeEach(() => {
   fetchCalls = 0;
   nextSSE = null;
   vi.clearAllMocks();
+});
+
+describe("ChatAgent interrupted queue recovery", () => {
+  const activeId = "aaaaaaaa-aaaa-4aaa-8aaa-000000000001";
+  const queuedId = "bbbbbbbb-bbbb-4bbb-8bbb-000000000002";
+  function queuedInput(model?: string): RunTurnInput {
+    return { projectId, chatId, turnId: queuedId, question: "Keep this queued question exactly.",
+      scopeMode: "explicit", sourceIds: ["s2", "s1"], ...(model ? { model } : {}) };
+  }
+  async function recoveryHarness(model?: string) {
+    const h = makeHarness();
+    await h.agent.onStart();
+    const active: TurnView = { turnId: activeId, question: "Active question", answer: "Partial source answer [S1:1].", state: "started",
+      model: "gateway:command-code/native-beam", scopeMode: "explicit", sourceIds: ["s1"], revisionIds: ["r1"],
+      citations: [{ revisionId: "r1", sourceId: "s1", block: 1, start: 0, end: 8, sourceTitle: "Paper", deleted: false, label: "[S1:1]" }],
+      invalidLabels: 0, inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: TOKEN_BOUND,
+      firstTokenMs: 12, totalMs: null, error: null };
+    h.db.prepare("INSERT INTO turns VALUES(?,?,?)").run(activeId, JSON.stringify(active), 100);
+    h.d1.prepare("INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,token_limit,created_at) VALUES(?,?,?,?,?,'whole','started',?,100)")
+      .run(chatId, activeId, active.model, active.scopeMode, JSON.stringify(active.revisionIds), TOKEN_BOUND);
+    const state: WireAgentState = { active: activeId, queued: queuedInput(model), stopRequested: false };
+    return { ...h, active, state };
+  }
+  function restart(h: ReturnType<typeof makeHarness>, state: WireAgentState) {
+    const agent = new ChatAgent({ database: h.db } as unknown as ConstructorParameters<typeof ChatAgent>[0], h.env);
+    agent.setState(structuredClone(state));
+    return agent;
+  }
+  function expectNoDispatch() {
+    expect(requireAvailableModel).not.toHaveBeenCalled();
+    expect(admitTurn).not.toHaveBeenCalled();
+    expect(buildContext).not.toHaveBeenCalled();
+    expect(fetchCalls).toBe(0);
+  }
+  it.each([undefined, "gateway:must-not-resolve/queued-model"])("preserves A and queued B on startup, reconnect and repeat ID (model=%s)", async (model) => {
+    const h = await recoveryHarness(model);
+    try {
+      const agent = restart(h, h.state);
+      const setState = agent.setState.bind(agent);
+      vi.spyOn(agent, "setState").mockImplementation((next) => {
+        if (next.queued === null) expect(h.db.prepare("SELECT payload FROM turns WHERE id=?").get(queuedId)).toBeDefined();
+        setState(next);
+      });
+      await agent.onStart();
+      const snapshot = await agent.getSnapshot(projectId);
+      expect(snapshot.queued).toBeNull();
+      const a = snapshot.turns.find((turn) => turn.turnId === activeId);
+      const b = snapshot.turns.find((turn) => turn.turnId === queuedId);
+      expect(a).toMatchObject({ ...h.active, state: "partial", error: expect.stringContaining("interrupted") });
+      expect(b).toMatchObject({ turnId: queuedId, question: h.state.queued?.question, input: h.state.queued, state: "failed",
+        model: model ?? "", scopeMode: "explicit", sourceIds: ["s2", "s1"], revisionIds: [], contextMode: "none",
+        answer: "", citations: [], inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0,
+        error: expect.stringContaining("not sent to the model") });
+      const rowBefore = h.db.prepare("SELECT payload,created_at FROM turns WHERE id=?").get(queuedId);
+      // Replay the old durable state after the local write but before its clear.
+      const replay = restart(h, h.state);
+      await replay.onStart();
+      expect(h.db.prepare("SELECT payload,created_at FROM turns WHERE id=?").get(queuedId)).toEqual(rowBefore);
+      const send = vi.fn();
+      vi.mocked(getAgentByName).mockResolvedValue(replay as never);
+      await replay.onConnect({ send } as unknown as Parameters<ChatAgent["onConnect"]>[0],
+        { request: new Request("http://localhost/?projectId=" + projectId) } as Parameters<ChatAgent["onConnect"]>[1]);
+      expect(JSON.parse(send.mock.calls[0]?.[0] as string).turns).toContainEqual(b);
+      expect(await replay.submitTurn(queuedInput(model), false)).toEqual(b);
+      expect(await replay.submitTurn(queuedInput(model), true)).toEqual(b);
+      await replay.stopTurn(projectId, queuedId);
+      await expect(replay.getStoredTurn(projectId, queuedId)).rejects.toMatchObject({ code: "conflict" });
+      const saved = await replay.getStoredTurn(projectId, activeId);
+      expect(saved.state).toBe("partial");
+      expect(saved.answer).toContain("Partial answer");
+      expect(saved.citations).toEqual(h.active.citations.map((citation) => ({ ...citation, label: "[Rr1:1]" })));
+      expect(h.d1.prepare("SELECT state,input_tokens,cached_tokens,output_tokens,token_limit FROM chat_turn WHERE turn_id=?").get(activeId))
+        .toMatchObject({ state: "partial", input_tokens: null, cached_tokens: null, output_tokens: null, token_limit: TOKEN_BOUND });
+      expect(h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(queuedId)).toBeUndefined();
+      expectNoDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("recovers an orphan queue with no active turn", async () => {
+    const h = await recoveryHarness();
+    try {
+      const agent = restart(h, { active: null, queued: queuedInput(), stopRequested: false });
+      await agent.onStart();
+      expect((await agent.getTurns(projectId)).find((turn) => turn.turnId === queuedId))
+        .toMatchObject({ state: "failed", input: queuedInput(), tokenLimit: 0 });
+      expect(agent.state.queued).toBeNull();
+      expectNoDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it.each(["write", "broadcast"])("keeps B recoverable after a local %s failure", async (failure) => {
+    const h = await recoveryHarness();
+    try {
+      const agent = restart(h, h.state);
+      if (failure === "write") h.db.exec("CREATE TRIGGER fail_queued_write BEFORE INSERT ON turns WHEN NEW.id='" + queuedId + "' BEGIN SELECT RAISE(ABORT,'fixture write failure'); END;");
+      else vi.spyOn(agent, "broadcast").mockImplementationOnce(() => { throw new Error("fixture disconnected reader"); });
+      if (failure === "write") {
+        await expect(agent.onStart()).rejects.toThrow();
+        expect(agent.state.queued).toEqual(h.state.queued);
+      } else {
+        await agent.onStart();
+        expect(agent.state.queued).toBeNull();
+      }
+      const before = h.db.prepare("SELECT payload,created_at FROM turns WHERE id=?").get(queuedId);
+      if (failure === "write") h.db.exec("DROP TRIGGER fail_queued_write");
+      const replay = restart(h, h.state);
+      await replay.onStart();
+      const after = h.db.prepare("SELECT payload,created_at FROM turns WHERE id=?").get(queuedId);
+      expect(after).toBeDefined();
+      if (before) expect(after).toEqual(before);
+      expect(replay.state).toEqual({ active: null, queued: null, stopRequested: false });
+      expectNoDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("retains B's input during promotion until its first turn payload is durable", async () => {
+    const h = await recoveryHarness();
+    let releaseValidation: (() => void) | undefined;
+    try {
+      h.agent.setState(h.state);
+      const prepare = h.env.DB.prepare.bind(h.env.DB);
+      h.env.DB.prepare = ((sql: string) => sql.includes("FROM chat WHERE id=") ? {
+        bind: () => ({ first: () => new Promise<{ project_id: string }>((resolve) => { releaseValidation = () => resolve({ project_id: projectId }); }) }),
+      } : prepare(sql)) as typeof h.env.DB.prepare;
+      (h.agent as unknown as { advanceQueue(id: string): void }).advanceQueue(activeId);
+      expect(h.agent.state).toMatchObject({ active: queuedId, queued: queuedInput() });
+      expect(h.db.prepare("SELECT payload FROM turns WHERE id=?").get(queuedId)).toBeUndefined();
+      h.env.DB.prepare = prepare;
+      const replay = restart(h, h.agent.state);
+      await replay.onStart();
+      expect((await replay.getTurns(projectId)).find((turn) => turn.turnId === queuedId))
+        .toMatchObject({ state: "failed", input: queuedInput(), inputTokens: 0, tokenLimit: 0 });
+      expect(await replay.submitTurn(queuedInput(), true)).toMatchObject({ state: "failed", tokenLimit: 0 });
+      expectNoDispatch();
+    } finally {
+      h.agent.setState({ active: null, queued: null, stopRequested: false });
+      releaseValidation?.();
+      await Promise.resolve(); await Promise.resolve();
+      h.db.close(); h.d1.close();
+    }
+  });
+  it.each(["queued", "turn"])("does not strand a handed-off question when the %s notification fails", async (frameType) => {
+    const h = await recoveryHarness("gateway:must-not-resolve/queued-model");
+    try {
+      h.agent.setState(h.state);
+      let failed = false;
+      vi.spyOn(h.agent, "broadcast").mockImplementation((payload) => {
+        if (!failed && typeof payload === "string" && JSON.parse(payload).type === frameType) { failed = true; throw new Error("fixture reader disconnected"); }
+      });
+      (h.agent as unknown as { advanceQueue(id: string): void }).advanceQueue(activeId);
+      await (h.agent as unknown as { current: Promise<TurnView> }).current;
+      expect(failed).toBe(true);
+      expect(h.agent.state).toEqual({ active: null, queued: null, stopRequested: false });
+      const b = (await h.agent.getTurns(projectId)).find((turn) => turn.turnId === queuedId);
+      expect(b).toMatchObject({ state: "failed", inputTokens: 0, tokenLimit: 0 });
+      expect(await h.agent.submitTurn(queuedInput("gateway:must-not-resolve/queued-model"), true)).toEqual(b);
+      expect(requireAvailableModel).toHaveBeenCalledTimes(1);
+      expect(fetchCalls).toBe(0);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("preserves B as undispatched when handoff project validation fails", async () => {
+    const h = await recoveryHarness();
+    try {
+      h.agent.setState(h.state);
+      const prepare = h.env.DB.prepare.bind(h.env.DB);
+      h.env.DB.prepare = ((sql: string) => sql.includes("FROM chat WHERE id=") ? { bind: () => ({ first: async () => null }) } : prepare(sql)) as typeof h.env.DB.prepare;
+      (h.agent as unknown as { advanceQueue(id: string): void }).advanceQueue(activeId);
+      const b = await (h.agent as unknown as { current: Promise<TurnView> }).current;
+      h.env.DB.prepare = prepare;
+      expect(b).toMatchObject({ state: "failed", input: queuedInput(), inputTokens: 0, tokenLimit: 0,
+        error: expect.stringContaining("could not be validated") });
+      expect(h.agent.state).toEqual({ active: null, queued: null, stopRequested: false });
+      expect(await h.agent.submitTurn(queuedInput(), true)).toEqual(b);
+      expectNoDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("recovers a retained first handoff payload as known zero without changing its creation time", async () => {
+    const h = await recoveryHarness();
+    try {
+      const initial = { ...h.active, turnId: queuedId, question: queuedInput().question, answer: "", model: "",
+        sourceIds: queuedInput().sourceIds, revisionIds: [], citations: [], tokenLimit: null, firstTokenMs: null };
+      h.db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,200)").run(queuedId, JSON.stringify(initial));
+      const replay = restart(h, { active: queuedId, queued: queuedInput(), stopRequested: false });
+      await replay.onStart();
+      const b = (await replay.getTurns(projectId)).find((turn) => turn.turnId === queuedId);
+      expect(b).toMatchObject({ state: "failed", input: queuedInput(), inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0,
+        error: expect.stringContaining("not sent to the model") });
+      expect(h.db.prepare("SELECT created_at FROM turns WHERE id=?").get(queuedId)).toEqual({ created_at: 200 });
+      expectNoDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("stores a maximum-length Unicode queued question once while preserving its exact input", async () => {
+    const h = await recoveryHarness();
+    try {
+      const input = { ...queuedInput(), question: "文".repeat(400000) };
+      const agent = restart(h, { active: null, queued: input, stopRequested: false });
+      await agent.onStart();
+      const row = h.db.prepare("SELECT payload FROM turns WHERE id=?").get(queuedId) as { payload: string };
+      expect(new TextEncoder().encode(row.payload).byteLength).toBeLessThan(2_000_000);
+      expect(JSON.parse(row.payload).input).not.toHaveProperty("question");
+      expect((await agent.getTurns(projectId)).find((turn) => turn.turnId === queuedId)?.input).toEqual(input);
+      expectNoDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it.each([
+    { fault: "write", persistent: false }, { fault: "state-clear", persistent: false },
+    { fault: "write", persistent: true }, { fault: "state-clear", persistent: true },
+  ])("recovers a live handoff after $fault failure (persistent=$persistent) without creating another Agent", async ({ fault, persistent }) => {
+    const h = await recoveryHarness();
+    try {
+      const agent = h.agent;
+      agent.setState(h.state);
+      let broken = true, failedWrites = 0;
+      if (fault === "write") {
+        h.db.function("fail_queued_handoff", () => {
+          if (persistent || failedWrites === 0) { failedWrites++; throw new Error("fixture transient write failure"); }
+          return 0;
+        });
+        h.db.exec("CREATE TRIGGER fail_live_handoff BEFORE INSERT ON turns WHEN NEW.id='" + queuedId + "' BEGIN SELECT fail_queued_handoff(); END;");
+      } else {
+        const setState = agent.setState.bind(agent);
+        vi.spyOn(agent, "setState").mockImplementation((state) => {
+          if (broken && (persistent || failedWrites === 0) && state.queued === null && agent.state.queued?.turnId === queuedId) {
+            failedWrites++; throw new Error("fixture transient state-clear failure");
+          }
+          setState(state);
+        });
+      }
+      (agent as unknown as { advanceQueue(id: string): void }).advanceQueue(activeId);
+      const task = (agent as unknown as { current: Promise<TurnView> }).current;
+      await expect(task).rejects.toThrow();
+      expect((agent as unknown as { current?: Promise<TurnView>; controller?: AbortController }).current).toBeUndefined();
+      expect((agent as unknown as { controller?: AbortController }).controller).toBeUndefined();
+      if (persistent) {
+        await expect(agent.getSnapshot(projectId)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+        expect(failedWrites).toBe(3); // Initial operation, completion, then one explicit read; no loop.
+        expect(agent.state).toMatchObject({ active: queuedId, queued: queuedInput() });
+      } else {
+        expect(failedWrites).toBe(1);
+        expect(agent.state).toEqual({ active: null, queued: null, stopRequested: false });
+      }
+      expectNoDispatch();
+      if (fault === "write") h.db.exec("DROP TRIGGER fail_live_handoff");
+      broken = false;
+      const send = vi.fn();
+      vi.mocked(getAgentByName).mockResolvedValue(agent as never);
+      await agent.onConnect({ send } as unknown as Parameters<ChatAgent["onConnect"]>[0],
+        { request: new Request("http://localhost/?projectId=" + projectId) } as Parameters<ChatAgent["onConnect"]>[1]);
+      const snapshot = await agent.getSnapshot(projectId);
+      const b = snapshot.turns.find((turn) => turn.turnId === queuedId);
+      expect(b).toMatchObject({ state: "failed", input: queuedInput(), inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0 });
+      expect(JSON.parse(send.mock.calls[0]?.[0] as string).turns).toContainEqual(b);
+      expect(snapshot.queued).toBeNull();
+      expect(agent.state).toEqual({ active: null, queued: null, stopRequested: false });
+      const stored = h.db.prepare("SELECT payload,created_at FROM turns WHERE id=?").get(queuedId);
+      expect(await agent.submitTurn(queuedInput(), true)).toEqual(b);
+      expect(await agent.submitTurn(queuedInput(), false)).toEqual(b);
+      expect(h.db.prepare("SELECT payload,created_at FROM turns WHERE id=?").get(queuedId)).toEqual(stored);
+      expectNoDispatch();
+      nextSSE = sse([chunk({ content: "New explicit answer [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 5, total_tokens: 13 })]);
+      const c = requireTurn(await agent.submitTurn({ ...queuedInput(), turnId: "cccccccc-cccc-4ccc-8ccc-000000000003",
+        question: "New explicit question.", model: "gateway:command-code/native-beam" }, true));
+      expect(c.state).toBe("completed");
+      expect(fetchCalls).toBe(1); // Only C's explicit Send reaches the synthetic transport.
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("does not resurrect queued B in a snapshot whose history read was delayed until B finished", async () => {
+    const h = await recoveryHarness();
+    let releaseRead: (() => void) | undefined;
+    try {
+      const agent = h.agent;
+      agent.setState(h.state);
+      const getTurns = agent.getTurns.bind(agent);
+      vi.spyOn(agent, "getTurns").mockImplementationOnce(async (id) => {
+        await new Promise<void>((resolve) => { releaseRead = resolve; });
+        return getTurns(id);
+      });
+      const pendingSnapshot = agent.getSnapshot(projectId);
+      nextSSE = sse([chunk({ content: "B finished [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 })]);
+      (agent as unknown as { advanceQueue(id: string): void }).advanceQueue(activeId);
+      await (agent as unknown as { current: Promise<TurnView> }).current;
+      expect(agent.state).toEqual({ active: null, queued: null, stopRequested: false });
+      releaseRead?.();
+      const snapshot = await pendingSnapshot;
+      expect(snapshot.turns.find((turn) => turn.turnId === queuedId)?.state).toBe("completed");
+      expect(snapshot.queued).toBeNull();
+      expect(fetchCalls).toBe(1);
+    } finally { releaseRead?.(); h.db.close(); h.d1.close(); }
+  });
 });
 
 describe("chat-stream K2 wire regression", () => {

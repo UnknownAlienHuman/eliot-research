@@ -134,6 +134,8 @@ export interface AnswerWarning {
 export interface TurnView {
   turnId: string;
   question: string;
+  /** Original accepted request, retained when a queued question never started. */
+  input?: RunTurnInput;
   answer: string;
   state: "started" | "completed" | "partial" | "failed" | "cancelled";
   model: string;
