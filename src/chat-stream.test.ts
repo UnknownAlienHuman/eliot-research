@@ -526,8 +526,9 @@ describe("ChatAgent terminal D1 settlement", () => {
       await h.agent.onStart(); terminalFault(h);
       let release!: () => void;
       const gate = new Promise<void>((resolve) => { release = resolve; });
-      const fetch = h.env.AI.fetch.bind(h.env.AI);
-      vi.spyOn(h.env.AI, "fetch").mockImplementationOnce(async (...args) => { await gate; return fetch(...args); });
+      const ai = h.env.AI as unknown as { fetch: (url: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
+      const fetch = ai.fetch.bind(ai);
+      vi.spyOn(ai, "fetch").mockImplementationOnce(async (...args) => { await gate; return fetch(...args); });
       nextSSE = sse([chunk({ content: "Saved answer [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 5, total_tokens: 13 })]);
       await h.agent.submitTurn(input, false);
       const task = (h.agent as unknown as { current: Promise<TurnView> }).current;
@@ -592,7 +593,7 @@ describe("ChatAgent terminal D1 settlement", () => {
           const bind = statement.bind.bind(statement);
           statement.bind = (...args) => {
             const bound = bind(...args), run = bound.run.bind(bound);
-            bound.run = async () => { const result = await run(); if (!failed) { failed = true; throw new Error("fixture acknowledgement lost"); } return result; };
+            bound.run = async <T = Record<string, unknown>>() => { const result = await run<T>(); if (!failed) { failed = true; throw new Error("fixture acknowledgement lost"); } return result; };
             return bound;
           };
           return statement;
