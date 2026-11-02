@@ -5,6 +5,8 @@ import { resolveCitations } from "./citations.js";
 import { LibraryError } from "./library.js";
 import { modelOutputLimit } from "./models.js";
 import type { Actor } from "./auth";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 
 const NL = String.fromCharCode(10);
 const actor = { type: "owner", id: "o1", authentication: "local" } as unknown as Actor;
@@ -57,6 +59,17 @@ interface MemText {
 
 function wholeBlock(text: string, id: number): MemBlock {
   return { id, type: "paragraph", start: 0, end: text.length, heading: null as string | null };
+}
+function streamObject(bytes: Uint8Array, size: number | undefined = bytes.byteLength) {
+  let offset = 0;
+  return { size, body: new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset === bytes.byteLength) { controller.close(); return; }
+      const end = Math.min(offset + 65536, bytes.byteLength);
+      controller.enqueue(bytes.subarray(offset, end));
+      offset = end;
+    },
+  }, { highWaterMark: 0 }) };
 }
 
 function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; revisions: MemRevision[]; texts: Record<string, MemText>; claims?: Record<string, MemClaim[]> }) {
@@ -134,25 +147,25 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
         const bytes = new TextEncoder().encode(entry.text);
         const view = byteRange ? bytes.subarray(byteRange.offset, byteRange.offset + byteRange.length) : bytes;
         const exact = Uint8Array.from(view);
-        return { arrayBuffer: async () => exact.buffer as ArrayBuffer };
+        return streamObject(exact);
       }
       if (kind === "guide.md") {
         if (entry.guide === undefined) return null;
         const data = new TextEncoder().encode(entry.guide);
-        return { arrayBuffer: async () => data.buffer as ArrayBuffer };
+        return streamObject(data);
       }
       if (kind === "checked/guide.md") {
         if (entry.checkedGuide === undefined) return null;
         const data = new TextEncoder().encode(entry.checkedGuide);
-        return { arrayBuffer: async () => data.buffer as ArrayBuffer };
+        return streamObject(data);
       }
       if (kind === "checked/distill.json") {
         if (entry.report === undefined) return null;
         const raw = typeof entry.report === "string" ? entry.report : JSON.stringify(entry.report);
         const data = new TextEncoder().encode(raw);
-        return { arrayBuffer: async () => data.buffer as ArrayBuffer };
+        return streamObject(data);
       }
-      if (kind === "blocks.json") return { json: async () => entry.blocks };
+      if (kind === "blocks.json") return streamObject(new TextEncoder().encode(JSON.stringify(entry.blocks)));
       return null;
     },
   };
@@ -959,7 +972,7 @@ describe("buildContext K3 claims fallback", () => {
     expect(err).toBeInstanceOf(LibraryError);
     expect((err as LibraryError).code).toBe("invalid");
     expect((err as LibraryError).message).toMatch(/understood/);
-    expect(reads()).toBe(3);
+    expect(reads()).toBe(2); // The same immutable block map is reused by whole/compact attempts.
     expect(requested.filter((key) => key === "source/r1/text.md")).toHaveLength(1);
   });
   it("prints only own-revision persistent guide refs as citable passages", async () => {
@@ -1337,5 +1350,195 @@ describe("history reference continuity", () => {
     const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
     expect(res.messages[0]?.content).toContain("conversation context, not evidence");
     expect(res.messages[0]?.content).toContain("re-ground");
+  });
+});
+
+describe("bounded context materialization", () => {
+  const limit = 16 * 1024 * 1024;
+  function scope(count = 3, text = "Evidence.", readableSize: number | null = null, distilled = false, reportKey: string | null = null) {
+    return makeEnv({
+      memberships: Array.from({ length: count }, (_, i) => ({ projectId: "p1", sourceId: "s" + i, enabled: 1 })),
+      sources: Array.from({ length: count }, (_, i) => ({ id: "s" + i, title: "Paper " + i, state: "active", currentRevisionId: "r" + i, createdAt: i })),
+      revisions: Array.from({ length: count }, (_, i) => ({ id: "r" + i, readableState: "readable", readableSize,
+        distillState: distilled ? "done" : "none", guideSummary: null, deletedAt: null, claimCount: 1, reportKey })),
+      texts: Object.fromEntries(Array.from({ length: count }, (_, i) => ["r" + i, { text, blocks: [wholeBlock(text, 1)], guide: "Guide." }])),
+      claims: Object.fromEntries(Array.from({ length: count }, (_, i) => ["r" + i,
+        [{ ordinal: 0, statement: text, quote: text, conditions: null, blockIndex: 1, ambiguous: 0 }]])),
+    });
+  }
+  it("rejects an oversized undistilled block before opening its text body", async () => {
+    const fixture = scope(3, "x".repeat(limit + 1), limit + 1);
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toEqual(["source/r0/blocks.json"]);
+  });
+  it.each([null, 1])("counts unknown/understated source and object sizes (%s), cancels the stream and opens no later body", async (readableSize) => {
+    const fixture = scope(3, "x", readableSize);
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    let consumed = 0;
+    let cancelled = false;
+    const baseline = process.memoryUsage();
+    let peakHeap = baseline.heapUsed;
+    let peakBuffers = baseline.arrayBuffers;
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      if (key !== "source/r0/text.md") return get(key, options);
+      fixture.requested.push(key);
+      return { size: 1, body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = new Uint8Array(65536).fill(120);
+          consumed += chunk.byteLength;
+          const memory = process.memoryUsage();
+          peakHeap = Math.max(peakHeap, memory.heapUsed);
+          peakBuffers = Math.max(peakBuffers, memory.arrayBuffers);
+          controller.enqueue(chunk);
+          if (consumed >= limit + 65536) controller.close();
+        },
+        cancel() { cancelled = true; },
+      }, { highWaterMark: 0 }) };
+    }) as typeof fixture.env.BUCKET.get;
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(cancelled).toBe(true);
+    expect(consumed).toBeLessThanOrEqual(limit);
+    expect(fixture.requested.some((key) => key.startsWith("source/r1/"))).toBe(false);
+    console.warn("context-memory-observation", JSON.stringify({ readableSize, consumed, cancelled,
+      heapIncrease: peakHeap - baseline.heapUsed, arrayBufferIncrease: peakBuffers - baseline.arrayBuffers }));
+  });
+  it("counts projected strings cumulatively and stops before the next text body", async () => {
+    const fixture = scope(3, "x".repeat(1_000_000), null);
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toContain("source/r0/text.md");
+    expect(fixture.requested).not.toContain("source/r2/text.md");
+  });
+  it.each(["blocks.json", "guide.md", "checked/distill.json"])("bounds %s before JSON parsing/decoding or later source reads", async (artifact) => {
+    const fixture = scope(2, "Evidence.", 9_000_000, true, artifact.startsWith("checked/") ? "source/r0/checked/distill.json" : null);
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      if (key !== "source/r0/" + artifact) return get(key, options);
+      fixture.requested.push(key);
+      return streamObject(new Uint8Array(limit + 1).fill(120), 1);
+    }) as typeof fixture.env.BUCKET.get;
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested.some((key) => key.startsWith("source/r1/"))).toBe(false);
+    expect(fixture.requested).not.toContain("source/r0/text.md");
+  });
+  it("bounds explicit and default scope cardinality without returning a partial scope", async () => {
+    const fixture = scope(1025);
+    for (const scopeMode of ["explicit", "project_default"] as const) {
+      await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode, model: MODEL,
+        sourceIds: Array.from({ length: 1025 }, (_, i) => "s" + i) }))
+        .rejects.toMatchObject({ code: "invalid", status: 400 });
+    }
+    expect(fixture.requested).toEqual([]);
+  });
+  it("rejects oversized explicit IDs before binding or reading source bodies", async () => {
+    const fixture = scope();
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s".repeat(129)], model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toEqual([]);
+  });
+  it("selects newest history before copying individually fitting older exchanges", async () => {
+    const fixture = scope(1);
+    const history = Array.from({ length: 49 }, (_, i) => [
+      { role: "user" as const, content: "Old question " + i + "u".repeat(100000), revisionIds: ["r0"] },
+      { role: "assistant" as const, content: "Old answer " + i + "a".repeat(100000), revisionIds: ["r0"], citations: [] },
+    ]).flat();
+    history.push({ role: "user", content: "Newest question", revisionIds: ["r0"] },
+      { role: "assistant", content: "Newest answer", revisionIds: ["r0"], citations: [] });
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL, history });
+    expect(result.messages.at(-1)?.content).toBe("Newest answer");
+    expect(result.revisionIds).toEqual(["r0"]);
+    expect(result.estimatedInputTokens + modelOutputLimit(MODEL)).toBeLessThanOrEqual(400000);
+  });
+  it("does not jump over an oversized newest exchange to reuse older history", async () => {
+    const fixture = scope(1);
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL,
+      history: [{ role: "user", content: "Old question" }, { role: "assistant", content: "Old answer" },
+        { role: "user", content: "New question" }, { role: "assistant", content: "n".repeat(400000) }] });
+    expect(result.messages.map((message) => message.role)).toEqual(["system", "user"]);
+  });
+  it("counts separate block maps cumulatively before reading later text", async () => {
+    const fixture = scope();
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    const blocks = new TextEncoder().encode(JSON.stringify(Array.from({ length: 2000 }, (_, i) =>
+      ({ id: i + 1, type: "heading", start: 0, end: 1, heading: "h".repeat(200) }))));
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      if (!key.endsWith("blocks.json")) return get(key, options);
+      fixture.requested.push(key);
+      return streamObject(blocks);
+    }) as typeof fixture.env.BUCKET.get;
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toContain("source/r0/text.md");
+    expect(fixture.requested).toContain("source/r1/blocks.json");
+    expect(fixture.requested).not.toContain("source/r1/text.md");
+    expect(fixture.requested.some((key) => key.startsWith("source/r2/"))).toBe(false);
+  });
+  it("rejects a guide range above the remaining bound before its R2 get", async () => {
+    const revisionId = "11111111-1111-4111-8111-111111111111";
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper", state: "active", currentRevisionId: revisionId, createdAt: 1 }],
+      revisions: [{ id: revisionId, readableState: "readable", readableSize: limit + 1, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 1 }],
+      texts: { [revisionId]: { text: "Evidence.", blocks: [{ id: 1, type: "paragraph", start: 0, end: limit + 1, heading: null }], guide: "Guide [R" + revisionId + ":1]." } },
+      claims: { [revisionId]: [{ ordinal: 0, statement: "Evidence.", quote: "Evidence.", conditions: null, blockIndex: 1, ambiguous: 0 }] },
+    });
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toContain("source/" + revisionId + "/guide.md");
+    expect(fixture.requested.some((key) => key.includes("text.md"))).toBe(false);
+  });
+  it("caps tiny guide range fan-out without returning partial source evidence", async () => {
+    const revisionId = "11111111-1111-4111-8111-111111111111";
+    const blocks = Array.from({ length: 257 }, (_, i) => ({ id: i + 1, type: "paragraph", start: i, end: i + 1, heading: null }));
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper", state: "active", currentRevisionId: revisionId, createdAt: 1 }],
+      revisions: [{ id: revisionId, readableState: "readable", readableSize: 9000000, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 1 }],
+      texts: { [revisionId]: { text: "x".repeat(257), blocks, guide: blocks.map((block) => "[R" + revisionId + ":" + block.id + "]").join(" ") } },
+      claims: { [revisionId]: [{ ordinal: 0, statement: "x", quote: "x", conditions: null, blockIndex: 1, ambiguous: 0 }] },
+    });
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested.filter((key) => key.includes("text.md#r"))).toHaveLength(256);
+  });
+  it.each(["sources", "source NUL", "summary NUL", "report NUL", "claims", "claim NUL", "source aggregate", "IDs"])("bounds %s inside SQLite before transferring oversized fields", async (kind) => {
+    const db = new DatabaseSync(":memory:");
+    const fixture = scope();
+    const transferred: Record<string, unknown>[] = [];
+    try {
+      db.exec(`CREATE TABLE project(id TEXT); INSERT INTO project VALUES('p1');
+        CREATE TABLE source(id TEXT,title TEXT,current_revision_id TEXT,state TEXT,created_at INTEGER);
+        CREATE TABLE source_revision(id TEXT,readable_state TEXT,readable_size INTEGER,distill_state TEXT,guide_summary TEXT,distill_report_key TEXT,deleted_at INTEGER,claim_count INTEGER);
+        CREATE TABLE project_source(project_id TEXT,source_id TEXT,enabled INTEGER);
+        CREATE TABLE claim(source_revision_id TEXT,ordinal INTEGER,statement TEXT,quote TEXT,conditions TEXT,block_index INTEGER,ambiguous INTEGER);
+        INSERT INTO source VALUES('s0','Paper','r0','active',1);
+        INSERT INTO source_revision VALUES('r0','readable',9000000,'done',NULL,NULL,NULL,1);
+        INSERT INTO project_source VALUES('p1','s0',1);`);
+      if (kind === "sources" || kind === "source NUL") db.prepare("UPDATE source SET title=?").run((kind.endsWith("NUL") ? "a\0" : "") + "t".repeat(20000));
+      else if (kind === "summary NUL") db.prepare("UPDATE source_revision SET guide_summary=?").run("a\0" + "g".repeat(40000));
+      else if (kind === "report NUL") db.prepare("UPDATE source_revision SET distill_report_key=?").run("a\0" + "k".repeat(20000));
+      else if (kind === "IDs") {
+        const id = "a\0" + "i".repeat(20000);
+        db.prepare("UPDATE source SET id=?").run(id);
+        db.prepare("UPDATE project_source SET source_id=?").run(id);
+      } else if (kind === "source aggregate") {
+        db.prepare("UPDATE source_revision SET guide_summary=?").run("g".repeat(8192));
+        const source = db.prepare("INSERT INTO source VALUES(?,?,'r0','active',1)");
+        const membership = db.prepare("INSERT INTO project_source VALUES('p1',?,1)");
+        for (let i = 1; i <= 600; i++) { source.run("s" + i, "Paper"); membership.run("s" + i); }
+      } else db.prepare("INSERT INTO claim VALUES('r0',0,'Fact',?,NULL,1,0)").run((kind.endsWith("NUL") ? "a\0" : "") + "q".repeat(limit));
+      fixture.env.DB = { prepare(sql: string) {
+        const statement = db.prepare(sql);
+        return { bind(...params: SQLInputValue[]) { return {
+          async first() { return statement.get(...params) ?? null; },
+          async all() { const rows = statement.all(...params); transferred.push(...rows); return { results: rows }; },
+        }; } };
+      } } as unknown as D1Database;
+      await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+        .rejects.toMatchObject({ code: "invalid", status: 400 });
+      expect(fixture.requested).toEqual([]);
+      expect(JSON.stringify(transferred).length).toBeLessThan(kind === "source aggregate" ? 200000 : 2000);
+    } finally { db.close(); }
   });
 });

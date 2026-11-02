@@ -49,6 +49,75 @@ export interface ContextResult {
 const READABLE = new Set(["readable", "readable_with_warnings"]);
 const DISTILLED = new Set(["done", "partial"]);
 const WHOLE_CAP = 400000;
+// Per assembly, not a Worker limit. Count retained bytes and conservative allocation
+// charges monotonically, including discarded attempts; leave the isolate room for SDKs.
+const MATERIALIZATION_BYTES = 16 * 1024 * 1024;
+const MAX_SOURCES = 1024;
+const MAX_CLAIMS = 256;
+const MAX_GUIDE_RANGES = 256;
+interface Materialization { used: number; blocks: Map<string, Block[]>; rangeReads: number }
+function reserve(assembly: Materialization, bytes: number): void {
+  if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > MATERIALIZATION_BYTES - assembly.used) {
+    throw new LibraryError("invalid", NARROW_SCOPE, 400);
+  }
+  assembly.used += bytes;
+}
+function joinContext(assembly: Materialization, parts: string[], separator = ""): string {
+  reserve(assembly, 2 * (parts.reduce((sum, part) => sum + part.length, 0) + Math.max(0, parts.length - 1) * separator.length));
+  return parts.join(separator);
+}
+function utf8Bytes(text: string): number {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) bytes++;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) { bytes += 4; i++; }
+    else bytes += 3;
+  }
+  return bytes;
+}
+async function readContextBytes(env: Env, assembly: Materialization, key: string, range?: { offset: number; length: number }): Promise<Uint8Array> {
+  if (range && ++assembly.rangeReads > MAX_GUIDE_RANGES) throw new LibraryError("invalid", NARROW_SCOPE, 400);
+  reserve(assembly, 128);
+  if (range && range.length > MATERIALIZATION_BYTES - assembly.used) reserve(assembly, range.length);
+  const object = await env.BUCKET.get(key, range ? { range } : undefined);
+  if (!object) throw new LibraryError("unavailable", UNAVAILABLE, 503);
+  const reader = object.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    const expected = range?.length ?? object.size;
+    if (Number.isSafeInteger(expected) && expected > MATERIALIZATION_BYTES - assembly.used) reserve(assembly, expected);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      reserve(assembly, value.byteLength + 32);
+      size += value.byteLength;
+      if (range && size > range.length) throw new LibraryError("unavailable", UNAVAILABLE, 503);
+      chunks.push(value);
+    }
+    if (range && size !== range.length) throw new LibraryError("unavailable", UNAVAILABLE, 503);
+    reserve(assembly, size);
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return bytes;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+function decodeContext(assembly: Materialization, bytes: Uint8Array, start = 0): string {
+  reserve(assembly, bytes.byteLength * 2);
+  return (start === 0 ? bomDecoder : decoder).decode(bytes);
+}
+async function readContextJson<T>(env: Env, assembly: Materialization, key: string): Promise<T> {
+  const bytes = await readContextBytes(env, assembly, key);
+  // Strings plus parsed objects/arrays (including tiny JSON values) have overhead.
+  reserve(assembly, bytes.byteLength * 12);
+  return JSON.parse(decodeContext(assembly, bytes)) as T;
+}
 const SYSTEM_PROMPT =
   "Answer in the user's language with ordinary Markdown. Attach all atomic [Sx:N] markers needed to support the full adjacent claim, including every fact, condition and qualifier; when one block covers only part, include the other supporting markers. Mark unsupported content as inference or omit it. Never shorten or invent labels. " +
   "Answer directly and keep detail proportional to the question; omit unrelated background and repetition while preserving every requested fact, condition, uncertainty and supporting citation. " +
@@ -67,7 +136,7 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 const bomDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 function estimateTokens(text: string): number {
-  return Math.ceil(new TextEncoder().encode(text).byteLength / 3);
+  return Math.ceil(utf8Bytes(text) / 3);
 }
 function stripLabels(content: string): string {
   return content
@@ -115,6 +184,23 @@ interface Frozen {
   guideSummary: string | null;
   reportKey: string | null;
 }
+// SQL clips oversized fields before transfer; the flag rejects rather than truncates
+// evidence. Row limits prevent an unbounded D1 response before JS can count it.
+const SOURCE_METADATA = "CASE WHEN length(CAST(s.id AS BLOB))<=128 THEN s.id ELSE '' END AS id, " +
+  "CASE WHEN length(CAST(s.current_revision_id AS BLOB))<=128 THEN s.current_revision_id ELSE '' END AS revisionId, " +
+  "CASE WHEN length(CAST(s.title AS BLOB))<=4096 THEN s.title ELSE '' END AS title, " +
+  "CASE WHEN length(CAST(r.guide_summary AS BLOB))<=32768 THEN r.guide_summary ELSE NULL END AS guideSummary, " +
+  "CASE WHEN length(CAST(r.distill_report_key AS BLOB))<=4096 THEN r.distill_report_key ELSE NULL END AS reportKey, " +
+  "(length(CAST(s.id AS BLOB))>128 OR coalesce(length(CAST(s.current_revision_id AS BLOB)),0)>128 OR " +
+  "length(CAST(s.title AS BLOB))>4096 OR coalesce(length(CAST(r.guide_summary AS BLOB)),0)>32768 OR coalesce(length(CAST(r.distill_report_key AS BLOB)),0)>4096) AS metadataTooLarge, ";
+function retainFrozen(assembly: Materialization, rows: Array<Frozen & { metadataTooLarge?: number }>): Frozen[] {
+  if (rows.length > MAX_SOURCES) throw new LibraryError("invalid", NARROW_SCOPE, 400);
+  for (const row of rows) {
+    if (row.metadataTooLarge) throw new LibraryError("invalid", NARROW_SCOPE, 400);
+    reserve(assembly, 256 + 4 * (row.sourceId.length + row.revisionId.length + row.title.length + (row.guideSummary?.length ?? 0) + (row.reportKey?.length ?? 0)));
+  }
+  return rows;
+}
 
 interface ClaimRow {
   ordinal: number;
@@ -130,100 +216,113 @@ async function ensureProject(env: Env, projectId: string): Promise<void> {
   if (!row) throw new LibraryError("not_found", "Project not found.", 404);
 }
 
-async function freezeExplicit(env: Env, projectId: string, ids: string[]): Promise<Frozen[]> {
+async function freezeExplicit(env: Env, projectId: string, ids: string[], assembly: Materialization): Promise<Frozen[]> {
+  if (ids.length > MAX_SOURCES) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   const out: Frozen[] = [];
   const seen = new Set<string>();
   for (const id of ids) {
+    if (utf8Bytes(id) > 128) throw new LibraryError("invalid", NARROW_SCOPE, 400);
     if (seen.has(id)) continue;
     seen.add(id);
     const row = await env.DB.prepare(
-      "SELECT s.id AS id, s.title AS title, s.current_revision_id AS revisionId, " +
+      "SELECT " + SOURCE_METADATA +
         "r.readable_state AS readableState, r.readable_size AS readableSize, " +
-        "r.distill_state AS distillState, r.guide_summary AS guideSummary, r.distill_report_key AS reportKey FROM project_source ps " +
+        "r.distill_state AS distillState FROM project_source ps " +
         "JOIN source s ON s.id=ps.source_id LEFT JOIN source_revision r ON r.id=s.current_revision_id " +
         "WHERE ps.project_id=? AND ps.source_id=? AND s.state='active'",
     )
       .bind(projectId, id)
-      .first<{ id: string; title: string; revisionId: string | null; readableState: string | null; readableSize: number | null; distillState: string | null; guideSummary: string | null; reportKey: string | null }>();
+      .first<{ id: string; title: string; revisionId: string | null; readableState: string | null; readableSize: number | null; distillState: string | null; guideSummary: string | null; reportKey: string | null; metadataTooLarge?: number }>();
     if (!row?.revisionId || !READABLE.has(row.readableState ?? "")) {
       throw new LibraryError("invalid", "Narrow the source selection to readable sources in this project.", 400);
     }
-    out.push({ sourceId: row.id, title: row.title, revisionId: row.revisionId, readableSize: row.readableSize, distillState: row.distillState, guideSummary: row.guideSummary, reportKey: row.reportKey ?? null });
+    out.push(...retainFrozen(assembly, [{ sourceId: row.id, title: row.title, revisionId: row.revisionId, readableSize: row.readableSize, distillState: row.distillState, guideSummary: row.guideSummary, reportKey: row.reportKey ?? null, ...(row.metadataTooLarge ? { metadataTooLarge: row.metadataTooLarge } : {}) }]));
   }
   return out;
 }
 
-async function freezeProjectDefault(env: Env, projectId: string): Promise<Frozen[]> {
-  const result = await env.DB.prepare(
-    "SELECT s.id AS id, s.title AS title, s.current_revision_id AS revisionId, r.readable_size AS readableSize, " +
-      "r.distill_state AS distillState, r.guide_summary AS guideSummary, r.distill_report_key AS reportKey " +
+async function freezeProjectDefault(env: Env, projectId: string, assembly: Materialization): Promise<Frozen[]> {
+  const selection =
+    "SELECT s.created_at AS createdAt, " + SOURCE_METADATA + "r.readable_size AS readableSize, " +
+      "r.distill_state AS distillState " +
       "FROM project_source ps JOIN source s ON s.id=ps.source_id JOIN source_revision r ON r.id=s.current_revision_id " +
       "WHERE ps.project_id=? AND ps.enabled=1 AND s.state='active' " +
       "AND r.readable_state IN ('readable','readable_with_warnings') AND r.deleted_at IS NULL " +
-      "ORDER BY s.created_at ASC, s.id ASC",
-  )
-    .bind(projectId)
-    .all<{ id: string; title: string; revisionId: string; readableSize: number | null; distillState: string | null; guideSummary: string | null; reportKey: string | null }>();
-  return result.results.map((row) => ({ sourceId: row.id, title: row.title, revisionId: row.revisionId, readableSize: row.readableSize, distillState: row.distillState, guideSummary: row.guideSummary, reportKey: row.reportKey ?? null }));
+      "ORDER BY s.created_at ASC, s.id ASC LIMIT " + (MAX_SOURCES + 1);
+  const result = await env.DB.prepare("WITH selected AS (" + selection + "), bounded AS (SELECT *, " +
+    "sum(256 + 4 * (length(CAST(id AS BLOB)) + length(CAST(revisionId AS BLOB)) + length(CAST(title AS BLOB)) + coalesce(length(CAST(guideSummary AS BLOB)),0) + coalesce(length(CAST(reportKey AS BLOB)),0))) OVER () <= ? AS fits FROM selected) " +
+    "SELECT CASE WHEN fits THEN id ELSE '' END AS id,CASE WHEN fits THEN revisionId ELSE '' END AS revisionId,readableSize,distillState,CASE WHEN fits THEN title ELSE '' END AS title, " +
+    "CASE WHEN fits THEN guideSummary END AS guideSummary,CASE WHEN fits THEN reportKey END AS reportKey, " +
+    "(metadataTooLarge OR NOT fits) AS metadataTooLarge FROM bounded ORDER BY createdAt ASC,id ASC")
+    .bind(projectId, MATERIALIZATION_BYTES - assembly.used)
+    .all<{ id: string; title: string; revisionId: string; readableSize: number | null; distillState: string | null; guideSummary: string | null; reportKey: string | null; metadataTooLarge?: number }>();
+  return retainFrozen(assembly, result.results.map((row) => ({ ...row, sourceId: row.id, reportKey: row.reportKey ?? null })));
 }
 
 function selectHistory(
   history: ContextHistoryTurn[] | undefined,
   frozen: Set<string>,
   budget: number,
-  sources: LabelSource[] = [],
+  sources: LabelSource[],
+  assembly: Materialization,
 ): { messages: ContextMessage[]; tokens: number } {
-  const exchanges: { messages: ContextMessage[]; tokens: number }[] = [];
+  const picked: ContextMessage[] = [];
   const orderedFrozen = [...frozen];
   const turns = history ?? [];
-  for (let i = 0; i < turns.length;) {
-    const user = turns[i];
-    if (!user || user.role !== "user") { i += 1; continue; }
-    const assistant = turns[i + 1];
-    if (!assistant || assistant.role !== "assistant") {
-      const content = stripLabels(user.content).trim();
-      if (content) exchanges.push({ messages: [{ role: "user", content }], tokens: estimateTokens(content) });
-      i += 1;
-      continue;
-    }
-    i += 2;
-    if ((assistant.revisionIds ?? []).some((id) => !frozen.has(id))) continue;
-    const userContent = stripLabels(user.content).trim();
-    const prefixOk = isScopePrefix(user.revisionIds, orderedFrozen);
-    const assistantContent = (prefixOk ? retainAssistantLabels(assistant.content, assistant.citations, sources) : stripLabels(assistant.content)).trim();
-    if (!userContent || !assistantContent) continue;
-    const messages: ContextMessage[] = [
-      { role: "user", content: userContent },
-      { role: "assistant", content: assistantContent, ...(assistant.turnId ? { turnId: assistant.turnId } : {}) },
-    ];
-    exchanges.push({ messages, tokens: estimateTokens(userContent) + estimateTokens(assistantContent) });
-  }
-  const picked: ContextMessage[] = [];
   let used = 0;
-  for (let i = exchanges.length - 1; i >= 0; i--) {
-    const exchange = exchanges[i];
-    if (!exchange) continue;
-    if (used + exchange.tokens > budget) break;
-    used += exchange.tokens;
-    picked.unshift(...exchange.messages);
+  for (let i = turns.length - 1; i >= 0;) {
+    const tail = turns[i--];
+    const assistant = tail?.role === "assistant" ? tail : undefined;
+    const user = assistant ? turns[i] : tail;
+    if (!user || user.role !== "user") continue;
+    if (assistant) i--;
+    if (assistant && (assistant.revisionIds ?? []).some((id) => !frozen.has(id))) continue;
+    // Do not copy a raw exchange above the full history reserve merely to strip
+    // labels. Visit newest first; older candidates stop once the suffix is full.
+    if (estimateTokens(user.content) > budget || (assistant && estimateTokens(assistant.content) > budget)) break;
+    reserve(assembly, 4 * (user.content.length + (assistant?.content.length ?? 0)));
+    const userContent = stripLabels(user.content).trim();
+    if (!userContent) continue;
+    const messages: ContextMessage[] = [{ role: "user", content: userContent }];
+    let tokens = estimateTokens(userContent);
+    if (assistant) {
+      const prefixOk = isScopePrefix(user.revisionIds, orderedFrozen);
+      const content = (prefixOk ? retainAssistantLabels(assistant.content, assistant.citations, sources) : stripLabels(assistant.content)).trim();
+      if (!content) continue;
+      messages.push({ role: "assistant", content, ...(assistant.turnId ? { turnId: assistant.turnId } : {}) });
+      tokens += estimateTokens(content);
+    }
+    if (used + tokens > budget) break;
+    used += tokens;
+    picked.unshift(...messages);
   }
   return { messages: picked, tokens: used };
 }
 
-async function loadBlocks(env: Env, revisionId: string): Promise<Block[]> {
-  const blocksObject = await env.BUCKET.get("source/" + revisionId + "/blocks.json");
-  if (!blocksObject) throw new LibraryError("unavailable", UNAVAILABLE, 503);
-  const blocks = (await blocksObject.json<Block[]>()) ?? [];
-  if (blocks.length === 0) throw new LibraryError("unavailable", UNAVAILABLE, 503);
+async function loadBlocks(env: Env, revisionId: string, assembly: Materialization): Promise<Block[]> {
+  const cached = assembly.blocks.get(revisionId);
+  if (cached) return cached;
+  const blocks = await readContextJson<Block[]>(env, assembly, "source/" + revisionId + "/blocks.json");
+  if (!Array.isArray(blocks) || blocks.length === 0) throw new LibraryError("unavailable", UNAVAILABLE, 503);
+  for (const block of blocks) {
+    if (!block || !Number.isSafeInteger(block.id) || block.id < 1 || !Number.isSafeInteger(block.start)
+      || !Number.isSafeInteger(block.end) || block.start < 0 || block.end <= block.start) {
+      throw new LibraryError("unavailable", UNAVAILABLE, 503);
+    }
+  }
+  assembly.blocks.set(revisionId, blocks);
   return blocks;
 }
 
-async function loadSourceText(env: Env, frozen: Frozen, index: number): Promise<{ section: string; source: LabelSource }> {
+async function loadSourceText(env: Env, frozen: Frozen, index: number, assembly: Materialization): Promise<{ section: string; source: LabelSource }> {
   const alias = "S" + (index + 1);
-  const textObject = await env.BUCKET.get("source/" + frozen.revisionId + "/text.md");
-  if (!textObject) throw new LibraryError("unavailable", UNAVAILABLE, 503);
-  const bytes = new Uint8Array(await textObject.arrayBuffer());
-  const blocks = await loadBlocks(env, frozen.revisionId);
+  const blocks = await loadBlocks(env, frozen.revisionId, assembly);
+  // A block this large cannot be materialized even if most of the revision consists
+  // of omitted page markers. Do not treat readable_size as a projected token count.
+  for (const block of blocks) {
+    if (block.end - block.start > MATERIALIZATION_BYTES - assembly.used) reserve(assembly, block.end - block.start);
+  }
+  const bytes = await readContextBytes(env, assembly, "source/" + frozen.revisionId + "/text.md");
   const lines = [sourceHeader(alias, frozen.title)];
   const citableBlocks: Block[] = [];
   for (const block of blocks) {
@@ -233,46 +332,55 @@ async function loadSourceText(env: Env, frozen: Frozen, index: number): Promise<
     }
     let slice: string;
     try {
-      slice = (block.start === 0 ? bomDecoder : decoder).decode(bytes.subarray(block.start, block.end));
-    } catch {
+      slice = decodeContext(assembly, bytes.subarray(block.start, block.end), block.start);
+    } catch (error) {
+      if (error instanceof LibraryError && error.code === "invalid") throw error;
       throw new LibraryError("unavailable", UNAVAILABLE, 503);
     }
     if (!slice.trim()) continue;
     if (isCitableBlock(block, slice)) {
       citableBlocks.push(block);
-      lines.push("[" + alias + ":" + block.id + "] " + slice);
+      lines.push(joinContext(assembly, ["[", alias, ":", String(block.id), "] ", slice]));
     }
   }
   if (lines.length === 1) throw new LibraryError("unavailable", UNAVAILABLE, 503);
   const source: LabelSource = { sourceId: frozen.sourceId, revisionId: frozen.revisionId, title: frozen.title, blocks: citableBlocks, alias };
+  reserve(assembly, source.blocks.length * 128);
   lines.splice(1, 0, citableLabelInventory(source));
-  return { section: lines.join("\n"), source };
+  return { section: joinContext(assembly, lines, "\n"), source };
 }
 
-async function loadClaims(env: Env, revisionId: string): Promise<ClaimRow[]> {
+async function loadClaims(env: Env, revisionId: string, assembly: Materialization): Promise<ClaimRow[]> {
+  reserve(assembly, 128);
   const result = await env.DB.prepare(
-    "SELECT c.ordinal AS ordinal, c.statement AS statement, c.quote AS quote, c.conditions AS conditions, " +
+    "WITH selected AS (SELECT c.ordinal AS ordinal, c.statement AS statement, c.quote AS quote, c.conditions AS conditions, " +
       "c.block_index AS blockIndex FROM claim c JOIN source_revision r ON r.id = c.source_revision_id " +
-      "WHERE c.source_revision_id = ? AND c.ambiguous = 0 AND c.ordinal < r.claim_count ORDER BY c.ordinal ASC",
+      "WHERE c.source_revision_id = ? AND c.ambiguous = 0 AND c.ordinal < r.claim_count ORDER BY c.ordinal ASC LIMIT " + (MAX_CLAIMS + 1) +
+      "), bounded AS (SELECT *,sum(256 + 4 * (length(CAST(statement AS BLOB)) + length(CAST(quote AS BLOB)) + coalesce(length(CAST(conditions AS BLOB)),0))) OVER () <= ? AS fits FROM selected) " +
+      "SELECT ordinal,blockIndex,CASE WHEN fits THEN statement ELSE '' END AS statement,CASE WHEN fits THEN quote ELSE '' END AS quote, " +
+      "CASE WHEN fits THEN conditions END AS conditions,NOT fits AS metadataTooLarge FROM bounded ORDER BY ordinal ASC",
   )
-    .bind(revisionId)
-    .all<ClaimRow>();
+    .bind(revisionId, MATERIALIZATION_BYTES - assembly.used)
+    .all<ClaimRow & { metadataTooLarge?: number }>();
+  if (result.results.length > MAX_CLAIMS) throw new LibraryError("invalid", NARROW_SCOPE, 400);
+  for (const row of result.results) {
+    if (row.metadataTooLarge) throw new LibraryError("invalid", NARROW_SCOPE, 400);
+    reserve(assembly, 256 + 4 * (row.statement.length + row.quote.length + (row.conditions?.length ?? 0)));
+  }
   return result.results;
 }
 
-async function resolveGuideKey(env: Env, entry: Frozen): Promise<string> {
+async function resolveGuideKey(env: Env, entry: Frozen, assembly: Materialization): Promise<string> {
   const legacy = "source/" + entry.revisionId + "/guide.md";
   const raw = typeof entry.reportKey === "string" ? entry.reportKey.trim() : "";
   if (!raw) return legacy;
   const prefix = "source/" + entry.revisionId + "/";
   if (!raw.startsWith(prefix)) throw new LibraryError("unavailable", GUIDE_MISSING, 503);
-  const reportObject = await env.BUCKET.get(raw);
-  if (!reportObject) throw new LibraryError("unavailable", GUIDE_MISSING, 503);
   let report: unknown;
   try {
-    const bytes = new Uint8Array(await reportObject.arrayBuffer());
-    report = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch {
+    report = await readContextJson<unknown>(env, assembly, raw);
+  } catch (error) {
+    if (error instanceof LibraryError && error.code === "invalid") throw error;
     throw new LibraryError("unavailable", GUIDE_MISSING, 503);
   }
   const artifacts = (report as { artifacts?: unknown } | null)?.artifacts;
@@ -282,14 +390,13 @@ async function resolveGuideKey(env: Env, entry: Frozen): Promise<string> {
   return guideKey;
 }
 
-async function loadGuideBlocks(env: Env, entry: Frozen, byId: Map<number, Block>): Promise<Array<{ id: number; passage: string }>> {
-  const guideKey = await resolveGuideKey(env, entry);
-  const guideObject = await env.BUCKET.get(guideKey);
-  if (!guideObject) throw new LibraryError("unavailable", GUIDE_MISSING, 503);
+async function loadGuideBlocks(env: Env, entry: Frozen, byId: Map<number, Block>, assembly: Materialization): Promise<Array<{ id: number; passage: string }>> {
+  const guideKey = await resolveGuideKey(env, entry, assembly);
   let guideText: string;
   try {
-    guideText = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(new Uint8Array(await guideObject.arrayBuffer()));
-  } catch {
+    guideText = decodeContext(assembly, await readContextBytes(env, assembly, guideKey));
+  } catch (error) {
+    if (error instanceof LibraryError && error.code === "invalid") throw error;
     throw new LibraryError("unavailable", UNAVAILABLE, 503);
   }
   const out: Array<{ id: number; passage: string }> = [];
@@ -300,14 +407,12 @@ async function loadGuideBlocks(env: Env, entry: Frozen, byId: Map<number, Block>
     if (!Number.isSafeInteger(id) || id < 1 || seen.has(id)) continue;
     const block = byId.get(id);
     if (!block) continue;
-    const rangeObject = await env.BUCKET.get("source/" + entry.revisionId + "/text.md", { range: { offset: block.start, length: block.end - block.start } });
-    if (!rangeObject) throw new LibraryError("unavailable", UNAVAILABLE, 503);
-    const rangeBytes = new Uint8Array(await rangeObject.arrayBuffer());
-    if (rangeBytes.byteLength !== block.end - block.start) throw new LibraryError("unavailable", UNAVAILABLE, 503);
+    const rangeBytes = await readContextBytes(env, assembly, "source/" + entry.revisionId + "/text.md", { offset: block.start, length: block.end - block.start });
     let passage: string;
     try {
-      passage = (block.start === 0 ? bomDecoder : decoder).decode(rangeBytes);
-    } catch {
+      passage = decodeContext(assembly, rangeBytes, block.start);
+    } catch (error) {
+      if (error instanceof LibraryError && error.code === "invalid") throw error;
       throw new LibraryError("unavailable", UNAVAILABLE, 503);
     }
     if (!passage.trim()) continue;
@@ -318,11 +423,12 @@ async function loadGuideBlocks(env: Env, entry: Frozen, byId: Map<number, Block>
   return out;
 }
 
-async function loadClaimContextPart(env: Env, entry: Frozen, index: number): Promise<ClaimContextPart | undefined> {
+async function loadClaimContextPart(env: Env, entry: Frozen, index: number, assembly: Materialization): Promise<ClaimContextPart | undefined> {
   if (!DISTILLED.has(entry.distillState ?? "")) return undefined;
   const alias = "S" + (index + 1);
-  const claims = await loadClaims(env, entry.revisionId);
-  const blocks = await loadBlocks(env, entry.revisionId);
+  const claims = await loadClaims(env, entry.revisionId, assembly);
+  const blocks = await loadBlocks(env, entry.revisionId, assembly);
+  reserve(assembly, blocks.length * 64);
   const byId = new Map<number, Block>();
   for (const block of blocks) byId.set(block.id, block);
   const supported = claims.filter((claim) => {
@@ -334,27 +440,30 @@ async function loadClaimContextPart(env: Env, entry: Frozen, index: number): Pro
   const quoted = new Set<string>();
   const lines = [sourceHeader(alias, entry.title)];
   const claimsOrientation = [sourceHeader(alias, entry.title)];
-  for (const guide of await loadGuideBlocks(env, entry, byId)) {
+  for (const guide of await loadGuideBlocks(env, entry, byId, assembly)) {
     used.add(guide.id);
     quoted.add(JSON.stringify([guide.id, guide.passage]));
-    lines.push("[" + alias + ":" + guide.id + "] " + guide.passage);
+    lines.push(joinContext(assembly, ["[", alias, ":", String(guide.id), "] ", guide.passage]));
   }
   for (const claim of supported) {
     used.add(claim.blockIndex);
+    reserve(assembly, 8 * (claim.statement.length + claim.quote.length + (claim.conditions?.length ?? 0)) + 256);
     const when = claim.conditions && claim.conditions.trim() ? " [" + claim.conditions.trim() + "]" : "";
     claimsOrientation.push(stripLabels(claim.statement + when));
     const key = JSON.stringify([claim.blockIndex, claim.quote]);
     if (quoted.has(key)) continue;
     quoted.add(key);
-    lines.push("[" + alias + ":" + claim.blockIndex + "] " + claim.quote);
+    lines.push(joinContext(assembly, ["[", alias, ":", String(claim.blockIndex), "] ", claim.quote]));
   }
   const source: LabelSource = { sourceId: entry.sourceId, revisionId: entry.revisionId, title: entry.title, blocks: blocks.filter((block) => used.has(block.id)), alias };
+  reserve(assembly, source.blocks.length * 128);
   lines.splice(1, 0, citableLabelInventory(source));
-  return { section: lines.join("\n"), orientation: claimsOrientation.join("\n"), source };
+  return { section: joinContext(assembly, lines, "\n"), orientation: joinContext(assembly, claimsOrientation, "\n"), source };
 }
 
 async function buildMixedContext(
   env: Env,
+  assembly: Materialization,
   frozen: Frozen[],
   rawHistory: ContextHistoryTurn[] | undefined,
   frozenSet: Set<string>,
@@ -369,15 +478,15 @@ async function buildMixedContext(
   const compactParts: Array<ClaimContextPart | undefined> = [];
   for (let i = 0; i < frozen.length; i++) {
     const entry = frozen[i];
-    if (entry) compactParts[i] = await loadClaimContextPart(env, entry, i);
+    if (entry) compactParts[i] = await loadClaimContextPart(env, entry, i, assembly);
   }
   const wholeParts = preloadedWhole ? [...preloadedWhole] : new Array<Awaited<ReturnType<typeof loadSourceText>> | undefined>(frozen.length);
   let projectedTokens = wholePrefitTokens;
   if (preloadedWhole) {
     const sections = wholeParts.map((part) => part?.section ?? "");
     const sources = wholeParts.flatMap((part) => part ? [part.source] : []);
-    const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources);
-    projectedTokens = systemTokens + estimateTokens(SOURCES_HEADER + sections.join("\n\n"))
+    const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources, assembly);
+    projectedTokens = systemTokens + estimateTokens(joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]))
       + history.tokens + callerTokens + maxOutputTokens;
   } else {
     projectedTokens += estimateTokens(SOURCES_HEADER) + Math.max(0, frozen.length - 1) * estimateTokens("\n\n");
@@ -416,14 +525,14 @@ async function buildMixedContext(
       if (!entry) continue;
       const compact = compressed.has(i) ? compactParts[i] : undefined;
       if (compressed.has(i) && !compact) throw new Error("A compact context source disappeared during assembly.");
-      const part = compact ?? (wholeParts[i] ?? (wholeParts[i] = await loadSourceText(env, entry, i)));
+      const part = compact ?? (wholeParts[i] ?? (wholeParts[i] = await loadSourceText(env, entry, i, assembly)));
       sections.push(part.section);
       sources.push(part.source);
       if (compact) orientations.push(compact.orientation);
     }
-    const sourcesText = SOURCES_HEADER + sections.join("\n\n");
-    const claimOrientation = orientations.length ? CLAIMS_ORIENTATION_HEADER + orientations.join("\n\n") : "";
-    const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources);
+    const sourcesText = joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]);
+    const claimOrientation = orientations.length ? joinContext(assembly, [CLAIMS_ORIENTATION_HEADER, joinContext(assembly, orientations, "\n\n")]) : "";
+    const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources, assembly);
     const estimatedInputTokens = systemTokens + estimateTokens(sourcesText)
       + (claimOrientation ? estimateTokens(claimOrientation) : 0) + history.tokens;
     if (estimatedInputTokens + callerTokens + maxOutputTokens > cap) return undefined;
@@ -458,7 +567,12 @@ async function buildMixedContext(
 }
 
 export async function buildContext(env: Env, _actor: Actor, input: ContextInput): Promise<ContextResult> {
-  if (!input.projectId || typeof input.projectId !== "string") {
+  const assembly: Materialization = { used: 0, blocks: new Map(), rangeReads: 0 };
+  reserve(assembly, 2 * ((input.question?.length ?? 0) + (input.instructions?.length ?? 0)));
+  for (const turn of input.history ?? []) {
+    reserve(assembly, 128 + (turn.citations?.length ?? 0) * 256);
+  }
+  if (!input.projectId || typeof input.projectId !== "string" || utf8Bytes(input.projectId) > 128) {
     throw new LibraryError("invalid", "Choose a project before asking.", 400);
   }
   const contextTokens = input.model?.contextTokens ?? 0;
@@ -474,8 +588,8 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
   await ensureProject(env, input.projectId);
   let frozen: Frozen[];
   if (input.scopeMode === "empty") frozen = [];
-  else if (input.scopeMode === "explicit") frozen = await freezeExplicit(env, input.projectId, input.sourceIds ?? []);
-  else if (input.scopeMode === "project_default") frozen = await freezeProjectDefault(env, input.projectId);
+  else if (input.scopeMode === "explicit") frozen = await freezeExplicit(env, input.projectId, input.sourceIds ?? [], assembly);
+  else if (input.scopeMode === "project_default") frozen = await freezeProjectDefault(env, input.projectId, assembly);
   else throw new LibraryError("invalid", "Choose sources before asking.", 400);
 
   const cap = Math.min(Math.floor(contextTokens * 0.6), WHOLE_CAP);
@@ -487,10 +601,12 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
   }
   const frozenSet = new Set(frozen.map((entry) => entry.revisionId));
   const historyBudget = Math.min(Math.floor(contextTokens * 0.1), cap - maxOutputTokens - systemTokens - scopePolicyTokens - callerTokens);
-  const history = selectHistory(input.history, frozenSet, Math.max(0, historyBudget));
+  const history = selectHistory(input.history, frozenSet, Math.max(0, historyBudget), [], assembly);
   let knownBytes = 0;
   for (const entry of frozen) {
-    if (typeof entry.readableSize === "number") knownBytes += entry.readableSize;
+    if (typeof entry.readableSize === "number" && Number.isSafeInteger(entry.readableSize) && entry.readableSize >= 0) {
+      knownBytes = Math.min(Number.MAX_SAFE_INTEGER, knownBytes + entry.readableSize);
+    }
   }
   const wholePrefitTokens = Math.ceil(knownBytes / 3) + systemTokens + history.tokens + callerTokens + maxOutputTokens;
   const wholePrefit = wholePrefitTokens <= cap;
@@ -516,14 +632,14 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     for (let i = 0; i < frozen.length; i++) {
       const entry = frozen[i];
       if (!entry) continue;
-      const loaded = await loadSourceText(env, entry, i);
+      const loaded = await loadSourceText(env, entry, i, assembly);
       wholeParts[i] = loaded;
       sections.push(loaded.section);
       sources.push(loaded.source);
     }
-    const sourcesText = SOURCES_HEADER + sections.join("\n\n");
+    const sourcesText = joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]);
     const sourceTokens = estimateTokens(sourcesText);
-    const historyFinal = selectHistory(input.history, frozenSet, Math.max(0, historyBudget), sources);
+    const historyFinal = selectHistory(input.history, frozenSet, Math.max(0, historyBudget), sources, assembly);
     const estimatedInputTokens = systemTokens + sourceTokens + historyFinal.tokens;
     if (estimatedInputTokens + callerTokens + maxOutputTokens <= cap) {
       let orientation: ContextMessage[] = [];
@@ -537,7 +653,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
         guideLines.push(sourceHeader("S" + (i + 1), stripLabels(summary)));
       }
       if (guideLines.length > 0) {
-        const guideText = "Derived orientation only; facts and citations must come from original labelled blocks.\n\n" + guideLines.join("\n");
+        const guideText = joinContext(assembly, ["Derived orientation only; facts and citations must come from original labelled blocks.\n\n", joinContext(assembly, guideLines, "\n")]);
         const guideTokens = estimateTokens(guideText);
         if (estimatedInputTokens + guideTokens + callerTokens + maxOutputTokens <= cap) {
           orientationTokens = guideTokens;
@@ -558,7 +674,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
       };
     }
   }
-  return buildMixedContext(env, frozen, input.history, frozenSet, historyBudget, systemTokens, callerTokens,
+  return buildMixedContext(env, assembly, frozen, input.history, frozenSet, historyBudget, systemTokens, callerTokens,
     maxOutputTokens, cap, wholePrefitTokens, wholePrefit ? wholeParts : undefined);
 }
 
