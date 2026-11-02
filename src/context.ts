@@ -54,7 +54,8 @@ const WHOLE_CAP = 400000;
 const MATERIALIZATION_BYTES = 16 * 1024 * 1024;
 const MAX_SOURCES = 1024;
 const MAX_CLAIMS = 256;
-interface Materialization { used: number; blocks: Map<string, Block[]> }
+const MAX_GUIDE_RANGES = 256;
+interface Materialization { used: number; blocks: Map<string, Block[]>; rangeReads: number }
 function reserve(assembly: Materialization, bytes: number): void {
   if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > MATERIALIZATION_BYTES - assembly.used) {
     throw new LibraryError("invalid", NARROW_SCOPE, 400);
@@ -77,6 +78,7 @@ function utf8Bytes(text: string): number {
   return bytes;
 }
 async function readContextBytes(env: Env, assembly: Materialization, key: string, range?: { offset: number; length: number }): Promise<Uint8Array> {
+  if (range && ++assembly.rangeReads > MAX_GUIDE_RANGES) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   reserve(assembly, 128);
   if (range && range.length > MATERIALIZATION_BYTES - assembly.used) reserve(assembly, range.length);
   const object = await env.BUCKET.get(key, range ? { range } : undefined);
@@ -277,7 +279,7 @@ function selectHistory(
     if (assistant && (assistant.revisionIds ?? []).some((id) => !frozen.has(id))) continue;
     // Do not copy a raw exchange above the full history reserve merely to strip
     // labels. Visit newest first; older candidates stop once the suffix is full.
-    if (estimateTokens(user.content) > budget || (assistant && estimateTokens(assistant.content) > budget)) continue;
+    if (estimateTokens(user.content) > budget || (assistant && estimateTokens(assistant.content) > budget)) break;
     reserve(assembly, 4 * (user.content.length + (assistant?.content.length ?? 0)));
     const userContent = stripLabels(user.content).trim();
     if (!userContent) continue;
@@ -565,7 +567,7 @@ async function buildMixedContext(
 }
 
 export async function buildContext(env: Env, _actor: Actor, input: ContextInput): Promise<ContextResult> {
-  const assembly: Materialization = { used: 0, blocks: new Map() };
+  const assembly: Materialization = { used: 0, blocks: new Map(), rangeReads: 0 };
   reserve(assembly, 2 * ((input.question?.length ?? 0) + (input.instructions?.length ?? 0)));
   for (const turn of input.history ?? []) {
     reserve(assembly, 128 + (turn.citations?.length ?? 0) * 256);

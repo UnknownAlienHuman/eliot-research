@@ -584,6 +584,8 @@ The materialization bound below is implemented by the current repair slice; chat
   R2 bodies use `body.getReader()`, count chunks before retaining them, and cancel on failure. Block maps are read
   first and reused within the assembly; a block larger than the remaining allowance rejects before its text GET.
   Reports, guides and exact ranges use the same bound, and ranges must return exactly their requested byte length.
+  At most 256 guide ranges are fetched per assembly; another range rejects the whole request before its GET,
+  preventing small passages from turning the byte allowance into thousands of serial reads.
   Declared sizes cannot waive the streamed checks. No subsequent body is fetched after exhaustion.
   Source queries return at most 1,025 rows and reject more than **1,024** sources; explicit ID arrays share that cap.
   IDs and explicit input IDs are capped at 128 UTF-8 bytes. SQL clips title/summary/report-key fields above
@@ -592,7 +594,7 @@ The materialization bound below is implemented by the current repair slice; chat
   aggregate metadata before transfer.
   Claim queries similarly suppress oversized fields and reject more than **256** rows, without using a partial list.
   History is selected newest-first before copying older exchanges. Raw exchanges above the existing history-token
-  reserve are skipped before label normalization; UTF-8 token estimation no longer allocates encoded copies.
+  reserve stop older-history selection before label normalization; UTF-8 token estimation no longer allocates encoded copies.
   Caller and output reserves remain unchanged.
   Metadata still chooses eligible whole/compact representations before body reads. `readable_size` is only a
   preflight estimate, not an exact token count or a lower bound on projected citable text: fitting marker-heavy

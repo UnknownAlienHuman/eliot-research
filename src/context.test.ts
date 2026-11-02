@@ -1452,6 +1452,13 @@ describe("bounded context materialization", () => {
     expect(result.revisionIds).toEqual(["r0"]);
     expect(result.estimatedInputTokens + modelOutputLimit(MODEL)).toBeLessThanOrEqual(400000);
   });
+  it("does not jump over an oversized newest exchange to reuse older history", async () => {
+    const fixture = scope(1);
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL,
+      history: [{ role: "user", content: "Old question" }, { role: "assistant", content: "Old answer" },
+        { role: "user", content: "New question" }, { role: "assistant", content: "n".repeat(400000) }] });
+    expect(result.messages.map((message) => message.role)).toEqual(["system", "user"]);
+  });
   it("counts separate block maps cumulatively before reading later text", async () => {
     const fixture = scope();
     const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
@@ -1481,6 +1488,19 @@ describe("bounded context materialization", () => {
       .rejects.toMatchObject({ code: "invalid", status: 400 });
     expect(fixture.requested).toContain("source/" + revisionId + "/guide.md");
     expect(fixture.requested.some((key) => key.includes("text.md"))).toBe(false);
+  });
+  it("caps tiny guide range fan-out without returning partial source evidence", async () => {
+    const revisionId = "11111111-1111-4111-8111-111111111111";
+    const blocks = Array.from({ length: 257 }, (_, i) => ({ id: i + 1, type: "paragraph", start: i, end: i + 1, heading: null }));
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper", state: "active", currentRevisionId: revisionId, createdAt: 1 }],
+      revisions: [{ id: revisionId, readableState: "readable", readableSize: 9000000, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 1 }],
+      texts: { [revisionId]: { text: "x".repeat(257), blocks, guide: blocks.map((block) => "[R" + revisionId + ":" + block.id + "]").join(" ") } },
+      claims: { [revisionId]: [{ ordinal: 0, statement: "x", quote: "x", conditions: null, blockIndex: 1, ambiguous: 0 }] },
+    });
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested.filter((key) => key.includes("text.md#r"))).toHaveLength(256);
   });
   it.each(["sources", "source NUL", "summary NUL", "report NUL", "claims", "claim NUL", "source aggregate", "IDs"])("bounds %s inside SQLite before transferring oversized fields", async (kind) => {
     const db = new DatabaseSync(":memory:");
