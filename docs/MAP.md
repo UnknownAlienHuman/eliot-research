@@ -43,13 +43,14 @@ quotas.
 
 ### Active repair order
 
-Rechecked at `98ebdc21` on 2026-11-02. The rows below are **open proposals**, not delivered fixes. Implement one usable
-slice at a time in this order; update its owning contract and this row when evidence closes it. Code changes come first;
+Rechecked at `98ebdc21` on 2026-11-02. The rows below track open proposals and implemented slices awaiting acceptance;
+they do not establish contour acceptance. Implement one usable slice at a time in this order and update its owning
+contract and row when evidence closes it. Code changes come first;
 the closure cases below describe later acceptance, not permission to start paid runs or a new test framework.
 
 | Order | Problem and implementation owner | Closure |
 |---|---|---|
-| 1 · K2 | `context.ts` loads an oversized undistilled scope before rejecting it. Add bounded materialization in [IMPLEMENTATION §8](IMPLEMENTATION.md#8-ask-and-context). | Oversized scopes stop before unbounded R2 reads/allocation; fitting mixed scopes retain every frozen source and exact citation; zero inference on rejection. |
+| 1 · K2 | `context.ts` now bounds assembly to 16 MiB of cumulative streamed-byte/allocation charges, including bounded source/claim metadata and reused block maps; see [IMPLEMENTATION §8](IMPLEMENTATION.md#8-ask-and-context). | Implementation ready for review. Stream cancellation, unknown/understated sizes, metadata/projection bounds and existing mixed/marker-heavy UTF-8 controls pass; native journeys and packaging are reported in the PR. This closes only the memory repair after acceptance, not K2/K3 semantic or deployed gates. |
 | 2 · K2 | `chat.ts:onStart` clears an accepted queued question. Preserve it as visibly undispatched; never launch it from recovery. | After restart, active A is interrupted and queued B remains readable with zero usage; reopening and repeating B's ID cause no model call. A new Send is explicit. |
 | 3 · K2 | `chat.ts` stores a terminal DO turn before its final D1 update; a failed update is not reconciled once active state is cleared. Apply storage-only settlement in [§8](IMPLEMENTATION.md#8-ask-and-context). | A failed or unconfirmed D1 write converges from the stored turn without another model call; terminal state and known usage agree, unknown usage remains unknown, and terminal D1 rows are not overwritten. |
 | 4 · K1 | `workflows/ingest.ts` disables retries for load/commit as well as conversion; a D1 failure can strand a pending revision or leave readable text unpublished. Apply completion recovery in [§4](IMPLEMENTATION.md#4-ingest-and-conversion). | Recoverable storage failures settle or show an actionable terminal failure; recovery never repeats conversion. The pre-dispatch call count survives, and stored text is published only under the existing head guard. |

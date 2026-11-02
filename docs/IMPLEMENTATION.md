@@ -570,19 +570,38 @@ distinct; missing usage remains unknown. Private turn telemetry exposes only the
 `cachedTokens` and `reasoningTokens`, each null when missing or invalid. Eval may reuse only completed turns
 with exact frozen source/revision sets; a non-reusable question stays manual and resume never dispatches a replacement.
 
-### Proposed context and chat repairs — open
+### Context materialization and proposed chat repairs
 
-These changes are not implemented at `98ebdc21`; [MAP's repair order](MAP.md#active-repair-order) owns their status.
+The materialization bound below is implemented by the current repair slice; chat repairs remain open.
+[MAP's repair order](MAP.md#active-repair-order) owns acceptance status.
 
-- **Materialization bound — `context.ts`.** Decide eligible whole/compact representations from metadata before
-  loading their bodies. Introduce one cumulative byte ceiling for this assembly, separate from the model token cap;
-  include block maps and projected-text allocations, and leave room for the rest of the Worker. `readable_size` is
-  preflight metadata, not an exact token count or a lower bound on projected text, which omits some markers. Reject
-  an obviously oversized noncompressible selection before reading its text bodies. Enforce the ceiling on actual
-  R2 bytes with bounded reads before `arrayBuffer`/concatenation; unknown or mismatched sizes cannot bypass it. Abort
-  before fetching the remaining bodies when exhausted. Preserve frozen scope/order; return the existing narrow-scope
-  or understanding-needed error without dispatching inference or automatically distilling. The implementation PR
-  records the chosen byte ceiling and peak-memory evidence; an unbounded metadata/claim list is not a substitute.
+- **Materialization bound — `context.ts`.** Each assembly has one cumulative **16 MiB** allocation allowance, separate
+  from the unchanged model-token cap. It counts actual streamed R2 bytes, chunk bookkeeping, contiguous copies,
+  decoded UTF-16 strings, conservative parsed-JSON overhead, metadata, labels, orientation and joined projections.
+  Charges are not released for discarded attempts. This is a product guard, not a measurement of V8's heap or a
+  process-wide concurrency limit; SDKs, the caller's already-loaded turn payloads and other isolate requests need
+  additional memory. The implementation PR records observed memory separately from this accounting bound.
+  R2 bodies use `body.getReader()`, count chunks before retaining them, and cancel on failure. Block maps are read
+  first and reused within the assembly; a block larger than the remaining allowance rejects before its text GET.
+  Reports, guides and exact ranges use the same bound, and ranges must return exactly their requested byte length.
+  Declared sizes cannot waive the streamed checks. No subsequent body is fetched after exhaustion.
+  Source queries return at most 1,025 rows and reject more than **1,024** sources; explicit ID arrays share that cap.
+  IDs and explicit input IDs are capped at 128 UTF-8 bytes. SQL clips title/summary/report-key fields above
+  4,096/32,768/4,096 bytes and marks the complete request invalid, rather than publishing truncated metadata.
+  Lengths use `length(CAST(field AS BLOB))`, including NUL tails. Window sums include IDs and suppress oversized
+  aggregate metadata before transfer.
+  Claim queries similarly suppress oversized fields and reject more than **256** rows, without using a partial list.
+  History is selected newest-first before copying older exchanges. Raw exchanges above the existing history-token
+  reserve are skipped before label normalization; UTF-8 token estimation no longer allocates encoded copies.
+  Caller and output reserves remain unchanged.
+  Metadata still chooses eligible whole/compact representations before body reads. `readable_size` is only a
+  preflight estimate, not an exact token count or a lower bound on projected citable text: fitting marker-heavy
+  sources remain eligible. Frozen scope/order, aliases and original UTF-8 citation ranges are preserved. Failure
+  returns the existing narrow-scope/understanding-needed response before inference, without automatic distillation.
+  Checked 2026-11-02 against the installed `@cloudflare/workers-types@5.20261024.1` R2 declarations and the official
+  [R2 range/body contract](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and
+  [Worker memory contract](https://developers.cloudflare.com/workers/platform/limits/#memory). The platform's
+  128 MB limit is shared by the isolate, not a separate allowance for each assembly.
 - **Interrupted queue — `chat.ts`.** Before clearing persisted `queued`, store its unchanged turn ID/question/input
   in the existing DO turn history as `failed` with an explicit never-dispatched message and zero token usage/bound.
   Do not resolve a new model or invent frozen revision IDs for a question that never started. Persist this recovery
