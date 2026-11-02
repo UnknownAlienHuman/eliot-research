@@ -131,6 +131,17 @@ stays readable with a visible conflict warning and never replaces the newer head
 mutation UUID returns its already committed winner. Old revisions remain readable for old citations. Use UUIDs and Unix milliseconds. Do not add
 a generic effects ledger; each operation stores its own model route, usage and estimate.
 
+**Proposed freshness repair — open.** Ordinary ingest head advancement currently omits page invalidation; OCR Apply
+already invalidates existing accepted heads. Put successful ingest head advancement and dependent-page staleness in
+one D1 batch, preserving its compare-and-set guard. Match exact string revision IDs in accepted heads' `inputs_json`;
+do not stale unrelated pages or pages on a failed head race. Also calculate freshness inside the publication batch
+for `saveAnswer` and proposal acceptance: an old answer/proposal may be published after replacement or OCR Apply.
+If any recorded input is superseded or unavailable, publish as stale; otherwise the new accepted head is current,
+including when it replaces a stale head. Keep historical revisions and citation identities valid. Resolve this from
+existing rows, without another dependency store, automatic refresh or model call; expose the result in Studio (§13).
+Freshness follows the current readable head: a pending, failed or unreadable replacement retains the prior readable
+evidence until a new readable head wins. Show that replacement's conversion state separately.
+
 ## 4. Ingest and conversion
 
 The browser may select many files but sends one file/request with at most two concurrent requests. API file cap is
@@ -149,6 +160,16 @@ usage, and `conversion_ms`. Every Workflow step has retries disabled; conversion
 The Blob sent to `toMarkdown` carries its stored MIME type: the real service rejected an empty type. PDF metadata and
 embedded-image conversion are disabled. Output containing only page headings is `needs_conversion`, never readable
 source evidence. Exactly one leading UTF-8 BOM is removed before canonical storage; readers preserve those stored bytes.
+
+**Proposed completion recovery — open.** `IngestWorkflow` also disables retries on deterministic load/commit steps.
+A failed commit can leave `pending` forever, or readable artifacts without a current pointer; `conversion_calls=1`
+already persists before dispatch, but final tokens/state may not. Give only storage load/commit bounded retries;
+keep convert/store single-attempt. Make the terminal revision/head/freshness write idempotent and atomic before
+retrying it. Handle exhausted attempts as a visible failure, using the existing deterministic instance
+for bounded storage-only status reconciliation. A completed conversion step's cached result and matching retained
+artifacts may recover the commit step only; never recreate the Workflow or restart at/before conversion to repair a
+write. Without sufficient evidence, show an actionable failure rather than inventing successful conversion or usage.
+Retain known counts, keep unavailable usage unknown, and preserve the newer-head guard on every completion attempt.
 
 `IngestWorkflow` converts native UTF-8 text locally. Cache `env.AI.toMarkdown().supported()` and call `toMarkdown` only
 for required document formats. Ordinary ingest never invokes OCR or opts into model-assisted image conversion: retain scans/images and mark
@@ -574,6 +595,14 @@ These changes are not implemented at `98ebdc21`; [MAP's repair order](MAP.md#act
   `writeTurn` already preserves `created_at` on conflict: retain that ordering, add no second message store. Prepend
   pages chronologically and merge by turn ID so streaming/reconnect cannot erase loaded older pages or duplicate turns.
   An old saved answer keeps its original citations. Browsable history and bounded model-history selection are separate.
+- **Terminal settlement — `chat.ts`.** A terminal DO payload currently precedes its D1 write, while startup repairs
+  only payloads still marked `started`. Keep an unfinished D1 update discoverable on the owning stored turn after
+  active execution ends. Settle from that durable payload with a bounded, idempotent storage-only path, including
+  startup/replay; adopt an existing terminal D1 result only after its stored fields match the terminal DO projection.
+  Preserve and report any terminal mismatch instead of silently declaring convergence. Update only a D1 row
+  still `started`, respecting migration `0006` rather than rewriting terminal history. Preserve known usage and nulls.
+  A failed client notification must not prevent persistence. Recovery neither dispatches inference nor starts the
+  queued question; use the interrupted-queue rule above, without an effects ledger or generic retry service.
 
 ## 9. AI Search projection — K5 only
 
@@ -859,6 +888,19 @@ context → dispatch → settlement visible in one orchestrator; extract only de
 projection helpers, keeping stop/deadline ordering intact. Then review `SourcesPane`, `OcrDialog` and `ModelSettings`
 for similarly independent responsibilities when touching them. Function length locates review targets; it is not a
 quota or justification for a hook hierarchy, generic lifecycle framework, new provider layer or mass file splitting.
+
+**Proposed Studio completeness — open.** `StudioView` currently drops both `nextCursor` and `freshness`. Consume page
+pagination and show the existing freshness field in list and detail; keep selection when fetching more or refreshing.
+Use immutable `(created_at,id)` ordering and a value cursor, as in chat inventory, and deduplicate IDs. The current
+ID-only cursor re-reads mutable `updated_at`; do not retain it, because source invalidation or proposal acceptance can
+move rows between requests. Raising the 50-row limit is not a repair.
+
+**Proposed asynchronous view isolation — open.** `ChatView.send` can navigate or clear a different chat's draft after
+its request finishes. Reader's polling does not abort in-flight metadata reads, and a completed replacement can write
+its old source's revision into a new source route. Guard every continuation by the initiating mounted view and
+project/chat or source/revision identity; abort obsolete reads, including polling, and reset replacement-file state
+when its source changes. Already submitted writes keep their original target and may finish there; their late result
+must not redirect, overwrite or unlock the newly selected view. Reuse component keys, refs and AbortController.
 
 ## 14. Lifecycle and export
 
