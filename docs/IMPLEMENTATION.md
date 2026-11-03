@@ -131,14 +131,19 @@ stays readable with a visible conflict warning and never replaces the newer head
 mutation UUID returns its already committed winner. Old revisions remain readable for old citations. Use UUIDs and Unix milliseconds. Do not add
 a generic effects ledger; each operation stores its own model route, usage and estimate.
 
-**Freshness repair — partly implemented, acceptance in MAP.** Ingest publication now batches its terminal revision,
+**Freshness repair — implementation and acceptance in MAP.** Ingest publication batches its terminal revision,
 guarded readable head and dependent accepted-head staleness atomically; OCR Apply also invalidates existing accepted
 heads. Match exact string revision IDs in accepted heads' `inputs_json`; do not stale unrelated pages or pages on a
-failed head race. Remaining repair: calculate freshness inside the publication batch
-for `saveAnswer` and proposal acceptance: an old answer/proposal may be published after replacement or OCR Apply.
-If any recorded input is superseded or unavailable, publish as stale; otherwise the new accepted head is current,
-including when it replaces a stale head. Keep historical revisions and citation identities valid. Resolve this from
-existing rows, without another dependency store, automatic refresh or model call; expose the result in Studio (§13).
+failed head race. `saveAnswer` and proposal acceptance calculate freshness inside their existing guarded head UPDATE,
+in the same D1 batch that inserts or accepts the immutable page revision. Evaluate every recorded `inputs_json` ID,
+including uncited context, as an exact JSON string against its available, readable source revision and that source's
+current readable head. Missing, deleted, unreadable or superseded inputs make the new head stale; all-current inputs
+and the empty input array make it current, including when replacing a stale head. Archive or detach alone does not
+make evidence unavailable. A source switch serialized before publication is observed there; a switch serialized after
+publication invalidates the newly accepted dependent head. Historical input order, bodies and citation bytes remain
+unchanged. Repeated Save/Accept returns the recorded winner without recomputing freshness; Reject, a failed head CAS
+and replay of an older acceptance cannot change another head's freshness. No dependency store, automatic refresh or
+model call is added. Studio freshness display remains the separate open §13 repair.
 Freshness follows the current readable head: a pending, failed or unreadable replacement retains the prior readable
 evidence until a new readable head wins. Show that replacement's conversion state separately.
 
@@ -174,7 +179,7 @@ Read-back adopts a committed batch whose reply was lost; different terminal meta
 older readable-but-unpublished result can finish publication without replaying conversion even when a newer revision
 is pending. Preflight checks newest readable, and the batch checks the full terminal projection (including the
 warning/state pair) again before head advancement or staleness. Historical capture fields
-remain immutable under migration `0006`; later Save/Accept freshness is a separate repair.
+remain immutable under migration `0006`; later Save/Accept computes freshness at its own publication boundary (§3).
 Canonical R2 writes use conditional create, never overwrite an existing text or block object, and retain returned
 ETags in the small cached conversion result. Commit/reconciliation checks both objects' ETags and text size. Text
 alone, equal sizes, missing blocks or changed objects do not prove completion. A partial store remains a failure;
