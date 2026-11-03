@@ -133,6 +133,9 @@ export interface AnswerWarning {
 
 export interface TurnView {
   turnId: string;
+  /** Read/stream metadata from the owning DO row; not part of model history. */
+  createdAt?: number;
+  historyVersion?: number;
   question: string;
   /** Original accepted request, retained when a queued question never started. */
   input?: RunTurnInput;
@@ -160,6 +163,8 @@ export interface TurnView {
   settlementPending?: true;
   settlementError?: string;
 }
+
+export interface TurnPage { turns: TurnView[]; nextCursor: string | null }
 
 export interface RunTurnInput {
   projectId: string;

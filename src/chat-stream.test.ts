@@ -207,6 +207,84 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("ChatAgent older history", () => {
+  const turn = (n: number): TurnView => ({ turnId: "history-" + String(n).padStart(4, "0"), question: "Question " + n, answer: "Answer " + n,
+    state: "completed", model: "fixture", scopeMode: "empty", contextMode: "none", revisionIds: [], sourceIds: [], citations: [],
+    invalidLabels: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0, firstTokenMs: null, totalMs: 1, error: null });
+  const seed = (db: DatabaseSync, count: number, start = 1) => {
+    for (let n = start; n < start + count; n++) db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,?)").run(turn(n).turnId, JSON.stringify(turn(n)), 100 + Math.floor(n / 90));
+  };
+  it("pages all equal-timestamp ties without gaps/duplicates, while model history stays latest 50", async () => {
+    const h = makeHarness(); try {
+      await h.agent.onStart(); seed(h.db, 163);
+      const seen: string[] = []; let cursor: string | undefined;
+      do {
+        const page = await h.agent.getTurnPage(projectId, cursor);
+        expect(page.turns.length).toBeLessThanOrEqual(50);
+        expect(page.turns.every((t) => t.createdAt !== undefined && t.historyVersion === 0)).toBe(true);
+        seen.unshift(...page.turns.map((t) => t.turnId)); cursor = page.nextCursor ?? undefined;
+      } while (cursor);
+      expect(seen).toEqual(Array.from({ length: 163 }, (_, n) => turn(n + 1).turnId));
+      expect(new Set(seen).size).toBe(163);
+      expect((await h.agent.getTurns(projectId)).map((t) => t.turnId)).toEqual(seen.slice(-50));
+      expect(h.db.prepare("EXPLAIN QUERY PLAN SELECT id FROM turns WHERE (created_at,id)<(101,'history-0100') ORDER BY created_at DESC,id DESC LIMIT 50").all()).toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.stringContaining("SEARCH turns USING COVERING INDEX turns_by_created") })]));
+      expect(fetchCalls).toBe(0); expect(requireAvailableModel).not.toHaveBeenCalled();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("keeps a value boundary across updates, a new tied-timestamp turn, deletion of the anchor and restart", async () => {
+    const h = makeHarness(); try {
+      await h.agent.onStart(); seed(h.db, 120);
+      const first = await h.agent.getTurnPage(projectId), oldest = first.turns[0];
+      if (!oldest || !first.nextCursor) throw new Error("missing boundary");
+      const before = await h.agent.getTurnPage(projectId, first.nextCursor);
+      h.db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,101)").run(turn(121).turnId, JSON.stringify(turn(121)));
+      (h.agent as unknown as { writeTurn(t: TurnView): void }).writeTurn({ ...oldest, answer: "New streamed text" });
+      expect(h.db.prepare("SELECT created_at,history_version FROM turns WHERE id=?").get(oldest.turnId)).toMatchObject({ created_at: oldest.createdAt, history_version: 1 });
+      h.db.prepare("DELETE FROM turns WHERE id=?").run(oldest.turnId);
+      const restarted = new ChatAgent({ database: h.db } as unknown as ConstructorParameters<typeof ChatAgent>[0], h.env); await restarted.onStart();
+      expect(await restarted.getTurnPage(projectId, first.nextCursor)).toEqual(before);
+      const snapshot = await restarted.getSnapshot(projectId); expect(snapshot.turns.at(-1)?.turnId).toBe(turn(121).turnId);
+      expect(fetchCalls).toBe(0);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("adds version/index to existing storage without rewriting legacy payloads or creation timestamps", async () => {
+    const h = makeHarness(); try {
+      h.db.exec("CREATE TABLE turns(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL)"); seed(h.db, 1);
+      const before = h.db.prepare("SELECT payload,created_at FROM turns").get(); await h.agent.onStart(); await h.agent.onStart();
+      expect(h.db.prepare("SELECT payload,created_at FROM turns").get()).toEqual(before);
+      const old = (await h.agent.getTurns(projectId))[0]; if (!old) throw new Error("missing legacy turn");
+      expect(old.historyVersion).toBe(0);
+      (h.agent as unknown as { writeTurn(t: TurnView): void }).writeTurn({ ...old, answer: "Stream one" });
+      (h.agent as unknown as { writeTurn(t: TurnView): void }).writeTurn({ ...old, answer: "Stream two" });
+      const frame = JSON.parse(String(vi.mocked(h.agent.broadcast).mock.calls.at(-1)?.[0] ?? "{}"));
+      expect(frame.turn).toMatchObject({ answer: "Stream two", createdAt: old.createdAt, historyVersion: 2 });
+      const payload = JSON.parse((h.db.prepare("SELECT payload FROM turns").get()?.payload as string));
+      expect(payload.createdAt).toBeUndefined(); expect(payload.historyVersion).toBeUndefined();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("browsing older pages does not widen the next explicit turn's existing latest-50 model history", async () => {
+    const h = makeHarness(); try {
+      await h.agent.onStart(); seed(h.db, 120);
+      let cursor = (await h.agent.getTurnPage(projectId)).nextCursor;
+      while (cursor) cursor = (await h.agent.getTurnPage(projectId, cursor)).nextCursor;
+      expect(fetchCalls).toBe(0);
+      nextSSE = sse([chunk({ content: "Bounded answer [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 })]);
+      await h.agent.submitTurn({ projectId, chatId, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-999999999999", question: "New explicit send", scopeMode: "empty", model: "gateway:openrouter/test-model" }, true);
+      const history = vi.mocked(buildContext).mock.calls.at(-1)?.[2].history ?? [];
+      const questions = history.filter((item) => item.role === "user").map((item) => item.content);
+      expect(questions).toEqual(Array.from({ length: 49 }, (_, n) => "Question " + (n + 72)));
+      expect(fetchCalls).toBe(1); // The existing in-process fake stream, never a provider call.
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it.each(["", "{}", "[]", "null", '["other-chat",1,"turn"]', '["wire-chat",-1,"turn"]', '["wire-chat",1.5,"turn"]', '["wire-chat",1,""]', "x".repeat(513)])("rejects malformed or foreign cursor %s without model work", async (cursor) => {
+    const h = makeHarness(); try {
+      await h.agent.onStart(); await expect(h.agent.getTurnPage(projectId, cursor)).rejects.toMatchObject({ code: "invalid", status: 400 });
+      await expect(h.agent.getTurnPage("other-project")).rejects.toMatchObject({ code: "not_found", status: 404 });
+      expect(fetchCalls).toBe(0); expect(requireAvailableModel).not.toHaveBeenCalled();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+});
+
 describe("ChatAgent interrupted queue recovery", () => {
   const activeId = "aaaaaaaa-aaaa-4aaa-8aaa-000000000001";
   const queuedId = "bbbbbbbb-bbbb-4bbb-8bbb-000000000002";
@@ -222,7 +300,7 @@ describe("ChatAgent interrupted queue recovery", () => {
       citations: [{ revisionId: "r1", sourceId: "s1", block: 1, start: 0, end: 8, sourceTitle: "Paper", deleted: false, label: "[S1:1]" }],
       invalidLabels: 0, inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: TOKEN_BOUND,
       firstTokenMs: 12, totalMs: null, error: null };
-    h.db.prepare("INSERT INTO turns VALUES(?,?,?)").run(activeId, JSON.stringify(active), 100);
+    h.db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,?)").run(activeId, JSON.stringify(active), 100);
     h.d1.prepare("INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,token_limit,created_at) VALUES(?,?,?,?,?,'whole','started',?,100)")
       .run(chatId, activeId, active.model, active.scopeMode, JSON.stringify(active.revisionIds), TOKEN_BOUND);
     const state: WireAgentState = { active: activeId, queued: queuedInput(model), stopRequested: false };
@@ -374,7 +452,7 @@ describe("ChatAgent interrupted queue recovery", () => {
       expect(b).toMatchObject({ state: "failed", input: queuedInput(), inputTokens: 0, tokenLimit: 0,
         error: expect.stringContaining("could not be validated") });
       expect(h.agent.state).toEqual({ active: null, queued: null, stopRequested: false });
-      expect(await h.agent.submitTurn(queuedInput(), true)).toEqual(b);
+      expect(await h.agent.submitTurn(queuedInput(), true)).toMatchObject(b);
       expectNoDispatch();
     } finally { h.db.close(); h.d1.close(); }
   });
@@ -474,8 +552,8 @@ describe("ChatAgent interrupted queue recovery", () => {
     try {
       const agent = h.agent;
       agent.setState(h.state);
-      const getTurns = agent.getTurns.bind(agent);
-      vi.spyOn(agent, "getTurns").mockImplementationOnce(async (id) => {
+      const getTurns = agent.getTurnPage.bind(agent);
+      vi.spyOn(agent, "getTurnPage").mockImplementationOnce(async (id) => {
         await new Promise<void>((resolve) => { releaseRead = resolve; });
         return getTurns(id);
       });
@@ -502,7 +580,7 @@ describe("ChatAgent terminal D1 settlement", () => {
     const turn: TurnView = { turnId: id, question: input.question, model: "gateway:command-code/native-beam", answer: "Saved answer [S1:1].", state,
       scopeMode: "explicit", sourceIds: ["s1"], revisionIds: ["r1"], contextMode: "whole", citations: [{ revisionId: "r1", sourceId: "s1", block: 1, start: 0, end: 8, sourceTitle: "Paper", deleted: false, label: "[S1:1]" }],
       invalidLabels: 0, inputTokens: null, cachedTokens: null, outputTokens: 5, tokenLimit: TOKEN_BOUND, firstTokenMs: 12, totalMs: 45, error: null, settlementPending: true };
-    h.db.prepare("INSERT INTO turns VALUES(?,?,100)").run(id, JSON.stringify(turn));
+    h.db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,100)").run(id, JSON.stringify(turn));
     h.d1.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,input_tokens,cached_tokens,output_tokens,token_limit,citations,invalid_labels,first_token_ms,total_ms,error,created_at,estimated_cost_microusd)
       VALUES(?,?,?,?,?,?,'started',NULL,NULL,NULL,?,0,0,NULL,NULL,NULL,100,12345)`).run(chatId, id, turn.model, turn.scopeMode, JSON.stringify(turn.revisionIds), turn.contextMode ?? "none", TOKEN_BOUND);
     h.agent.setState({ active, queued: null, stopRequested: false });
@@ -550,7 +628,7 @@ describe("ChatAgent terminal D1 settlement", () => {
       expect(snapshot.turns.find((turn) => turn.turnId === id)?.settlementPending).toBeUndefined();
       expect(h.agent.state.active).toBeNull();
       expect(h.d1.prepare("SELECT state,input_tokens,output_tokens FROM chat_turn WHERE turn_id=?").get(id)).toEqual({ state: "completed", input_tokens: 8, output_tokens: 5 });
-      expect(await h.agent.submitTurn(bInput, true)).toEqual({ ...b, input: bInput });
+      expect(await h.agent.submitTurn(bInput, true)).toMatchObject({ ...b, input: bInput });
       const before = h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id);
       await h.agent.getSnapshot(projectId); await h.agent.submitTurn(input, true);
       expect(h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id)).toEqual(before);
@@ -615,7 +693,7 @@ describe("ChatAgent terminal D1 settlement", () => {
   it("finds a pending terminal result outside the latest 50 turns after active was cleared", async () => {
     const h = await seeded("completed", null);
     try {
-      for (let n = 0; n < 51; n++) h.db.prepare("INSERT INTO turns VALUES(?,?,?)").run("later-" + n, JSON.stringify({ ...h.turn, turnId: "later-" + n, settlementPending: undefined }), 200 + n);
+      for (let n = 0; n < 51; n++) h.db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,?)").run("later-" + n, JSON.stringify({ ...h.turn, turnId: "later-" + n, settlementPending: undefined }), 200 + n);
       const snapshot = await h.agent.getSnapshot(projectId);
       expect(snapshot.turns).toHaveLength(50); expect(snapshot.turns.some((turn) => turn.turnId === id)).toBe(false);
       expect(h.d1.prepare("SELECT state,input_tokens,cached_tokens,output_tokens,estimated_cost_microusd FROM chat_turn WHERE turn_id=?").get(id))
@@ -663,7 +741,7 @@ describe("ChatAgent terminal D1 settlement", () => {
     try {
       for (let n = 1; n <= 8; n++) {
         const next = "pending-" + n;
-        h.db.prepare("INSERT INTO turns VALUES(?,?,?)").run(next, JSON.stringify({ ...h.turn, turnId: next }), 100 + n);
+        h.db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,?)").run(next, JSON.stringify({ ...h.turn, turnId: next }), 100 + n);
         h.d1.prepare("INSERT INTO chat_turn SELECT chat_id,?,model,scope_mode,scope_json,context_mode,state,input_tokens,cached_tokens,output_tokens,token_limit,estimated_cost_microusd,citations,invalid_labels,first_token_ms,total_ms,error,created_at FROM chat_turn WHERE turn_id=?").run(next, id);
       }
       expect(h.db.prepare("EXPLAIN QUERY PLAN SELECT id FROM turns WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 8").all())

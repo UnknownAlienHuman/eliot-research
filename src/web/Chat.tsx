@@ -1,11 +1,12 @@
 // K2 Ask: project chat and saved-answer Studio views. The parent owns project,
 // source selection, active chat routing, and the three-pane workspace. This file
 // owns only chat/history presentation and the storage-backed K2 interactions.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { Markdown } from './Markdown';
 import type { MarkdownReference } from './Markdown';
-import type { SourceSelection, TurnView } from '../shared/api';
+import type { SourceSelection, TurnPage, TurnView } from '../shared/api';
+import { mergeTurnHistory } from './chat-history';
 import type { Citation } from '../citations';
 import { ModelSettings } from './ModelSettings';
 import { ProposalsInbox } from './Proposals';
@@ -112,7 +113,11 @@ export function ChatView({
   const [chatsError, setChatsError] = useState('');
   const [historyRetry, setHistoryRetry] = useState(0);
   const [turns, setTurns] = useState<TurnView[]>([]);
+  const turnsRef = useRef<TurnView[]>([]);
   const [turnsError, setTurnsError] = useState('');
+  const [turnsCursor, setTurnsCursor] = useState<string | null>(null);
+  const [olderBusy, setOlderBusy] = useState(false);
+  const [olderError, setOlderError] = useState('');
   const [models, setModels] = useState<ModelRoute[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState('');
@@ -143,6 +148,19 @@ export function ChatView({
   const settingsDialogRef = useRef<HTMLDialogElement | null>(null);
   const historyRef = useRef<HTMLDetailsElement | null>(null);
   const routeRef = useRef({ projectId, chatId });
+  const turnsRoute = useRef<{ projectId: string; chatId?: string } | null>(null);
+  const olderRequest = useRef(0);
+  const olderAbort = useRef<AbortController | null>(null);
+  const headSequence = useRef(0);
+  const queueSequence = useRef(0);
+  const conversationRef = useRef<HTMLDivElement | null>(null);
+  const prependScroll = useRef<{ top: number; height: number } | null>(null);
+
+  function mergeTurns(incoming: readonly TurnView[]): void {
+    const merged = mergeTurnHistory(turnsRef.current, incoming);
+    turnsRef.current = merged;
+    setTurns(merged);
+  }
 
   if (selectionRef.current !== selection) {
     selectionRef.current = selection;
@@ -243,20 +261,36 @@ export function ChatView({
     const requestSelectionSequence = selectionChangeSeq.current;
     const requestProject = projectId;
     const requestChat = chatId;
+    const requestHead = headSequence.current;
+    const requestQueue = queueSequence.current;
+    const sameRoute = turnsRoute.current?.projectId === projectId && turnsRoute.current.chatId === chatId;
+    turnsRoute.current = { projectId, ...(chatId ? { chatId } : {}) };
+    const abort = new AbortController();
     let live = true;
-    setQueued(null);
-    setTurns([]);
+    olderRequest.current++;
+    olderAbort.current?.abort();
+    setOlderBusy(false);
+    setOlderError('');
+    if (!sameRoute) {
+      setQueued(null);
+      setTurns([]);
+      turnsRef.current = [];
+      setTurnsCursor(null);
+      prependScroll.current = null;
+    }
     setTurnsError('');
     setChatReady(requestChat === undefined);
     if (requestChat !== undefined) {
-      void apiJson<{ chat: ChatRow; turns: TurnView[]; queued?: QueuedTurn | null; settlementError?: string | null }>(
+      void apiJson<TurnPage & { chat: ChatRow; queued?: QueuedTurn | null; settlementError?: string | null }>(
         '/api/projects/' + encodeURIComponent(requestProject) + '/chats/' + encodeURIComponent(requestChat),
+        { signal: abort.signal },
       )
         .then((data) => {
           if (!live || historySeq.current !== sequence || projectRef.current !== requestProject || chatRef.current !== requestChat) return;
-          setTurns(data.turns);
+          mergeTurns(data.turns);
+          if (headSequence.current === requestHead) setTurnsCursor(data.nextCursor);
           setTurnsError(data.settlementError ?? '');
-          setQueued(data.queued ?? null);
+          if (queueSequence.current === requestQueue) setQueued(data.queued ?? null);
           const last = data.turns[data.turns.length - 1];
           if (last !== undefined && selectionChangeSeq.current === requestSelectionSequence) {
             onSelectionChangeRef.current({ scopeMode: last.scopeMode, sourceIds: [...last.sourceIds] });
@@ -271,6 +305,8 @@ export function ChatView({
     }
     return () => {
       live = false;
+      abort.abort();
+      olderAbort.current?.abort();
       if (historySeq.current === sequence) historySeq.current += 1;
     };
   }, [projectId, chatId, historyRetry]);
@@ -297,6 +333,8 @@ export function ChatView({
           + '?projectId=' + encodeURIComponent(currentProject),
       );
       ws = next;
+      const knownAtConnect = new Set(turnsRef.current.map((turn) => turn.turnId));
+      let queuedEvent = false;
       next.onopen = () => {
         if (live) {
           setSocket('open');
@@ -305,7 +343,7 @@ export function ChatView({
       };
       next.onerror = () => { if (live) setSocket('error'); };
       next.onclose = () => {
-        if (!live) return;
+        if (!live || projectRef.current !== currentProject || chatRef.current !== currentChat || next !== ws) return;
         setSocket('closed');
         const attempt = retryRef.current;
         retryRef.current = attempt + 1;
@@ -314,7 +352,7 @@ export function ChatView({
         timer = window.setTimeout(connect, delay);
       };
       next.onmessage = (event: MessageEvent) => {
-        if (!live) return;
+        if (!live || projectRef.current !== currentProject || chatRef.current !== currentChat || next !== ws) return;
         try {
           const message = JSON.parse(String(event.data)) as {
             type: string;
@@ -322,18 +360,30 @@ export function ChatView({
             queued?: QueuedTurn | null;
             turn?: TurnView;
             settlementError?: string | null;
+            nextCursor?: string | null;
           };
           if (message.type === 'snapshot' && Array.isArray(message.turns)) {
-            setTurns(message.turns);
-            setQueued(message.queued ?? null);
+            headSequence.current++;
+            if (!knownAtConnect.size || !message.turns.some((turn) => knownAtConnect.has(turn.turnId))) {
+              olderRequest.current++;
+              olderAbort.current?.abort();
+              setOlderBusy(false);
+              setOlderError('');
+              // Only rewind when the new window is disjoint: bridge messages
+              // missed offline, then dedupe through retained history. An
+              // overlapping reconnect keeps the existing older-page boundary.
+              setTurnsCursor(message.nextCursor ?? null);
+            }
+            mergeTurns(message.turns);
+            if (!queuedEvent) { queueSequence.current++; setQueued(message.queued ?? null); }
             setTurnsError(message.settlementError ?? '');
           } else if (message.type === 'queued') {
+            queuedEvent = true;
+            queueSequence.current++;
             setQueued(message.queued ?? null);
           } else if (message.type === 'turn' && message.turn !== undefined) {
             const receivedTurn = message.turn;
-            setTurns((previous) => previous.some((turn) => turn.turnId === receivedTurn.turnId)
-              ? previous.map((turn) => turn.turnId === receivedTurn.turnId ? receivedTurn : turn)
-              : [...previous, receivedTurn]);
+            mergeTurns([receivedTurn]);
           }
         } catch { /* retain the last readable snapshot */ }
       };
@@ -346,6 +396,31 @@ export function ChatView({
       ws?.close();
     };
   }, [projectId, chatId]);
+
+  useLayoutEffect(() => {
+    const element = conversationRef.current, anchor = prependScroll.current;
+    if (element && anchor) element.scrollTop = anchor.top + element.scrollHeight - anchor.height;
+    prependScroll.current = null;
+  }, [turns]);
+
+  async function moreTurns(): Promise<void> {
+    if (!chatId || !turnsCursor || olderBusy) return;
+    const request = ++olderRequest.current, project = projectId, chat = chatId;
+    const abort = new AbortController(); olderAbort.current = abort;
+    setOlderBusy(true); setOlderError('');
+    try {
+      const data = await apiJson<TurnPage>('/api/projects/' + encodeURIComponent(project) + '/chats/' + encodeURIComponent(chat)
+        + '/turns?cursor=' + encodeURIComponent(turnsCursor), { signal: abort.signal });
+      if (olderRequest.current !== request || projectRef.current !== project || chatRef.current !== chat) return;
+      const element = conversationRef.current;
+      if (element) prependScroll.current = { top: element.scrollTop, height: element.scrollHeight };
+      mergeTurns(data.turns);
+      setTurnsCursor(data.nextCursor);
+    } catch (error) {
+      if (olderRequest.current === request && projectRef.current === project && chatRef.current === chat)
+        setOlderError(error instanceof Error ? error.message : 'Could not load earlier messages.');
+    } finally { if (olderRequest.current === request) setOlderBusy(false); }
+  }
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -526,7 +601,11 @@ export function ChatView({
         </dialog>
       ) : null}
 
-      <div className='er-chat__conversation'>
+      <div className='er-chat__conversation' ref={conversationRef}>
+        {turnsCursor !== null ? <button className='er-button er-button--text' type='button' disabled={olderBusy} onClick={() => void moreTurns()}>
+          {olderBusy ? 'Loading earlier messages…' : 'Load earlier messages'}
+        </button> : null}
+        {olderError !== '' ? <p className='er-chat__error' role='alert'>{olderError} Retry loading earlier messages.</p> : null}
         {turnsError !== '' ? (
           <p className='er-chat__error' role='alert'>
             {turnsError}{' '}

@@ -11,7 +11,7 @@ import type { ModelSpec } from "./models";
 import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
 import { LibraryError } from "./library";
 import { readText } from "./read";
-import type { RunTurnInput, TurnView } from "./shared/api";
+import type { RunTurnInput, TurnPage, TurnView } from "./shared/api";
 
 interface ChatState { active: string | null; queued: RunTurnInput | null; stopRequested: boolean }
 interface StoredInput { projectId: string; chatId: string; hasModel: boolean; hasSourceIds: boolean }
@@ -41,12 +41,25 @@ function sameTurnRequest(a: RunTurnInput, b: RunTurnInput): boolean {
     && a.question === b.question && a.scopeMode === b.scopeMode && (a.model ?? null) === (b.model ?? null)
     && JSON.stringify(a.sourceIds ?? []) === JSON.stringify(b.sourceIds ?? []);
 }
+export function parseTurnCursor(cursor: unknown, chatId: string): { at: number; id: string } | undefined {
+  if (cursor === undefined) return undefined;
+  try {
+    if (typeof cursor !== "string" || cursor.length > 512) throw new Error("cursor");
+    const value: unknown = JSON.parse(cursor);
+    if (!Array.isArray(value) || value.length !== 3 || value[0] !== chatId || !Number.isSafeInteger(value[1]) || value[1] < 0
+      || typeof value[2] !== "string" || !value[2] || value[2].length > 128) throw new Error("cursor");
+    return { at: value[1] as number, id: value[2] };
+  } catch { throw new LibraryError("invalid", "This conversation cursor is invalid. Reopen the conversation.", 400); }
+}
 export class ChatAgent extends Agent<Env, ChatState> {
   initialState: ChatState = { active: null, queued: null, stopRequested: false };
   private controller: AbortController | undefined;
   private current: Promise<TurnView> | undefined;
   async onStart() {
     void this.sql`CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL)`;
+    if (!this.sql<{ name: string }>`PRAGMA table_info(turns)`.some((column) => column.name === "history_version"))
+      void this.sql`ALTER TABLE turns ADD COLUMN history_version INTEGER NOT NULL DEFAULT 0`;
+    void this.sql`CREATE INDEX IF NOT EXISTS turns_by_created ON turns(created_at,id)`;
     void this.sql`CREATE INDEX IF NOT EXISTS turns_pending_settlement ON turns(created_at,id) WHERE json_extract(payload,'$.settlementPending')=1`;
     const queued = this.state.queued;
     if (queued) {
@@ -84,19 +97,19 @@ export class ChatAgent extends Agent<Env, ChatState> {
     connection.send(JSON.stringify({ type: "snapshot", ...snapshot }));
   }
   private readTurn(id: string): TurnView | undefined {
-    const row = this.sql<{ payload: string }>`SELECT payload FROM turns WHERE id=${id}`[0];
+    const row = this.sql<{ payload: string; created_at: number; history_version: number }>`SELECT payload,created_at,history_version FROM turns WHERE id=${id}`[0];
     if (!row) return undefined;
-    return parseStoredTurn(row.payload);
+    return { ...parseStoredTurn(row.payload), createdAt: row.created_at, historyVersion: row.history_version };
   }
   private writeTurn(turn: TurnView, notify = true) {
     // Shared request fields already live on the turn. Do not duplicate a large
     // accepted question/source selection inside the same 2 MB SQLite row.
     const input: StoredInput | undefined = turn.input ? { projectId: turn.input.projectId, chatId: turn.input.chatId,
       hasModel: turn.input.model !== undefined, hasSourceIds: turn.input.sourceIds !== undefined } : undefined;
-    const payload = JSON.stringify(turn.input ? { ...turn, input } : turn);
-    void this.sql`INSERT INTO turns(id,payload,created_at) VALUES(${turn.turnId},${payload},${Date.now()})
-      ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`;
-    if (notify) this.notify(JSON.stringify({ type: "turn", turn }));
+    const payload = JSON.stringify({ ...turn, createdAt: undefined, historyVersion: undefined, ...(turn.input ? { input } : {}) });
+    const [row] = this.sql<{ created_at: number; history_version: number }>`INSERT INTO turns(id,payload,created_at,history_version) VALUES(${turn.turnId},${payload},${Date.now()},1)
+      ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,history_version=turns.history_version+1 RETURNING created_at,history_version`;
+    if (notify && row) this.notify(JSON.stringify({ type: "turn", turn: { ...turn, createdAt: row.created_at, historyVersion: row.history_version } }));
   }
   private notify(payload: string) {
     try { this.broadcast(payload); }
@@ -233,18 +246,30 @@ export class ChatAgent extends Agent<Env, ChatState> {
     if (!row || row.project_id !== projectId) throw new LibraryError("not_found", "Chat not found in this project.", 404);
   }
   async getTurns(projectId: string): Promise<TurnView[]> {
+    return (await this.getTurnPage(projectId)).turns;
+  }
+  async getTurnPage(projectId: string, cursor?: string): Promise<TurnPage> {
     await this.ensureProject(projectId);
+    const before = parseTurnCursor(cursor, this.name);
     this.requireRecoveredHandoff();
     await this.recoverFinishedTurn();
-    return this.sql<{ payload: string }>`SELECT payload FROM turns ORDER BY created_at DESC,id DESC LIMIT 50`
-      .reverse().map((row) => parseStoredTurn(row.payload));
+    // Fully materialize synchronously. The extra existence query reads only an ID,
+    // not a 51st potentially large answer. Updates never move the ordering key.
+    type Row = { id: string; payload: string; created_at: number; history_version: number };
+    const rows = before
+      ? this.sql<Row>`SELECT id,payload,created_at,history_version FROM turns WHERE (created_at,id)<(${before.at},${before.id}) ORDER BY created_at DESC,id DESC LIMIT 50`
+      : this.sql<Row>`SELECT id,payload,created_at,history_version FROM turns ORDER BY created_at DESC,id DESC LIMIT 50`;
+    const oldest = rows[rows.length - 1];
+    const more = rows.length === 50 && oldest && this.sql<{ id: string }>`SELECT id FROM turns WHERE (created_at,id)<(${oldest.created_at},${oldest.id}) LIMIT 1`.length > 0;
+    return { turns: rows.reverse().map((row) => ({ ...parseStoredTurn(row.payload), createdAt: row.created_at, historyVersion: row.history_version })),
+      nextCursor: more ? JSON.stringify([this.name, oldest.created_at, oldest.id]) : null };
   }
   async getSnapshot(projectId: string) {
-    const turns = await this.getTurns(projectId);
+    const { turns, nextCursor } = await this.getTurnPage(projectId);
     const { queued, active } = this.state;
     const older = this.sql<{ id: string; error: string | null }>`SELECT id,json_extract(payload,'$.settlementError') AS error FROM turns
       WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 1`[0];
-    return { turns, queued: queued && queued.turnId !== active ? { turnId: queued.turnId, question: queued.question } : null,
+    return { turns, nextCursor, queued: queued && queued.turnId !== active ? { turnId: queued.turnId, question: queued.question } : null,
       settlementError: older && !turns.some((turn) => turn.turnId === older.id) ? older.error : null };
   }
   async getStoredTurn(projectId: string, turnId: string) {

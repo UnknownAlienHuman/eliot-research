@@ -17,6 +17,7 @@ import { handleMcp } from "./mcp";
 import { decideProposal, getProposal, listProposals } from "./proposals";
 import { applyOcrJob, cancelOcrJob, createOcrJob, getOcrJob, listOcrJobs, readOcrPreview, startOcrJob, uploadOcrPage } from "./ocr";
 import { OCR_LIMITS } from "./shared/api";
+import { parseTurnCursor } from "./chat";
 
 export { IngestWorkflow } from "./workflows/ingest";
 export { ChatAgent } from "./chat";
@@ -135,6 +136,12 @@ app.get("/api/projects/:id/chats/:chatId", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId"));
   const chat = await chatRecord(c.env, projectId, chatId), agent = await getAgentByName(c.env.CHAT, chatId);
   return c.json({ chat, ...await agent.getSnapshot(projectId) });
+});
+app.get("/api/projects/:id/chats/:chatId/turns", async (c) => {
+  const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId"));
+  await chatRecord(c.env, projectId, chatId);
+  const cursor = c.req.query("cursor"); parseTurnCursor(cursor, chatId);
+  return c.json(await (await getAgentByName(c.env.CHAT, chatId)).getTurnPage(projectId, cursor));
 });
 app.post("/api/projects/:id/chats/:chatId/turns", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId")); await chatRecord(c.env, projectId, chatId);
