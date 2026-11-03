@@ -496,7 +496,7 @@ describe("ChatAgent interrupted queue recovery", () => {
       expect(b).toMatchObject({ state: "failed", input: queuedInput(), inputTokens: 0, tokenLimit: 0,
         error: expect.stringContaining("could not be validated") });
       expect(h.agent.state).toEqual({ active: null, queued: null, stopRequested: false });
-      expect(await h.agent.submitTurn(queuedInput(), true)).toMatchObject(b);
+      expect(await h.agent.submitTurn(queuedInput(), true)).toEqual(b);
       expectNoDispatch();
     } finally { h.db.close(); h.d1.close(); }
   });
@@ -672,7 +672,9 @@ describe("ChatAgent terminal D1 settlement", () => {
       expect(snapshot.turns.find((turn) => turn.turnId === id)?.settlementPending).toBeUndefined();
       expect(h.agent.state.active).toBeNull();
       expect(h.d1.prepare("SELECT state,input_tokens,output_tokens FROM chat_turn WHERE turn_id=?").get(id)).toEqual({ state: "completed", input_tokens: 8, output_tokens: 5 });
-      expect(await h.agent.submitTurn(bInput, true)).toMatchObject({ ...b, input: bInput });
+      const ordering = h.db.prepare("SELECT created_at,history_version FROM turns WHERE id=?").get(bInput.turnId);
+      expect(await h.agent.submitTurn(bInput, true)).toEqual({ ...b, input: bInput,
+        createdAt: ordering?.created_at, historyVersion: ordering?.history_version });
       const before = h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id);
       await h.agent.getSnapshot(projectId); await h.agent.submitTurn(input, true);
       expect(h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id)).toEqual(before);
