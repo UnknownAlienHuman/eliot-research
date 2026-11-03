@@ -1,4 +1,4 @@
-import { fencedRanges, inlineCodeRanges } from "./code-ranges.js";
+import { fencedRanges, inlineCodeRanges } from "./code-ranges.ts";
 import { countNumericQuantities, numbersSupported, parseSingleNumber } from "./numbers.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";

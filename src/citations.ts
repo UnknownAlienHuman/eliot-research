@@ -1,4 +1,4 @@
-import { fencedRanges, inlineCodeRanges } from "./code-ranges.js";
+import { fencedRanges, inlineCodeRanges } from "./code-ranges.ts";
 import type { Block } from "./blocks.js";
 import { numbersSupported } from "./numbers.ts";
 import type { AnswerWarning } from "./shared/api.js";
