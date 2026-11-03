@@ -294,21 +294,29 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
   const claims = rechecked.claims.flatMap((item, index) => primary(item, index, "retained"));
   dropped.push(...rechecked.dropped.map((item) => ({ ...item, reason: `retained-${item.reason}` })));
   const additional: CandidateClaim[] = [];
+  const additionalIndexes: number[] = [];
   for (const [index, item] of raw.output.additionalClaims.entries()) {
     const quote = byLabel.get(item.quoteBlock), cleaned = cleanDistillText(item.statement, [item.quoteBlock], revisionId);
     if (!quote || cleaned.invalidReferences) { dropped.push({ index, reason: "additional-invalid-reference" }); continue; }
+    if (!cleaned.text.trim()) { dropped.push({ index, reason: "additional-empty-statement" }); continue; }
+    additionalIndexes.push(index);
     additional.push({ kind: item.kind, statement: cleaned.text, quote: quote.quote, block: quote.block,
       task: item.task ?? null, metric: item.metric ?? null, dataset: item.dataset ?? null,
       valueText: item.valueText ?? null, unit: item.unit ?? null, conditions: item.conditions ?? null });
   }
   const checked = verifyClaims(bytes, blocks, additional);
-  dropped.push(...checked.dropped.map((item) => ({ ...item, reason: `additional-${item.reason}` })));
-  for (const [index, rawItem] of checked.claims.entries()) {
-    const item = primary(rawItem, index, "additional")[0];
+  let checkedIndex = 0;
+  for (const [index, originalIndex] of additionalIndexes.entries()) {
+    const rejected = checked.dropped.find((item) => item.index === index);
+    if (rejected) { dropped.push({ index: originalIndex, reason: `additional-${rejected.reason}` }); continue; }
+    const rawItem = checked.claims[checkedIndex++];
+    if (!rawItem) throw new Error("The call-2 verifier lost candidate ordering.");
+    const item = primary(rawItem, originalIndex, "additional")[0];
     if (!item) continue;
     if (claims.some((c) => c.block === item.block && c.statement === item.statement)) continue;
-    if (claims.length < 32) claims.push(item); else dropped.push({ index: item.block, reason: "claim-output-bound" });
+    if (claims.length < 32) claims.push(item); else dropped.push({ index: originalIndex, reason: "claim-output-bound" });
   }
+  if (checkedIndex !== checked.claims.length) throw new Error("The call-2 verifier lost candidate ordering.");
   const evidence = (labels: string[]) => labels.map((label) => byLabel.get(label)?.quote ?? "").join("\n");
   const prose = (items: { text: string; labels: string[] }[], stage: string) => items.flatMap((item, index) => {
     const cleaned = cleanDistillText(item.text, item.labels, revisionId);

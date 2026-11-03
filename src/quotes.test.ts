@@ -347,7 +347,7 @@ describe("verifyClaims", () => {
 
   it.each([
     ["0,500", 0.5], ["-0,050", -0.05], ["+0,500%", 0.5], ["0,500e-2", 0.005],
-    ["1,280,000", 1280000], ["0,5", null], ["1 280 000", null],
+    ["1,280,000", 1280000], ["1,500", 1500], ["0,5", null], ["1 280 000", null],
   ] as const)("preserves scalar interpretation and canonical bytes for %s", (valueText, valueNumber) => {
     const text = "Потеря 😀: " + valueText + ".";
     const out = verifyClaims(TE.encode(text), [blockFor(1, text, text)], [claim({
