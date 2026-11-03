@@ -3,7 +3,7 @@
 // No donor runtime/query/byte helpers. Root wires Routes/App/Shell + this CSS
 // and owns routes/schema/shared/api. Ranges: UTF-8 bytes, end-exclusive.
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useLocation, useParams, useSearchParams } from "react-router";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project, Revision, Source, SourceSelection } from "../shared/api";
 import { readableTextWarning } from "../ingest";
@@ -495,6 +495,12 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
 }
 export function Reader() {
   const { projectId, sourceId } = useParams();
+  return <SourceReader key={(projectId ?? "") + ":" + (sourceId ?? "")} />;
+}
+
+function SourceReader() {
+  const { projectId, sourceId } = useParams();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
   const revisionId = params.get("revisionId") ?? "";
@@ -509,6 +515,16 @@ export function Reader() {
   const [failure, setFailure] = useState("");
   const [copied, setCopied] = useState(false);
   const [replace, setReplace] = useState<File | null>(null);
+  const [replacing, setReplacing] = useState(false);
+  const mounted = useRef(false), replaceLock = useRef(false);
+  const metaSequence = useRef(0), metaAbort = useRef<AbortController | null>(null);
+  const metaOwner = useRef({ projectId, sourceId, revisionId });
+  if (metaOwner.current.projectId !== projectId || metaOwner.current.sourceId !== sourceId || metaOwner.current.revisionId !== revisionId)
+    metaOwner.current = { projectId, sourceId, revisionId };
+  const actionView = useRef({ key: location.key, path: location.pathname, search: location.search });
+  if (actionView.current.key !== location.key || actionView.current.path !== location.pathname || actionView.current.search !== location.search)
+    actionView.current = { key: location.key, path: location.pathname, search: location.search };
+  const view = actionView.current;
   const preRef = useRef<HTMLPreElement | null>(null);
   const rev = revisions.find((r) => r.id === (revisionId || source?.currentRevisionId || source?.revisionId || revisions[0]?.id || ""));
   const activeRevision = rev?.id ?? "";
@@ -518,39 +534,45 @@ export function Reader() {
   const textReady = loadedRev !== "" && loadedRev === activeRevision;
   const readableWarning = useMemo(() => rev?.warningSummary ?? (textReady ? readableTextWarning(text) : null), [rev?.warningSummary, textReady, text]);
   const hasRange = textReady && Number.isSafeInteger(rangeStart) && Number.isSafeInteger(rangeEnd) && rangeStart >= 0 && rangeEnd > rangeStart;
-  async function refreshMeta(signal?: AbortSignal) {
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; metaSequence.current++; metaAbort.current?.abort(); };
+  }, []);
+  async function refreshMeta(reportFailure = true) {
+    const owner = metaOwner.current, sequence = ++metaSequence.current, abort = new AbortController();
+    metaAbort.current?.abort(); metaAbort.current = abort;
     const q = revisionId ? "?revisionId=" + encodeURIComponent(revisionId) : "";
-    const d = await apiJson<{ source: Source; revisions: Revision[] }>("/api/sources/" + encodeURIComponent(sourceId ?? "") + q, signal ? { signal } : undefined);
-    if (signal?.aborted) return;
-    setSource(d.source); setRevisions(d.revisions);
+    const current = () => mounted.current && metaOwner.current === owner && metaSequence.current === sequence && !abort.signal.aborted;
+    try {
+      const d = await apiJson<{ source: Source; revisions: Revision[] }>("/api/sources/" + encodeURIComponent(sourceId ?? "") + q, { signal: abort.signal });
+      if (!current()) return;
+      setSource(d.source); setRevisions(d.revisions); if (reportFailure) setFailure("");
+    } catch (err) { if (current() && reportFailure) setFailure(err instanceof Error ? err.message : "Could not open the source."); }
   }
-  async function reloadMeta(signal?: AbortSignal) {
-    try { await refreshMeta(signal); if (!signal?.aborted) setFailure(""); }
-    catch (err) { if (!signal?.aborted) setFailure(err instanceof Error ? err.message : "Could not open the source."); }
-  }
-  useEffect(() => { const c = new AbortController(); setFailure(""); void reloadMeta(c.signal); return () => c.abort(); }, [sourceId, revisionId]);
+  useEffect(() => { setFailure(""); void refreshMeta(); return () => { metaSequence.current++; metaAbort.current?.abort(); }; }, [projectId, sourceId, revisionId]);
   useEffect(() => {
     if (!sourceId || activeState !== "pending") return;
-    const timer = window.setInterval(async () => { try { await refreshMeta(); } catch { /* next tick retries */ } }, POLL_MS);
-    return () => window.clearInterval(timer);
+    let pending = false;
+    const timer = window.setInterval(async () => { if (pending) return; pending = true; try { await refreshMeta(false); } finally { pending = false; } }, POLL_MS);
+    return () => { window.clearInterval(timer); metaAbort.current?.abort(); };
   }, [sourceId, revisionId, activeState]);
   useEffect(() => {
     if (!activeRevision || activeState === "pending" || activeState === "failed" || activeState === "needs_conversion" || activeState === "") return;
-    let live = true;
+    const abort = new AbortController();
     (async () => {
       try {
-        const res = await fetch("/api/revisions/" + encodeURIComponent(activeRevision) + "/text", { credentials: "same-origin" });
+        const res = await fetch("/api/revisions/" + encodeURIComponent(activeRevision) + "/text", { credentials: "same-origin", signal: abort.signal });
         if (!res.ok) throw new Error(await apiErrorMessage(res));
         const raw = decodeCanonical(await res.arrayBuffer());
-        if (!live) return;
+        if (abort.signal.aborted || !mounted.current) return;
         setText(raw);
-        const od = await apiJson<{ blocks: unknown }>("/api/revisions/" + encodeURIComponent(activeRevision) + "/outline");
-        if (!live) return;
+        const od = await apiJson<{ blocks: unknown }>("/api/revisions/" + encodeURIComponent(activeRevision) + "/outline", { signal: abort.signal });
+        if (abort.signal.aborted || !mounted.current) return;
         setOutline(toOutlineItems(od.blocks, raw));
         setLoadedRev(activeRevision);
-      } catch (err) { if (live) setFailure(err instanceof Error ? err.message : "Could not read the text."); }
+      } catch (err) { if (!abort.signal.aborted && mounted.current) setFailure(err instanceof Error ? err.message : "Could not read the text."); }
     })();
-    return () => { live = false; };
+    return () => abort.abort();
   }, [activeRevision, activeState]);
   const excerpt = useMemo(() => {
     if (!hasRange || !text) return "";
@@ -569,21 +591,25 @@ export function Reader() {
     void navigator.clipboard?.writeText(window.location.origin + window.location.pathname + "?" + next.toString()).then(() => setCopied(true), () => setCopied(false));
   }
   async function replaceFile() {
-    if (!replace || !projectId || !source) return;
+    if (!replace || !projectId || !source || replaceLock.current) return;
+    const owner = actionView.current, targetSource = source.id, file = replace;
+    const current = () => mounted.current && actionView.current === owner;
+    replaceLock.current = true; setReplacing(true); setFailure("");
     const form = new FormData();
-    form.append("file", replace, replace.name);
-    form.append("sourceId", source.id);
-    let res: Response;
+    form.append("file", file, file.name);
+    form.append("sourceId", targetSource);
     try {
-      res = await fetch("/api/projects/" + encodeURIComponent(projectId) + "/sources/file", { method: "POST", body: form, credentials: "same-origin" });
-    } catch (err) { setFailure(err instanceof Error ? err.message : "Replace failed before a response arrived."); return; }
-    if (!res.ok) { setFailure(await apiErrorMessage(res)); return; }
-    const body = (await res.json()) as { revisionId?: string };
-    setReplace(null); setText(""); setOutline([]); setLoadedRev("");
-    if (body.revisionId) setParams({ revisionId: body.revisionId });
-    try { await refreshMeta(); } catch (err) { setFailure(err instanceof Error ? err.message : "Replaced, but the source would not reload."); }
+      const res = await fetch("/api/projects/" + encodeURIComponent(projectId) + "/sources/file", { method: "POST", body: form, credentials: "same-origin" });
+      if (!res.ok) throw new Error(await apiErrorMessage(res));
+      const body = (await res.json()) as { revisionId?: string };
+      if (!current()) return;
+      setReplace(null);
+      if (body.revisionId) setParams({ revisionId: body.revisionId }); // The new revision effect owns its reads.
+      else await refreshMeta();
+    } catch (err) { if (current()) setFailure(err instanceof Error ? err.message : "Replace failed before a response arrived."); }
+    finally { replaceLock.current = false; if (mounted.current) setReplacing(false); }
   }
-  if (!source) return <LoadGate text="Opening the source…" failure={failure} onRetry={() => void reloadMeta()} />;
+  if (!source) return <LoadGate text="Opening the source…" failure={failure} onRetry={() => void refreshMeta()} />;
   return (
     <section className="er-lib" aria-labelledby="er-lib-reader">
       <header className="er-lib__head"><Link className="er-button er-button--text" to={"/p/" + encodeURIComponent(projectId ?? "") + "/sources"}>Sources</Link><h1 className="er-lib__title" id="er-lib-reader">{source.title}</h1><p className="er-lib__hint"><span className="er-chip er-lib__badge" data-tone={tone(activeState)}>{stateLabel(activeState)}</span></p></header>
@@ -607,13 +633,14 @@ export function Reader() {
           <div className="er-lib__actions"><button className="er-button er-button--tonal" type="button" onClick={copySelectionLink}>Copy link to selection</button>{activeRevision ? <a className="er-button er-button--text" href={"/api/revisions/" + encodeURIComponent(activeRevision) + "/original"}>Original</a> : null}{copied ? <span className="er-lib__hint" role="status">Link copied.</span> : null}</div>
           {projectId && sourceId && activeRevision && activeRevision === source.revisionId && rev?.originalMime === "application/pdf" && activeState !== "pending"
             ? <SourceOcr projectId={projectId} sourceId={sourceId} revisionId={activeRevision} onApplied={id => {
+              if (!mounted.current || actionView.current !== view) return;
               void queryClient.invalidateQueries({ queryKey: ["sources", projectId], exact: true });
               if (id !== activeRevision) { setText(""); setOutline([]); setLoadedRev(""); }
               setParams({ revisionId: id });
             }} /> : null}
           <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void replaceFile(); }}>
-            <label className="er-field__label" htmlFor="er-lib-replace">Replace source file</label><input id="er-lib-replace" type="file" onChange={(e) => setReplace(e.currentTarget.files?.[0] ?? null)} />
-            <button className="er-button er-button--tonal" type="submit" disabled={!replace}>Upload new revision</button>
+            <label className="er-field__label" htmlFor="er-lib-replace">Replace source file</label><input id="er-lib-replace" type="file" disabled={replacing} onChange={(e) => setReplace(e.currentTarget.files?.[0] ?? null)} />
+            <button className="er-button er-button--tonal" type="submit" disabled={!replace || replacing}>{replacing ? "Uploading new revision…" : "Upload new revision"}</button>
           </form>
           {activeState === "pending" ? <p className="er-lib__hint" role="status">Converting…</p> : null}
           {activeState === "needs_conversion" ? <p className="er-lib__hint" role="note">The original is saved. Upload a readable Markdown file to read this source.</p> : null}

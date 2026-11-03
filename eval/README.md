@@ -56,6 +56,7 @@ The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `
 | `pnpm eval k2 --native-only` | limited reader/history smoke, zero model calls |
 | `pnpm eval k2 --models-only` | disconnected Gateway consent/admission and 390px Settings/understanding; no credential enable or provider call, not external-model acceptance |
 | `pnpm eval k2 --picker-only` | empty-project chat readiness, dynamic model/provider selection and intercepted Send payloads; zero inference, unchanged stored turns/usage, frontend proof only |
+| `pnpm eval k2 --view-isolation` | loopback desktop/phone reused workspace, delayed Send/Reader responses and replacement locks; native stored sources, intercepted model/delayed replacement writes plus real zero-conversion Markdown controls, unchanged stored turns; frontend ownership only |
 | `pnpm eval k2 --stored-only` | existing chat hard-gate revalidation; requires `ELIOT_EVAL_CHAT`, no new chat or turn |
 | `pnpm eval k2` without model opt-in | limited storage smoke, not full K2 acceptance |
 | `pnpm eval k3 --native-only` | explicitly limited storage smoke, zero model calls; optional cached-output checks are separate fixtures |

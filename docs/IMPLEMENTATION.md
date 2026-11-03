@@ -109,8 +109,9 @@ Migrations own schema names:
 | `0008_model_providers.sql` | provider configuration, owning-row token bounds and saved native usage choice; existing accounting data retained |
 | `0009_agents.sql` | trigram claim FTS/backfill and immutable proposal base revision |
 | `0010_source_ocr.sql` | owner-requested `source_ocr_job`, frozen PDF/model inputs, bounded page progress/usage, preview identity and applied revision |
+| `0011_studio_pages.sql` | published-page index on immutable creation time and ID for Studio pagination |
 
-Apply all active `migrations/*.sql` in filename order: currently `0001`–`0003` and `0005`–`0010`.
+Apply all active `migrations/*.sql` in filename order: currently `0001`–`0003` and `0005`–`0011`.
 The unaccepted `0004_agents.sql` draft is preserved at `infra/legacy-migrations/0004_agents.sql`, outside that selection.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:
@@ -211,7 +212,7 @@ K1 static capture uses HTTPS port 443, at most three redirects, a 15-second tota
 Hostname validation does not pin DNS resolution; DNS rebinding prevention is not claimed. No owner/model credentials
 are sent to captured sites or corpus download hosts. `ELIOT_REMOTE_BINDINGS=0 pnpm dev` disables remote services for
 local native-text work and CI; the production bindings and Access checks are unchanged. `pnpm db:local` applies pending
-active `migrations/*.sql` in filename order, including `0010_source_ocr.sql`; archived `0004` stays excluded.
+active `migrations/*.sql` in filename order, including `0011_studio_pages.sql`; archived `0004` stays excluded.
 Remote D1/R2 provisioning and deployment are not run.
 
 Unexpected C0/DEL characters, excluding ordinary text whitespace, produce a readable-text warning without changing
@@ -1033,12 +1034,30 @@ eligibility change. Historical bodies and exact citation links remain immutable.
 work. Checked 2026-11-03 against pinned D1 types and the official [D1 binding](https://developers.cloudflare.com/d1/worker-api/d1-database/)
 and [SQLite tuple pagination](https://www.sqlite.org/rowvalue.html#scrolling_window_queries) contracts.
 
-**Proposed asynchronous view isolation — open.** `ChatView.send` can navigate or clear a different chat's draft after
-its request finishes. Reader's polling does not abort in-flight metadata reads, and a completed replacement can write
-its old source's revision into a new source route. Guard every continuation by the initiating mounted view and
-project/chat or source/revision identity; abort obsolete reads, including polling, and reset replacement-file state
-when its source changes. Already submitted writes keep their original target and may finish there; their late result
-must not redirect, overwrite or unlock the newly selected view. Reuse component keys, refs and AbortController.
+**Asynchronous view isolation — implementation and acceptance in MAP.** Chat Send freezes the question, source scope
+and model override before awaiting chat creation. A departed creation view cannot dispatch a turn after that await.
+An already submitted write retains its original target; its acknowledgement, error and navigation belong to the
+initiating mounted location, including its navigation generation. Returning A→B→A does not renew old ownership.
+Draft edits made during Send survive acknowledgement and intentional first-chat navigation; that navigation also
+retains newer source selection rather than restoring the sent scope from history. Stop/Save result messages use the
+same view ownership. A successful Save still refreshes Studio in its owning mounted project. Separate project/chat
+request generations prevent an old completion from unlocking a newer Send.
+
+Reader is keyed by project/source, resetting metadata, text and both React/native replacement-file state on source
+change. Revision and passage navigation reuse that source reader. Metadata reads carry source/revision generation
+and abort signals; pending polls do not overlap. Text/outline reads abort on revision change/unmount. A replacement
+POST remains bound to its original source/file, while only its initiating location may change URL, error or file
+selection. Its write lock lasts until settlement even across same-source query changes; changing sources creates an
+independent reader. Existing source/citation and same-revision OCR navigation retain their text/outline semantics.
+No write is cancelled/retried to infer its server outcome, and no read starts model work.
+
+`pnpm eval k2 --view-isolation` exercises the reused workspace on desktop and phone, including held success/error
+responses, A→B→A, project unmount, serialized polls, revision changes and replacement locks. It uses native stored
+sources, intercepts model and delayed replacement POSTs before dispatch, and includes real native Markdown replacement
+controls. It checks stored turns remain empty and only those controls add zero-conversion revisions; this proves
+frontend ownership, not model semantics. Checked 2026-11-03 against pinned React 19.3 and official
+[effect cleanup](https://react.dev/reference/react/useEffect) and
+[AbortController](https://developer.mozilla.org/en-US/docs/Web/API/AbortController) contracts.
 
 ## 14. Lifecycle and export
 
