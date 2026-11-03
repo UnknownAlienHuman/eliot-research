@@ -663,12 +663,39 @@ The materialization bound below is implemented by the current repair slice; chat
   Client notifications are best-effort so a disconnected reader cannot interrupt persistence or queue handoff;
   reconnect reads the stored snapshot. Read queue/active state together after awaiting history, so a delayed history
   read cannot resurrect a question that finished meanwhile. This does not implement terminal D1 settlement/reconciliation below.
-- **Older turns — `chat.ts`, `index.ts`, `shared/api.ts`, `web/Chat.tsx`.** Add a bounded GET on the existing
-  `/api/projects/:id/chats/:chatId/turns` resource with a validated older-than `(created_at,id)` cursor and next cursor.
-  Keep project validation and the initial latest-50 snapshot; return older pages through the same turn projection.
-  `writeTurn` already preserves `created_at` on conflict: retain that ordering, add no second message store. Prepend
-  pages chronologically and merge by turn ID so streaming/reconnect cannot erase loaded older pages or duplicate turns.
-  An old saved answer keeps its original citations. Browsable history and bounded model-history selection are separate.
+- **Older turns - `chat.ts`, `index.ts`, `shared/api.ts`, `web/Chat.tsx`.** GET on the existing
+  `/api/projects/:id/chats/:chatId/turns` resource returns at most 50 turns and `nextCursor`. The validated value cursor
+  records chat ID and the oldest returned immutable `(created_at,id)`; strict descending tuple comparison handles
+  timestamp ties without depending on the anchor row's continued existence. A covering DO index supports the range;
+  one ID-only lookahead detects more rows without loading a 51st answer. Authorization and bounded storage-only
+  recovery still run before reading payloads. Initial HTTP/WebSocket snapshots retain their latest-50 window and also
+  return a next cursor; model-history `getTurns` remains latest-50 regardless of how much the owner browses.
+  `writeTurn` preserves `created_at` on conflict and increments the same row's `history_version`. Startup adds that
+  column with legacy default zero and the ordering index, without rewriting old payloads. Read and stream projections
+  carry `createdAt`/`historyVersion`; neither is duplicated inside payload JSON or used as model context. UI merges by
+  immutable turn ID and stored version, including the first preparation/handoff frame and the wait=1 receipt.
+  The same DO has one constant-size `chat_history_clock` row for ordering queue/settlement projections across HTTP
+  and WebSocket. Existing state/payload writes advance it before writing; a failed write can leave an unused version
+  but cannot publish changed state with an older version. Repeated reads do not advance it. Snapshots and queue frames
+  expose `stateVersion` and the complete queue/settlement-notice projection, including an explicit null to clear a notice.
+  Queue frames use the same bounded pending-turn/latest-50 ID projection as snapshots, including notices for pending
+  turns outside the current page. Both go through the same client merge: a newer queue frame may supersede an older
+  snapshot only with its notice/clear included. Older projections cannot resurrect a queue or an obsolete notice. This is transport
+  metadata only, not an admission mechanism, effects ledger or another message store. UI sorts by creation time/ID,
+  so delayed pages/snapshots cannot regress streamed text or erase older rows. Ordinary overlapping reconnects keep
+  the older cursor. A disjoint latest window after
+  more than 50 missed turns resets only the pagination boundary to that snapshot: explicit Load earlier messages fills
+  the middle gap, deduplicates through retained rows and continues older. No automatic full-history fetch runs.
+  Only a newer head window may move that boundary; a delayed older first socket snapshot cannot replace a newer HTTP
+  boundary. Initial scope restoration uses the merged latest turn and respects manual selection. A successful
+  authorized socket snapshot makes chat ready; a later failed parallel initial HTTP read cannot disable Send.
+  An older request's success/error/finally is scoped to its initiating project/chat and request generation; obsolete
+  reads are aborted. Older pages never restore selection, queue or composer state. Page merging preserves a visible
+  turn element's offset in the conversation scrollport, rather than using total height growth: middle-gap insertion
+  and streamed growth below the reader must not move it. Keyed answer/details remain open; old answers use the existing storage-only Save with their
+  original citations. Checked 2026-11-03 against Agents `0.30.1`, Workers types `5.20261024.1` and the official
+  [SQLite cursor contract](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#sql-api): queries
+  are fully consumed synchronously before any await, including the ID-only lookahead.
 - **Terminal settlement — `chat.ts`.** The owning DO payload has optional `settlementPending: true` before the D1
   INSERT attempt; an INSERT may commit without acknowledging it. A terminal result retains that marker until a D1
   primary-binding read confirms its projection. `active` names an execution **or unfinished settlement**: release the
