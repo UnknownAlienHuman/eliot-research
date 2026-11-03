@@ -370,6 +370,8 @@ Balanced TeX integer powers (`10^{-6}`, `3.7×10^{4}`) and single-backslash `\ti
 token identity as their explicit caret forms. Incomplete braces and separately written quantities are not repaired;
 canonical text and citation ranges remain unchanged.
 The production verifier and K3 stored eval share `src/numbers.ts`; the eval does not keep a weaker numeric checker.
+Parsed `valueNumber` uses the same normalization after its format check: `0,500` becomes `0.5`, while `1,280,000`
+remains `1280000`. `valueText`, quotes, ranges and previously unparsed formats remain unchanged.
 
 The verifier stores the original canonical slice, including original whitespace and punctuation, after normalized
 matching. Candidate statements with unsupported digit groups are dropped rather than retained with misleading prose.

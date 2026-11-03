@@ -345,6 +345,20 @@ describe("verifyClaims", () => {
     expect(out.claims[2]).toMatchObject({ valueText: "1e-8", valueNumber: 1e-8 });
   });
 
+  it.each([
+    ["0,500", 0.5], ["-0,050", -0.05], ["+0,500%", 0.5], ["0,500e-2", 0.005],
+    ["1,280,000", 1280000], ["0,5", null], ["1 280 000", null],
+  ] as const)("preserves scalar interpretation and canonical bytes for %s", (valueText, valueNumber) => {
+    const text = "Потеря 😀: " + valueText + ".";
+    const out = verifyClaims(TE.encode(text), [blockFor(1, text, text)], [claim({
+      quote: text, block: 1, statement: text, metric: "loss", valueText,
+    })]);
+    expect(out.dropped).toEqual([]);
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0]).toMatchObject({ statement: text, quote: text, valueText, valueNumber,
+      start: 0, end: TE.encode(text).byteLength });
+  });
+
   it("drops statements whose numbers lack quote support, keeps supported model names", () => {
     const text = "Models.\n\nResNet-50 wins. Accuracy reached 95.2%.\n";
     const supported = "ResNet-50 wins. Accuracy reached 95.2%.";
