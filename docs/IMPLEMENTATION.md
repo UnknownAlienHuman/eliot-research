@@ -455,7 +455,8 @@ it to retain a card. Citation annotations are resolved separately from factual n
 its item. First-call claim statements use the same declared-reference cleaner as guide text and second-call additions
 before numeric verification. Only the claim's own `quoteBlock`, its persistent form and corresponding `[block N]`
 annotation may be removed; unknown references and annotation-only statements reject the candidate. Code literals
-remain literal, factual numbers still need the original quote, and drop indexes retain the original candidate order.
+remain literal and factual numbers still need the original quote. Drop indexes identify the original candidates;
+diagnostic entries need not be sorted. Surviving claims retain their order.
 The raw first output, original block/range and frozen evidence selections remain unchanged. Historical cached candidate
 IDs are not recomputed and no output is automatically rechecked or regenerated. Synthetic retained outputs reproduce
 this gap through current whole-block verification and Workerd/D1/R2 storage; the inspected corpus reports contained no
@@ -475,6 +476,12 @@ omit these fields; storage-only rechecks retain that shape and treat omissions a
 Store raw result/report in R2, compact verified claims in D1, and usage
 and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
+The K3 A3 GPU-memory gate accepts the frozen source sentence or exact EN/RU assertion forms naming LoRA,
+GPT-3 175B and threefold memory reduction. Both complete fields must match; otherwise `REVIEW_REQUIRED` blocks
+automatic acceptance without a factual-failure verdict. No sentence is discarded. The retained paragraph block 5,
+bytes `[1011,1940)`, matches its canonical R2 range (929 bytes) and requires review. Passing the isolated source sentence
+does not close this actual anchor. `pnpm eval k3 --anchors-only` runs synthetic checks before API calls and rejects
+model opt-in. This is not general semantic verification; frozen questions and production claim verification are unchanged.
 Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.providerUsage` from AI SDK `usage.raw`
 as a JSON object or null. A typed structured-output failure retains `output: null` and known usage in the same immutable
 artifact. Its safe failure cause is exposed by the owning report; request bodies, headers and private protocol fields
