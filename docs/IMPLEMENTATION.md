@@ -475,6 +475,11 @@ omit these fields; storage-only rechecks retain that shape and treat omissions a
 Store raw result/report in R2, compact verified claims in D1, and usage
 and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
+The K3 A3 GPU-memory gate requires recognized threefold reduction in both the statement and its own quote, with
+GPT-3 175B in the same sentence. It accepts the source's coordinated parameters/memory reduction and bounded EN/RU
+variants. Opposite, negated, uncertain, mixed or unrecognized wording stays `NOT_VERIFIED`; this is not general
+semantic verification. `pnpm eval k3 --anchors-only` runs synthetic full-gate checks before API calls and rejects
+model opt-in. Ordinary K3 eval runs the same checks. Frozen questions and production claim verification are unchanged.
 Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.providerUsage` from AI SDK `usage.raw`
 as a JSON object or null. A typed structured-output failure retains `output: null` and known usage in the same immutable
 artifact. Its safe failure cause is exposed by the owning report; request bodies, headers and private protocol fields

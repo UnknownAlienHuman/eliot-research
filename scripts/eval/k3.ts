@@ -38,6 +38,8 @@ const nativeOnly = process.argv.includes('--native-only');
 const unchangedOnly = process.argv.includes('--unchanged-only');
 const readerBrowser = process.argv.includes('--reader-browser');
 const runModel = process.env.ELIOT_K3_MODEL === '1';
+const anchorsOnly = process.argv.includes('--anchors-only');
+assert(!anchorsOnly || !runModel, '--anchors-only forbids model work.');
 assert(!unchangedOnly || !runModel, '--unchanged-only forbids model work.');
 const outDir = fileURLToPath(new URL('../../eval/out/k3/', import.meta.url));
 await mkdir(outDir, { recursive: true });
@@ -55,9 +57,9 @@ const overflowManifest = JSON.parse(await readFile(evalDir + '/arxiv-10/overflow
 const BASELINE_EXPECTED = baselineManifest.sources.map((s) => ({ filename: 'arxiv-' + s.id + '.pdf', title: s.title }));
 const baselineSeedPath = process.env.ELIOT_K3_BASELINE_SEED_RESULT;
 const overflowStoragePath = process.env.ELIOT_K3_OVERFLOW_STORAGE_COMPLETION;
-assert(nativeOnly || unchangedOnly || (baselineSeedPath && overflowStoragePath), 'Full K3 eval requires the caller-frozen ELIOT_K3_BASELINE_SEED_RESULT and ELIOT_K3_OVERFLOW_STORAGE_COMPLETION paths.');
-const baselineSeed = !nativeOnly && !unchangedOnly && baselineSeedPath ? JSON.parse(await readFile(baselineSeedPath, 'utf8')) : null;
-const overflowStorage = !nativeOnly && !unchangedOnly && overflowStoragePath ? JSON.parse(await readFile(overflowStoragePath, 'utf8')) : null;
+assert(nativeOnly || unchangedOnly || anchorsOnly || (baselineSeedPath && overflowStoragePath), 'Full K3 eval requires the caller-frozen ELIOT_K3_BASELINE_SEED_RESULT and ELIOT_K3_OVERFLOW_STORAGE_COMPLETION paths.');
+const baselineSeed = !nativeOnly && !unchangedOnly && !anchorsOnly && baselineSeedPath ? JSON.parse(await readFile(baselineSeedPath, 'utf8')) : null;
+const overflowStorage = !nativeOnly && !unchangedOnly && !anchorsOnly && overflowStoragePath ? JSON.parse(await readFile(overflowStoragePath, 'utf8')) : null;
 const OVERFLOW_EXPECTED = overflowManifest.sources.map((s) => ({ id: s.id, title: s.title, arxiv: s.arxiv }));
 assert.deepEqual(BASELINE_EXPECTED.map((s) => s.filename), Array.from({ length: 10 }, (_, i) => 'arxiv-' + String(i + 1).padStart(2, '0') + '.pdf'), 'K3 baseline manifest must name each arxiv-01..10 PDF once.');
 assert.deepEqual(overflowManifest.sources.map((s) => s.id).slice().sort(), ['gpt3', 'palm'], 'K3 overflow manifest must remain the two approved papers.');
@@ -444,6 +446,31 @@ const a1ComputeQuote = (q) => a1ComputeResult(q)
 const a2ResidualMapping = (q) => q.includes('residual')
   && /\b(?:functions?|mappings?)\b/u.test(q)
   && /reformulat|recast|learn|fit/u.test(q);
+const a3Gpt175 = (q) => /gpt[- ]?3/.test(q) && /175\s*b/.test(q);
+const anchorSentences = new Intl.Segmenter(['en', 'ru'], { granularity: 'sentence' });
+// Fixed A3 literal recognition, not semantic entailment. Unknown wording stays NOT_VERIFIED.
+function a3MemoryReduction(q) {
+  const memory = String.raw`gpu memory(?: (?:requirements?|usage|consumption))?`;
+  const factor = String.raw`(?<![\p{L}\p{N}.,])(?:3|three)(?:\s*(?:times|[x×])|[ -]?fold)`;
+  const amount = String.raw`by (?:${factor}|(?:a )?factor of (?:3|three))`;
+  const reduce = String.raw`(?:reduc(?:e[sd]?|ing)|decreas(?:e[sd]?|ing)|cuts?)`;
+  // The frozen source elides the same reduce verb across these two explicit objects.
+  const parameters = String.raw`(?:number of trainable parameters by [\d,]+ times and (?:the )?)?`;
+  const positive = new RegExp(
+    String.raw`\b(?:${reduce} (?:the )?${parameters}${memory} ${amount}`
+    + String.raw`|${memory} (?:(?:is|are|was|were|can be|has been|have been) )?reduced ${amount}`
+    + String.raw`|${factor} (?:less|lower) ${memory}|${factor} reduction in ${memory})(?=$|[\s,.;])`, 'u');
+  const russian = /(?<![\p{L}\p{N}.,])(?:в )?(?:3|три) раза? меньше gpu[- ](?:памяти|memory)(?=$|[\s,.;])|(?<!\p{L})(?:снижает|уменьшает) (?:требования к |объ[её]м )?gpu[- ]памяти в (?:3|три) раза?(?=$|[\s,.;])/u;
+  const memorySentences = [...anchorSentences.segment(q)].map(part => part.segment)
+    .filter(part => /\bgpu memory\b|gpu[- ]памят/u.test(part));
+  // Reject-only: negation, uncertainty or opposing direction in a memory sentence cannot prove this anchor.
+  const uncertain = new RegExp(
+    String.raw`[?¿]|\b(?:not|no|never|neither|nor|without|cannot|false|incorrect|untrue|fail\w*|deny|denies|denied|denying|refut\w*)\b|n['’]t\b`
+    + String.raw`|\b(?:may|might|could|would|whether|either|or|unclear|unknown|uncertain|perhaps|possibly|about|approximately|roughly|around|if|unless)\b|\bat (?:least|most)\b|\bup to\b`
+    + String.raw`|\b(?:more|higher|greater|larger|increas\w*|grow\w*)\b|(?<!\p{L})(?:не|нет|больше|увелич\p{L}*|возможно|если|либо|или)(?!\p{L})`, 'u');
+  return memorySentences.length > 0 && !memorySentences.some(part => uncertain.test(part))
+    && memorySentences.some(part => a3Gpt175(part) && (positive.test(part) || russian.test(part)));
+}
 
 const a1RussianCompute = 'модель установила bleu 41.8 на wmt 2014 english-to-french после 3.5 дней обучения на восьми gpu.';
 const a1EnglishQuote = 'the model reached bleu 41.8 on the wmt 2014 english-to-french task after 3.5 days of training on eight gpus.';
@@ -476,9 +503,8 @@ function checkAnchors(byFile) {
   if (!paired(q03, (q) => runsOf(q).includes('152') && /layer/.test(q))) missing.push('A2-152-layers');
   if (!paired(q03, (q) => q.includes('3.57') && q.includes('ensemble') && q.includes('imagenet') && q.includes('test') && q.includes('error'))) missing.push('A2-ensemble-3.57%-ImageNet-test-error');
   if (!paired(q07, (q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q))) missing.push('A3-frozen-weights-trained-lowrank');
-  const gpt = (q) => /gpt[- ]?3/.test(q) && /175\s*b/.test(q);
-  if (!paired(q07, (q) => gpt(q) && /10[, ]*000/.test(q) && q.includes('trainable') && q.includes('parameter'))) missing.push('A3-GPT3-175B-10000x-trainable-params');
-  if (!paired(q07, (q) => gpt(q) && /(?:\b3\b|\bthree\b).{0,20}(?:times|[x×]|fold)/.test(q) && q.includes('gpu') && q.includes('memory'))) missing.push('A3-GPT3-175B-3x-GPU-memory');
+  if (!paired(q07, (q) => a3Gpt175(q) && /10[, ]*000/.test(q) && q.includes('trainable') && q.includes('parameter'))) missing.push('A3-GPT3-175B-10000x-trainable-params');
+  if (!paired(q07, a3MemoryReduction)) missing.push('A3-GPT3-175B-3x-GPU-memory');
   if (!paired(q07, (q) => /(?:\bno\b|without|does not|do not).{0,80}latency/.test(q) && q.includes('inference'))) missing.push('A3-no-additional-inference-latency');
   return missing;
 }
@@ -507,6 +533,51 @@ function assertUnderstandingIdentity(u, sourceId, revisionId, what) {
 assert.doesNotThrow(() => assertUnderstandingIdentity({ sourceId: 's1', revisionId: 'r1' }, 's1', 'r1', 'identity fixture'));
 assert.throws(() => assertUnderstandingIdentity({ sourceId: 's2', revisionId: 'r1' }, 's1', 'r1', 'source identity fixture'), /sourceId must match/);
 assert.throws(() => assertUnderstandingIdentity({ sourceId: 's1', revisionId: 'old-r1' }, 's1', 'r1', 'revision identity fixture'), /revisionId must match/);
+const a3MemoryAnchor = 'A3-GPT3-175B-3x-GPU-memory';
+const a3MemorySource = 'Compared to GPT-3 175B fine-tuned with Adam, LoRA can reduce the number of trainable parameters by 10,000 times and the GPU memory requirement by 3 times.';
+const a3MemoryOpposite = 'For GPT-3 175B, LoRA uses 3 times more GPU memory.';
+const a3MemoryPass = (statement, quote = a3MemorySource) => !checkAnchors(new Map([['arxiv-07.pdf', [{ statement, quote }]]])).includes(a3MemoryAnchor);
+const a3MemoryCases = [
+  ['frozen source coordinated objects', a3MemorySource, true],
+  ['active reduction', 'For GPT-3 175B, LoRA reduces GPU memory usage by 3 times.', true],
+  ['passive reduction', 'For GPT-3 175B, GPU memory requirements are reduced by a factor of three.', true],
+  ['less memory', 'For GPT-3 175B, LoRA uses three times less GPU memory.', true],
+  ['multiplication sign', 'For GPT-3 175B, LoRA uses 3× less GPU memory.', true],
+  ['fold reduction', 'For GPT-3 175B, LoRA achieves a three-fold reduction in GPU memory.', true],
+  ['RU reduction', 'Для GPT-3 175B LoRA использует в 3 раза меньше GPU-памяти.', true],
+  ['RU decrease', 'Для GPT-3 175B LoRA уменьшает объём GPU-памяти в три раза.', true],
+  ['opposite', a3MemoryOpposite, false],
+  ['negative active', 'For GPT-3 175B, LoRA does not reduce GPU memory by 3 times.', false],
+  ['negative passive', 'For GPT-3 175B, GPU memory is not reduced by 3 times.', false],
+  ['contracted negative', 'For GPT-3 175B, LoRA doesn’t use 3 times less GPU memory.', false],
+  ['negated claim', 'For GPT-3 175B, we refute the claim of a 3-fold reduction in GPU memory.', false],
+  ['uncertain', 'For GPT-3 175B, LoRA might use 3 times less GPU memory.', false],
+  ['question', 'Does LoRA use 3 times less GPU memory for GPT-3 175B?', false],
+  ['approximate factor', 'For GPT-3 175B, LoRA uses about 3 times less GPU memory.', false],
+  ['upper bound', 'For GPT-3 175B, LoRA uses up to 3 times less GPU memory.', false],
+  ['direction absent', 'For GPT-3 175B, LoRA changes GPU memory by 3 times.', false],
+  ['unrelated decrease', 'For GPT-3 175B, LoRA reduces training time by 3 times while GPU memory is unchanged.', false],
+  ['unrelated less', 'For GPT-3 175B, LoRA uses 3 times less CPU memory while GPU memory is unchanged.', false],
+  ['mixed direction', 'For GPT-3 175B, LoRA uses 3 times less GPU memory but also uses 3 times more GPU memory.', false],
+  ['mixed sentences', 'For GPT-3 175B, LoRA uses 3 times less GPU memory. GPU memory instead increases by 3 times.', false],
+  ['mixed or', 'For GPT-3 175B, LoRA uses 3 times less or more GPU memory.', false],
+  ['wrong factor', 'For GPT-3 175B, LoRA uses 2 times less GPU memory.', false],
+  ['decimal factor', 'For GPT-3 175B, LoRA uses 0.3 times less GPU memory.', false],
+  ['wrong model', 'For GPT-2 175B, LoRA uses 3 times less GPU memory.', false],
+  ['RU opposite', 'Для GPT-3 175B LoRA использует в 3 раза больше GPU-памяти.', false],
+  ['RU wrong factor suffix', 'Для GPT-3 175B LoRA использует 13 раза меньше GPU-памяти.', false],
+  ['RU negative', 'Для GPT-3 175B LoRA не использует в 3 раза меньше GPU-памяти.', false],
+];
+assert.deepEqual(unsupportedNumbers(a3MemoryOpposite, a3MemorySource), [], 'Opposite direction has matching numbers; numeric occurrence cannot establish reduction.');
+for (const [name, text, expected] of a3MemoryCases) {
+  assert.equal(a3MemoryPass(text), expected, 'A3 full anchor statement: ' + name);
+  assert.equal(a3MemoryPass(a3MemorySource, text), expected, 'A3 full anchor quote: ' + name);
+}
+assert.equal(checkAnchors(new Map([['arxiv-07.pdf', [
+  { statement: a3MemorySource, quote: 'For GPT-3 175B, the source discusses GPU memory.' },
+  { statement: 'The source discusses GPT-3 175B.', quote: a3MemorySource },
+]]])).includes(a3MemoryAnchor), true, 'A3 memory direction cannot be borrowed across cards.');
+if (anchorsOnly) { console.log(JSON.stringify({ scope: 'K3_ANCHOR_GATES', memoryDirectionCases: a3MemoryCases.length, pairedSidesChecked: true, apiCalls: 0, modelCalls: 0, unrecognized: 'NOT_VERIFIED', semanticAcceptance: 'NOT_RUN' })); process.exit(0); }
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
