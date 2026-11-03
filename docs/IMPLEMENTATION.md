@@ -61,7 +61,7 @@ JSON lives under `/api/`, validated with zod. Error shape:
 ```
 
 Use cursor pagination. Chat inventory uses immutable `(created_at,id)` descending so activity between pages cannot
-move an unseen chat above the cursor. Add idempotency only where a natural key exists: turn ID, page-revision mutation ID and
+move an unseen chat above the cursor. Add idempotency only where a natural key exists: chat/turn ID, page-revision mutation ID and
 deterministic Workflow ID. The MCP endpoint transports the shared toolset; it is not a second business API.
 
 ## 2. Access and actors
@@ -665,8 +665,14 @@ The mounted composer retains one unconfirmed Send ID, its normalized question/sc
 and any acknowledged chat ID. An explicit Send with identical input reuses them after a lost or unreadable response;
 only a matching turn-ID acknowledgement consumes the attempt in its visible view. Sources/overview navigation retains
 it with the draft. Changed input has a new turn ID in the same known chat; changing chats or unmounting discards the draft and attempt.
-No read or timer sends it again, and an empty history read does not prove rejection. Chat creation itself has no
-idempotency key: losing its acknowledgement can leave a duplicate empty chat, but no turn is sent without a known chat ID.
+No read or timer sends it again, and an empty history read does not prove rejection.
+For a new conversation the same attempt retains its creation UUID and original title before POST `/chats`. The optional
+caller ID uses the existing chat primary key: insert returns 201; matching project/title and an unarchived chat return
+the stored row with 200. Foreign, archived or differently titled identities return 409 without updating metadata. Omitted IDs keep
+server-generated creation. Titles must be valid Unicode; the composer uses up to 80 complete code points.
+After reload, History can open a committed chat and any accepted turn through existing storage-only reads. No request
+is resumed automatically. If only creation committed, the full question is not recoverable from its truncated title;
+unaccepted draft text is not persisted in the URL, localStorage or another client cache.
 The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
 cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
 Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the recorded

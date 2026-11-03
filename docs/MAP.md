@@ -234,6 +234,8 @@ canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect
 never retried automatically.
 An explicit repeat of an unconfirmed Send in the same composer reuses its ID, unchanged input and known chat target;
 a new question or a repeat after confirmation has a new ID. See IMPLEMENTATION §8 for the volatile-draft boundary.
+New-chat creation also retains its UUID/title for explicit replay. After reload, History opens a committed chat/result
+without resending; it does not reconstruct an unaccepted draft.
 Missing citation/numeric-support spans remain API/eval diagnostics without frames in the owner answer. They do not
 change stream state. A completed generation can
 still fail the quality gate; diagnostics do not waive citation, expected-fact or owner-review requirements.

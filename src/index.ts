@@ -127,10 +127,14 @@ app.get("/api/projects/:id/chats", async (c) => {
 });
 app.post("/api/projects/:id/chats", async (c) => {
   const projectId = uuid.parse(c.req.param("id")); await getProject(c.env, c.get("actor"), projectId);
-  const input = z.object({ title: title.optional() }).strict().parse(await c.req.json());
-  const id = crypto.randomUUID(), now = Date.now();
-  await c.env.DB.prepare("INSERT INTO chat(id,project_id,title,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?)").bind(id, projectId, input.title ?? "New chat", c.get("actor").type, now, now).run();
-  return c.json({ chat: { id, title: input.title ?? "New chat", updatedAt: now } }, 201);
+  const input = z.object({ id: uuid.optional(), title: title.refine(value => !/[\uD800-\uDFFF]/u.test(value), "Use a valid Unicode title.").optional() }).strict().parse(await c.req.json());
+  const id = input.id ?? crypto.randomUUID(), now = Date.now(), requestedTitle = input.title ?? "New chat";
+  const result = await c.env.DB.prepare("INSERT INTO chat(id,project_id,title,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING")
+    .bind(id, projectId, requestedTitle, c.get("actor").type, now, now).run();
+  const stored = await c.env.DB.prepare("SELECT id,title,updated_at AS updatedAt FROM chat WHERE id=? AND project_id=? AND title=? AND archived_at IS NULL")
+    .bind(id, projectId, requestedTitle).first<{ id: string; title: string; updatedAt: number }>();
+  if (!stored) throw new LibraryError("conflict", "This conversation ID cannot be reused with these inputs.", 409);
+  return c.json({ chat: stored }, result.meta.changes === 1 ? 201 : 200);
 });
 app.get("/api/projects/:id/chats/:chatId", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId"));
