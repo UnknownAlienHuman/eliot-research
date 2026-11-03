@@ -5,7 +5,7 @@ import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 vi.mock("cloudflare:workers", () => ({ WorkflowEntrypoint: class { constructor(_ctx: unknown, readonly env: Env) {} } }));
 import { IngestWorkflow } from "./ingest";
 import { commitRevision, loadRevision, recoverIngest, STATUS_UNAVAILABLE, STORAGE_FAILURE } from "../ingest-completion";
-import { addSource, getSource } from "../library";
+import { addSource, attachSource, getSource } from "../library";
 import type { Actor } from "../auth";
 
 const owner: Actor = { type: "owner", id: "owner", authentication: "access" };
@@ -90,6 +90,27 @@ describe("Ingest storage completion", () => {
       expect(result.source).toMatchObject({ readableState: "readable", currentRevisionId: "revision", conversionCalls: 1, conversionTokens: 7, error: null });
       await getSource(h.env, owner, "source");
       expect(h.transform).toHaveBeenCalledTimes(1); expect(h.bucketPut).toHaveBeenCalledTimes(2); expect(h.create).not.toHaveBeenCalled();
+    } finally { h.db.close(); }
+  });
+  it("attaches pending ingest by publishing its retained result without another conversion", async () => {
+    const h = fixture();
+    try {
+      h.db.exec("INSERT INTO project(id,title,created_at,updated_at) VALUES('project','Target',1,1)");
+      h.db.exec("CREATE TRIGGER fail_completion BEFORE UPDATE OF readable_state ON source_revision BEGIN SELECT RAISE(ABORT,'completion unavailable'); END");
+      await h.run();
+      expect(h.row()).toMatchObject({ readable_state: "pending", conversion_calls: 1, conversion_tokens: null });
+      expect(h.current()).toEqual({ current_revision_id: null });
+      expect(h.transform).toHaveBeenCalledTimes(1); expect(h.bucketPut).toHaveBeenCalledTimes(2);
+      const objects = structuredClone(h.objects);
+      h.db.exec("DROP TRIGGER fail_completion");
+      await attachSource(h.env, owner, "project", "source");
+      expect(h.row()).toMatchObject({ readable_state: "readable", conversion_calls: 1, conversion_tokens: 7, error: null });
+      expect(h.current()).toEqual({ current_revision_id: "revision" });
+      await attachSource(h.env, owner, "project", "source");
+      expect(h.db.prepare("SELECT source_id FROM project_source WHERE project_id='project'").all()).toEqual([{ source_id: "source" }]);
+      expect(h.status).toHaveBeenCalledTimes(1);
+      expect(h.transform).toHaveBeenCalledTimes(1); expect(h.bucketPut).toHaveBeenCalledTimes(2);
+      expect(h.objects).toEqual(objects); expect(h.create).not.toHaveBeenCalled();
     } finally { h.db.close(); }
   });
   it("adopts a committed batch with a lost reply and repairs an older readable-but-unpublished result", async () => {

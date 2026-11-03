@@ -165,7 +165,9 @@ Add sources → Browse Library lists active shared sources not already attached 
 not yet readable. `GET /api/projects/:id/sources/available` reads metadata only: 50 rows plus one lookahead, ordered by
 immutable `(source.created_at,source.id)` descending. Its value cursor is JSON `[projectId,createdAt,id]`, checked for
 project, safe nonnegative timestamp and UUID. Attaching a row cannot move the cursor or admit conversion/understanding;
-the existing idempotent Attach inserts only project membership and preserves source revisions and stored output.
+the existing idempotent Attach reuses the shared source identity. Its source read may finish storage publication
+of an already completed ingest from the existing Workflow result and matching retained artifacts (§4); it starts no
+new conversion, understanding or model call. Membership insertion remains idempotent.
 An attached row opens the listed revision directly, even when it falls beyond the project's loaded source pages.
 Refresh restarts the list for new sources or eligibility changes above its cursor. Closing the dialog cancels reads;
 submitted Attach keeps its original project. The dialog uses the existing query client and Material controls.
