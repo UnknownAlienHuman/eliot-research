@@ -2,7 +2,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { Actor } from "./auth";
-import { getPage, PAGE_FRESHNESS_SQL, saveAnswer } from "./pages";
+import { getPage, listPages, PAGE_FRESHNESS_SQL, saveAnswer } from "./pages";
 import { decideProposal } from "./proposals";
 import { commitRevision } from "./ingest-completion";
 import { applyOcrJob } from "./ocr";
@@ -46,7 +46,7 @@ function fixture() {
     return results;
   } }, BUCKET: { put: bucketPut, async get(key: string) { const o = objects.get(key); return o ? { ...o, text: async () => new TextDecoder().decode(o.bytes), json: async () => JSON.parse(new TextDecoder().decode(o.bytes)) as unknown, arrayBuffer: async () => o.bytes.slice().buffer } : null; }, async head(key: string) { return objects.get(key) ?? null; }, async delete(key: string) { objects.delete(key); } }, CHAT: { getByName: () => ({ getStoredTurn }) } } as unknown as Env;
   const page = (pageId: string) => db.prepare("SELECT head_revision_id,freshness,updated_at FROM page WHERE id=?").get(pageId);
-  function proposal(scope: unknown = stored.revisionIds, pageId = crypto.randomUUID(), base: string | null = null) {
+  function proposal(scope: unknown = stored.revisionIds, pageId: string = crypto.randomUUID(), base: string | null = null) {
     if (!db.prepare("SELECT id FROM page WHERE id=?").get(pageId)) db.prepare("INSERT INTO page(id,project_id,kind,title,created_at,updated_at) VALUES(?,'project','note','Publication',1,1)").run(pageId);
     const id = crypto.randomUUID(), no = (db.prepare("SELECT COUNT(*) AS n FROM page_revision WHERE page_id=?").get(pageId)?.n as number) + 1;
     put(`page/${id}/body.md`, body); put(`page/${id}/citations.json`, JSON.stringify(citations));
@@ -182,4 +182,69 @@ it("matches JSON string identities exactly, with invalid or non-array scopes fai
       expect(Object.values(h.db.prepare(PAGE_FRESHNESS_SQL).get(id) ?? {})[0]).toBe(expected);
     }
   } finally { h.db.close(); }
+});
+
+describe("Studio stable page inventory", () => {
+  it("keeps every tied-timestamp page reachable after real acceptance and source invalidation move updated_at", async () => {
+    const h = fixture(); try {
+      for (let n = 0; n < 123; n++) await h.accept(h.proposal());
+      const expected = h.db.prepare("SELECT id FROM page ORDER BY created_at DESC,id DESC").all().map((p) => p.id);
+      const first = await listPages(h.env, owner, { projectId: "project" }), boundary = first.pages.at(-1);
+      if (!boundary || !first.nextCursor || !boundary.headRevisionId) throw new Error("missing cursor");
+      await h.accept(h.proposal(["r1"], boundary.id, boundary.headRevisionId)); await h.replace();
+      const second = await listPages(h.env, owner, { projectId: "project", cursor: first.nextCursor });
+      const third = await listPages(h.env, owner, { projectId: "project", cursor: second.nextCursor ?? undefined });
+      const seen = [...first.pages, ...second.pages, ...third.pages].map((p) => p.id);
+      expect(seen).toEqual(expected); expect(new Set(seen).size).toBe(123); expect(third.nextCursor).toBeNull();
+      expect(second.pages.every((p) => p.freshness === "stale" && p.headRevisionNo === 1 && p.createdAt === 1)).toBe(true);
+      expect(h.db.prepare("EXPLAIN QUERY PLAN SELECT id FROM page WHERE project_id='project' AND head_revision_id IS NOT NULL AND (created_at,id)<(1,'boundary') ORDER BY created_at DESC,id DESC LIMIT 51").all())
+        .toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.stringContaining("page_by_created") })]));
+    } finally { h.db.close(); }
+  });
+  it("uses value boundaries without re-reading an anchor and scopes a cursor to its project and kind", async () => {
+    const h = fixture(); try {
+      for (let n = 0; n < 52; n++) await h.accept(h.proposal());
+      const first = await listPages(h.env, owner, { projectId: "project", kind: "note" });
+      if (!first.nextCursor) throw new Error("missing cursor");
+      const before = await listPages(h.env, owner, { projectId: "project", kind: "note", cursor: first.nextCursor });
+      h.db.prepare("UPDATE page SET head_revision_id=NULL,updated_at=999999 WHERE id=?").run(first.pages.at(-1)?.id ?? "");
+      expect(await listPages(h.env, owner, { projectId: "project", kind: "note", cursor: first.nextCursor })).toEqual(before);
+      await expect(listPages(h.env, owner, { projectId: "project", cursor: first.nextCursor })).rejects.toMatchObject({ code: "invalid", status: 400 });
+      h.db.exec("INSERT INTO project(id,title,created_at,updated_at) VALUES('other','Other',1,1)");
+      await expect(listPages(h.env, owner, { projectId: "other", kind: "note", cursor: first.nextCursor })).rejects.toMatchObject({ code: "invalid", status: 400 });
+      expect((await listPages(h.env, owner, { projectId: "project", kind: "wiki" })).pages).toEqual([]);
+    } finally { h.db.close(); }
+  });
+  it("documents mid-scan headless eligibility: refresh discovers acceptance above the cursor and detail reads an accepted old page outside the first 50", async () => {
+    const h = fixture(); try {
+      for (let n = 0; n < 60; n++) await h.accept(h.proposal());
+      const above = h.proposal(), older = h.proposal();
+      h.db.prepare("UPDATE page SET created_at=2 WHERE id=?").run(above.pageId);
+      h.db.prepare("UPDATE page SET created_at=0 WHERE id=?").run(older.pageId);
+      const first = await listPages(h.env, owner, { projectId: "project" });
+      await h.accept(above); await h.accept(older);
+      const next = await listPages(h.env, owner, { projectId: "project", cursor: first.nextCursor ?? undefined });
+      expect(next.pages.some((p) => p.id === above.pageId)).toBe(false);
+      const restarted = await listPages(h.env, owner, { projectId: "project" });
+      expect(restarted.pages[0]?.id).toBe(above.pageId); expect(restarted.pages.some((p) => p.id === older.pageId)).toBe(false);
+      const selected = await getPage(h.env, owner, { projectId: "project", pageId: older.pageId });
+      expect(selected).toMatchObject({ id: older.pageId, headRevisionId: older.id, headRevisionNo: 1, freshness: "current", createdAt: 0, body });
+      expect(selected.citations).toEqual(citations);
+    } finally { h.db.close(); }
+  });
+  it("returns the selected head's own freshness and identity through stale invalidation and a subsequent current acceptance", async () => {
+    const h = fixture(); try {
+      const original = h.proposal(); await h.accept(original); await h.replace();
+      const stale = await getPage(h.env, owner, { projectId: "project", pageId: original.pageId });
+      expect(stale).toMatchObject({ headRevisionId: original.id, headRevisionNo: 1, freshness: "stale", createdAt: 1 });
+      const current = h.proposal(["r2"], original.pageId, original.id); await h.accept(current);
+      const selected = await getPage(h.env, owner, { projectId: "project", pageId: original.pageId });
+      expect(selected).toMatchObject({ headRevisionId: current.id, headRevisionNo: 2, freshness: "current", createdAt: 1, body });
+      expect((await listPages(h.env, owner, { projectId: "project" })).pages[0]).toMatchObject({ headRevisionId: selected.headRevisionId, headRevisionNo: 2, freshness: "current" });
+    } finally { h.db.close(); }
+  });
+  it.each(["", "invalid", "[]", "null", '["project",null,-1,"id"]', '["project",null,1.5,"id"]', '["project",null,1,""]', "x".repeat(513)])("rejects invalid page cursor %s", async (cursor) => {
+    const h = fixture(); try { await expect(listPages(h.env, owner, { projectId: "project", cursor })).rejects.toMatchObject({ code: "invalid", status: 400 }); }
+    finally { h.db.close(); }
+  });
 });

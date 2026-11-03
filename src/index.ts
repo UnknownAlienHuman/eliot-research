@@ -164,7 +164,7 @@ app.post("/api/projects/:id/pages/from-turn", async (c) => {
   const input = z.object({ chatId: uuid, turnId: uuid, title, mutationId: uuid }).strict().parse(await c.req.json());
   return c.json({ page: await saveAnswer(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...input }) }, 201);
 });
-app.get("/api/projects/:id/pages", async (c) => c.json(await listPages(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...(c.req.query("cursor") ? { cursor: uuid.parse(c.req.query("cursor")) } : {}) })));
+app.get("/api/projects/:id/pages", async (c) => c.json(await listPages(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), cursor: c.req.query("cursor") })));
 app.get("/api/projects/:id/pages/:pageId", async (c) => c.json({ page: await getPage(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), pageId: uuid.parse(c.req.param("pageId")) }) }));
 app.get("/api/projects", async (c) => c.json(await listProjects(c.env, c.get("actor"), uuid.optional().parse(c.req.query("cursor")))));
 app.post("/api/projects", async (c) => {

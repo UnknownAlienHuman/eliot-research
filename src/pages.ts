@@ -8,12 +8,8 @@ import type { Citation } from "./citations";
 
 export type PageKind = "overview" | "note" | "answer" | "report" | "wiki" | "map";
 
-export interface SavedPage {
-  id: string;
-  title: string;
-  kind: PageKind;
+export interface SavedPage extends PageSummary {
   headRevisionId: string;
-  freshness: "current" | "stale";
   body: string;
   citations: Citation[];
 }
@@ -24,8 +20,12 @@ export interface PageSummary {
   kind: PageKind;
   headRevisionId: string | null;
   freshness: "current" | "stale";
+  headRevisionNo: number;
+  createdAt: number;
   updatedAt: number;
 }
+
+export interface PageList { pages: PageSummary[]; nextCursor: string | null }
 
 const PAGE_KINDS: readonly PageKind[] = ["overview", "note", "answer", "report", "wiki", "map"];
 const MAX_BODY_CHARS = 1_000_000;
@@ -149,29 +149,48 @@ export async function saveAnswer(env: Env, actor: Actor, input: { projectId: str
   return getPage(env, actor, { projectId: input.projectId, pageId });
 }
 
-export async function listPages(env: Env, _actor: Actor, input: { projectId: string; cursor?: string | undefined; kind?: PageKind | undefined }): Promise<{ pages: PageSummary[]; nextCursor: string | null }> {
+export async function listPages(env: Env, _actor: Actor, input: { projectId: string; cursor?: string | undefined; kind?: PageKind | undefined }): Promise<PageList> {
   const project = await env.DB.prepare("SELECT id FROM project WHERE id=?").bind(input.projectId).first<{ id: string }>();
   if (!project) throw new LibraryError("not_found", "Project not found.", 404);
   if (input.kind !== undefined && !PAGE_KINDS.includes(input.kind)) throw new LibraryError("invalid", "Unknown page kind.", 400);
-  const result = await env.DB.prepare("SELECT id,title,kind,head_revision_id AS headRevisionId,freshness,updated_at AS updatedAt FROM page WHERE project_id=? AND head_revision_id IS NOT NULL AND (? IS NULL OR kind=?) AND (? IS NULL OR (updated_at,id)<(SELECT updated_at,id FROM page WHERE id=?)) ORDER BY updated_at DESC,id DESC LIMIT 51").bind(input.projectId, input.kind ?? null, input.kind ?? null, input.cursor ?? null, input.cursor ?? null).all<PageSummary>();
-  return { pages: result.results.slice(0, 50), nextCursor: result.results.length > 50 ? (result.results[49]?.id ?? null) : null };
+  let before: { at: number; id: string } | undefined;
+  if (input.cursor !== undefined) {
+    try {
+      if (typeof input.cursor !== "string" || input.cursor.length > 512) throw new Error("cursor");
+      const value: unknown = JSON.parse(input.cursor);
+      if (!Array.isArray(value) || value.length !== 4 || value[0] !== input.projectId || value[1] !== (input.kind ?? null)
+        || !Number.isSafeInteger(value[2]) || value[2] < 0 || typeof value[3] !== "string" || !value[3] || value[3].length > 128) throw new Error("cursor");
+      before = { at: value[2] as number, id: value[3] };
+    } catch { throw new LibraryError("invalid", "This page cursor is invalid. Refresh saved pages.", 400); }
+  }
+  const args: (string | number)[] = [input.projectId];
+  if (input.kind) args.push(input.kind);
+  if (before) args.push(before.at, before.id);
+  const result = await env.DB.prepare(`SELECT p.id,p.title,p.kind,p.head_revision_id AS headRevisionId,r.revision_no AS headRevisionNo,
+    p.freshness,p.created_at AS createdAt,p.updated_at AS updatedAt FROM page p JOIN page_revision r ON r.id=p.head_revision_id
+    WHERE p.project_id=? AND p.head_revision_id IS NOT NULL ${input.kind ? "AND p.kind=?" : ""}
+    ${before ? "AND (p.created_at,p.id)<(?,?)" : ""} ORDER BY p.created_at DESC,p.id DESC LIMIT 51`).bind(...args).all<PageSummary>();
+  const pages = result.results.slice(0, 50), last = pages.at(-1);
+  return { pages, nextCursor: result.results.length > 50 && last ? JSON.stringify([input.projectId, input.kind ?? null, last.createdAt, last.id]) : null };
 }
 
 export async function getPage(env: Env, _actor: Actor, input: { projectId: string; pageId: string }): Promise<SavedPage> {
-  const page = await env.DB.prepare("SELECT project_id AS projectId,title,kind,head_revision_id AS headRevisionId,freshness FROM page WHERE id=?").bind(input.pageId).first<{ projectId: string; title: string; kind: PageKind; headRevisionId: string | null; freshness: "current" | "stale" }>();
+  const page = await env.DB.prepare(`SELECT p.id,p.project_id AS projectId,p.title,p.kind,p.head_revision_id AS headRevisionId,p.freshness,
+    p.created_at AS createdAt,p.updated_at AS updatedAt,r.revision_no AS headRevisionNo,r.body_key AS bodyKey,r.citations_key AS citationsKey
+    FROM page p LEFT JOIN page_revision r ON r.id=p.head_revision_id WHERE p.id=?`).bind(input.pageId).first<PageSummary & { projectId: string; bodyKey: string | null; citationsKey: string | null }>();
   if (!page || page.projectId !== input.projectId) throw new LibraryError("not_found", "Page not found.", 404);
   if (!page.headRevisionId) throw new LibraryError("unavailable", "This page has no readable revision yet.", 503);
-  const revision = await env.DB.prepare("SELECT body_key AS bodyKey,citations_key AS citationsKey FROM page_revision WHERE id=?").bind(page.headRevisionId).first<{ bodyKey: string; citationsKey: string | null }>();
-  if (!revision) throw new LibraryError("not_found", "Page revision not found.", 404);
-  const bodyObj = await env.BUCKET.get(revision.bodyKey);
+  if (!page.bodyKey || !page.headRevisionNo) throw new LibraryError("not_found", "Page revision not found.", 404);
+  const bodyObj = await env.BUCKET.get(page.bodyKey);
   if (!bodyObj) throw new LibraryError("not_found", "Page body is missing from storage.", 404);
   let citations: Citation[] = [];
-  if (revision.citationsKey) {
-    const citationsObj = await env.BUCKET.get(revision.citationsKey);
+  if (page.citationsKey) {
+    const citationsObj = await env.BUCKET.get(page.citationsKey);
     if (!citationsObj) throw new LibraryError("not_found", "Page citations are missing from storage.", 404);
     try { citations = toCitations(await citationsObj.json<unknown>()); }
     catch { throw new LibraryError("unavailable", "Page citations are missing from storage.", 503); }
   }
-  return { id: input.pageId, title: page.title, kind: page.kind, headRevisionId: page.headRevisionId, freshness: page.freshness, body: await bodyObj.text(), citations };
+  return { id: input.pageId, title: page.title, kind: page.kind, headRevisionId: page.headRevisionId, headRevisionNo: page.headRevisionNo,
+    freshness: page.freshness, createdAt: page.createdAt, updatedAt: page.updatedAt, body: await bodyObj.text(), citations };
 }
 

@@ -16,7 +16,8 @@ import type { ModelRoute } from './ModelPicker';
 import './chat.css';
 
 interface ChatRow { readonly id: string; readonly title: string; readonly updatedAt: number; }
-interface PageRow { readonly id: string; readonly title: string; readonly updatedAt: number; }
+import type { PageList, PageSummary, SavedPage } from '../pages';
+import { mergeStudioPages, newerPage, pageSummary } from './studio-pages';
 interface QueuedTurn { readonly turnId: string; readonly question: string; }
 type SocketStatus = 'connecting' | 'open' | 'closed' | 'error';
 
@@ -728,111 +729,133 @@ export function ChatView({
 }
 
 export function StudioView({ projectId, refreshKey }: StudioViewProps) {
-  const [proposalRefresh, setProposalRefresh] = useState(0);
-  const [pages, setPages] = useState<PageRow[] | undefined>(undefined);
-  const [failure, setFailure] = useState('');
-  const [openId, setOpenId] = useState('');
-  const [body, setBody] = useState('');
-  const [cites, setCites] = useState<Citation[]>([]);
+  const [scan, setScan] = useState(0);
+  const [pages, setPages] = useState<PageSummary[] | undefined>(undefined);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [listBusy, setListBusy] = useState(false);
+  const [listError, setListError] = useState('');
+  const [selection, setSelection] = useState<{ projectId: string; pageId: string } | null>(null);
+  const openId = selection?.projectId === projectId ? selection.pageId : '';
+  const [reader, setReader] = useState<{ projectId: string; page: SavedPage } | null>(null);
+  const [detailError, setDetailError] = useState('');
+  const [detailRetry, setDetailRetry] = useState(0);
   const [pageLoading, setPageLoading] = useState(false);
+  const projectRef = useRef(projectId), selectedRef = useRef(openId);
+  const pool = useRef<{ projectId: string; pages: PageSummary[] }>({ projectId, pages: [] });
+  const detail = useRef<{ projectId: string; page: SavedPage; refresh: string } | null>(null);
+  const listSequence = useRef(0), detailSequence = useRef(0);
+  const listAbort = useRef<AbortController | null>(null), listLock = useRef(false);
+  projectRef.current = projectId; selectedRef.current = openId;
+  const visiblePages = pool.current.projectId === projectId ? pages : undefined;
+  const hint = visiblePages?.find((page) => page.id === openId);
+  const refresh = refreshKey + ':' + scan + ':' + detailRetry;
+
+  function receivePages(incoming: readonly PageSummary[], replace = false): void {
+    let next = mergeStudioPages(replace ? [] : pool.current.pages, incoming);
+    const known = detail.current;
+    if (known?.projectId === projectId && next.some((page) => page.id === known.page.id)) next = mergeStudioPages(next, [pageSummary(known.page)]);
+    pool.current = { projectId, pages: next }; setPages(next);
+  }
 
   useEffect(() => {
-    let live = true;
-    setPages(undefined);
-    setFailure('');
-    void apiJson<{ pages: PageRow[] }>('/api/projects/' + encodeURIComponent(projectId) + '/pages')
+    const sequence = ++listSequence.current, project = projectId, abort = new AbortController();
+    listAbort.current?.abort(); listAbort.current = abort; listLock.current = true;
+    pool.current = { projectId: project, pages: [] };
+    setPages(undefined); setCursor(null); setListBusy(true); setListError('');
+    void apiJson<PageList>('/api/projects/' + encodeURIComponent(project) + '/pages', { signal: abort.signal })
       .then((data) => {
-        if (!live) return;
-        setPages(data.pages);
-        setFailure('');
+        if (listSequence.current !== sequence || projectRef.current !== project) return;
+        receivePages(data.pages, true); setCursor(data.nextCursor);
       })
       .catch((error: unknown) => {
-        if (live) setFailure(error instanceof Error ? error.message : 'Could not load saved pages.');
-      });
-    return () => { live = false; };
-  }, [projectId, refreshKey, proposalRefresh]);
-
-  useEffect(() => {
-    if (openId === '') {
-      setBody('');
-      setCites([]);
-      setPageLoading(false);
-      return;
-    }
-    let live = true;
-    setBody('');
-    setCites([]);
-    setFailure('');
-    setPageLoading(true);
-    void apiJson<{ page: { body: string; citations: Citation[] } }>(
-      '/api/projects/' + encodeURIComponent(projectId) + '/pages/' + encodeURIComponent(openId),
-    )
-      .then((data) => {
-        if (!live) return;
-        setBody(data.page.body);
-        setCites(data.page.citations);
-      })
-      .catch((error: unknown) => {
-        if (live) setFailure(error instanceof Error ? error.message : 'Could not open the saved page.');
+        if (listSequence.current === sequence && projectRef.current === project)
+          setListError(error instanceof Error ? error.message : 'Could not load saved pages.');
       })
       .finally(() => {
-        if (live) setPageLoading(false);
+        if (listSequence.current === sequence && projectRef.current === project) { listLock.current = false; setListBusy(false); }
       });
-    return () => { live = false; };
-  }, [projectId, openId, proposalRefresh]);
+    return () => { listSequence.current++; listAbort.current?.abort(); };
+  }, [projectId, refreshKey, scan]);
 
+  async function morePages(): Promise<void> {
+    if (!cursor || listLock.current) return;
+    const sequence = ++listSequence.current, project = projectId, abort = new AbortController();
+    listAbort.current = abort; listLock.current = true; setListBusy(true); setListError('');
+    try {
+      const data = await apiJson<PageList>('/api/projects/' + encodeURIComponent(project) + '/pages?cursor=' + encodeURIComponent(cursor), { signal: abort.signal });
+      if (listSequence.current !== sequence || projectRef.current !== project) return;
+      receivePages(data.pages); setCursor(data.nextCursor);
+    } catch (error) {
+      if (listSequence.current === sequence && projectRef.current === project)
+        setListError(error instanceof Error ? error.message : 'Could not load more pages.');
+    } finally {
+      if (listSequence.current === sequence && projectRef.current === project) { listLock.current = false; setListBusy(false); }
+    }
+  }
+
+  useEffect(() => {
+    if (!openId) { detail.current = null; setReader(null); setPageLoading(false); setDetailError(''); return; }
+    const known = detail.current;
+    if (known?.projectId === projectId && known.page.id === openId && known.refresh === refresh
+      && (!hint || known.page.headRevisionNo > hint.headRevisionNo
+        || (known.page.headRevisionNo === hint.headRevisionNo && (known.page.freshness === 'stale' || hint.freshness === 'current')))) { setPageLoading(false); return; }
+    const sequence = ++detailSequence.current, project = projectId, id = openId, abort = new AbortController();
+    setPageLoading(true); setDetailError('');
+    void apiJson<{ page: SavedPage }>('/api/projects/' + encodeURIComponent(project) + '/pages/' + encodeURIComponent(id), { signal: abort.signal })
+      .then((data) => {
+        if (detailSequence.current !== sequence || projectRef.current !== project || selectedRef.current !== id) return;
+        const previous = detail.current;
+        const value = previous?.projectId === project && previous.page.id === id && newerPage(previous.page, data.page) === previous.page ? previous.page : data.page;
+        detail.current = { projectId: project, page: value, refresh };
+        setReader({ projectId: project, page: value });
+        if (pool.current.projectId === project && pool.current.pages.some((page) => page.id === id)) receivePages([pageSummary(value)]);
+      })
+      .catch((error: unknown) => {
+        if (detailSequence.current === sequence && projectRef.current === project && selectedRef.current === id)
+          setDetailError(error instanceof Error ? error.message : 'Could not open the saved page.');
+      })
+      .finally(() => {
+        if (detailSequence.current === sequence && projectRef.current === project && selectedRef.current === id) setPageLoading(false);
+      });
+    return () => { abort.abort(); detailSequence.current++; };
+  }, [projectId, openId, refresh, hint?.headRevisionNo, hint?.freshness]);
+
+  const selected = reader?.projectId === projectId && reader.page.id === openId ? reader.page : null;
+  const readable = selected && (!hint || selected.headRevisionNo >= hint.headRevisionNo) ? selected : null;
   return (
     <section className='er-chat er-chat--studio' aria-label='Studio'>
       <header className='er-chat__head'>
-        <div className='er-chat__head-title'>
-          <h1 className='er-chat__title'>Studio</h1>
-          <p className='er-chat__hint'>Answers you saved from chat.</p>
+        <div className='er-chat__head-title'><h1 className='er-chat__title'>Studio</h1><p className='er-chat__hint'>Answers you saved from chat. Refresh to see changes from other sessions.</p></div>
+        <div className='er-chat__head-actions'>
+          <button className='er-button er-button--text' type='button' disabled={listBusy} onClick={() => setScan((value) => value + 1)}>Refresh pages</button>
+          <ProposalsInbox projectId={projectId} onAccepted={(pageId) => { setSelection({ projectId, pageId }); setScan((value) => value + 1); }} />
         </div>
-        <ProposalsInbox projectId={projectId} onAccepted={(pageId) => {
-          setProposalRefresh(value => value + 1);
-          setOpenId(pageId);
-        }} />
       </header>
       <div className='er-chat__studio-content'>
-        <section className='er-chat__studio-list' aria-label='Saved pages'>
-          {failure !== '' ? <p className='er-chat__error' role='alert'>{failure}</p> : null}
-          {pages === undefined
-            ? <p className='er-chat__hint' role='status'>Loading saved pages…</p>
-            : pages.length === 0
-              ? <p className='er-chat__hint'>Nothing saved yet. Save an answer from chat.</p>
-              : (
-                <ul className='er-chat__pages'>
-                  {pages.map((page) => (
-                    <li key={page.id}>
-                      <button
-                        className='er-button er-button--text'
-                        type='button'
-                        onClick={() => setOpenId(page.id)}
-                        aria-current={page.id === openId ? 'page' : undefined}
-                      >
-                        {page.title}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+        <section className='er-chat__studio-list' aria-label='Saved pages' aria-busy={listBusy}>
+          {listError ? <p className='er-chat__error' role='alert'>{listError} <button className='er-button er-button--text' type='button'
+            onClick={() => cursor ? void morePages() : setScan((value) => value + 1)}>Retry pages</button></p> : null}
+          {visiblePages === undefined ? <p className='er-chat__hint' role='status'>{listBusy ? 'Loading saved pages.' : 'Saved pages are unavailable.'}</p>
+            : visiblePages.length === 0 ? <p className='er-chat__hint'>Nothing saved yet. Save an answer from chat.</p>
+              : <ul className='er-chat__pages'>{visiblePages.map((page) => <li key={page.id}>
+                <button className='er-button er-button--text' type='button' onClick={() => setSelection({ projectId, pageId: page.id })}
+                  aria-current={page.id === openId ? 'page' : undefined} aria-describedby={'page-freshness-' + page.id}>{page.title}</button>
+                <span className='er-chip' id={'page-freshness-' + page.id}>{page.freshness === 'stale' ? 'Stale' : 'Current'}</span>
+              </li>)}</ul>}
+          {cursor ? <button className='er-button er-button--text' type='button' disabled={listBusy} onClick={() => void morePages()}>
+            {listBusy ? 'Loading more pages…' : 'Load more pages'}</button> : null}
         </section>
-        <article className='er-card er-chat__page er-chat__studio-reader'>
-          {pageLoading
-            ? <p className='er-chat__hint' role='status'>Loading saved answer…</p>
-            : body !== ''
-              ? (
-                <>
-                  <div className='er-chat__answer'><Markdown text={body} references={collectRefs(projectId, cites)} /></div>
-                  {cites.length > 0 ? (
-                    <details className='er-chat__turn-details'>
-                      <summary>Sources</summary>
-                      <Cites projectId={projectId} cites={cites} />
-                    </details>
-                  ) : null}
-                </>
-              )
-              : <p className='er-chat__hint'>Select a saved answer to read it.</p>}
+        <article className='er-card er-chat__page er-chat__studio-reader' aria-label='Selected saved page' aria-busy={pageLoading}>
+          {selected ? <h2>{selected.title}</h2> : null}
+          {pageLoading ? <p className='er-chat__hint' role='status'>Updating saved page.</p> : null}
+          {detailError ? <p className='er-chat__error' role='alert'>{detailError} <button className='er-button er-button--text' type='button'
+            onClick={() => setDetailRetry((value) => value + 1)}>Retry page</button></p> : null}
+          {readable ? <>
+            {!pageLoading ? <p className='er-chat__hint' role='status'>{detailError ? 'Freshness could not be checked.' : readable.freshness === 'stale'
+              ? 'Stale. Sources changed or are no longer available.' : 'Current.'}</p> : null}
+            <div className='er-chat__answer'><Markdown text={readable.body} references={collectRefs(projectId, readable.citations)} /></div>
+            {readable.citations.length > 0 ? <details className='er-chat__turn-details'><summary>Sources</summary><Cites projectId={projectId} cites={readable.citations} /></details> : null}
+          </> : !pageLoading && !detailError ? <p className='er-chat__hint'>Select a saved answer to read it.</p> : null}
         </article>
       </div>
     </section>
