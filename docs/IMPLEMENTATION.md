@@ -1051,8 +1051,8 @@ with provider addresses and Gateway routing in connection dialogs. Both owner bi
 Unknown metadata stays visible, and model-job admission remains separate
 from selection.
 
-**Proposed decomposition — open.** Start with `ChatView`: separate the chat-history list/older-message reader and the
-active conversation's socket lifecycle from presentational composer/actions. Each route, connection and source selection
+**Conversation decomposition — open.** Keep the active conversation's HTTP/socket/history/version/cursor/scroll
+lifecycle together when separating it from presentational composer/actions. Each route, connection and source selection
 keeps one state owner; preserve stale-response cancellation, queued status and current Material layout. Use existing
 React/QueryClient facilities where they remove current duplication. In `ChatAgent.runTurn`, keep admission → frozen
 context → dispatch → settlement visible in one orchestrator; extract only deterministic citation/completion and usage
@@ -1060,7 +1060,12 @@ projection helpers, keeping stop/deadline ordering intact. Then review `SourcesP
 for similarly independent responsibilities when touching them. Function length locates review targets; it is not a
 quota or justification for a hook hierarchy, generic lifecycle framework, new provider layer or mass file splitting.
 
-**Bounded server decomposition — implementation awaiting review.** `chat-usage.ts:turnUsageProjection` owns the pure
+`web/use-chat-history.ts` owns project chat-list reads, paging and created-row insertion. Both page paths merge by ID,
+so a delayed first page cannot erase a newly created chat. Failure retains loaded rows/cursor; initial failure offers
+Retry. Cleanup aborts the current read. Conversation HTTP/socket/version/cursor/scroll and Send/Stop/Save remain in
+`ChatView`.
+
+**Post-stream usage.** `chat-usage.ts:turnUsageProjection` owns the pure
 post-stream projection of AI SDK reported token/provider usage and the known-zero undispatched case. `runTurn` applies
 that usage-only patch at its original post-stream point. An absent report leaves existing unknown values and the held
 reservation untouched; reported zeros stay zero and missing reported fields stay null. It reuses the existing safe
