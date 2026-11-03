@@ -3,7 +3,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import type { Citation } from '../citations';
 import type { ProposalSummary, ProposalView } from '../shared/api';
-import { Markdown } from './Markdown';
+import { Markdown, citationHref, citationLabel } from './Markdown';
 import type { MarkdownReference } from './Markdown';
 import './proposals.css';
 
@@ -24,14 +24,10 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   throw new ProposalRequestError(message, response.status);
 }
 
-const readerHref = (projectId: string, citation: Citation) => '/p/' + encodeURIComponent(projectId) + '/source/' +
-  encodeURIComponent(citation.sourceId) + '?revisionId=' + encodeURIComponent(citation.revisionId) +
-  '&start=' + citation.start + '&end=' + citation.end;
-const citationLabel = (citation: Citation) => citation.sourceTitle + ' · ' + citation.block + (citation.deleted ? ' (deleted)' : '');
 function citationReferences(projectId: string, citations: readonly Citation[]): MarkdownReference[] {
   const refs = new Map<string, MarkdownReference>();
   for (const citation of citations) for (const text of [citation.label, '[R' + citation.revisionId + ':' + citation.block + ']'])
-    if (text) refs.set(text, { text, label: citationLabel(citation), href: readerHref(projectId, citation) });
+    if (text) refs.set(text, { text, label: citationLabel(citation), href: citationHref(projectId, citation) });
   return [...refs.values()];
 }
 const kindLabel = (kind: string) => kind.slice(0, 1).toLocaleUpperCase() + kind.slice(1);
@@ -211,7 +207,7 @@ export function ProposalsInbox({ projectId, onAccepted }: { readonly projectId: 
                   <ul>
                     {visible.citations.map((citation: Citation) => (
                       <li key={citation.revisionId + ':' + citation.block + ':' + citation.start}>
-                        <Link className="er-citation" to={readerHref(projectId, citation)}>{citationLabel(citation)}</Link>
+                        <Link className="er-citation" to={citationHref(projectId, citation)}>{citationLabel(citation)}</Link>
                       </li>
                     ))}
                   </ul>
