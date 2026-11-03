@@ -214,6 +214,8 @@ stop/reconnect, reopen chat and save an answer as a page.
    store citations/usage/timing/cost and never auto-continue a paid failed stream.
 6. Add chat/page APIs, one visible Material catalogue with answer/understanding defaults, compact chat/project pickers,
    saved answers and the moved chat/evidence UI. Provider configuration is separate from credentials kept in Cloudflare.
+   The project header opens a paged active-project picker with Refresh/Retry; switching opens that project's chat
+   without creating a chat or sending a question. Closing the picker preserves the current draft and source scope.
    Persist the native usage choice (included quota or standard Cloudflare billing) without starting a job or changing
    models. An unverified included-only cap pauses native requests; it must never silently enable paid overage.
 7. Add label/context/cost cases and `pnpm eval k2`.
