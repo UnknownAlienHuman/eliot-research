@@ -673,13 +673,23 @@ The materialization bound below is implemented by the current repair slice; chat
   `writeTurn` preserves `created_at` on conflict and increments the same row's `history_version`. Startup adds that
   column with legacy default zero and the ordering index, without rewriting old payloads. Read and stream projections
   carry `createdAt`/`historyVersion`; neither is duplicated inside payload JSON or used as model context. UI merges by
-  immutable turn ID and stored version, sorting by creation time/ID, so delayed pages/snapshots cannot regress streamed
-  text or erase older rows. Ordinary overlapping reconnects keep the older cursor. A disjoint latest window after
+  immutable turn ID and stored version, including the first preparation/handoff frame and the wait=1 receipt.
+  The same DO has one constant-size `chat_history_clock` row for ordering queue/settlement projections across HTTP
+  and WebSocket. Existing state/payload writes advance it before writing; a failed write can leave an unused version
+  but cannot publish changed state with an older version. Repeated reads do not advance it. Snapshots and queue frames
+  expose `stateVersion`; older projections cannot resurrect a queue or an obsolete settlement notice. This is transport
+  metadata only, not an admission mechanism, effects ledger or another message store. UI sorts by creation time/ID,
+  so delayed pages/snapshots cannot regress streamed text or erase older rows. Ordinary overlapping reconnects keep
+  the older cursor. A disjoint latest window after
   more than 50 missed turns resets only the pagination boundary to that snapshot: explicit Load earlier messages fills
   the middle gap, deduplicates through retained rows and continues older. No automatic full-history fetch runs.
+  Only a newer head window may move that boundary; a delayed older first socket snapshot cannot replace a newer HTTP
+  boundary. Initial scope restoration uses the merged latest turn and respects manual selection. A successful
+  authorized socket snapshot makes chat ready; a later failed parallel initial HTTP read cannot disable Send.
   An older request's success/error/finally is scoped to its initiating project/chat and request generation; obsolete
-  reads are aborted. Older pages never restore selection, queue or composer state. Prepending preserves the visible
-  conversation scroll anchor and keyed answer/details; old answers use the existing storage-only Save with their
+  reads are aborted. Older pages never restore selection, queue or composer state. Page merging preserves a visible
+  turn element's offset in the conversation scrollport, rather than using total height growth: middle-gap insertion
+  and streamed growth below the reader must not move it. Keyed answer/details remain open; old answers use the existing storage-only Save with their
   original citations. Checked 2026-11-03 against Agents `0.30.1`, Workers types `5.20261024.1` and the official
   [SQLite cursor contract](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#sql-api): queries
   are fully consumed synchronously before any await, including the ID-only lookahead.

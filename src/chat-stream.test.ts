@@ -214,6 +214,29 @@ describe("ChatAgent older history", () => {
   const seed = (db: DatabaseSync, count: number, start = 1) => {
     for (let n = start; n < start + count; n++) db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,?)").run(turn(n).turnId, JSON.stringify(turn(n)), 100 + Math.floor(n / 90));
   };
+  it.each(["direct", "handoff"])("includes durable ordering/version in the first %s preparation frame before model resolution", async (path) => {
+    const h = makeHarness(); let rejectModel: ((error: Error) => void) | undefined;
+    try {
+      await h.agent.onStart(); seed(h.db, 1);
+      vi.mocked(requireAvailableModel).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectModel = reject; }));
+      const input: RunTurnInput = { projectId, chatId, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-777777777777", question: "Prepare only", scopeMode: "empty", model: "gateway:openrouter/test-model" };
+      let pending: Promise<unknown>;
+      if (path === "direct") pending = h.agent.submitTurn(input, true);
+      else {
+        h.agent.setState({ active: turn(1).turnId, queued: input, stopRequested: false });
+        const agent = h.agent as unknown as { advanceQueue(id: string): void; current: Promise<unknown> };
+        agent.advanceQueue(turn(1).turnId); pending = agent.current;
+      }
+      await vi.waitFor(() => expect(rejectModel).toBeDefined());
+      const frame = vi.mocked(h.agent.broadcast).mock.calls.map(([value]) => JSON.parse(String(value))).find((value) => value.type === "turn" && value.turn.turnId === input.turnId);
+      expect(frame.turn).toMatchObject({ state: "started", tokenLimit: null, historyVersion: 1, createdAt: expect.any(Number) });
+      expect(frame.turn.createdAt).toBeGreaterThan(101);
+      expect(h.db.prepare("SELECT created_at,history_version FROM turns WHERE id=?").get(input.turnId)).toEqual({ created_at: frame.turn.createdAt, history_version: frame.turn.historyVersion });
+      expect(fetchCalls).toBe(0); expect(admitTurn).not.toHaveBeenCalled();
+      rejectModel?.(new Error("Fixture model resolution stopped")); const receipt = await pending;
+      expect(receipt).toEqual((await h.agent.getTurns(projectId)).find((item) => item.turnId === input.turnId));
+    } finally { h.db.close(); h.d1.close(); }
+  });
   it("pages all equal-timestamp ties without gaps/duplicates, while model history stays latest 50", async () => {
     const h = makeHarness(); try {
       await h.agent.onStart(); seed(h.db, 163);
@@ -274,6 +297,27 @@ describe("ChatAgent older history", () => {
       const questions = history.filter((item) => item.role === "user").map((item) => item.content);
       expect(questions).toEqual(Array.from({ length: 49 }, (_, n) => "Question " + (n + 72)));
       expect(fetchCalls).toBe(1); // The existing in-process fake stream, never a provider call.
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("orders queue/notice projections across channels without advancing the clock on repeated reads", async () => {
+    const h = makeHarness(); try {
+      await h.agent.onStart(); seed(h.db, 1);
+      const base = await h.agent.getSnapshot(projectId);
+      const agent = h.agent as unknown as { current: Promise<unknown>; changeState(state: WireAgentState): void; writeTurn(t: TurnView): void; historyClock(): number };
+      agent.current = new Promise(() => {}); // Keep a synthetic execution active; no model or recovery dispatch.
+      const queued: RunTurnInput = { projectId, chatId, turnId: "queued-version", question: "Accepted queued question", scopeMode: "empty" };
+      agent.changeState({ active: turn(1).turnId, queued, stopRequested: false });
+      const waiting = await h.agent.getSnapshot(projectId);
+      expect(waiting.stateVersion).toBeGreaterThan(base.stateVersion); expect(waiting.queued?.turnId).toBe(queued.turnId);
+      agent.writeTurn({ ...turn(1), error: "Updated stored notice" });
+      const updated = await h.agent.getSnapshot(projectId);
+      expect(updated.stateVersion).toBeGreaterThan(waiting.stateVersion);
+      expect((await h.agent.getSnapshot(projectId)).stateVersion).toBe(updated.stateVersion);
+      agent.changeState({ active: turn(1).turnId, queued: null, stopRequested: false });
+      const cleared = await h.agent.getSnapshot(projectId); expect(cleared.queued).toBeNull(); expect(cleared.stateVersion).toBeGreaterThan(updated.stateVersion);
+      const restarted = new ChatAgent({ database: h.db } as unknown as ConstructorParameters<typeof ChatAgent>[0], h.env); await restarted.onStart();
+      expect((restarted as unknown as { historyClock(): number }).historyClock()).toBe(cleared.stateVersion);
+      expect(fetchCalls).toBe(0);
     } finally { h.db.close(); h.d1.close(); }
   });
   it.each(["", "{}", "[]", "null", '["other-chat",1,"turn"]', '["wire-chat",-1,"turn"]', '["wire-chat",1.5,"turn"]', '["wire-chat",1,""]', "x".repeat(513)])("rejects malformed or foreign cursor %s without model work", async (cursor) => {

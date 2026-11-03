@@ -165,6 +165,7 @@ export interface TurnView {
 }
 
 export interface TurnPage { turns: TurnView[]; nextCursor: string | null }
+export interface ChatSnapshotState { stateVersion: number; queued: { turnId: string; question: string } | null; settlementError?: string | null }
 
 export interface RunTurnInput {
   projectId: string;

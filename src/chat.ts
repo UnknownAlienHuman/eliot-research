@@ -57,6 +57,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
   private current: Promise<TurnView> | undefined;
   async onStart() {
     void this.sql`CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL)`;
+    void this.sql`CREATE TABLE IF NOT EXISTS chat_history_clock(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL)`;
+    void this.sql`INSERT OR IGNORE INTO chat_history_clock(id,version) VALUES(1,0)`;
     if (!this.sql<{ name: string }>`PRAGMA table_info(turns)`.some((column) => column.name === "history_version"))
       void this.sql`ALTER TABLE turns ADD COLUMN history_version INTEGER NOT NULL DEFAULT 0`;
     void this.sql`CREATE INDEX IF NOT EXISTS turns_by_created ON turns(created_at,id)`;
@@ -82,7 +84,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       }
     }
     const active = this.state.active ? this.readTurn(this.state.active) : undefined;
-    if (this.state.active || queued) this.setState({ active: active?.settlementPending ? active.turnId : null, queued: null, stopRequested: false });
+    if (this.state.active || queued) this.changeState({ active: active?.settlementPending ? active.turnId : null, queued: null, stopRequested: false });
     await this.recoverFinishedTurn();
   }
   shouldConnectionBeReadonly() { return true; }
@@ -107,9 +109,22 @@ export class ChatAgent extends Agent<Env, ChatState> {
     const input: StoredInput | undefined = turn.input ? { projectId: turn.input.projectId, chatId: turn.input.chatId,
       hasModel: turn.input.model !== undefined, hasSourceIds: turn.input.sourceIds !== undefined } : undefined;
     const payload = JSON.stringify({ ...turn, createdAt: undefined, historyVersion: undefined, ...(turn.input ? { input } : {}) });
+    this.bumpHistoryClock();
     const [row] = this.sql<{ created_at: number; history_version: number }>`INSERT INTO turns(id,payload,created_at,history_version) VALUES(${turn.turnId},${payload},${Date.now()},1)
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,history_version=turns.history_version+1 RETURNING created_at,history_version`;
-    if (notify && row) this.notify(JSON.stringify({ type: "turn", turn: { ...turn, createdAt: row.created_at, historyVersion: row.history_version } }));
+    if (!row) throw new Error("Stored turn ordering is unavailable.");
+    turn.createdAt = row.created_at; turn.historyVersion = row.history_version;
+    if (notify) this.notify(JSON.stringify({ type: "turn", turn }));
+  }
+  private bumpHistoryClock() { void this.sql`UPDATE chat_history_clock SET version=version+1 WHERE id=1`; }
+  private historyClock() { return this.sql<{ version: number }>`SELECT version FROM chat_history_clock WHERE id=1`[0]?.version ?? 0; }
+  private changeState(state: ChatState) {
+    // Allocate before the write: a failed write may leave a harmless gap, never
+    // a changed queue/notice with an older cross-channel projection version.
+    this.bumpHistoryClock(); this.setState(state);
+  }
+  private notifyQueued(queued: Pick<RunTurnInput, "turnId" | "question"> | null) {
+    this.notify(JSON.stringify({ type: "queued", queued, stateVersion: this.historyClock() }));
   }
   private notify(payload: string) {
     try { this.broadcast(payload); }
@@ -136,8 +151,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
     try {
       const turn = this.preserveUndispatched(queued, "This queued question was not sent to the model because it could not be saved before starting. Send it again as a new question to retry.");
       if (turn.state === "started") return false; // Never regrade already-admitted work.
-      this.setState({ active: null, queued: null, stopRequested: false });
-      this.notify(JSON.stringify({ type: "queued", queued: null }));
+      this.changeState({ active: null, queued: null, stopRequested: false });
+      this.notifyQueued(null);
       return true;
     } catch { return false; } // Retain input for one storage-only attempt on the next authorised read/submit.
   }
@@ -207,8 +222,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
     const queued = this.state.queued;
     if (queued && queued.turnId !== this.state.active) {
       this.preserveUndispatched(queued, "This queued question was not sent to the model because the previous answer could not finish saving. Send it again as a new question to retry.");
-      this.setState({ ...this.state, queued: null });
-      this.notify(JSON.stringify({ type: "queued", queued: null }));
+      this.changeState({ ...this.state, queued: null });
+      this.notifyQueued(null);
     }
   }
   private async recoverFinishedTurn() {
@@ -234,11 +249,11 @@ export class ChatAgent extends Agent<Env, ChatState> {
     }
     if (active && this.state.active === active && !this.current && this.state.queued?.turnId !== active) {
       const turn = this.readTurn(active);
-      if (turn && turn.state !== "started" && !turn.settlementPending) this.setState({ active: null, queued: null, stopRequested: false });
+      if (turn && turn.state !== "started" && !turn.settlementPending) this.changeState({ active: null, queued: null, stopRequested: false });
     }
     if (!this.current && !this.state.active) {
       const pending = this.sql<{ id: string }>`SELECT id FROM turns WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 1`[0];
-      if (pending) { this.preserveWaitingQuestion(); this.setState({ active: pending.id, queued: null, stopRequested: false }); }
+      if (pending) { this.preserveWaitingQuestion(); this.changeState({ active: pending.id, queued: null, stopRequested: false }); }
     }
   }
   private async ensureProject(projectId: string) {
@@ -269,7 +284,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     const { queued, active } = this.state;
     const older = this.sql<{ id: string; error: string | null }>`SELECT id,json_extract(payload,'$.settlementError') AS error FROM turns
       WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 1`[0];
-    return { turns, nextCursor, queued: queued && queued.turnId !== active ? { turnId: queued.turnId, question: queued.question } : null,
+    return { turns, nextCursor, stateVersion: this.historyClock(), queued: queued && queued.turnId !== active ? { turnId: queued.turnId, question: queued.question } : null,
       settlementError: older && !turns.some((turn) => turn.turnId === older.id) ? older.error : null };
   }
   async getStoredTurn(projectId: string, turnId: string) {
@@ -286,7 +301,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       citations: saved.citations, revisionIds: turn.revisionIds, state: turn.state };
   }
   private startTurn(input: RunTurnInput): Promise<TurnView> {
-    this.setState({ active: input.turnId, queued: null, stopRequested: false });
+    this.changeState({ active: input.turnId, queued: null, stopRequested: false });
     const task = this.runTurn(input);
     this.current = task;
     this.ctx.waitUntil(task.finally(() => this.advanceQueue(input.turnId)));
@@ -305,14 +320,14 @@ export class ChatAgent extends Agent<Env, ChatState> {
       return;
     }
     if (!queued) {
-      this.setState({ active: null, queued: null, stopRequested: false });
-      this.notify(JSON.stringify({ type: "queued", queued: null }));
+      this.changeState({ active: null, queued: null, stopRequested: false });
+      this.notifyQueued(null);
       return;
     }
     // Claim the queued ID synchronously before runTurn performs its first await.
     // A concurrent submit therefore cannot jump ahead or replace this payload.
-    this.setState({ active: queued.turnId, queued, stopRequested: false });
-    this.notify(JSON.stringify({ type: "queued", queued: null }));
+    this.changeState({ active: queued.turnId, queued, stopRequested: false });
+    this.notifyQueued(null);
     const task = this.runTurn(queued);
     this.current = task;
     this.ctx.waitUntil(task.finally(() => this.advanceQueue(queued.turnId)));
@@ -334,8 +349,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
         if (!sameTurnRequest(this.state.queued, input)) throw new LibraryError("conflict", "This turn ID is already queued with different input.", 409);
         return { turnId: input.turnId, queued: true };
       }
-      this.setState({ ...this.state, queued: input });
-      this.notify(JSON.stringify({ type: "queued", queued: { turnId: input.turnId, question: input.question } }));
+      this.changeState({ ...this.state, queued: input });
+      this.notifyQueued({ turnId: input.turnId, question: input.question });
       return { turnId: input.turnId, queued: true };
     }
     const task = this.startTurn(input);
@@ -345,8 +360,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
     await this.ensureProject(projectId);
     this.requireRecoveredHandoff();
     await this.recoverFinishedTurn();
-    if (this.state.queued?.turnId === turnId && this.state.active !== turnId) { this.setState({ ...this.state, queued: null }); this.notify(JSON.stringify({ type: "queued", queued: null })); }
-    if (this.state.active === turnId) { this.setState({ ...this.state, stopRequested: true }); this.controller?.abort(); }
+    if (this.state.queued?.turnId === turnId && this.state.active !== turnId) { this.changeState({ ...this.state, queued: null }); this.notifyQueued(null); }
+    if (this.state.active === turnId) { this.changeState({ ...this.state, stopRequested: true }); this.controller?.abort(); }
     return { turnId };
   }
   async runTurn(input: RunTurnInput): Promise<TurnView> {
@@ -355,7 +370,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const queued = this.state.queued;
       if (!queued || this.state.active !== input.turnId || !sameTurnRequest(queued, input)) throw error;
       const turn = this.preserveUndispatched(queued, "This queued question was not sent to the model because its conversation could not be validated. Reopen the conversation before sending a new question.");
-      this.setState({ ...this.state, queued: null });
+      this.changeState({ ...this.state, queued: null });
       return turn;
     }
     if (this.state.active !== input.turnId) throw new LibraryError("conflict", "Turn was not admitted by this chat.", 409);
@@ -364,7 +379,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       scopeMode: input.scopeMode, revisionIds: [], sourceIds: input.sourceIds ?? [], citations: [], invalidLabels: 0, inputTokens: null, cachedTokens: null, outputTokens: null,
       tokenLimit: null, firstTokenMs: null, totalMs: null, error: null };
     this.writeTurn(turn, false);
-    if (this.state.queued?.turnId === input.turnId) this.setState({ ...this.state, queued: null });
+    if (this.state.queued?.turnId === input.turnId) this.changeState({ ...this.state, queued: null });
     this.notify(JSON.stringify({ type: "turn", turn }));
     const controller = new AbortController();
     this.controller = controller;
