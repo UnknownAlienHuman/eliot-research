@@ -1,7 +1,7 @@
 // K3 source understanding and project overview. Only explicit Understand starts model work.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiJson } from './api';
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { Markdown } from './Markdown';
 import { ModelPicker, type ModelRoute } from './ModelPicker';
@@ -53,11 +53,12 @@ function Questions({ questions, onUse, showHint = true }: { readonly questions: 
 }
 export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTitle, onUseQuestion }: { readonly projectId: string; readonly sourceId: string; readonly revisionId: string; readonly sourceTitle: string; readonly onUseQuestion?: ((question: string) => void) | undefined }) {
   const queryClient = useQueryClient();
-  const [view, setView] = useState<Understanding | undefined>(undefined);
-  const [failure, setFailure] = useState('');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
-  const [readVersion, setReadVersion] = useState(0);
+  const [awaitingStatus, setAwaitingStatus] = useState<null | 'unknown' | 'accepted'>(null);
+  const statusKey = sourceId + ':' + revisionId;
+  const [statusReadKey, setStatusReadKey] = useState('');
+  const mounted = useRef(false);
   const [models, setModels] = useState<readonly ModelOption[]>([]);
   const [modelChoice, setModelChoice] = useState('');
   const [catalogueLoaded, setCatalogueLoaded] = useState(false);
@@ -67,60 +68,61 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const [modelRoutePending, setModelRoutePending] = useState(false);
   const base = '/api/sources/' + encodeURIComponent(sourceId) + '/understanding';
   const url = base + '?revisionId=' + encodeURIComponent(revisionId);
-  const state = view?.state;
+  const understanding = useQuery({
+    queryKey: ['understanding', sourceId, revisionId],
+    queryFn: ({ signal }) => apiJson<Understanding>(url, { signal }),
+    enabled: sourceId !== '' && revisionId !== '' && statusReadKey === statusKey,
+    staleTime: Infinity,
+    gcTime: 0,
+    networkMode: 'always',
+    refetchInterval: query => !query.state.error && (query.state.data?.state === 'queued' || query.state.data?.state === 'running') ? 3000 : false,
+  });
+  const view = understanding.data;
+  const failure = understanding.error?.message ?? '';
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setModelChoice(''); }, [sourceId, revisionId]);
+  const refetchUnderstanding = understanding.refetch;
+  useEffect(() => {
+    if (sourceId === '' || revisionId === '') return;
+    let live = true;
+    queueMicrotask(() => {
+      if (!live) return;
+      void refetchUnderstanding({ cancelRefetch: false }).then(result => {
+        if (live && !result.error) setStatusReadKey(statusKey);
+      });
+    });
+    return () => { live = false; };
+  }, [statusKey, refetchUnderstanding]);
   useEffect(() => {
     let live = true;
     setCatalogueLoaded(false);
     void apiJson<{ models: ModelOption[]; warnings?: string[] }>('/api/models').then((d) => { if (live) { setModels(d.models); setCatalogWarnings(Array.isArray(d.warnings) ? d.warnings : []); setCatalogError(''); setCatalogueLoaded(true); } }).catch((err: unknown) => { if (live) { setCatalogError(err instanceof Error ? err.message : 'Could not load the model catalog.'); setCatalogueLoaded(true); } });
     return () => { live = false; };
   }, [catalogVersion]);
-  useEffect(() => {
-    if (sourceId === '' || revisionId === '' || (state !== undefined && state !== 'queued' && state !== 'running')) return;
-    let live = true;
-    let timer = 0;
-    let armed = false;
-    async function read(): Promise<void> {
-      try {
-        const d = await apiJson<Understanding>(url);
-        if (!live) return;
-        setView(d);
-        setFailure('');
-      } catch (err) { if (live) setFailure(err instanceof Error ? err.message : 'Could not load understanding.'); }
-    }
-    if (state === undefined) { void read(); }
-    else { armed = true; timer = window.setInterval(() => { void read(); }, 3000); }
-    return () => { live = false; if (armed) window.clearInterval(timer); };
-  }, [sourceId, revisionId, state, url, readVersion]);
-  async function understand(): Promise<void> {
-    if (sourceId === '' || revisionId === '' || busy || modelRoutePending) return;
-    const chosen = models.find((m) => m.route === modelChoice);
-    if (modelChoice !== '' && (!chosen || !chosen.enabled)) { setNote(chosen && chosen.unavailableReason ? 'Selected model is unavailable: ' + chosen.unavailableReason : 'Selected model is unavailable.'); return; }
-    if (modelChoice === '' && configuredBound === null) { setNote('The default model is currently unavailable, so Understand cannot start yet.'); return; }
-    if (modelChoice !== '' && chosen !== undefined && chosen.enabled && twoCallBound(chosen) === null) { setNote('The selected model is currently unavailable, so Understand cannot start yet.'); return; }
-    setBusy(true);
-    setNote('');
-    try {
-      await apiJson(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(modelChoice === '' ? { revisionId } : { revisionId, model: modelChoice }) });
-      void queryClient.invalidateQueries({ queryKey: ['sources', projectId], exact: true });
-      const d = await apiJson<Understanding>(url);
-      setView(d);
-      setFailure('');
-    } catch (err) { setNote(err instanceof Error ? err.message : 'Could not start understanding.'); }
-    setBusy(false);
+  async function reload(): Promise<void> {
+    const result = await understanding.refetch();
+    if (mounted.current && !result.error) { setStatusReadKey(statusKey); setAwaitingStatus(null); setNote(''); }
   }
-  async function saveAvailable(): Promise<void> {
-    if (sourceId === '' || revisionId === '' || busy) return;
+  async function request(saveAvailable = false): Promise<void> {
+    if (sourceId === '' || revisionId === '' || busy || awaitingStatus || statusReadKey !== statusKey || failure !== '' || understanding.isFetching || (!saveAvailable && modelRoutePending)) return;
+    if (!saveAvailable) {
+      const chosen = models.find((m) => m.route === modelChoice);
+      if (modelChoice !== '' && (!chosen || !chosen.enabled)) { setNote(chosen && chosen.unavailableReason ? 'Selected model is unavailable: ' + chosen.unavailableReason : 'Selected model is unavailable.'); return; }
+      if (modelChoice === '' && configuredBound === null) { setNote('The default model is currently unavailable, so Understand cannot start yet.'); return; }
+      if (modelChoice !== '' && chosen !== undefined && chosen.enabled && twoCallBound(chosen) === null) { setNote('The selected model is currently unavailable, so Understand cannot start yet.'); return; }
+    }
     setBusy(true);
+    setAwaitingStatus('unknown');
     setNote('');
     try {
-      await apiJson(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionId, saveAvailable: true }) });
+      const input = saveAvailable ? { revisionId, saveAvailable: true } : modelChoice === '' ? { revisionId } : { revisionId, model: modelChoice };
+      await apiJson(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
       void queryClient.invalidateQueries({ queryKey: ['sources', projectId], exact: true });
-      const d = await apiJson<Understanding>(url);
-      setView(d);
-      setFailure('');
-    } catch (err) { setNote(err instanceof Error ? err.message : 'Could not save the available output.'); }
-    setBusy(false);
+      if (!mounted.current) return;
+      setAwaitingStatus('accepted');
+      await reload();
+    } catch (err) { if (mounted.current) setNote(err instanceof Error ? err.message : 'Could not confirm the request. Reload understanding to check its status.'); }
+    finally { if (mounted.current) setBusy(false); }
   }
   if (sourceId === '' || revisionId === '') return null;
   if (view === undefined) {
@@ -130,7 +132,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
         {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : <p className='er-und__hint' role='status'>Loading understanding…</p>}
         {note !== '' ? <p className='er-und__error' role='alert'>{note}</p> : null}
         {failure !== '' ? <div className='er-und__actions'>
-          <button className='er-button er-button--tonal' type='button' onClick={() => setReadVersion((v) => v + 1)}>Reload understanding</button>
+          <button className='er-button er-button--tonal' type='button' disabled={understanding.isFetching} onClick={() => void reload()}>Reload understanding</button>
         </div> : null}
       </section>
     );
@@ -138,8 +140,9 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const canRecover = view.canRecover === true;
   const understandingError = view.error;
   const active = view.state === 'queued' || view.state === 'running';
-  const canStart = !active && (view.state === 'none' || view.state === 'paused');
-  const canSaveAvailable = !active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial');
+  const statusReady = statusReadKey === statusKey && failure === '' && !understanding.isFetching;
+  const canStart = !awaitingStatus && statusReady && !active && (view.state === 'none' || view.state === 'paused');
+  const canSaveAvailable = !awaitingStatus && statusReady && !active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial');
   const references = view.citations.map((c, index) => ({
     text: '[R' + view.revisionId + ':' + c.block + ']',
     label: 'Open quote · ' + sourceTitle + ' · ' + (index + 1),
@@ -158,12 +161,17 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const progressTokens = view.progress.maximumTokens ?? null;
   const configuredBound = configuredSpec !== undefined ? (configuredSpec.enabled ? twoCallBound(configuredSpec) : null) : progressTokens;
   const pickerEmptyLabel = 'Use configured default' + (configuredLabel !== null ? ' (' + configuredLabel + ')' : '');
-  const understandDisabled = busy || modelRoutePending || (modelChoice === '' ? configuredBound === null : chosenDisabled || chosenBound === null);
+  const understandDisabled = busy || failure !== '' || understanding.isFetching || modelRoutePending || (modelChoice === '' ? configuredBound === null : chosenDisabled || chosenBound === null);
+  const requestStatus = awaitingStatus === null
+    ? statusReady ? stateLabel(view.state) : 'Checking understanding status.'
+    : busy ? 'Sending request.'
+      : (awaitingStatus === 'accepted' ? 'Request accepted.' : 'Request outcome is unknown.')
+        + (understanding.isFetching ? ' Reading status.' : ' Reload understanding to check its status.');
   const reloadSnapshot = () => { setCatalogError(''); setCatalogWarnings([]); setCatalogVersion((v) => v + 1); };
   return (
-    <section className='er-und' aria-label='Understanding'>
+    <section className='er-und' aria-label='Understanding' aria-busy={busy || understanding.isFetching || !statusReady}>
       <h2 className='er-und__title'>Understanding</h2>
-      <p className='er-und__hint' role='status'>{stateLabel(view.state)}</p>
+      <p className='er-und__hint' role='status'>{requestStatus}</p>
       {view.authors || view.published ? <p className='er-und__meta'>{[view.authors, view.published].filter(Boolean).join(' · ')}</p> : null}
       {understandingError !== null && understandingError !== '' ? <p className='er-und__error' role='alert'>{understandingError}</p> : null}
       {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : null}
@@ -175,10 +183,10 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
         {catalogWarnings.length > 0 ? <p className='er-und__hint' role='status'>Model catalog: {catalogWarnings.join(' ')}</p> : null}
         {modelChoice === '' ? (configuredBound === null ? (<p className='er-und__error' role='alert'>The default model is currently unavailable, so Understand cannot start yet.</p>) : null) : chosen !== undefined && chosen.enabled && chosenBound !== null ? null : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'The selected model is currently unavailable, so Understand cannot start yet.'}</p>)}
       </div> : null}
-      {canStart || failure !== '' || canSaveAvailable ? <div className='er-und__actions'>
-        {canStart ? <button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void understand()}>Understand source</button> : null}
-        {failure !== '' ? <button className='er-button er-button--text' type='button' onClick={() => setReadVersion((v) => v + 1)}>Reload understanding</button> : null}
-        {canSaveAvailable ? <button className='er-button er-button--tonal' type='button' disabled={busy} onClick={() => void saveAvailable()}>{view.state === 'failed' ? 'Save available output' : 'Recheck saved output'}</button> : null}
+      {canStart || failure !== '' || note !== '' || awaitingStatus || canSaveAvailable ? <div className='er-und__actions'>
+        {canStart ? <button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void request()}>Understand source</button> : null}
+        {failure !== '' || note !== '' || awaitingStatus ? <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={() => void reload()}>Reload understanding</button> : null}
+        {canSaveAvailable ? <button className='er-button er-button--tonal' type='button' disabled={busy || understanding.isFetching} onClick={() => void request(true)}>{view.state === 'failed' ? 'Save available output' : 'Recheck saved output'}</button> : null}
       </div> : null}
       {note !== '' ? <p className='er-und__error' role='alert'>{note}</p> : null}
       {(view.state === 'done' || view.state === 'partial') ? (<>

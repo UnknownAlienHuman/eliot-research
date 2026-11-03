@@ -412,10 +412,18 @@ against Workflow ID `distill-<revisionId>`; it never admits queued work. Migrati
 removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
 resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
 
-After a successful Understand or Save-existing POST the reader refreshes its workspace source metadata before the
-follow-up view GET by invalidating the active `sources` query for that project in the existing QueryClient. Infinite
-query pages retain loaded pagination; queued/running work is polled to its terminal state without a document reload
-or selection reset. These reads never dispatch understanding.
+After a successful Understand or Save-existing POST the reader invalidates the active `sources` query for that project
+and rereads understanding. Infinite source pages retain loaded pagination and source selection. A failed follow-up GET
+shows the accepted request with a storage-only Reload action; Understand/Save stay unavailable until a successful read.
+The reader locks before dispatch. Any POST error—including a lost reply, non-2xx response or unreadable JSON—leaves the
+outcome unknown and keeps both actions unavailable until Reload succeeds. A successful read of `none` only enables a
+later explicit request; it never resubmits.
+Mounting the reader always refreshes status, and a failed status read blocks actions until Reload succeeds.
+The existing QueryClient owns revision-scoped status reads, passes their AbortSignal and polls queued/running work
+without overlapping reads. A read error stops polling until Reload; the last received view is retained with its error.
+Navigation cancels reads and ignores the departed reader's action continuation. Submitted POSTs keep their original
+source/revision; a successful late POST may still invalidate its owning project's source badge query. These reads never
+dispatch understanding, and no document reload or new server state is introduced.
 
 **Bibliographic metadata — implementation and acceptance in MAP.** Current ingest/OCR inputs have no separate,
 reliably attributed author/date fields; PDF conversion explicitly disables PDF metadata. Canonical text, including

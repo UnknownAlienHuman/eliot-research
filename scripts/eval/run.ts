@@ -8,6 +8,7 @@ await import('./' + (contour === 'k2' && process.argv.includes('--context-only')
   : contour === 'k3' && process.argv.includes('--overview-only') ? 'k3-overview'
   : contour === 'k3' && process.argv.includes('--overview-browser') ? 'overview-browser'
   : contour === 'k3' && process.argv.includes('--question-browser') ? 'question-browser'
+  : contour === 'k3' && process.argv.includes('--understanding-browser') ? 'understanding-browser'
   : contour === 'k1' && process.argv.includes('--library-only') ? 'k1-library'
   : contour === 'k1' && process.argv.includes('--library-browser') ? 'library-browser'
   : contour === 'k1' && process.argv.includes('--ocr') ? 'k1-ocr' : contour) + '.ts');
