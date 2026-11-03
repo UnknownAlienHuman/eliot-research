@@ -1,15 +1,11 @@
-// K3 Material understanding UI (this slice only). Presentation adapted from
-// the moved K1 reader and K2 evidence chips; NotebookLM behavior is reference
-// only, paper-qa ideas only. Wire types imported from the root server
-// contract src/understanding.ts. All reads are storage-only GETs; the only
-// paid trigger is the explicit Understand button.
+// K3 source understanding and project overview. Only explicit Understand starts model work.
 import { useEffect, useState } from 'react';
 import { apiJson } from './api';
-import { useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { Markdown } from './Markdown';
 import { ModelPicker, type ModelRoute } from './ModelPicker';
-import type { DistillState, Overview, OverviewSource, Understanding } from '../understanding';
+import type { DistillState, Overview, Understanding } from '../understanding';
 import './understanding.css';
 // Wire types above come from src/understanding.ts; no local duplicates.
 type ModelOption = ModelRoute;
@@ -193,27 +189,40 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
 export function ProjectOverview({ projectId }: { readonly projectId?: string }) {
   const { projectId: routeId } = useParams();
   const pid = projectId ?? routeId ?? '';
-  const [rows, setRows] = useState<readonly OverviewSource[] | undefined>(undefined);
-  const [failure, setFailure] = useState('');
-  useEffect(() => {
-    if (pid === '') return;
-    let live = true;
-    void apiJson<Overview>('/api/projects/' + encodeURIComponent(pid) + '/overview').then((d) => { if (live) { setRows(d.sources); setFailure(''); } }).catch((err: unknown) => { if (live) setFailure(err instanceof Error ? err.message : 'Could not load the overview.'); });
-    return () => { live = false; };
-  }, [pid]);
+  const queryClient = useQueryClient();
+  const queryKey = ['overview', pid];
+  const overview = useInfiniteQuery({
+    queryKey,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam, signal }) => apiJson<Overview>('/api/projects/' + encodeURIComponent(pid) + '/overview'
+      + (pageParam ? '?cursor=' + encodeURIComponent(pageParam) : ''), { signal }),
+    getNextPageParam: page => page.nextCursor ?? undefined,
+    enabled: pid !== '',
+    staleTime: Infinity,
+    gcTime: 0,
+  });
+  const rows = overview.data?.pages.flatMap(page => page.sources);
+  const more = () => { if (!overview.isFetching) void overview.fetchNextPage({ cancelRefetch: false }); };
   if (pid === '') return null;
-  if (rows === undefined) return failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : <p className='er-und__hint' role='status'>Loading overview…</p>;
-  if (rows.length === 0) return <p className='er-und__hint'>No sources yet. Add them under Sources first.</p>;
   return (
-    <section className='er-und' aria-label='Project overview'>
+    <section className='er-und' aria-label='Project overview' aria-busy={overview.isFetching}>
       <h2 className='er-und__title'>Project overview</h2>
+      <p className='er-und__hint'>Guides and questions from readable project sources. Refresh to include source changes.</p>
+      <div className='er-und__actions'><button className='er-button er-button--text' type='button'
+        onClick={() => void queryClient.resetQueries({ queryKey, exact: true })}>Refresh overview</button></div>
+      {overview.error ? <p className='er-und__error' role='alert'>{overview.error.message} <button className='er-button er-button--text' type='button'
+        disabled={overview.isFetching} onClick={() => overview.isFetchNextPageError ? more() : void overview.refetch()}>Retry overview</button></p> : null}
+      {rows === undefined ? overview.error ? null : <p className='er-und__hint' role='status'>Loading overview.</p>
+        : rows.length === 0 ? <p className='er-und__hint'>No readable sources yet. <Link to={'/p/' + encodeURIComponent(pid) + '/sources'}>Open Sources</Link> to add a source or finish conversion.</p> :
       <ul className='er-und__rows'>{rows.map((r) => (
         <li key={r.sourceId} className='er-card er-und__row'>
-          <Link className='er-und__rowtitle' to={'/p/' + encodeURIComponent(pid) + '/source/' + encodeURIComponent(r.sourceId)}>{r.title}</Link>
+          <Link className='er-und__rowtitle' to={'/p/' + encodeURIComponent(pid) + '/source/' + encodeURIComponent(r.sourceId) + '?revisionId=' + encodeURIComponent(r.revisionId)}>{r.title}</Link>
           <span className='er-und__meta'>{stateLabel(r.state)}</span>
           {r.summary !== null && r.summary !== '' ? <div className='er-und__answer'><Markdown text={r.summary} /></div> : null}
-          {r.questions.length > 0 ? (<ul className='er-und__questions'>{r.questions.map((q, i) => (<li key={i}>{q}</li>))}</ul>) : null}
-        </li>))}</ul>
+          {r.questions.length > 0 ? <ul className='er-und__questions'>{r.questions.map((q, i) => <li key={i}>{q}</li>)}</ul> : null}
+        </li>))}</ul>}
+      {overview.hasNextPage ? <button className='er-button er-button--text' type='button' disabled={overview.isFetching} onClick={more}>
+        {overview.isFetchingNextPage ? 'Loading more sources.' : 'Load more sources'}</button> : null}
     </section>
   );
 }

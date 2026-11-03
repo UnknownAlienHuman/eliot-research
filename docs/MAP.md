@@ -287,7 +287,8 @@ re-distilled automatically.
    output/report in R2 and compact claims in D1. Paid calls do not retry.
    Preserve a safe failure reason for the reader without retaining raw provider errors or credentials.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
-   an extra overview model call.
+   an extra overview model call. Open it from Studio, load sources in bounded pages and Refresh to rescan changed
+   membership/heads. Each row opens the immutable revision whose summary was shown.
 6. Add claim context mode. Preserve whole originals where the shared budget permits; compress eligible sources only
    as needed, retaining the complete frozen scope and aliases. The same answer prompt and citation resolver are used.
 7. Add reader guide/claims UI, quote cases and `pnpm eval k3`. Reader metadata shows availability and verification
@@ -324,7 +325,9 @@ re-distilled automatically.
 - An anchor must be expressed by an EN/RU stored claim statement and supported by that same claim's exact quote; a matching
   phrase only inside a broad quote does not establish that the claim card contains the fact. Guides/digests are not
   anchor evidence.
-- Claim mode keeps C1–C4 correct and citations valid; overview lists every readable source without a model call.
+- Claim mode keeps C1–C4 correct and citations valid; overview pages through every active readable project source
+  without a model call. Tied timestamps, deleted cursor anchors, project isolation, Retry/Refresh and pinned Reader
+  links pass `--overview-only` and `--overview-browser`; newly eligible earlier sources require Refresh.
 - The automatic claims path is exercised in a separate real overflow project: reuse the ten baseline sources and
   attach the public papers in `eval/arxiv-10/overflow.json`. Measured source bytes must exceed the unchanged model
   whole-reading cap, and all four turns must report `contextMode=claims`. The baseline PDFs/questions remain unchanged;

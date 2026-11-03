@@ -258,7 +258,9 @@ app.post("/api/sources/:id/understanding", async (c) => {
   const input = z.object({ revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional() }).strict().parse(await c.req.json());
   return c.json(await requestUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), ...input }), 202);
 });
-app.get("/api/projects/:id/overview", async (c) => c.json(await getOverview(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")) })));
+app.get("/api/projects/:id/overview", async (c) => c.json(await getOverview(c.env, c.get("actor"), {
+  projectId: uuid.parse(c.req.param("id")), cursor: z.string().max(512).optional().parse(c.req.query("cursor")),
+})));
 app.get("/api/revisions/:id/text", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id"))));
 app.get("/api/revisions/:id/range", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
   start: z.coerce.number().int().nonnegative().parse(c.req.query("start")), end: z.coerce.number().int().positive().parse(c.req.query("end")),

@@ -487,6 +487,13 @@ omit these fields; storage-only rechecks retain that shape and treat omissions a
 Store raw result/report in R2, compact verified claims in D1, and usage
 and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
+`GET /api/projects/:id/overview` returns `{ sources, nextCursor }`: 50 active attached sources with current readable
+heads, ordered by immutable source `(created_at,id)` ascending. Its value cursor includes the project ID; only returned
+rows load R2 reports, never the lookahead. Title/head/understanding updates do not move the boundary. An old-created
+source that becomes eligible before the boundary requires Refresh; one scan is not a membership snapshot.
+Studio opens the overview. Load more retains the preceding rows; Retry repeats the failed page. Refresh discards the
+scan and requests page one, while project changes/unmount cancel the prior query. Rows open their exact revision in
+Reader. The existing QueryClient owns this storage-only read state while mounted; leaving the overview discards its pages.
 The K3 A3 GPU-memory gate accepts the frozen source sentence or exact EN/RU assertion forms naming LoRA,
 GPT-3 175B and threefold memory reduction. Both complete fields must match; otherwise `REVIEW_REQUIRED` blocks
 automatic acceptance without a factual-failure verdict. No sentence is discarded. The retained paragraph block 5,
