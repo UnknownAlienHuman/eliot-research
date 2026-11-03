@@ -126,20 +126,36 @@ try {
     const primaryLink = name => primary.getByRole('link', { name, exact: true });
     const sourceCheck = source => page.getByRole('checkbox', { name: 'Include ' + source.title + ' in the current source selection', exact: true });
     const scopeDefault = page.getByRole('checkbox', { name: /^Project default/ });
-    const settle = async () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const navigate = async pathname => {
       await page.evaluate(path => { history.pushState({}, '', path); dispatchEvent(new PopStateEvent('popstate')); }, pathname);
       await expect(page).toHaveURL(origin + pathname);
-      await settle();
+      // History changes before BrowserRouter commits the selected chat/revision.
+      if (pathname.includes('/chat/')) {
+        await expect(page.locator('.er-chat__history-link[href="' + pathname + '"]')).toHaveAttribute('aria-current', 'page');
+        await expect(questionBox).toBeVisible();
+      } else {
+        await expect(page.getByRole('combobox', { name: 'Revision', exact: true, includeHidden: true }))
+          .toHaveValue(new URL(pathname, origin).searchParams.get('revisionId'));
+      }
     };
     const revealScope = async expectedSource => {
-      if (viewport.width <= 600) await primaryLink('Sources').click();
+      if (viewport.width <= 600) {
+        await primaryLink('Sources').click();
+        await expect(scopeDefault).toBeVisible();
+      }
       await expect(scopeDefault).not.toBeChecked();
       const expected = expectedSource.id === sourceA.id ? sourceCheck(sourceA) : sourceCheck(sourceB);
       const other = expectedSource.id === sourceA.id ? sourceCheck(sourceB) : sourceCheck(sourceA);
       await expect(expected).toBeChecked();
       await expect(other).not.toBeChecked();
-      if (viewport.width <= 600) await primaryLink('Chat').click();
+      if (viewport.width <= 600) {
+        const selectedChat = await page.locator('.er-chat__history-link[aria-current="page"]')
+          .evaluateAll(links => links[0]?.getAttribute('href'));
+        await primaryLink('Chat').click();
+        // Wait for /chat to restore the selected chat before pushing a Reader route.
+        await expect(page).toHaveURL(origin + (selectedChat ?? chatPath(project)));
+        await expect(questionBox).toBeVisible();
+      }
     };
     const chatQuestionButton = () => page.getByRole('button', { name: 'Use question in chat: ' + questionB, exact: true });
     const openCurrentQuestion = async () => {
