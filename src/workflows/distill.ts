@@ -29,8 +29,7 @@ function extractionSchema(labels: [string, ...string[]]) {
       .describe("One source-guide sentence. Select every supporting block before writing it; a section-level statement may need several blocks.") })).min(3).max(5),
     claims: z.array(z.object({ quoteBlock, kind, task: optionalText, metric: optionalText, dataset: optionalText,
       valueText: optionalText, unit: optionalText, conditions: optionalText, statement: z.string().min(1).max(1200) })).max(32),
-    questions: z.array(z.string().min(1).max(500)).min(3).max(5),
-    authors: z.string().max(1000), published: z.string().max(100).nullable() });
+    questions: z.array(z.string().min(1).max(500)).min(3).max(5) });
 }
 type Extraction = z.infer<ReturnType<typeof extractionSchema>>;
 interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage?: JSONObject | null }
@@ -182,7 +181,7 @@ async function extract(env: Env, revisionId: string, model: ModelSpec) {
     "Write compact atomic claims: one independently supported fact per claim. Preserve distinct facts across contribution, methods, assumptions, findings, conditions and limitations; omit unsupported or duplicate claims. When stated and supported, prioritize the central contribution, mechanism, assumptions and limitations before secondary result rows or repeated variants; the maximum claim count is a ceiling, not a target. Use null when a structured field is absent. " +
     "Choose quoteBlock from the printed labels. The full block is the exact quote shown to the owner and must support the entire statement, every number and every condition. Never combine facts from separate blocks into one claim. " +
     "Each result claim describes one scalar result for one task, dataset, metric and model condition. Split different result rows into separate claims; do not put multiple results in valueText. Copy source digits and units without conversion. " +
-    "Keep task, metric, dataset and valueText in the source language; do not convert units or generalize a particular result. Authors and publication dates must be copied from the source, otherwise use empty/null.",
+    "Keep task, metric, dataset and valueText in the source language; do not convert units or generalize a particular result.",
     content, extractionSchema(labels), documentLanguage(citable.map(({ passage }) => passage).join("\n")), model);
   await put(env, revisionId, "distill-call1.json", raw);
 }
@@ -227,15 +226,14 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
     evidence: [...new Set([...raw.output.claims.map((item) => item.quoteBlock), ...raw.output.guide.flatMap((item) => item.labels)])].map((label) => ({ label, ...evidence(label) })),
     dropped: [...verified.dropped, ...guideDropped] };
   await put(env, revisionId, "distill-verified.json", artifact);
-  const owner = await env.DB.prepare("SELECT source_id,distill_model FROM source_revision WHERE id=?").bind(revisionId).first<{ source_id: string; distill_model: string }>();
+  const owner = await env.DB.prepare("SELECT distill_model FROM source_revision WHERE id=?").bind(revisionId).first<{ distill_model: string }>();
   if (!owner) throw new Error("Source revision is missing.");
   if (owner.distill_model !== model.route) throw new LibraryError("conflict", "The admitted model snapshot no longer matches the stored model route.", 409);
   const jobTokenLimit = 2 * modelTokenLimit(model);
-  await env.DB.batch([
-    env.DB.prepare("UPDATE source_revision SET distill_input_tokens=?,distill_cached_tokens=?,distill_output_tokens=?,distill_token_limit=? WHERE id=?")
-      .bind(raw.usage.inputTokens ?? null, raw.usage.cachedTokens ?? null, raw.usage.outputTokens ?? null, jobTokenLimit, revisionId),
-    env.DB.prepare("UPDATE source SET authors=?,published=? WHERE id=? AND current_revision_id=?")
-      .bind(text.includes(raw.output.authors) ? raw.output.authors : "", raw.output.published && text.includes(raw.output.published) ? raw.output.published : null, owner.source_id, revisionId)]);
+  // Canonical text and model output carry no trusted bibliographic fields. Legacy raw
+  // authors/published remain immutable evidence, never inputs to source metadata writes.
+  await env.DB.prepare("UPDATE source_revision SET distill_input_tokens=?,distill_cached_tokens=?,distill_output_tokens=?,distill_token_limit=? WHERE id=?")
+    .bind(raw.usage.inputTokens ?? null, raw.usage.cachedTokens ?? null, raw.usage.outputTokens ?? null, jobTokenLimit, revisionId).run();
   return { kept: verified.claims.length, dropped: verified.dropped.length };
 }
 async function synthesize(env: Env, revisionId: string, model: ModelSpec) {

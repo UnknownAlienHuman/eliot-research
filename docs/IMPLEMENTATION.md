@@ -388,12 +388,24 @@ follow-up view GET by invalidating the active `sources` query for that project i
 query pages retain loaded pagination; queued/running work is polled to its terminal state without a document reload
 or selection reset. These reads never dispatch understanding.
 
-**Proposed metadata repair — open.** `verifyAndStore` currently checks authors/publication with source-wide
-`text.includes`, which verifies occurrence but not field attribution. Stop promoting these guesses into `source`
-metadata. Populate a field only from explicit source bibliographic metadata with an identifiable field boundary;
-until that input exists, leave new authors empty and publication null. Do not add a generic name/date parser or a
-paid metadata pass. A name/date occurring only in a reference or body sentence must not qualify. Historical stored
-values are not silently rewritten by GET or cached-output reuse; any correction needs its own explicit stored-data change.
+**Bibliographic metadata — implementation and acceptance in MAP.** Current ingest/OCR inputs have no separate,
+reliably attributed author/date fields; PDF conversion explicitly disables PDF metadata. Canonical text, including
+front matter, bylines, references and date-looking strings, is content rather than a typed bibliographic input.
+Distillation no longer requests authors/publication in the extraction schema or promotes model guesses into `source`.
+New sources retain the schema defaults: authors `''`, publication `NULL`. Only a future explicit source metadata
+producer with an identifiable field boundary may populate them; no name/date parser or paid metadata pass is added.
+
+Legacy raw call output may still contain author/date guesses. Verification ignores those fields without rewriting
+the immutable raw bytes or source text, quotes and ranges. Existing source-wide D1 authors/publication remain unchanged
+during verification, GET and explicit Save-existing reuse, including when reading later revisions of that source.
+This repair does not certify or correct historical values; correction requires its own explicit stored-data change.
+Accounting and the existing two-call bound remain unchanged. Checked 2026-11-03 against the pinned D1/R2/Workflows types
+and official [prepared statements](https://developers.cloudflare.com/d1/worker-api/prepared-statements/),
+[conditional R2 writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and
+[Workflow steps](https://developers.cloudflare.com/workflows/build/workers-api/) contracts.
+`pnpm eval k3 --metadata-only` runs the production verification/storage/GET/Save paths on isolated Workerd/D1/R2,
+with retained synthetic outputs and both paid producer callbacks skipped. It checks default/historical metadata,
+replacement heads and immutable bytes/ETags. It establishes storage behavior, not model quality or paid-step replay.
 
 `DistillWorkflow` uses two bounded calls:
 

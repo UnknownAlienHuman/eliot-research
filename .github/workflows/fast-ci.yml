@@ -60,6 +60,7 @@ jobs:
           pnpm eval k2 --view-isolation
           pnpm eval k2 --models-only
           pnpm eval k3 --native-only
+          pnpm eval k3 --metadata-only
       - name: Upload checked build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

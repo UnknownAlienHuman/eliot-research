@@ -66,13 +66,14 @@ function fixture(storedRoute: string, document?: { text: string; blocks: Block[]
     .run(revisionId, sourceId, readableSize, storedRoute, Date.now() - 100);
   db.prepare("UPDATE source SET current_revision_id=? WHERE id=?").run(revisionId, sourceId);
   const bodies = new Map([[prefix + "text.md", text], [prefix + "blocks.json", JSON.stringify(blocks)]]);
-  const dispatchCAS = vi.fn();
+  const dispatchCAS = vi.fn(), sourceWrites = vi.fn();
   const env = { DB: {
     prepare(sql: string) {
       return { bind(...args: SQLInputValue[]) {
         return {
           first: async () => db.prepare(sql).get(...args) ?? null,
           run: async () => {
+            if (/^UPDATE\s+source\s/i.test(sql)) sourceWrites(sql, args);
             if (/SET\s+distill_calls\s*=\s*distill_calls\s*\+\s*1/i.test(sql)) dispatchCAS(sql, args);
             return { meta: { changes: Number(db.prepare(sql).run(...args).changes) } };
           },
@@ -90,7 +91,7 @@ function fixture(storedRoute: string, document?: { text: string; blocks: Block[]
       bodies.set(key, body); return {};
     },
   } } as unknown as Env;
-  return { db, env, bodies, dispatchCAS };
+  return { db, env, bodies, dispatchCAS, sourceWrites };
 }
 
 const explicitlySelectedRevisionId = "148e1392-f987-4fc5-bc65-152c9000b4d8";
@@ -178,6 +179,61 @@ function finished(f: ReturnType<typeof fixture>, error: string) {
 }
 
 describe("DistillWorkflow admitted model snapshot", () => {
+  it.each([
+    { name: "bibliography", passage: "References\nAda Example. Related research. 2021.", authors: "Ada Example", published: "2021" },
+    { name: "body attribution", passage: "We compare the 2024 method described by Ann Example.", authors: "Ann Example", published: "2024" },
+    { name: "Unicode bibliography", passage: "Литература\nМария Ёлкина. Чужая статья. 2023 г.", authors: "Мария Ёлкина", published: "2023" },
+    { name: "Unicode byline text", passage: "Автор: Zoë Łukasz\nОпубликовано: 2024-02-29", authors: "Zoë Łukasz", published: "2024-02-29" },
+    { name: "front matter is canonical text", passage: "---\nauthors: Ada Example\npublished: 2020-03\n---", authors: "Ada Example", published: "2020-03" },
+    { name: "partial occurrences", passage: "Annabelle Example's run has identifier 2024-02-29.", authors: "Ann", published: "2024" },
+    { name: "unavailable", passage: "No bibliographic information is supplied.", authors: "", published: null },
+    { name: "legacy null fields", passage: "The literal null is content, not metadata.", authors: null, published: null },
+  ])("does not promote $name from retained model output into source metadata", async ({ passage, authors, published }) => {
+    const document = documentWithBlocks([{ type: "paragraph", text: passage + "\n\nThe method uses normalization." }]);
+    const f = fixture(snapshot.route, document);
+    const raw = JSON.stringify({ output: {
+      guide: ["The source describes a method.", "The method uses normalization.", "The source retains its text."].map(text => ({ labels: ["[S1:1]"], text })),
+      questions: ["Which method?", "What normalization?", "What evidence?"],
+      claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The method uses normalization.",
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }], authors, published,
+    }, usage: { inputTokens: 17, cachedTokens: 0, outputTokens: 8, tokenLimit: 100 } });
+    f.bodies.set(prefix + "distill-call1.json", raw);
+    f.db.prepare("UPDATE source_revision SET distill_calls=1 WHERE id=?").run(revisionId);
+    const originalBodies = new Map(f.bodies);
+    try {
+      for (let replay = 0; replay < 2; replay++) {
+        const metadata = replay === 0 ? { authors: "", published: null } : { authors: "Историческая Zoë Ёлкина", published: "2021-03" };
+        if (replay) {
+          f.db.prepare("INSERT INTO source_revision(id,source_id,revision_no,readable_state,created_by,created_at) VALUES(?,?,2,'readable','owner',1)")
+            .run(explicitlySelectedRevisionId, sourceId);
+          f.db.prepare("UPDATE source SET authors=?,published=?,current_revision_id=? WHERE id=?")
+            .run(metadata.authors, metadata.published, explicitlySelectedRevisionId, sourceId);
+        }
+        const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) => {
+          if (name === "extract source") return; // Simulate cached extraction; the paid function is not invoked.
+          if (name === "verify source excerpts") return callback(); // Actual production verifier/storage callback.
+          throw new Error("Fixture stops before the next paid step.");
+        });
+        await new DistillWorkflow({} as ExecutionContext, f.env).run(
+          { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>, { do: stepDo } as unknown as WorkflowStep);
+        expect(stepDo.mock.calls.map(([name]) => name)).toEqual(["extract source", "verify source excerpts", "review and synthesize"]);
+        expect(f.db.prepare("SELECT authors,published FROM source WHERE id=?").get(sourceId)).toEqual(metadata);
+        expect(f.db.prepare("SELECT current_revision_id AS head FROM source WHERE id=?").get(sourceId))
+          .toEqual({ head: replay ? explicitlySelectedRevisionId : revisionId });
+        expect(f.db.prepare("SELECT distill_calls AS calls,distill_input_tokens AS input,distill_cached_tokens AS cached,distill_output_tokens AS output FROM source_revision WHERE id=?")
+          .get(revisionId)).toEqual({ calls: 1, input: 17, cached: 0, output: 8 });
+        const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
+        expect(verified.claims).toHaveLength(1);
+        expect(verified.claims[0].quote).toBe(document.text);
+        for (const [key, body] of originalBodies) expect(f.bodies.get(key)).toBe(body);
+      }
+      expect(generateText).not.toHaveBeenCalled(); expect(resolveModelTransport).not.toHaveBeenCalled();
+      expect(f.dispatchCAS).not.toHaveBeenCalled();
+      expect(f.sourceWrites).not.toHaveBeenCalled();
+      for (const lookup of forbiddenLookups) expect(lookup).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
   it("explicit Understand dispatches only its revision; cron leaves queued untouched", async () => {
     const f = callerFixture();
     vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
@@ -408,6 +464,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
         return JSON.parse(instructions.slice(at + marker.length)) as JsonSchemaNode;
       };
       const firstSchema = generatedSchema(callInstructions[0]);
+      expect(firstSchema.properties).not.toHaveProperty("authors");
+      expect(firstSchema.properties).not.toHaveProperty("published");
       const secondSchema = generatedSchema(callInstructions[1]);
       const firstClaim = firstSchema.properties?.claims?.items;
       const additionalClaim = secondSchema.properties?.additionalClaims?.items;
@@ -474,6 +532,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
     }));
     cached.db.prepare("UPDATE source_revision SET distill_state='failed',distill_calls=2,distill_error=? WHERE id=?")
       .run("historical call-two output", revisionId);
+    cached.db.prepare("UPDATE source SET authors=?,published=? WHERE id=?").run("Историческая Zoë Ёлкина", "2021-03", sourceId);
+    const originalCachedBodies = new Map(cached.bodies);
     try {
       expect(await hasAvailableUnderstanding(cached.env, revisionId)).toBe(true);
       vi.mocked(generateText).mockClear();
@@ -489,6 +549,9 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(saved.state).toBe("done");
       expect(saved.kept).toBe(1);
       expect(saved.usage.calls).toBe(2);
+      expect(cached.db.prepare("SELECT authors,published FROM source WHERE id=?").get(sourceId))
+        .toEqual({ authors: "Историческая Zoë Ёлкина", published: "2021-03" });
+      for (const [key, body] of originalCachedBodies) expect(cached.bodies.get(key)).toBe(body);
       expect(saved.dropped).toContainEqual({ index: 0, reason: "additional-missing-or-unsupported-primary-result" });
     } finally { cached.db.close(); }
   });
