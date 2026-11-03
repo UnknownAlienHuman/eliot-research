@@ -8,7 +8,8 @@ import type { LabelSource } from "./citations";
 import { admitTurn } from "./cost";
 import { modelOutputLimit, requireAvailableModel } from "./models";
 import type { ModelSpec } from "./models";
-import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
+import { modelFailure, resolveModelTransport } from "./model-transport";
+import { turnUsageProjection } from "./chat-usage";
 import { LibraryError } from "./library";
 import { readText } from "./read";
 import type { ChatSnapshotState, RunTurnInput, TurnPage, TurnView } from "./shared/api";
@@ -522,13 +523,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     } else {
       delete turn.warnings;
     }
-    if (usage) {
-      turn.providerUsage = reportedProviderUsage(usage);
-      turn.inputTokens = usage.inputTokens ?? null; turn.cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null; turn.outputTokens = usage.outputTokens ?? null;
-    }
-    // Undispatched means no model call happened: actual counts are known zero and
-    // no usable reservation is retained, so unknown usage must not increase.
-    if (!dispatched) { turn.tokenLimit = 0; turn.inputTokens = 0; turn.cachedTokens = 0; turn.outputTokens = 0; }
+    Object.assign(turn, turnUsageProjection(dispatched, usage));
     turn.totalMs = Date.now() - started;
     if (turn.totalMs > 90000 && turn.state === "completed") { turn.state = "partial"; turn.error = "The answer exceeded the time bound."; }
     this.writeTurn(turn);

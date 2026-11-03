@@ -1024,6 +1024,14 @@ projection helpers, keeping stop/deadline ordering intact. Then review `SourcesP
 for similarly independent responsibilities when touching them. Function length locates review targets; it is not a
 quota or justification for a hook hierarchy, generic lifecycle framework, new provider layer or mass file splitting.
 
+**Bounded server decomposition — implementation awaiting review.** `chat-usage.ts:turnUsageProjection` owns the pure
+post-stream projection of AI SDK reported token/provider usage and the known-zero undispatched case. `runTurn` applies
+that usage-only patch at its original post-stream point. An absent report leaves existing unknown values and the held
+reservation untouched; reported zeros stay zero and missing reported fields stay null. It reuses the existing safe
+provider-usage projection. Admission, abort/deadline, queue, citation work and durable settlement remain orchestrated
+by `ChatAgent`; no state owner or effect moved. Existing stream/Stop/deadline/settlement and view-isolation gates check
+the assembled path. The larger ChatView history/socket ownership decomposition remains open and is not part of this slice.
+
 **Studio completeness — implementation and acceptance in MAP.** The existing pages GET returns at most 50 summaries,
 with a project/kind-scoped value cursor on immutable `(created_at,id)` and a 51st metadata-row lookahead. Migration
 `0011_studio_pages` indexes published pages in that order. Accept and source invalidation change head/freshness and
