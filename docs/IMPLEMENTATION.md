@@ -516,6 +516,8 @@ Additional statements containing only whitespace or declared reference annotatio
 cleaning; they do not count as kept claims. Additional-claim drop reasons retain their original call-two array indexes.
 Guide/digest describe the paper for the owner rather than candidate review or model reasoning. Conflicting source
 values remain attributed to their separate source passages instead of being silently reconciled.
+Guide/digest sentences need text beyond declared citation annotations; reference-only units do not count toward
+completion. Glossary entries require nonblank EN/RU terms and a definition beyond those annotations.
 Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels
 in guide/digest/glossary storage, including within sentence-level validation. Code literals remain literal; unknown
 annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.

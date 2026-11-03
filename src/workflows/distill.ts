@@ -325,7 +325,9 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
     }
     const statements = splitDistillStatements(item.text);
     return statements.flatMap((statement) => {
-      if (!numbersSupported(cleanDistillText(statement, item.labels, revisionId).text, evidence(item.labels))) {
+      const content = cleanDistillText(statement, item.labels, revisionId).text;
+      if (!content.trim()) { dropped.push({ index, reason: `${stage}-empty-statement` }); return []; }
+      if (!numbersSupported(content, evidence(item.labels))) {
         dropped.push({ index, reason: `${stage}-unsupported-numbers` }); return [];
       }
       return [{ text: cleanDistillText(statement, item.labels, revisionId, true).text, labels: item.labels }];
@@ -334,6 +336,9 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
   const guide = prose(raw.output.guide, "guide").slice(0, 5), digest = prose(raw.output.digest, "digest");
   const glossary = raw.output.glossary.flatMap((item, index) => {
     const cleaned = cleanDistillText(item.definition, item.labels, revisionId);
+    if (!item.en.trim() || !item.ru.trim() || !cleaned.text.trim()) {
+      dropped.push({ index, reason: "glossary-empty-output" }); return [];
+    }
     if (cleaned.invalidReferences || !item.labels.every((label) => byLabel.has(label)) || !numbersSupported(`${item.en} ${item.ru} ${cleaned.text}`, evidence(item.labels))) {
       dropped.push({ index, reason: "glossary-unsupported-output" }); return [];
     }

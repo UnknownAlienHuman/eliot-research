@@ -310,6 +310,7 @@ re-distilled automatically.
 - Every stored quote is an exact byte range; numeric result fields are cleared when not supported by their quote.
   Parsed numeric fields use the same literal interpretation as quote verification; source spelling stays unchanged.
 - Claim statements retain non-whitespace text after declared reference annotations are removed.
+- Guide/digest completion counts exclude reference-only units; glossary terms and definitions are nonblank.
 - Numbers in statements and conditions must match complete numeric literals in that same quote, rather than
   borrowing digits from a decimal axis tick, another number or another excerpt. Units, metrics and conditions must
   also be supported by that quote; numeric occurrence alone does not pass the semantic quality gate.
