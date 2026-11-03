@@ -108,7 +108,7 @@ export function Projects() {
   const loadMore = () => { if (!listing.isFetching) void listing.fetchNextPage({ cancelRefetch: false }); };
   async function create() {
     const next = title.trim();
-    if (!next || busy) return;
+    if (!next || busy || editing !== undefined) return;
     setBusy(true); setFailure("");
     try {
       await apiJson("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: next }) });
@@ -125,6 +125,12 @@ export function Projects() {
     } catch (err) { setFailure(err instanceof Error ? err.message : "Could not update the project."); }
     finally { setBusy(false); }
   }
+  const editVisible = projects?.some(project => project.id === editing?.id) ?? false;
+  const renameControls = editing ? <>
+    <input aria-label="Project title" value={editing.title} maxLength={200} autoFocus onChange={event => setEditing({ id: editing.id, title: event.currentTarget.value })} />
+    <button className="er-button er-button--tonal" type="button" disabled={busy || !editing.title.trim()} onClick={() => void patch(editing.id, { title: editing.title.trim() })}>Save</button>
+    <button className="er-button er-button--text" type="button" disabled={busy} onClick={() => setEditing(undefined)}>Cancel</button>
+  </> : null;
   return (
     <section className="er-lib" aria-labelledby="er-lib-projects">
       <header className="er-lib__head"><h1 className="er-lib__title" id="er-lib-projects">Projects</h1><p className="er-lib__hint">{archived ? "Unarchive a project to return it to the active list." : "Create a project, then open its sources."}</p></header>
@@ -136,17 +142,18 @@ export function Projects() {
           onClick={() => listing.isFetchNextPageError ? loadMore() : void listing.refetch()}>Retry projects</button></p> : null}
       {!archived ? <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void create(); }}>
         <label className="er-field__label" htmlFor="er-lib-new-title">New project</label><input id="er-lib-new-title" value={title} onChange={(e) => setTitle(e.currentTarget.value)} placeholder="Paper trail" maxLength={200} />
-        <button className="er-button er-button--primary" type="submit" disabled={busy || !title.trim()}>Create</button>
+        <button className="er-button er-button--primary" type="submit" disabled={busy || editing !== undefined || !title.trim()}>Create</button>
       </form> : null}
+      {editing && !editVisible ? <div className="er-card er-field" role="group" aria-label="Rename project">
+        <p role="status">This project is not shown here. Finish or cancel its rename.</p>
+        <div className="er-lib__actions">{renameControls}</div>
+      </div> : null}
       {projects === undefined ? listing.error ? null : <p role="status">Opening your projects.</p>
         : projects.length === 0 ? <p className="er-card er-lib__empty">{archived ? "No archived projects." : "No projects yet. Create the first one above."}</p> : (
         <ul className="er-lib__list">{projects.map((p) => (
           <li className="er-lib__row" key={p.id}>
             <span className="er-lib__row-main"><MaterialSymbol name="home" /><span><Link className="er-lib__row-title" to={"/p/" + encodeURIComponent(p.id) + "/sources"}>{p.title}</Link>{p.archivedAt !== null ? <span className="er-chip er-lib__badge">Archived</span> : null}{p.description ? <span className="er-lib__row-meta">{p.description}</span> : null}</span></span>
-            <span className="er-lib__actions">{editing?.id === p.id ? (<>
-              <input aria-label="Project title" value={editing.title} maxLength={200} onChange={(e) => setEditing({ id: p.id, title: e.currentTarget.value })} />
-              <button className="er-button er-button--tonal" type="button" disabled={busy || !editing.title.trim()} onClick={() => void patch(p.id, { title: editing.title.trim() })}>Save</button>
-              <button className="er-button er-button--text" type="button" disabled={busy} onClick={() => setEditing(undefined)}>Cancel</button></>) : (<>
+            <span className="er-lib__actions">{editing?.id === p.id ? renameControls : (<>
               <button className="er-button er-button--text" type="button" disabled={busy || editing !== undefined} onClick={() => setEditing({ id: p.id, title: p.title })}>Rename</button>
               <button className="er-button er-button--text" type="button" disabled={busy || editing !== undefined} onClick={() => void patch(p.id, { archived: p.archivedAt === null })}>{p.archivedAt === null ? "Archive" : "Unarchive"}</button></>)}
             </span>

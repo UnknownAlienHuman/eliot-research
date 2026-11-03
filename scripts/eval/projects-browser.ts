@@ -49,15 +49,21 @@ try {
     await api('/api/projects/' + target.id, { title: target.title, archived: false }, 'PATCH');
     const expectedArchived = await allProjects(true);
     const expectedActive = await allProjects(false);
+    const pageTwo = active[0];
+    assert(expectedActive.findIndex(project => project.id === pageTwo.id) >= 50, 'Rename fixture must be beyond page one.');
+    const createdTitle = 'After rename cancel ' + prefix + viewport.width;
     const context = await browser.newContext({ viewport });
     await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.fallback() : route.abort());
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    let mode = '', writeMode = '', heldPatch, unexpectedWrites = 0;
+    let mode = '', writeMode = '', heldPatch, unexpectedWrites = 0, createPosts = 0, listReads = 0;
     const heldReads = [], patches = [];
     await page.route('**/api/**', route => {
       const request = route.request(), url = new URL(request.url());
+      if (request.method() === 'POST' && url.pathname === '/api/projects' && request.postDataJSON().title === createdTitle) {
+        createPosts++; return route.fallback();
+      }
       if (request.method() === 'PATCH' && url.pathname === '/api/projects/' + target.id) {
         patches.push(request.postDataJSON());
         if (writeMode === 'hold') { heldPatch = route; return; }
@@ -65,6 +71,7 @@ try {
         return route.fallback();
       }
       if (request.method() !== 'GET') { unexpectedWrites++; return route.abort('blockedbyclient'); }
+      if (url.pathname === '/api/projects') listReads++;
       if (url.pathname === '/api/projects' && url.searchParams.get('archived') === 'true') {
         if (mode === 'hold') { heldReads.push(route); return; }
         if (mode === 'fail' || mode === 'page' && url.searchParams.has('cursor'))
@@ -91,6 +98,52 @@ try {
     await loadAll();
     assert.deepEqual(await rows.locator('a').evaluateAll(links => links.map(link => link.getAttribute('href'))),
       expectedActive.map(project => '/p/' + project.id + '/sources'));
+    // Create must not reset pagination underneath a second-page rename.
+    const create = projects.getByRole('button', { name: 'Create', exact: true });
+    const newName = projects.getByRole('textbox', { name: 'New project', exact: true });
+    await newName.fill(createdTitle);
+    await row(pageTwo.title).getByRole('button', { name: 'Rename', exact: true }).click();
+    const rename = projects.getByRole('textbox', { name: 'Project title', exact: true });
+    const renameDraft = 'Unsaved second-page name ' + viewport.width;
+    await rename.fill(renameDraft);
+    await expect(create).toBeDisabled();
+    await create.locator('..').evaluate(form => form.requestSubmit());
+    await expect(rename).toHaveValue(renameDraft);
+    await expect(rows).toHaveCount(expectedActive.length);
+    assert.equal(createPosts, 0);
+    await projects.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(filter).toBeEnabled();
+    await create.click();
+    await expect(row(createdTitle)).toHaveCount(1);
+    await expect(rename).toHaveCount(0);
+    await expect(filter).toBeEnabled();
+    assert.equal(createPosts, 1);
+    // An external archive followed by real reconnect refetch removes the row,
+    // while its single controlled editor must retain its draft and Cancel.
+    await loadAll();
+    await row(pageTwo.title).getByRole('button', { name: 'Rename', exact: true }).click();
+    await rename.fill(renameDraft);
+    await context.setOffline(true);
+    await api('/api/projects/' + pageTwo.id, { archived: true }, 'PATCH');
+    const readsBeforeReconnect = listReads;
+    await context.setOffline(false);
+    await expect.poll(() => listReads).toBeGreaterThan(readsBeforeReconnect);
+    await expect(row(pageTwo.title)).toHaveCount(0);
+    const outsideEditor = projects.getByRole('group', { name: 'Rename project', exact: true });
+    await expect(outsideEditor).toBeVisible();
+    await expect(rename).toHaveValue(renameDraft);
+    await expect(rename).toBeFocused();
+    const editorBounds = await rename.boundingBox();
+    assert(editorBounds && editorBounds.y >= 0 && editorBounds.y + editorBounds.height <= viewport.height,
+      'The recovered editor must be in the viewport, not merely attached above the list.');
+    await expect(outsideEditor.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+    await outsideEditor.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(outsideEditor).toHaveCount(0);
+    await expect(filter).toBeEnabled();
+    await expect(row(createdTitle).getByRole('button', { name: 'Rename', exact: true })).toBeEnabled();
+    await expect(row(createdTitle).getByRole('button', { name: 'Archive', exact: true })).toBeEnabled();
+    assert.equal((await api('/api/projects/' + pageTwo.id)).project.title, pageTwo.title, 'Cancel must not save the draft.');
+    await api('/api/projects/' + pageTwo.id, { archived: false }, 'PATCH');
     mode = 'hold';
     await filter.check();
     await expect.poll(() => heldReads.length).toBeGreaterThan(0);
@@ -100,7 +153,7 @@ try {
     await expect(rows).toHaveCount(50);
     await expect(row(target.title)).toHaveCount(1);
     await expect(filter).not.toBeChecked();
-    await expect(projects.getByRole('textbox', { name: 'New project', exact: true })).toHaveValue('Unsubmitted project name');
+    await expect(projects.getByRole('textbox', { name: 'New project', exact: true })).toHaveValue('');
     mode = 'fail';
     await filter.check();
     await expect(projects.getByRole('alert')).toContainText('Synthetic archived read failure');
@@ -159,10 +212,12 @@ try {
     assert.deepEqual(await api('/api/sources/' + source.id), sourceBefore);
     assert.equal(await fetchEval(origin + '/api/revisions/' + revisionId + '/text', {}, origin, process.env.ELIOT_ORIGIN).then(r => r.text()), canonicalBefore);
     assert.deepEqual(patches, [{ archived: true }, { archived: false }, { title: restoredTitle }, { archived: false }]);
+    assert.equal(createPosts, 1);
     assert.equal(unexpectedWrites, 0); assert.deepEqual(errors, []);
     console.log(JSON.stringify({ scope: 'K1_PROJECTS_BROWSER', viewport, active: expectedActive.length, archived: expectedArchived.length,
       pagedBothViews: true, staleReadIgnored: true, readAndRestoreRetry: true, archiveRenameRestore: true,
-      retainedSourceAndHistory: true, projectPatches: patches.length, unexpectedWrites, modelCalls: 0 }));
+      retainedSourceAndHistory: true, pageTwoRename: { createBlockedUntilCancel: true, externalRefetchKeepsDraftAndCancel: true },
+      createPosts, projectPatches: patches.length, unexpectedWrites, modelCalls: 0 }));
     await context.close();
   }
 } finally { await browser.close(); }

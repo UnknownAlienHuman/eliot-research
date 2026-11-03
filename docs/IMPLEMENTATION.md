@@ -1084,6 +1084,9 @@ Projects exposes Show archived projects and Unarchive. Each list view owns its q
 old reads and starts its first page. Failed reads keep loaded rows and offer Retry. A pending write or Rename edit
 disables view switching; failed writes preserve the row/edit, while success refreshes that view. The active-only
 project picker and MCP default remain unchanged.
+Create waits for Rename to finish or be cancelled. If an update removes the edited row from the loaded pages, its
+existing editor stays available above the list with the unsaved name and original target; Save/Cancel never depend
+on that row remaining visible.
 The project header's Switch project opens a native dialog over the existing `/api/projects` pages. Loading, empty,
 initial/page Retry and Refresh stay in that picker; its list reads abort on close or route change. Selecting a project
 opens its chat route without creating a chat or sending a question. Escape/Close returns focus and preserves the
