@@ -446,6 +446,8 @@ const a1ComputeQuote = (q) => a1ComputeResult(q)
 const a2ResidualMapping = (q) => q.includes('residual')
   && /\b(?:functions?|mappings?)\b/u.test(q)
   && /reformulat|recast|learn|fit/u.test(q);
+const a3MemoryAnchor = 'A3-GPT3-175B-3x-GPU-memory';
+const a3MemoryReview = a3MemoryAnchor + ': REVIEW_REQUIRED';
 const a3MemorySource = 'Compared to GPT-3 175B fine-tuned with Adam, LoRA can reduce the number of trainable parameters by 10,000 times and the GPU memory requirement by 3 times.';
 const a3Factor = String.raw`(?:3|three)(?: times|[x×]|-fold)`;
 const a3Memory = String.raw`gpu memory(?: requirements?| usage)?`;
@@ -493,7 +495,7 @@ function checkAnchors(byFile) {
   if (!paired(q07, (q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q))) missing.push('A3-frozen-weights-trained-lowrank');
   const gpt = (q) => /gpt[- ]?3/.test(q) && /175\s*b/.test(q);
   if (!paired(q07, (q) => gpt(q) && /10[, ]*000/.test(q) && q.includes('trainable') && q.includes('parameter'))) missing.push('A3-GPT3-175B-10000x-trainable-params');
-  if (!paired(q07, a3MemoryStatement)) missing.push('A3-GPT3-175B-3x-GPU-memory');
+  if (!paired(q07, a3MemoryStatement)) missing.push(a3MemoryReview);
   if (!paired(q07, (q) => /(?:\bno\b|without|does not|do not).{0,80}latency/.test(q) && q.includes('inference'))) missing.push('A3-no-additional-inference-latency');
   return missing;
 }
@@ -522,9 +524,8 @@ function assertUnderstandingIdentity(u, sourceId, revisionId, what) {
 assert.doesNotThrow(() => assertUnderstandingIdentity({ sourceId: 's1', revisionId: 'r1' }, 's1', 'r1', 'identity fixture'));
 assert.throws(() => assertUnderstandingIdentity({ sourceId: 's2', revisionId: 'r1' }, 's1', 'r1', 'source identity fixture'), /sourceId must match/);
 assert.throws(() => assertUnderstandingIdentity({ sourceId: 's1', revisionId: 'old-r1' }, 's1', 'r1', 'revision identity fixture'), /revisionId must match/);
-const a3MemoryAnchor = 'A3-GPT3-175B-3x-GPU-memory';
 const a3MemoryOpposite = 'For GPT-3 175B, LoRA uses 3 times more GPU memory.';
-const a3MemoryPass = (statement, quote = a3MemorySource) => !checkAnchors(new Map([['arxiv-07.pdf', [{ statement, quote }]]])).includes(a3MemoryAnchor);
+const a3MemoryPass = (statement, quote = a3MemorySource) => !checkAnchors(new Map([['arxiv-07.pdf', [{ statement, quote }]]])).some(entry => entry.startsWith(a3MemoryAnchor));
 const a3MemoryCases = [
   ['frozen source coordinated objects', a3MemorySource, true],
   ['active reduction', 'For GPT-3 175B, LoRA reduces GPU memory usage by 3 times.', true],
@@ -572,11 +573,12 @@ for (const [name, text, expected] of a3MemoryCases) {
   assert.equal(a3MemoryPass(text), expected, 'A3 full anchor statement: ' + name);
   assert.equal(a3MemoryPass(a3MemorySource, text), expected, 'A3 full anchor quote: ' + name);
 }
+assert.equal(checkAnchors(new Map([['arxiv-07.pdf', [{ statement: a3MemorySource, quote: a3MemorySource + ' More source context.' }]]])).includes(a3MemoryReview), true, 'Unrecognized quote context requires review, not a factual-failure verdict.');
 assert.equal(checkAnchors(new Map([['arxiv-07.pdf', [
   { statement: a3MemorySource, quote: 'For GPT-3 175B, the source discusses GPU memory.' },
   { statement: 'The source discusses GPT-3 175B.', quote: a3MemorySource },
-]]])).includes(a3MemoryAnchor), true, 'A3 memory direction cannot be borrowed across cards.');
-if (anchorsOnly) { console.log(JSON.stringify({ scope: 'K3_ANCHOR_GATES', memoryDirectionCases: a3MemoryCases.length, pairedSidesChecked: true, apiCalls: 0, modelCalls: 0, unrecognized: 'NOT_VERIFIED', semanticAcceptance: 'NOT_RUN' })); process.exit(0); }
+]]])).some(entry => entry.startsWith(a3MemoryAnchor)), true, 'A3 memory direction cannot be borrowed across cards.');
+if (anchorsOnly) { console.log(JSON.stringify({ scope: 'K3_ANCHOR_GATES', memoryDirectionCases: a3MemoryCases.length, pairedSidesChecked: true, apiCalls: 0, modelCalls: 0, unrecognized: 'REVIEW_REQUIRED', semanticAcceptance: 'NOT_RUN' })); process.exit(0); }
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
@@ -727,7 +729,7 @@ if (unchangedOnly) {
     '- exact owning revision records preserved: ' + String(reuseViolations.length === 0),
     '- fullK3Accepted: false', '- Scope: unchanged-revision reuse only; claim-mode C1–C4 remain open.', '',
     '## Reuse violations (' + reuseViolations.length + ')', '',
-    ...reuseViolations.map((v) => '- ' + v), '', '## Missing semantic anchors (' + missing.length + ')', '',
+    ...reuseViolations.map((v) => '- ' + v), '', '## Unverified semantic anchors (' + missing.length + ')', '',
     ...missing.map((v) => '- ' + v), ''].join(EOL);
   console.log(md);
   await writeFile(outDir + '/k3-unchanged-only-' + Date.now() + '.md', md);
@@ -1273,7 +1275,7 @@ if (!runModel) {
     await writeFile(outDir + '/k3-stored-' + String(rev).slice(0, 8) + '.json', JSON.stringify({ revisionId: rev, source: s.originalFilename, state: u.state, claims: claims.length, error: u.error || null }, null, 2));
     sRows.push('| ' + s.originalFilename + ' | ' + u.state + ' | ' + claims.length + ' | stored-only |');
   }
-  for (const m of checkAnchors(byFile)) violations.push('anchor missing from owner-visible statement + supporting quote: ' + m);
+  for (const m of checkAnchors(byFile)) violations.push('anchor not verified from statement + quote: ' + m);
   try {
     const ov1 = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/overview');
     assert.equal(ov1.status, 200, 'GET overview must be 200.');
@@ -1519,7 +1521,7 @@ if (unbased.length > 0) tailV.push('Second storage pass missing baselines (' + u
 if (failedRevs.length > 0) tailV.push('Failed revisions (no auto retry): ' + failedRevs.join(', '));
 if (pausedRevs.length > 0) tailV.push('Paused revisions need operator admission action: ' + pausedRevs.join(', '));
 const missing = checkAnchors(paidByFile);
-if (missing.length > 0) tailV.push('Missing anchors (reported, not weakened): ' + missing.join(', '));
+if (missing.length > 0) tailV.push('Unverified anchors: ' + missing.join(', '));
 try {
   const ov1 = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/overview');
   if (ov1.status !== 200) tailV.push('GET overview must be 200.');

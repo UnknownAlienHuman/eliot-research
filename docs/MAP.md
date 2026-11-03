@@ -350,9 +350,9 @@ A separate first-call statement-reference repair applies the existing declared-l
 and preserves surviving claim order and original candidate indexes (IMPLEMENTATION §6). It has a synthetic whole-block/storage reproduction; no
 inline annotations were found in the inspected retained corpus reports, so it does not close their coverage failures.
 That repair was accepted in [#477](https://github.com/UnknownAlienHuman/eliot-research/pull/477) as `e57c9df0`.
-The separate A3 GPU-memory evaluation gate now requires recognized reduction direction in both the same-card statement
-and quote (IMPLEMENTATION §6). Synthetic full-gate controls reject opposite, negated, uncertain or mixed direction;
-unrecognized wording remains NOT_VERIFIED. This is not production claim verification or evidence of model quality.
+The A3 GPU-memory evaluation gate requires complete recognized statement/quote forms; unmatched input is
+`REVIEW_REQUIRED`, not a factual-failure verdict (IMPLEMENTATION §6). The actual retained 929-byte source block
+requires review, so A3 acceptance remains open. Synthetic controls do not establish production or model quality.
 Repair defective PDF text only through the existing reviewed OCR/immutable Apply path; preserve old bytes and citations.
 For correct input, keep candidate statements atomic and complete, then review each against its own frozen evidence
 within the existing two calls. Guide/digest/glossary prose needs the same semantic scrutiny; adding a third verifier,
