@@ -30,7 +30,7 @@ These checks establish retained answer-text coverage, not semantic acceptance or
 | `notebooklm-citation.png` | 280646 | `f84c637bb26ecf928ccdec2acc9779c5913428c1580fdb56be17156a786266cb` |
 | `notebooklm-results.png` | 280730 | `cf959225093763d4a3a3c4537febc2dfaa0098bc377075bc81919dd775f7476a` |
 
-From another authorized local checkout, select and independently verify the existing archive without printing its
+From the root directory of another authorized local checkout, select and independently verify the existing archive without printing its
 contents or copying private answers into Git. Any failure returns a fixed message without answer text:
 
 ```powershell
