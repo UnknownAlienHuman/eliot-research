@@ -1011,11 +1011,27 @@ projection helpers, keeping stop/deadline ordering intact. Then review `SourcesP
 for similarly independent responsibilities when touching them. Function length locates review targets; it is not a
 quota or justification for a hook hierarchy, generic lifecycle framework, new provider layer or mass file splitting.
 
-**Proposed Studio completeness — open.** `StudioView` currently drops both `nextCursor` and `freshness`. Consume page
-pagination and show the existing freshness field in list and detail; keep selection when fetching more or refreshing.
-Use immutable `(created_at,id)` ordering and a value cursor, as in chat inventory, and deduplicate IDs. The current
-ID-only cursor re-reads mutable `updated_at`; do not retain it, because source invalidation or proposal acceptance can
-move rows between requests. Raising the 50-row limit is not a repair.
+**Studio completeness — implementation and acceptance in MAP.** The existing pages GET returns at most 50 summaries,
+with a project/kind-scoped value cursor on immutable `(created_at,id)` and a 51st metadata-row lookahead. Migration
+`0011_studio_pages` indexes published pages in that order. Accept and source invalidation change head/freshness and
+`updated_at`, not the pagination key; a cursor never re-reads its anchor. List/detail expose creation time and the
+existing accepted `headRevisionNo`, without another version store. Supported writers advance that revision number;
+within one head freshness changes only from current to stale. The UI uses those facts to deduplicate and merge
+reordered metadata without letting a delayed current/older-head response undo an already observed stale/newer head.
+
+Studio exposes explicit Load more pages, Refresh pages and separate list/detail retries. Current/Stale appears as text
+in the list with a button description, and selected detail announces its own returned head's freshness as a status.
+Loading more keeps selection. Refresh restarts the listing, discarding unchecked older summaries, while preserving
+the selected reader and rereading it independently, even outside the first page. Detail never borrows status from an
+older list row; a newer list head can trigger a fresh detail read. Requests are abortable and scoped by project/page
+and generation through success/error/finally. A failed read does not claim refreshed freshness.
+
+Owner acceptance triggers a new scan and selects the accepted page directly. A headless proposal can become eligible
+above an already passed cursor: immutable ordering cannot make that old scan discover it. External acceptance and
+source changes are picked up by explicit Refresh, rather than polling or claiming one scan captures every concurrent
+eligibility change. Historical bodies and exact citation links remain immutable. These reads never start model/search
+work. Checked 2026-11-03 against pinned D1 types and the official [D1 binding](https://developers.cloudflare.com/d1/worker-api/d1-database/)
+and [SQLite tuple pagination](https://www.sqlite.org/rowvalue.html#scrolling_window_queries) contracts.
 
 **Proposed asynchronous view isolation — open.** `ChatView.send` can navigate or clear a different chat's draft after
 its request finishes. Reader's polling does not abort in-flight metadata reads, and a completed replacement can write
