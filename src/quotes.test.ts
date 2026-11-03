@@ -83,6 +83,21 @@ describe("verifyClaims", () => {
     }
   });
 
+  it.each([
+    { prefix: "Before \u{1f30d}. ", canonical: "The \u201cexact quote\u201d ends here.", candidate: 'The "exact quote" ends here.' },
+    { prefix: "", canonical: "The \u201cexact \u{1f30d} quote\u201d ends here.", candidate: 'The "exact \u{1f30d} quote" ends here.' },
+    { prefix: "\u{20000}\u{1f30d} ", canonical: "\u{20001}\u2013\u{1f30d} end", candidate: "\u{20001}-\u{1f30d} end" },
+    { prefix: "\u{1f30d} ", canonical: "Quoted\u2013\u{20000}", candidate: "Quoted-\u{20000}" },
+  ])("maps normalized quotes after supplementary Unicode to exact original bytes: $candidate", ({ prefix, canonical, candidate }) => {
+    const text = "Intro.\n\n" + prefix + canonical + " Tail.\n";
+    const passage = prefix + canonical + " Tail.\n";
+    const out = verifyClaims(text, [blockFor(2, text, passage)], [claim({ kind: "method", quote: candidate, block: 2 })]);
+    const start = TE.encode("Intro.\n\n" + prefix).byteLength;
+    expect(out.dropped).toEqual([]);
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0]).toMatchObject({ quote: canonical, block: 2, start, end: start + TE.encode(canonical).byteLength });
+  });
+
   it("marks duplicates ambiguous and keeps the stated occurrence", () => {
     const one = "Same sentence here.";
     const text = one + "\n\n" + one + "\n";
@@ -97,6 +112,18 @@ describe("verifyClaims", () => {
     expect(out.claims[0]).toMatchObject({ block: 1, ambiguous: true });
     const found = out.claims[0];
     if (found !== undefined) expect(sliceUtf8(text, found.start, found.end)).toBe(one);
+  });
+
+  it("keeps the stated block and ambiguity when normalized duplicates follow supplementary Unicode", () => {
+    const first = "\u{1f30d} The \u201cexact quote\u201d.", second = "\u{20000} The \u201cexact quote\u201d.";
+    const text = first + "\n\n" + second;
+    const blocks = [blockFor(1, text, first), blockFor(2, text, second)];
+    const out = verifyClaims(text, blocks, [claim({ kind: "method", quote: 'The "exact quote".', block: 2 })]);
+    const canonical = "The \u201cexact quote\u201d.";
+    const start = TE.encode(first + "\n\n\u{20000} ").byteLength;
+    expect(out.dropped).toEqual([]);
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0]).toMatchObject({ quote: canonical, block: 2, start, end: TE.encode(text).byteLength, ambiguous: true });
   });
 
   it("drops empty quotes, unknown blocks and unmatched quotes", () => {
