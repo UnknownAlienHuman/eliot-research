@@ -58,8 +58,7 @@ export function sourceContextJson(value: Record<string, unknown>, authorityLabel
 interface Slice {
   base: number;
   text: string;
-  folded: string;
-  map: number[];
+  fold?: ReturnType<typeof foldText>;
 }
 
 interface Hit {
@@ -75,11 +74,11 @@ interface Hit {
  * byte ranges. No search, no fallback, no generation.
  */
 export function resolveQuoteBlock(
-  text: string,
+  text: string | Uint8Array,
   blocks: readonly Block[],
   label: string,
 ): { block: number; quote: string } | undefined {
-  if (typeof text !== "string" || typeof label !== "string") return undefined;
+  if ((typeof text !== "string" && !(text instanceof Uint8Array)) || typeof label !== "string") return undefined;
   const match = COMPACT_LABEL_RE.exec(label);
   const alias = match?.[1];
   const blockId = match?.[2];
@@ -213,21 +212,25 @@ function foldText(input: string): { folded: string; map: number[] } {
 }
 
 function byteOffset(base: number, slice: string, utf16Index: number): number {
-  return base + encoder.encode(slice.slice(0, utf16Index)).byteLength;
+  let offset = base;
+  for (const char of slice.slice(0, utf16Index)) {
+    const point = char.codePointAt(0) ?? 0;
+    offset += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
+  }
+  return offset;
 }
 
-function loadSlices(text: string, blocks: readonly Block[]): Map<number, Slice> {
+function loadSlices(bytes: Uint8Array, blocks: readonly Block[]): Map<number, Slice> {
   const out = new Map<number, Slice>();
   for (const block of blocks) {
     if (!Number.isInteger(block.id) || block.id < 1) continue;
     let slice: string;
     try {
-      slice = sliceUtf8(text, block.start, block.end);
+      slice = sliceUtf8(bytes, block.start, block.end);
     } catch {
       continue;
     }
-    const folded = foldText(slice);
-    out.set(block.id, { base: block.start, text: slice, folded: folded.folded, map: folded.map });
+    out.set(block.id, { base: block.start, text: slice });
   }
   return out;
 }
@@ -261,12 +264,13 @@ function foldedHits(slices: Map<number, Slice>, order: number[], foldedQuote: st
   for (const id of order) {
     const slice = slices.get(id);
     if (slice === undefined) continue;
+    const { folded, map } = slice.fold ??= foldText(slice.text);
     let from = 0;
     while (hits.length < 2) {
-      const at = slice.folded.indexOf(foldedQuote, from);
+      const at = folded.indexOf(foldedQuote, from);
       if (at < 0) break;
-      const start16 = slice.map[at];
-      const end16 = at + foldedQuote.length < slice.folded.length ? slice.map[at + foldedQuote.length] : slice.text.length;
+      const start16 = map[at];
+      const end16 = at + foldedQuote.length < folded.length ? map[at + foldedQuote.length] : slice.text.length;
       if (start16 === undefined || end16 === undefined) break;
       hits.push({ blockId: id, start: byteOffset(slice.base, slice.text, start16), end: byteOffset(slice.base, slice.text, end16) });
       from = at + 1;
@@ -292,14 +296,16 @@ function singleDataSplit(value: string | null, quoted: boolean): string | undefi
 }
 
 export function verifyClaims(
-  text: string,
+  text: string | Uint8Array,
   blocks: readonly Block[],
   candidates: readonly CandidateClaim[],
 ): { claims: VerifiedClaim[]; dropped: { index: number; reason: string }[]; clearedNumbers: number } {
-  const slices = loadSlices(text, blocks);
   const claims: VerifiedClaim[] = [];
   const dropped: { index: number; reason: string }[] = [];
   let clearedNumbers = 0;
+  if (candidates.length === 0) return { claims, dropped, clearedNumbers };
+  const bytes = typeof text === "string" ? encoder.encode(text) : text;
+  const slices = loadSlices(bytes, blocks);
   candidates.forEach((candidate, index) => {
     if (typeof candidate.quote !== "string" || candidate.quote.replace(/[\s\u00AD]/gu, "") === "") {
       dropped.push({ index, reason: "empty-quote" });
@@ -320,7 +326,7 @@ export function verifyClaims(
       dropped.push({ index, reason: "unmatched" });
       return;
     }
-    const verifiedText = sliceUtf8(text, first.start, first.end);
+    const verifiedText = sliceUtf8(bytes, first.start, first.end);
     if (!numbersSupported(candidate.statement, verifiedText)) {
       dropped.push({ index, reason: "unsupported-statement-numbers" });
       return;

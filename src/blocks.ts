@@ -10,8 +10,8 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const continuation = (byte: number | undefined) => byte !== undefined && (byte & 0xc0) === 0x80;
 
-export function sliceUtf8(text: string, start: number, end: number): string {
-  const bytes = encoder.encode(text);
+export function sliceUtf8(text: string | Uint8Array, start: number, end: number): string {
+  const bytes = typeof text === "string" ? encoder.encode(text) : text;
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > bytes.length
     || continuation(bytes[start]) || continuation(bytes[end])) throw new RangeError("Invalid UTF-8 byte range.");
   return decoder.decode(bytes.subarray(start, end));

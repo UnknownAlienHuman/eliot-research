@@ -345,6 +345,11 @@ added, and stored turn states are never regraded.
 backtick runs stay outside fences; an unmatched run remains prose and does not hide later independent spans.
 Code bytes remain literal. Reference authority stays with each caller, using its existing frozen labels.
 
+Quote verification reuses one local canonical byte buffer, including across label resolution and verification in each
+distillation storage operation. String callers encode once. `sliceUtf8` validates integer bounds and UTF-8 boundaries
+before fatal decoding, preserving BOM bytes. Normalized text/maps are computed only for fallback slices; empty candidate
+sets do no source work. No source buffer or folded map is cached between operations.
+
 For each candidate quote, search exact bytes in the stated block, then adjacent blocks; only then apply conservative
 whitespace/quote/dash/soft-hyphen normalization with a map back to original bytes. Prefer the stated block, mark
 ambiguous duplicates, and drop unmatched claims. Numeric support compares complete numeric literals, including their

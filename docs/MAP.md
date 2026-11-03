@@ -354,7 +354,9 @@ The A3 GPU-memory evaluation gate requires complete recognized statement/quote f
 `REVIEW_REQUIRED`, not a factual-failure verdict (IMPLEMENTATION §6). The actual retained 929-byte source block
 requires review, so A3 acceptance remains open. [#478](https://github.com/UnknownAlienHuman/eliot-research/pull/478)
 was accepted only as this guard (`96ee0d27`).
-Citation and distillation share code ranges; an unmatched backtick inside a fence cannot mask later prose references.
+[#479](https://github.com/UnknownAlienHuman/eliot-research/pull/479) unified citation/distillation code ranges;
+an unmatched backtick inside a fence cannot mask later prose references. Quote verification now reuses local canonical
+bytes and folds only fallback slices; this reduces repeated work without changing evidence or quality gates.
 Repair defective PDF text only through the existing reviewed OCR/immutable Apply path; preserve old bytes and citations.
 For correct input, keep candidate statements atomic and complete, then review each against its own frozen evidence
 within the existing two calls. Guide/digest/glossary prose needs the same semantic scrutiny; adding a third verifier,

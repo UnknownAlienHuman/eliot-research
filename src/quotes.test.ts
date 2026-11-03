@@ -1,5 +1,5 @@
 import { countNumericQuantities, numbersSupported } from "./numbers.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "./quotes.js";
 import type { CandidateClaim, VerifiedClaim } from "./quotes.js";
 import { sliceUtf8 } from "./blocks.js";
@@ -28,6 +28,79 @@ function claim(overrides: Partial<CandidateClaim> & { quote: string; block: numb
 }
 
 describe("verifyClaims", () => {
+  it("encodes a 512 KiB source once across 512 blocks and reuses supplied bytes", () => {
+    const text = ("x".repeat(1023) + "\n").repeat(512), bytes = TE.encode(text);
+    const blocks: Block[] = Array.from({ length: 512 }, (_, i) => ({ id: i + 1, type: "paragraph", start: i * 1024, end: (i + 1) * 1024, heading: null }));
+    const candidate = claim({ kind: "method", quote: "xxx", block: 256 });
+    for (const input of [text, bytes]) {
+      const encode = vi.spyOn(TextEncoder.prototype, "encode");
+      let out: ReturnType<typeof verifyClaims>;
+      try {
+        expect(verifyClaims(input, blocks, [])).toEqual({ claims: [], dropped: [], clearedNumbers: 0 });
+        expect(encode).not.toHaveBeenCalled();
+        out = verifyClaims(input, blocks, [candidate]);
+        expect(encode.mock.calls).toEqual(typeof input === "string" ? [[text]] : []);
+      } finally { encode.mockRestore(); }
+      expect(out.dropped).toEqual([]);
+      expect(out.claims[0]).toMatchObject({ quote: "xxx", block: 256, start: 255 * 1024, end: 255 * 1024 + 3, ambiguous: true });
+    }
+  });
+
+  it("maps all UTF-8 widths to the original offsets in exact and folded matches", () => {
+    const prefix = "\0A\u007f\u0080\u07ff\u0800\ud7ff\ue000\uffff😀\u{10ffff} ", text = prefix + "a—b.";
+    const blocks = [blockFor(1, text, text)], start = TE.encode(prefix).length;
+    for (const input of [text, TE.encode(text)]) {
+      for (const quote of ["a—b.", "a-b."]) {
+        expect(verifyClaims(input, blocks, [claim({ quote, block: 1 })]).claims[0])
+          .toMatchObject({ quote: "a—b.", start, end: TE.encode(text).length, ambiguous: false });
+      }
+    }
+  });
+
+  it("keeps canonical byte views, candidate order and exact/normalized duplicate preference", () => {
+    const passage = "\uFEFFКириллица 😀 alpha—beta\u00AD end.", text = passage + "\n\n" + passage;
+    const blocks = [blockFor(1, text, passage), { ...blockFor(2, text, passage), start: TE.encode(passage + "\n\n").length, end: TE.encode(text).length }];
+    const candidates = [claim({ quote: "alpha-beta end.", block: 2 }), claim({ quote: "😀 alpha—beta", block: 1 })];
+    const expected = verifyClaims(text, blocks, candidates), bytes = TE.encode(text);
+    const padded = new Uint8Array(bytes.length + 4); padded.set(bytes, 2);
+    expect(expected.claims.map(item => [item.block, item.ambiguous, item.quote])).toEqual([
+      [2, true, "alpha—beta\u00AD end."], [1, true, "😀 alpha—beta"],
+    ]);
+    expect(verifyClaims(padded.subarray(2, -2), blocks, candidates)).toEqual(expected);
+    expect(resolveQuoteBlock(bytes, blocks, "[S1:1]")).toEqual({ block: 1, quote: passage });
+    for (const item of expected.claims) expect(sliceUtf8(bytes, item.start, item.end)).toBe(item.quote);
+  });
+
+  it("prefers an adjacent exact quote over a normalized stated-block quote", () => {
+    const first = "😀 alpha—beta.", second = "я alpha-beta.", text = first + "\n\n" + second;
+    const blocks = [blockFor(1, text, first), blockFor(2, text, second)];
+    for (const input of [text, TE.encode(text)]) {
+      const out = verifyClaims(input, blocks, [claim({ quote: "alpha-beta.", block: 1 })]);
+      const start = TE.encode(first + "\n\nя ").length;
+      expect(out.dropped).toEqual([]);
+      expect(out.claims[0]).toMatchObject({ block: 2, quote: "alpha-beta.", start, end: TE.encode(text).length, ambiguous: false });
+    }
+  });
+
+  it.each([[1, 4], [0, 3], [-1, 4], [0, 7], [4, 0], [0.5, 4], [0, NaN], [0, Infinity], [0, Number.MAX_SAFE_INTEGER + 1]])(
+    "rejects invalid source byte ranges %s:%s in resolver and verifier", (start, end) => {
+      const bytes = TE.encode("😀я"), blocks: Block[] = [{ id: 1, type: "paragraph", start, end, heading: null }];
+      expect(resolveQuoteBlock(bytes, blocks, "[S1:1]")).toBeUndefined();
+      expect(verifyClaims(bytes, blocks, [claim({ quote: "😀", block: 1 })])).toMatchObject({ claims: [], dropped: [{ index: 0, reason: "unknown-block" }] });
+    },
+  );
+
+  it("rejects malformed UTF-8, keeps valid siblings and handles empty input", () => {
+    const bytes = new Uint8Array([0xff, 0x61]), blocks: Block[] = [
+      { id: 1, type: "paragraph", start: 0, end: 1, heading: null },
+      { id: 2, type: "paragraph", start: 1, end: 2, heading: null },
+    ];
+    expect(resolveQuoteBlock(bytes, blocks, "[S1:1]")).toBeUndefined();
+    expect(verifyClaims(bytes, blocks, [claim({ quote: "a", block: 2 })]).claims[0]).toMatchObject({ quote: "a", block: 2, start: 1, end: 2 });
+    expect(verifyClaims(new Uint8Array(), [], [])).toEqual({ claims: [], dropped: [], clearedNumbers: 0 });
+    expect(resolveQuoteBlock(new Uint8Array(), [{ id: 1, type: "paragraph", start: 0, end: 0, heading: null }], "[S1:1]")).toBeUndefined();
+  });
+
   it("verifies exact bytes in the stated block", () => {
     const text = "Intro.\n\nThe residual mapping F(x) = H(x) \u2212 x is learned.\n";
     const sub = "The residual mapping F(x) = H(x) \u2212 x is learned.";

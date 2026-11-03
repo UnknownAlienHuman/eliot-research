@@ -249,6 +249,13 @@ describe("scanBlocks", () => {
   });
 });
 describe("sliceUtf8", () => {
+  it("uses byte-view offsets, preserves BOM and rejects corrupt UTF-8", () => {
+    const bytes = new Uint8Array([0xff, 0xef, 0xbb, 0xbf, 0x61, 0xff]), view = bytes.subarray(1, -1);
+    expect(sliceUtf8(view, 0, view.length)).toBe("\uFEFFa");
+    expect(sliceUtf8(view, view.length, view.length)).toBe("");
+    expect(() => sliceUtf8(view, 1, 3)).toThrow(RangeError);
+    expect(() => sliceUtf8(bytes, 0, bytes.length)).toThrow(TypeError);
+  });
   it("is end-exclusive and rejects bad ranges", () => {
     expect(sliceUtf8("abcdef", 0, 3)).toBe("abc");
     expect(sliceUtf8("abcdef", 3, 3)).toBe("");
