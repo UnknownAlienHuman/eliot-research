@@ -7,4 +7,5 @@ await import('./' + (contour === 'k2' && process.argv.includes('--context-only')
   : contour === 'k3' && process.argv.includes('--metadata-only') ? 'k3-metadata'
   : contour === 'k3' && process.argv.includes('--overview-only') ? 'k3-overview'
   : contour === 'k3' && process.argv.includes('--overview-browser') ? 'overview-browser'
+  : contour === 'k3' && process.argv.includes('--question-browser') ? 'question-browser'
   : contour === 'k1' && process.argv.includes('--ocr') ? 'k1-ocr' : contour) + '.ts');

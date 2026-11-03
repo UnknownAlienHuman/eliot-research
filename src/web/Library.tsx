@@ -10,6 +10,7 @@ import type { Project, Revision, Source, SourceSelection } from "../shared/api";
 import { readableTextWarning } from "../ingest";
 import { MaterialSymbol } from "./ui/MaterialSymbol";
 import { SourceUnderstanding } from "./Understanding";
+import type { SuggestedQuestion } from "./Understanding";
 import { SourceOcr } from "./Ocr";
 export interface OutlineItem { label: string; start: number; end: number; }
 const FILE_LIMIT = 25 * 1024 * 1024;
@@ -487,12 +488,13 @@ export interface SourceReplacementProps {
   beginReplacement: (projectId: string, sourceId: string) => boolean;
   endReplacement: (projectId: string, sourceId: string) => void;
 }
-export function Reader(props: SourceReplacementProps) {
+interface ReaderProps extends SourceReplacementProps { onUseQuestion: (suggestion: SuggestedQuestion) => void }
+export function Reader(props: ReaderProps) {
   const { projectId, sourceId } = useParams();
   return <SourceReader key={(projectId ?? "") + ":" + (sourceId ?? "")} {...props} />;
 }
 
-function SourceReader({ replacingSources, beginReplacement, endReplacement }: SourceReplacementProps) {
+function SourceReader({ replacingSources, beginReplacement, endReplacement, onUseQuestion }: ReaderProps) {
   const { projectId, sourceId } = useParams();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -642,7 +644,8 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement }: So
           <pre className="er-card er-lib__text" ref={preRef}>{textReady ? text : ""}</pre>
         </div>
       </div>
-      {(activeState === "readable" || activeState === "readable_with_warnings") && activeRevision ? <SourceUnderstanding key={(sourceId ?? "") + activeRevision} projectId={projectId ?? ""} sourceId={sourceId ?? ""} revisionId={activeRevision} sourceTitle={source.title} /> : null}
+      {(activeState === "readable" || activeState === "readable_with_warnings") && activeRevision ? <SourceUnderstanding key={(sourceId ?? "") + activeRevision} projectId={projectId ?? ""} sourceId={sourceId ?? ""} revisionId={activeRevision} sourceTitle={source.title}
+        onUseQuestion={activeRevision === source.currentRevisionId ? question => onUseQuestion({ sourceId: sourceId ?? "", sourceTitle: source.title, question }) : undefined} /> : null}
     </section>
   );
 }

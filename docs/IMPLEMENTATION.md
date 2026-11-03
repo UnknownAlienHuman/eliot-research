@@ -1058,6 +1058,11 @@ passage temporarily replaces the center reader without dropping the selected cha
 refreshes Studio through the existing storage-only page API.
 Converting project-default scope to an explicit selection waits until all source pages are loaded; it never drops
 unloaded sources. Already explicit selections retain their full IDs while the visible source list is paginated.
+Choosing a stored suggested question explicitly selects its one source and opens the existing chat composer. Workspace
+owns the draft text and visible source selection; ChatView retains the Send/Stop/Save lifecycle and draft-edit guard.
+A nonblank different draft requires confirmation, with Keep draft/Escape preserving its text and selection. Route
+changes dismiss the pending choice. The composer displays its current source scope. Chat freezes current readable
+heads on explicit Send; historical Reader questions stay read-only. Prefill creates no chat or inference request.
 
 Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:sourceId?start=&end=`; K2
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.

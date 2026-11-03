@@ -293,6 +293,8 @@ re-distilled automatically.
    as needed, retaining the complete frozen scope and aliases. The same answer prompt and citation resolver are used.
 7. Add reader guide/claims UI, quote cases and `pnpm eval k3`. Reader metadata shows availability and verification
    caveats; quote links retain exact identities without displaying UUIDs or call/token/time/reservation counters.
+   Stored questions in the overview and current Reader prepare an editable chat draft with only that source visibly
+   selected. Replacing an existing draft requires confirmation; historical Reader questions remain read-only.
    API progress retains the admitted job bound independently of later model-default or catalogue changes.
    A successful Understand or Save refreshes the workspace source badge without reloading the document or resetting
    loaded pages or source selection; list/progress reads perform no inference.

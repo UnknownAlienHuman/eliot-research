@@ -27,6 +27,8 @@ export interface ChatViewProps {
   readonly projectId: string;
   readonly chatId?: string;
   readonly selection: SourceSelection;
+  readonly question: string;
+  readonly onQuestionChange: (question: string) => void;
   readonly onSelectionChange: (next: SourceSelection) => void;
   readonly onNewChat: () => void;
   readonly onSavedPage: () => void;
@@ -82,6 +84,8 @@ export function ChatView({
   projectId,
   chatId,
   selection,
+  question,
+  onQuestionChange: setQuestion,
   onSelectionChange,
   onNewChat,
   onSavedPage,
@@ -104,7 +108,6 @@ export function ChatView({
   const [catalogDefaultModel, setCatalogDefaultModel] = useState<string | null>(null);
   const [modelRoute, setModelRoute] = useState('');
   const [modelSelectionPending, setModelSelectionPending] = useState(false);
-  const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
   const [sendError, setSendError] = useState('');
   const [socket, setSocket] = useState<SocketStatus>('connecting');
@@ -196,7 +199,7 @@ export function ChatView({
     setSendError('');
     setSaveNote('');
     setSavingId('');
-  }, [projectId, chatId, location.key, location.pathname, location.search]);
+  }, [projectId, chatId, location.key, location.pathname, location.search, setQuestion]);
 
   useEffect(() => {
     setRefreshedProjectModel(null);
@@ -646,6 +649,8 @@ export function ChatView({
       </div>
 
       <form className='er-chat__composer' onSubmit={(event) => { event.preventDefault(); void send(); }}>
+        <p className='er-chat__hint'>Sources: {selection.scopeMode === 'project_default' ? 'project default' : selection.scopeMode === 'empty' ? 'none' : selection.sourceIds.length + ' selected'}.{' '}
+          <Link to={'/p/' + encodeURIComponent(projectId) + '/sources'}>Change sources</Link></p>
         <div className='er-chat__model'>
           <ModelPicker
             label='Model'
