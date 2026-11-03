@@ -493,17 +493,17 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
     </section>
   );
 }
-interface ReaderProps {
+export interface SourceReplacementProps {
   replacingSources: ReadonlySet<string>;
-  beginReplacement: (sourceId: string) => boolean;
-  endReplacement: (sourceId: string) => void;
+  beginReplacement: (projectId: string, sourceId: string) => boolean;
+  endReplacement: (projectId: string, sourceId: string) => void;
 }
-export function Reader(props: ReaderProps) {
+export function Reader(props: SourceReplacementProps) {
   const { projectId, sourceId } = useParams();
   return <SourceReader key={(projectId ?? "") + ":" + (sourceId ?? "")} {...props} />;
 }
 
-function SourceReader({ replacingSources, beginReplacement, endReplacement }: ReaderProps) {
+function SourceReader({ replacingSources, beginReplacement, endReplacement }: SourceReplacementProps) {
   const { projectId, sourceId } = useParams();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -520,7 +520,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement }: Re
   const [failure, setFailure] = useState("");
   const [copied, setCopied] = useState(false);
   const [replace, setReplace] = useState<File | null>(null);
-  const replacing = replacingSources.has(sourceId ?? "");
+  const replacing = replacingSources.has((projectId ?? "") + ":" + (sourceId ?? ""));
   const mounted = useRef(false);
   const metaSequence = useRef(0), metaAbort = useRef<AbortController | null>(null);
   const metaOwner = useRef({ projectId, sourceId, revisionId });
@@ -596,7 +596,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement }: Re
     void navigator.clipboard?.writeText(window.location.origin + window.location.pathname + "?" + next.toString()).then(() => setCopied(true), () => setCopied(false));
   }
   async function replaceFile() {
-    if (!replace || !projectId || !source || !beginReplacement(source.id)) return;
+    if (!replace || !projectId || !source || !beginReplacement(projectId, source.id)) return;
     const owner = actionView.current, targetSource = source.id, file = replace;
     const current = () => mounted.current && actionView.current === owner;
     setFailure("");
@@ -612,7 +612,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement }: Re
       if (body.revisionId) setParams({ revisionId: body.revisionId }); // The new revision effect owns its reads.
       else await refreshMeta();
     } catch (err) { if (current()) setFailure(err instanceof Error ? err.message : "Replace failed before a response arrived."); }
-    finally { endReplacement(targetSource); }
+    finally { endReplacement(projectId, targetSource); }
   }
   if (!source) return <LoadGate text="Opening the source…" failure={failure} onRetry={() => void refreshMeta()} />;
   return (

@@ -1047,14 +1047,16 @@ Reader is keyed by project/source, resetting metadata, text and both React/nativ
 change. Revision and passage navigation reuse that source reader. Metadata reads carry source/revision generation
 and abort signals; pending polls do not overlap. Text/outline reads abort on revision change/unmount. A replacement
 POST remains bound to its original source/file, while only its initiating location may change URL, error or file
-selection. Its source-specific write lock belongs to the mounted project workspace, outliving keyed Reader remounts
-and pane changes. A→B→A and same-source query changes cannot dispatch another A upload before settlement, while B
-can upload independently. Only the owning POST's settlement releases its lock; this is a client workspace guard, not
-cross-tab or reload idempotency. Existing source/citation and same-revision OCR navigation retain text/outline semantics.
+selection. A narrow `(projectId,sourceId)` lock in the existing App outlives keyed Reader/workspace remounts, pane changes
+and same-tab project/Settings navigation. A→B→A and same-source query changes cannot dispatch another A upload before
+settlement, while other project/source pairs can upload independently. Only the owning POST's settlement removes its
+key; completed requests leave no retained lock. This is a same-tab request guard, not cross-tab or reload idempotency.
+Existing source/citation and same-revision OCR navigation retain text/outline semantics.
 No write is cancelled/retried to infer its server outcome, and no read starts model work.
 
 `pnpm eval k2 --view-isolation` exercises the reused workspace on desktop and phone, including held success/error
-responses, A→B→A, project unmount, serialized polls, revision changes and replacement locks. It uses native stored
+responses, A→B→A, project/Settings remounts, serialized polls, revision changes and independent project/source locks.
+Success/error cleanup is checked while the original workspace is absent. It uses native stored
 sources, intercepts model and delayed replacement POSTs before dispatch, and includes real native Markdown replacement
 controls. It checks stored turns remain empty and only those controls add zero-conversion revisions; this proves
 frontend ownership, not model semantics. Checked 2026-11-03 against pinned React 19.3 and official

@@ -20,6 +20,7 @@ for (const title of ['Source A', 'Source B']) {
   await expect.poll(async () => { snapshot = await api('/api/sources/' + created.sourceId); return snapshot.source.readableState; }, { timeout: 30000 }).toBe('readable');
   assert.equal(snapshot.source.conversionCalls, 0); sources.push(snapshot);
 }
+await api('/api/projects/' + other + '/sources/attach', { sourceId: sources[0].source.id });
 const chatPath = id => '/p/' + project + '/chat' + (id ? '/' + id : '');
 const sourcePath = i => '/p/' + project + '/source/' + sources[i].source.id;
 const turnsUrl = id => origin + '/api/projects/' + project + '/chats/' + id + '/turns';
@@ -180,6 +181,39 @@ try {
     await expect(input).toBeEnabled(); await expect(page.getByText('Departed replacement failure')).toHaveCount(0); assert.equal(await input.evaluate(input => input.files[0].name), 'new-a.md');
     const afterError = await hold(uploadUrl); await upload.click(); await afterError.waiting; interceptedUploads++;
     assert.equal(uploadRequests, beforeAttempt + 1); await afterError.release();
+    // ProjectWorkspace itself is keyed/unmounted on project and Settings navigation. App must retain
+    // only the pending project/source key, permit another project/source, and clean up while away.
+    const otherSourcePath = '/p/' + other + '/source/' + sources[0].source.id;
+    const otherUploadUrl = origin + '/api/projects/' + other + '/sources/file';
+    for (const status of [200, 503]) {
+      await navigate(sourcePath(0)); await input.setInputFiles({ name: 'away-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Away A') });
+      const awayA = await hold(uploadUrl); await upload.click(); await awayA.waiting; interceptedUploads++;
+      await navigate('/settings'); await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+      await navigate(sourcePath(0)); await expect(input).toBeDisabled();
+      await input.setInputFiles({ name: 'duplicate-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Duplicate A') });
+      beforeAttempt = uploadRequests; await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
+      await navigate(otherSourcePath); await expect(input).toBeEnabled();
+      await input.setInputFiles({ name: 'other-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Other project A') });
+      const otherA = await hold(otherUploadUrl); await upload.click(); await otherA.waiting; interceptedUploads++;
+      assert(otherA.request().postData().includes(sources[0].source.id));
+      await navigate(sourcePath(1)); await expect(input).toBeEnabled(); // Independent source in original project.
+      await navigate(sourcePath(0)); await expect(input).toBeDisabled(); // Project switch did not release original A.
+      await input.setInputFiles({ name: 'duplicate-again.md', mimeType: 'text/markdown', buffer: Buffer.from('Duplicate again') });
+      beforeAttempt = uploadRequests; await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
+      await navigate('/settings');
+      await awayA.release(status === 200 ? { revisionId: sources[0].source.currentRevisionId } : { error: { message: 'Away replacement error' } }, status);
+      await navigate(sourcePath(0)); await expect(input).toBeEnabled(); await expect(page.getByText('Away replacement error')).toHaveCount(0);
+      await input.setInputFiles({ name: 'after-away.md', mimeType: 'text/markdown', buffer: Buffer.from('After away') });
+      const retryA = await hold(uploadUrl); await upload.click(); await retryA.waiting; interceptedUploads++;
+      assert.equal(uploadRequests, beforeAttempt + 1); await retryA.release();
+      await navigate(otherSourcePath); await expect(input).toBeDisabled(); // Original project's cleanup cannot release this pair.
+      await navigate('/settings'); await otherA.release({ error: { message: 'Other project upload error' } }, 503);
+      await navigate(otherSourcePath); await expect(input).toBeEnabled(); await expect(page.getByText('Other project upload error')).toHaveCount(0);
+      await input.setInputFiles({ name: 'other-after.md', mimeType: 'text/markdown', buffer: Buffer.from('Other after') });
+      const retryOther = await hold(otherUploadUrl); await upload.click(); await retryOther.waiting; interceptedUploads++; await retryOther.release();
+      await navigate('/'); await navigate(otherSourcePath); await expect(input).toBeEnabled();
+      await navigate(sourcePath(0)); await expect(input).toBeEnabled();
+    }
     await navigate(sourcePath(1)); await input.setInputFiles({ name: 'b.md', mimeType: 'text/markdown', buffer: Buffer.from('# Source B\n\nImmutable native text B replacement ' + viewport.width + ' ' + project) });
     // Changing only the revision URL must not release the source's pending write lock.
     pending = await hold(uploadUrl); await upload.click(); await pending.waiting; interceptedUploads++;

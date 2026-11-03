@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, Route, Routes, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import type { Project, SourceSelection } from "../shared/api";
 import { ChatView, StudioView } from "./Chat";
 import { Reader, SourcesPane } from "./Library";
+import type { SourceReplacementProps } from "./Library";
 import { ProjectOverview } from "./Understanding";
 import "./project-workspace.css";
 
-export function ProjectWorkspace() {
+export function ProjectWorkspace(replacements: SourceReplacementProps) {
   const { projectId = "" } = useParams();
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -17,8 +18,6 @@ export function ProjectWorkspace() {
   const [pageRefresh, setPageRefresh] = useState(0);
   const [project, setProject] = useState<Project>();
   const [projectError, setProjectError] = useState("");
-  const [replacingSources, setReplacingSources] = useState<ReadonlySet<string>>(() => new Set());
-  const replacementLocks = useRef(replacingSources);
   const selectedChatId = routeChatId ?? lastChatId;
   const reading = pathname.includes("/source/") || pathname.endsWith("/overview");
   const activePane = pathname.includes("/source") ? "sources" : pathname.endsWith("/studio") || pathname.endsWith("/overview") ? "studio" : "chat";
@@ -45,17 +44,6 @@ export function ProjectWorkspace() {
   }, [projectId]);
   const newChat = useCallback(() => setLastChatId(undefined), []);
   const savedPage = useCallback(() => setPageRefresh(value => value + 1), []);
-  // The workspace outlives source Reader remounts and pane changes. Acquire synchronously
-  // before React renders the disabled state; only the owning POST's finally releases it.
-  const beginReplacement = useCallback((sourceId: string) => {
-    if (replacementLocks.current.has(sourceId)) return false;
-    const next = new Set(replacementLocks.current).add(sourceId);
-    replacementLocks.current = next; setReplacingSources(next); return true;
-  }, []);
-  const endReplacement = useCallback((sourceId: string) => {
-    const next = new Set(replacementLocks.current); next.delete(sourceId);
-    replacementLocks.current = next; setReplacingSources(next);
-  }, []);
 
   return <section className="er-project-workspace" data-active-pane={activePane} data-reading={reading}>
     <header className="er-project-workspace__header">
@@ -75,7 +63,7 @@ export function ProjectWorkspace() {
         </div>
         <div className="er-project-workspace__reader" hidden={!reading}>
           <Routes>
-            <Route path="source/:sourceId" element={<Reader replacingSources={replacingSources} beginReplacement={beginReplacement} endReplacement={endReplacement} />} />
+            <Route path="source/:sourceId" element={<Reader {...replacements} />} />
             <Route path="overview" element={<ProjectOverview />} />
             <Route path="*" element={null} />
           </Routes>
