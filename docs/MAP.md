@@ -308,6 +308,7 @@ re-distilled automatically.
   `pnpm eval k3 --unchanged-only` preflights all ten terminal revisions, submits each exact revision ID once and compares
   the stored reports, claims, call counts and usage. This reuse check does not waive the semantic or claim-mode gates.
 - Every stored quote is an exact byte range; numeric result fields are cleared when not supported by their quote.
+  Parsed numeric fields use the same literal interpretation as quote verification; source spelling stays unchanged.
 - Numbers in statements and conditions must match complete numeric literals in that same quote, rather than
   borrowing digits from a decimal axis tick, another number or another excerpt. Units, metrics and conditions must
   also be supported by that quote; numeric occurrence alone does not pass the semantic quality gate.

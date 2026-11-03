@@ -155,6 +155,6 @@ export function parseSingleNumber(valueText: string): number | null {
   let cleaned = valueText.trim();
   if (cleaned.endsWith("%")) cleaned = cleaned.slice(0, -1);
   if (!SINGLE_NUMBER_RE.test(cleaned)) return null;
-  const parsed = Number(cleaned.replace(/,/g, ""));
+  const parsed = Number(normalizeNumericLiteral(cleaned).replace(/,/g, ""));
   return Number.isFinite(parsed) ? parsed : null;
 }
