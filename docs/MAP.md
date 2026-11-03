@@ -219,6 +219,7 @@ stop/reconnect, reopen chat and save an answer as a page.
    The project header opens a paged active-project picker with Refresh/Retry; switching opens that project's chat
    without creating a chat or sending a question. Switching to another project confirms discarding a nonblank draft;
    cancelling or closing the picker preserves the current draft and source scope.
+   History and New chat also confirm before discarding a nonblank draft; cancellation preserves the current chat and scope.
    Persist the native usage choice (included quota or standard Cloudflare billing) without starting a job or changing
    models. An unverified included-only cap pauses native requests; it must never silently enable paid overage.
 7. Add label/context/cost cases and `pnpm eval k2`.
