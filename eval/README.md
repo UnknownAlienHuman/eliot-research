@@ -64,6 +64,7 @@ The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `
 | `pnpm eval k2 --view-isolation` | loopback desktop/phone reused workspace, delayed Send/Reader responses and replacement locks; native stored sources, intercepted model/delayed replacement writes plus real zero-conversion Markdown controls, unchanged stored turns; frontend ownership only |
 | `pnpm eval k2 --stored-only` | existing chat hard-gate revalidation; requires `ELIOT_EVAL_CHAT`, no new chat or turn |
 | `pnpm eval k2` without model opt-in | limited storage smoke, not full K2 acceptance |
+| `pnpm eval k2 --context-only` | isolated Workerd/D1/R2 explicit-scope query fixture; counts 0/1/1024 source reads, checks ordered scope and canonical ranges; 1024 stops at token cap before R2; no model calls or semantic acceptance |
 | `pnpm eval k3 --anchors-only` | local synthetic full-anchor selftests, including paired A3 GPU-memory reduction direction; exits before API/model calls, rejects model opt-in; unrecognized whole-field input REVIEW_REQUIRED, no production or semantic acceptance |
 | `pnpm eval k3 --native-only` | explicitly limited storage smoke, zero model calls; optional cached-output checks are separate fixtures |
 | `pnpm eval k3 --metadata-only` | isolated Workerd/Workflows/D1/R2 fixture with synthetic outputs and paid producers skipped; checks metadata/head, Unicode ranges, reference/code boundaries and 512-block canonical byte reuse through storage/GET/Save; zero new model calls, no semantic acceptance |
