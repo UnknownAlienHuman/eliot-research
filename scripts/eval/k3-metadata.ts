@@ -46,10 +46,11 @@ try {
   await mf.ready; const db = await mf.getD1Database('DB', 'metadata'), bucket = await mf.getR2Bucket('BUCKET', 'metadata');
   for (const file of (await readdir(path.join(root, 'migrations'))).filter(f => /^\d+_.+\.sql$/.test(f)).sort())
     await db.batch(unstable_splitSqlQuery(await readFile(path.join(root, 'migrations', file), 'utf8')).map(sql => db.prepare(sql)));
-  for (const mode of ['unknown', 'historical', 'newer-head', 'cached-unicode', 'extraction-references', 'code-range-references', 'byte-reuse', 'decimal-comma', 'cached-decimal-comma']) {
+  for (const mode of ['unknown', 'historical', 'newer-head', 'cached-unicode', 'extraction-references', 'code-range-references', 'byte-reuse', 'decimal-comma', 'cached-decimal-comma', 'empty-additional', 'empty-additional-only']) {
     const source = crypto.randomUUID(), revision = crypto.randomUUID(), newer = crypto.randomUUID(), prefix = 'source/' + revision + '/';
     const scalar = mode === 'decimal-comma' || mode === 'cached-decimal-comma';
     const cached = mode === 'cached-unicode' || mode === 'cached-decimal-comma';
+    const noClaims = mode === 'empty-additional-only';
     const lead = 'UTF-8 reuse fixture 😀 я. The method uses normalization. The source retains canonical evidence. The method is described in this source. ';
     const chunk = lead + 'x'.repeat(1023 - new TextEncoder().encode(lead).length) + '\n';
     const text = scalar ? 'Потеря 😀: 0,500. The method uses normalization. The source retains canonical evidence. The method is described in this source.'
@@ -88,6 +89,12 @@ try {
         claims: statements.map(statement => ({ quoteBlock: '[S1:1]', kind: 'method', statement,
           task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null })) }, usage }));
     }
+    if (mode === 'empty-additional' || noClaims) {
+      const statements = ['[S1:1]', ' \n\t', ...(noClaims ? [] : ['The method uses normalization.', 'The method uses 9999 layers.'])];
+      originals.set('distill-call2.json', JSON.stringify({ output: { supportedClaims: [],
+        additionalClaims: statements.map(statement => ({ quoteBlock: '[S1:1]', kind: 'method', statement,
+          task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null })), guide, digest: [guide[0]], glossary: [] }, usage }));
+    }
     const canonicalQuote = mode === 'byte-reuse' ? chunk : mode === 'cached-unicode' ? 'The \u201cexact quote\u201d ends here.' : text;
     const start = new TextEncoder().encode(text.slice(0, text.indexOf(canonicalQuote))).length;
     const end = start + new TextEncoder().encode(canonicalQuote).length;
@@ -115,14 +122,20 @@ try {
     const p = '/api/sources/' + source + '/understanding';
     if (cached) await request(p, { revisionId: revision, saveAvailable: true });
     for (let repeat = 0; repeat < 2; repeat++) {
-      const before = await request(p + '?revisionId=' + revision); assert.equal(before.state, 'done', JSON.stringify({ mode, error: before.report?.error }));
+      const before = await request(p + '?revisionId=' + revision); assert.equal(before.state, noClaims ? 'partial' : 'done', JSON.stringify({ mode, error: before.report?.error }));
       if (mode === 'extraction-references') assert.equal(before.claims[0]?.statement, 'The method uses normalization. ');
       if (mode === 'code-range-references') {
         assert.equal(before.claims[0]?.statement, 'The method uses normalization.');
         assert(before.report.dropped.some(item => item.index === 0 && item.reason === 'claim-invalid-reference'));
       }
       assert.equal(before.authors, metadata.authors); assert.equal(before.published, metadata.published); assert.equal(before.report.usage.calls, 2);
-      assert.equal(before.claims.length, 1); assert.equal(before.claims[0].quote, canonicalQuote); assert.equal(before.claims[0].start, start); assert.equal(before.claims[0].end, end);
+      assert.equal(before.claims.length, noClaims ? 0 : 1);
+      if (!noClaims) { assert.equal(before.claims[0].quote, canonicalQuote); assert.equal(before.claims[0].start, start); assert.equal(before.claims[0].end, end); }
+      if (mode === 'empty-additional' || noClaims) {
+        if (!noClaims) assert.equal(before.claims[0].statement, 'The method uses normalization.');
+        for (const index of [0, 1]) assert(before.report.dropped.some(item => item.index === index && item.reason === 'additional-empty-statement'));
+        if (!noClaims) assert(before.report.dropped.some(item => item.index === 3 && item.reason === 'additional-unsupported-statement-numbers'));
+      }
       if (mode === 'byte-reuse') assert.equal(before.claims[0].ambiguous, true);
       if (scalar) { assert.equal(before.claims[0].valueText, '0,500'); assert.equal(before.claims[0].valueNumber, 0.5); }
       assert.equal(before.revisionId, revision);
@@ -131,13 +144,13 @@ try {
       await request(p, { revisionId: revision, saveAvailable: true });
     }
     const claim = await db.prepare('SELECT source_revision_id,block_index,quote,start_byte,end_byte,value_text,value_number FROM claim WHERE source_revision_id=?').bind(revision).first();
-    assert.deepEqual(claim, { source_revision_id: revision, block_index: 1, quote: canonicalQuote, start_byte: start, end_byte: end,
+    assert.deepEqual(claim, noClaims ? null : { source_revision_id: revision, block_index: 1, quote: canonicalQuote, start_byte: start, end_byte: end,
       value_text: scalar ? '0,500' : null, value_number: scalar ? 0.5 : null });
     const row = await db.prepare('SELECT authors,published,current_revision_id AS head FROM source WHERE id=?').bind(source).first();
     assert.deepEqual(row, { ...metadata, head: mode === 'newer-head' ? newer : revision });
     for (const [name, body] of originals) { const object = await bucket.get(prefix + name); assert.equal(await object.text(), body); assert.equal(object.etag, etags.get(prefix + name)); }
     assert.equal((await db.prepare('SELECT distill_calls FROM source_revision WHERE id=?').bind(revision).first()).distill_calls, 2);
   }
-  console.log(JSON.stringify({ scope: 'K3_METADATA_STORAGE', runtime: 'pinned Workerd/Workflows/D1/R2', cases: 9, decimalCommaScalar: true, cachedUnicodeQuoteRecheck: true, extractionStatementReferences: true, codeRangeReferences: true, byteReuse: { sourceBytes: 524288, blocks: 512, wholeSourceEncodeForbidden: true }, paidProducerSteps: 'SKIPPED_WITH_RETAINED_SYNTHETIC_OUTPUT', newModelCalls: 0,
+  console.log(JSON.stringify({ scope: 'K3_METADATA_STORAGE', runtime: 'pinned Workerd/Workflows/D1/R2', cases: 11, decimalCommaScalar: true, emptyAdditionalClaims: true, cachedUnicodeQuoteRecheck: true, extractionStatementReferences: true, codeRangeReferences: true, byteReuse: { sourceBytes: 524288, blocks: 512, wholeSourceEncodeForbidden: true }, paidProducerSteps: 'SKIPPED_WITH_RETAINED_SYNTHETIC_OUTPUT', newModelCalls: 0,
     historicalRecordedCallsPerCase: 2, metadataAndHeadPreserved: true, sourceAndRawBytesEtagsPreserved: true, repeatedGetSave: true, semanticAcceptance: 'NOT_RUN' }));
 } finally { await mf.dispose(); }

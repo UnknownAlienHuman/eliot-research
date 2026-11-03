@@ -512,6 +512,8 @@ alone must not discard those readable artifacts. Zero claims never produces `don
 Save available output require at least three guide sentences and at least one kept final claim for `done`. Only the
 second call's supported selections/additions become cards; first-call draft candidates are never promoted to fill an
 empty final claim set. A readable zero-claim partial result is not full K3 acceptance or proof of semantic quality.
+Additional statements containing only whitespace or declared reference annotations are rejected after reference
+cleaning; they do not count as kept claims. Additional-claim drop reasons retain their original call-two array indexes.
 Guide/digest describe the paper for the owner rather than candidate review or model reasoning. Conflicting source
 values remain attributed to their separate source passages instead of being silently reconciled.
 Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels

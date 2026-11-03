@@ -554,7 +554,14 @@ describe("DistillWorkflow admitted model snapshot", () => {
     cached.bodies.set(prefix + "distill-call2.json", JSON.stringify({
       output: {
         supportedClaims: ["C0"],
-        additionalClaims: [{ quoteBlock: "[S1:2]", kind: "result", statement: "The source reports a result of 3 times." }],
+        additionalClaims: [
+          { quoteBlock: "[S1:2]", kind: "result", statement: "The source reports a result of 3 times." },
+          { quoteBlock: "[S1:1]", kind: "method", statement: "[S1:1]" },
+          { quoteBlock: "[S1:1]", kind: "method", statement: " \n\t" },
+          { quoteBlock: "[S1:1]", kind: "method", statement: "The method uses a low-rank update." },
+          { quoteBlock: "[S1:1]", kind: "method", statement: "The method uses 9999 layers." },
+          { quoteBlock: "[S1:1]", kind: "result", statement: "The source reports a result." },
+        ],
         guide: [
           { labels: ["[S1:1]"], text: "The source describes method Alpha." },
           { labels: ["[S1:2]"], text: "The source reports a result." },
@@ -586,12 +593,18 @@ describe("DistillWorkflow admitted model snapshot", () => {
       if (!savedBody) throw new Error("Historical call-two output was not saved.");
       const saved = JSON.parse(savedBody) as DistillReport & { state: string };
       expect(saved.state).toBe("done");
-      expect(saved.kept).toBe(1);
+      expect(saved.kept).toBe(2);
       expect(saved.usage.calls).toBe(2);
       expect(cached.db.prepare("SELECT authors,published FROM source WHERE id=?").get(sourceId))
         .toEqual({ authors: "Историческая Zoë Ёлкина", published: "2021-03" });
       for (const [key, body] of originalCachedBodies) expect(cached.bodies.get(key)).toBe(body);
       expect(saved.dropped).toContainEqual({ index: 0, reason: "additional-missing-or-unsupported-primary-result" });
+      expect(saved.dropped).toContainEqual({ index: 1, reason: "additional-empty-statement" });
+      expect(saved.dropped).toContainEqual({ index: 2, reason: "additional-empty-statement" });
+      expect(saved.dropped).toContainEqual({ index: 4, reason: "additional-unsupported-statement-numbers" });
+      expect(saved.dropped).toContainEqual({ index: 5, reason: "additional-missing-or-unsupported-primary-result" });
+      expect(cached.db.prepare("SELECT statement FROM claim WHERE source_revision_id=? ORDER BY ordinal").all(revisionId))
+        .toEqual([{ statement: "Method Alpha uses a low-rank update." }, { statement: "The method uses a low-rank update." }]);
     } finally { cached.db.close(); }
   });
 
