@@ -1047,8 +1047,10 @@ Reader is keyed by project/source, resetting metadata, text and both React/nativ
 change. Revision and passage navigation reuse that source reader. Metadata reads carry source/revision generation
 and abort signals; pending polls do not overlap. Text/outline reads abort on revision change/unmount. A replacement
 POST remains bound to its original source/file, while only its initiating location may change URL, error or file
-selection. Its write lock lasts until settlement even across same-source query changes; changing sources creates an
-independent reader. Existing source/citation and same-revision OCR navigation retain their text/outline semantics.
+selection. Its source-specific write lock belongs to the mounted project workspace, outliving keyed Reader remounts
+and pane changes. A→B→A and same-source query changes cannot dispatch another A upload before settlement, while B
+can upload independently. Only the owning POST's settlement releases its lock; this is a client workspace guard, not
+cross-tab or reload idempotency. Existing source/citation and same-revision OCR navigation retain text/outline semantics.
 No write is cancelled/retried to infer its server outcome, and no read starts model work.
 
 `pnpm eval k2 --view-isolation` exercises the reused workspace on desktop and phone, including held success/error

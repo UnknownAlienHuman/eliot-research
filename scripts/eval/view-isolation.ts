@@ -24,12 +24,18 @@ const chatPath = id => '/p/' + project + '/chat' + (id ? '/' + id : '');
 const sourcePath = i => '/p/' + project + '/source/' + sources[i].source.id;
 const turnsUrl = id => origin + '/api/projects/' + project + '/chats/' + id + '/turns';
 const browser = await chromium.launch();
-let interceptedTurns = 0, interceptedUploads = 0, nativeUploads = 0, unexpectedTurns = 0;
+let interceptedTurns = 0, interceptedUploads = 0, nativeUploads = 0, unexpectedTurns = 0, unexpectedUploads = 0;
 try {
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     const context = await browser.newContext({ viewport });
     await context.route('https://**', route => route.abort());
     const page = await context.newPage();
+    let allowNativeUpload = false, uploadRequests = 0;
+    page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/sources/file')) uploadRequests++; });
+    await page.route('**/sources/file', route => {
+      if (route.request().method() !== 'POST' || allowNativeUpload) return route.continue();
+      unexpectedUploads++; return route.abort('blockedbyclient');
+    });
     await page.route('**/turns', route => {
       if (route.request().method() !== 'POST') return route.continue();
       unexpectedTurns++; return route.abort('blockedbyclient');
@@ -148,18 +154,39 @@ try {
     assert(pending.request().postData().includes(sources[0].source.id));
     await navigate(sourcePath(1)); await expect(input).toBeEnabled(); assert.equal(await input.evaluate(input => input.files.length), 0); await expect(upload).toBeDisabled();
     await input.setInputFiles({ name: 'b.md', mimeType: 'text/markdown', buffer: Buffer.from('# Source B\n\nImmutable native text B replacement ' + viewport.width + ' ' + project) });
-    await pending.release({ revisionId: sources[0].source.currentRevisionId }); await expect(page).toHaveURL(origin + sourcePath(1)); assert.equal(await input.evaluate(input => input.files[0].name), 'b.md');
+    const independentB = await hold(uploadUrl); await upload.click(); await independentB.waiting; interceptedUploads++;
+    assert(independentB.request().postData().includes(sources[1].source.id));
+    await navigate(sourcePath(0)); await expect(input).toBeDisabled();
+    // Force a file/change and form submission even through disabled controls: the synchronous source
+    // lock must reject the second POST as well as making it unavailable through ordinary UI actions.
+    await input.setInputFiles({ name: 'returned-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Returned A') });
+    let beforeAttempt = uploadRequests;
+    await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
+    await pending.release({ revisionId: sources[0].source.currentRevisionId }); await expect(input).toBeEnabled();
+    await expect(page).toHaveURL(origin + sourcePath(0)); assert.equal(await input.evaluate(input => input.files[0].name), 'returned-a.md');
+    const afterSuccess = await hold(uploadUrl); await upload.click(); await afterSuccess.waiting; interceptedUploads++;
+    assert.equal(uploadRequests, beforeAttempt + 1); await afterSuccess.release();
+    await navigate(sourcePath(1)); await expect(input).toBeDisabled(); // A's settlement cannot release B.
+    await independentB.release({ error: { message: 'Departed B failure' } }, 503); await expect(input).toBeEnabled();
+    await expect(page.getByText('Departed B failure')).toHaveCount(0);
     await navigate(sourcePath(0)); await input.setInputFiles({ name: 'old-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Old A') });
     pending = await hold(uploadUrl); await upload.click(); await pending.waiting; interceptedUploads++;
-    await navigate(sourcePath(1)); await navigate(sourcePath(0)); await input.setInputFiles({ name: 'new-a.md', mimeType: 'text/markdown', buffer: Buffer.from('New A') });
+    await navigate(sourcePath(1)); await navigate(sourcePath(0)); await expect(input).toBeDisabled();
+    await navigate(chatPath(chats[0])); await navigate(sourcePath(0)); await expect(input).toBeDisabled();
+    await input.setInputFiles({ name: 'new-a.md', mimeType: 'text/markdown', buffer: Buffer.from('New A') });
+    beforeAttempt = uploadRequests;
+    await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
     await pending.release({ error: { message: 'Departed replacement failure' } }, 503);
-    await expect(page.getByText('Departed replacement failure')).toHaveCount(0); assert.equal(await input.evaluate(input => input.files[0].name), 'new-a.md');
+    await expect(input).toBeEnabled(); await expect(page.getByText('Departed replacement failure')).toHaveCount(0); assert.equal(await input.evaluate(input => input.files[0].name), 'new-a.md');
+    const afterError = await hold(uploadUrl); await upload.click(); await afterError.waiting; interceptedUploads++;
+    assert.equal(uploadRequests, beforeAttempt + 1); await afterError.release();
     await navigate(sourcePath(1)); await input.setInputFiles({ name: 'b.md', mimeType: 'text/markdown', buffer: Buffer.from('# Source B\n\nImmutable native text B replacement ' + viewport.width + ' ' + project) });
     // Changing only the revision URL must not release the source's pending write lock.
     pending = await hold(uploadUrl); await upload.click(); await pending.waiting; interceptedUploads++;
     await navigate(sourcePath(1) + '?revisionId=' + sources[1].source.currentRevisionId); await expect(input).toBeDisabled(); await expect(page.getByRole('button', { name: /Uploading new revision/ })).toBeDisabled();
     await pending.release({ error: { message: 'Old replacement failure' } }, 503); await expect(input).toBeEnabled(); await expect(page.getByText('Old replacement failure')).toHaveCount(0); assert.equal(await input.evaluate(input => input.files[0].name), 'b.md');
     // In-view native Markdown replacement keeps intentional navigation and renders its real stored revision.
+    allowNativeUpload = true;
     const uploaded = page.waitForResponse(response => response.url() === uploadUrl && response.request().method() === 'POST');
     await upload.click(); const response = await uploaded; assert.equal(response.status(), 202); const body = await response.json(); nativeUploads++;
     await expect(page).toHaveURL(origin + sourcePath(1) + '?revisionId=' + body.revisionId);
@@ -170,6 +197,7 @@ try {
   }
 } finally { await browser.close(); }
 assert.equal(unexpectedTurns, 0, 'Departed chat creation must never dispatch a turn; unmatched POSTs are blocked.');
+assert.equal(unexpectedUploads, 0, 'A pending source replacement must not dispatch a duplicate POST after remount.');
 for (const id of chats) assert.deepEqual((await api('/api/projects/' + project + '/chats/' + id + '/turns')).turns, [], 'Intercepted Send must not create a stored execution.');
 for (const original of sources) {
   const current = await api('/api/sources/' + original.source.id);
