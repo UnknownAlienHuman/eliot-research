@@ -4,6 +4,7 @@
 // contract src/understanding.ts. All reads are storage-only GETs; the only
 // paid trigger is the explicit Understand button.
 import { useEffect, useState } from 'react';
+import { apiJson } from './api';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { Markdown } from './Markdown';
@@ -31,15 +32,6 @@ function twoCallBound(m: ModelOption): number | null {
   const bound = 2 * perCall;
   if (!Number.isSafeInteger(bound)) return null;
   return bound;
-}
-async function apiErrorMessage(res: Response): Promise<string> {
-  try { const b = (await res.json()) as { error?: { message?: string } }; if (b.error && b.error.message) return b.error.message; } catch { /* status text */ }
-  return 'Request failed with status ' + res.status + '.';
-}
-async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { credentials: 'same-origin', ...init });
-  if (res.ok) return (await res.json()) as T;
-  throw new Error(await apiErrorMessage(res));
 }
 function stateLabel(s: DistillState): string {
   if (s === 'done') return 'Understood';

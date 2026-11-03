@@ -6,6 +6,7 @@
 // Global form also owns the AI Gateway connection mini-section
 // (GET/PUT /api/models/connection, gatewayId only, no secrets).
 import { useEffect, useRef, useState } from 'react';
+import { apiErrorMessage, apiJson } from './api';
 import { ModelPicker } from './ModelPicker';
 import { ModelProviders, toDraft, validateDrafts, type Draft as ProviderDraft } from './ModelProviders';
 import type { ModelProvider } from '../models';
@@ -21,15 +22,6 @@ function quotaLabels(quotas: ProviderQuota[]): Record<string, string | null> {
   return Object.fromEntries(quotas.map((quota) => [quota.providerId,
     quota.usage === null || quota.limit === null ? null :
       `${quota.usage.toLocaleString('en-US')} / ${quota.limit.toLocaleString('en-US')}`]));
-}
-async function apiErrorMessage(res: Response): Promise<string> {
-  try { const b = (await res.json()) as { error?: { message?: string } }; if (b.error && b.error.message) return b.error.message; } catch { /* status text */ }
-  return 'Request failed with status ' + res.status + '.';
-}
-async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { credentials: 'same-origin', ...init });
-  if (res.ok) return (await res.json()) as T;
-  throw new Error(await apiErrorMessage(res));
 }
 async function apiRequest(path: string, init?: RequestInit): Promise<void> {
   const res = await fetch(path, { credentials: 'same-origin', ...init });
