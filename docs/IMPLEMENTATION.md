@@ -131,10 +131,10 @@ stays readable with a visible conflict warning and never replaces the newer head
 mutation UUID returns its already committed winner. Old revisions remain readable for old citations. Use UUIDs and Unix milliseconds. Do not add
 a generic effects ledger; each operation stores its own model route, usage and estimate.
 
-**Proposed freshness repair — open.** Ordinary ingest head advancement currently omits page invalidation; OCR Apply
-already invalidates existing accepted heads. Put successful ingest head advancement and dependent-page staleness in
-one D1 batch, preserving its compare-and-set guard. Match exact string revision IDs in accepted heads' `inputs_json`;
-do not stale unrelated pages or pages on a failed head race. Also calculate freshness inside the publication batch
+**Freshness repair — partly implemented, acceptance in MAP.** Ingest publication now batches its terminal revision,
+guarded readable head and dependent accepted-head staleness atomically; OCR Apply also invalidates existing accepted
+heads. Match exact string revision IDs in accepted heads' `inputs_json`; do not stale unrelated pages or pages on a
+failed head race. Remaining repair: calculate freshness inside the publication batch
 for `saveAnswer` and proposal acceptance: an old answer/proposal may be published after replacement or OCR Apply.
 If any recorded input is superseded or unavailable, publish as stale; otherwise the new accepted head is current,
 including when it replaces a stale head. Keep historical revisions and citation identities valid. Resolve this from
@@ -156,20 +156,40 @@ deliberate reconversion of identical bytes. Ordinary duplicate uploads return 40
 conditional insert in the D1 batch guards concurrent duplicates without a second identity store.
 
 Revision metadata records `conversion_calls` before dispatch, nullable `conversion_tokens` when the service returns
-usage, and `conversion_ms`. Every Workflow step has retries disabled; conversion is one call bounded to 60 seconds.
+usage, and `conversion_ms`. Load/commit storage steps allow two retries (three attempts, one-second delay, 30 seconds
+per attempt). `convert and store` has retries disabled; conversion is one call bounded to 60 seconds. A started
+conversion uses a `conversion_calls=0 AND readable_state='pending'` compare-and-set before dispatch; replay without
+winning that claim cannot call the service. An ambiguous claim acknowledgement retains its persisted count, and
+completion uses `MAX` for calls plus known-first nullable tokens, never resetting uncertain work to zero.
 The Blob sent to `toMarkdown` carries its stored MIME type: the real service rejected an empty type. PDF metadata and
 embedded-image conversion are disabled. Output containing only page headings is `needs_conversion`, never readable
 source evidence. Exactly one leading UTF-8 BOM is removed before canonical storage; readers preserve those stored bytes.
 
-**Proposed completion recovery — open.** `IngestWorkflow` also disables retries on deterministic load/commit steps.
-A failed commit can leave `pending` forever, or readable artifacts without a current pointer; `conversion_calls=1`
-already persists before dispatch, but final tokens/state may not. Give only storage load/commit bounded retries;
-keep convert/store single-attempt. Make the terminal revision/head/freshness write idempotent and atomic before
-retrying it. Handle exhausted attempts as a visible failure, using the existing deterministic instance
-for bounded storage-only status reconciliation. A completed conversion step's cached result and matching retained
-artifacts may recover the commit step only; never recreate the Workflow or restart at/before conversion to repair a
-write. Without sufficient evidence, show an actionable failure rather than inventing successful conversion or usage.
-Retain known counts, keep unavailable usage unknown, and preserve the newer-head guard on every completion attempt.
+**Completion recovery — implemented slice, acceptance in MAP.** `ingest-completion.ts` owns the storage publication
+used by Workflow and source reader. A single D1 batch publishes revision metadata, stales exact dependencies of the
+previous accepted head and advances the source only to a newer readable revision. The existing newest-readable,
+ownership and non-deleted guards remain; an older completion stays readable with a conflict warning and cannot
+replace a newer readable head. A newer pending/unreadable replacement does not hide the older readable result.
+Read-back adopts a committed batch whose reply was lost; different terminal metadata is not overwritten. A matching
+older readable-but-unpublished result can finish publication without replaying conversion. Historical capture fields
+remain immutable under migration `0006`; later Save/Accept freshness is a separate repair.
+Canonical R2 writes use conditional create, never overwrite an existing text or block object, and retain returned
+ETags in the small cached conversion result. Commit/reconciliation checks both objects' ETags and text size. Text
+alone, equal sizes, missing blocks or changed objects do not prove completion. A partial store remains a failure;
+neither conversion nor R2 writes are repeated to repair it. Original bytes remain available.
+On exhausted storage attempts, a separate bounded storage step records an actionable failure without reducing known
+call/usage fields. The Workflow returns its cached conversion metadata (not bodies), even if that failure write is
+unavailable. Source detail reads consult only the existing `ingest-<revisionId>` instance, for the requested revision
+or latest revision, after ownership validation. At most one status read and one storage commit run per source read.
+A complete matching output plus retained artifacts can finish commit. No read creates, recreates, resumes or restarts
+a Workflow, and no recovery resolves a converter or calls a model. Missing completed evidence gives an actionable
+failure; unknown/unavailable status remains pending with an explicit warning, since the original job may still run.
+An ambiguous create/status reply also retains pending identity rather than falsely stopping the accepted job.
+Unmarked legacy instances without retained conversion metadata cannot be reconstructed from artifact presence.
+Checked 2026-11-02 against pinned Workers types `5.20261024.1` and official
+[Workflow retry/cache rules](https://developers.cloudflare.com/workflows/build/rules-of-workflows/),
+[Workers status API](https://developers.cloudflare.com/workflows/build/workers-api/) and
+[R2 conditional writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/).
 
 `IngestWorkflow` converts native UTF-8 text locally. Cache `env.AI.toMarkdown().supported()` and call `toMarkdown` only
 for required document formats. Ordinary ingest never invokes OCR or opts into model-assisted image conversion: retain scans/images and mark

@@ -1,5 +1,6 @@
 import type { Actor } from "./auth";
 import type { Project, Revision, Source } from "./shared/api";
+import { recoverIngest, STATUS_UNAVAILABLE, STORAGE_FAILURE } from "./ingest-completion";
 
 export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 type Duplicate = { sourceId: string; title: string; revisionId: string };
@@ -59,9 +60,24 @@ export async function setProjectScope(env: Env, actor: Actor, input: { projectId
   return { sourceIds: input.sourceIds };
 }
 export async function getSource(env: Env, _actor: Actor, id: string, requestedRevisionId?: string) {
-  const source = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION} WHERE s.id=? AND s.state!='deleted'`)
+  let source = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION} WHERE s.id=? AND s.state!='deleted'`)
     .bind(id).first<Source>();
   if (!source) throw new LibraryError("not_found", "Source not found.", 404);
+  let target: Pick<Source, "revisionId" | "readableState" | "error"> = source;
+  if (requestedRevisionId && requestedRevisionId !== source.revisionId) {
+    const selected = await env.DB.prepare("SELECT id AS revisionId,readable_state AS readableState,error FROM source_revision WHERE id=? AND source_id=? AND deleted_at IS NULL")
+      .bind(requestedRevisionId, id).first<typeof target>();
+    if (!selected) throw new LibraryError("not_found", "This revision does not belong to this source.", 404);
+    target = selected;
+  }
+  let completionError: string | null = null;
+  if (target.readableState === "pending" || target.error === STORAGE_FAILURE ||
+    (target.revisionId === source.revisionId && ["readable", "readable_with_warnings"].includes(target.readableState) && source.currentRevisionId !== target.revisionId)) {
+    completionError = await recoverIngest(env, target.revisionId);
+    source = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION} WHERE s.id=? AND s.state!='deleted'`).bind(id).first<Source>();
+    if (!source) throw new LibraryError("not_found", "Source not found.", 404);
+    if (completionError && target.revisionId === source.revisionId) source = { ...source, error: completionError };
+  }
   const fields = "id,revision_no AS revisionNo,readable_state AS readableState,created_at AS createdAt,converter,conversion_tokens AS conversionTokens,conversion_calls AS conversionCalls,conversion_ms AS conversionMs,warning_summary AS warningSummary,error,original_mime AS originalMime,original_sha256 AS originalSha256,original_size AS originalSize";
   const revisions = await env.DB.prepare(`SELECT ${fields} FROM source_revision WHERE source_id=? AND deleted_at IS NULL ORDER BY revision_no DESC LIMIT 50`)
     .bind(id).all<Revision>();
@@ -72,7 +88,8 @@ export async function getSource(env: Env, _actor: Actor, id: string, requestedRe
     if (!selected) throw new LibraryError("not_found", "This revision does not belong to this source.", 404);
     revisions.results.push(selected);
   }
-  return { source, revisions: revisions.results };
+  return { source, revisions: revisions.results.map((revision) => revision.id === target.revisionId && completionError
+    ? { ...revision, error: completionError } : revision) };
 }
 export async function attachSource(env: Env, actor: Actor, projectId: string, sourceId: string) {
   await getProject(env, actor, projectId);
@@ -144,10 +161,10 @@ export async function addSource(env: Env, actor: Actor, projectId: string, input
       const instance = await env.INGEST.get(`ingest-${revisionId}`);
       await instance.status();
       return { sourceId, revisionId, state: "pending" as const };
-    } catch { /* The original and failed revision remain available to the owner. */ }
-    await env.DB.prepare("UPDATE source_revision SET readable_state='failed',error=? WHERE id=?")
-      .bind("Conversion could not start. The original is saved; replace it to retry deliberately.", revisionId).run();
-    throw new LibraryError("unavailable", "The original is saved, but conversion could not start. Open the source for details.", 503);
+    } catch { /* Create may have committed even when both acknowledgements are unavailable. */ }
+    await env.DB.prepare("UPDATE source_revision SET error=? WHERE id=? AND readable_state='pending'")
+      .bind(STATUS_UNAVAILABLE, revisionId).run();
+    return { sourceId, revisionId, state: "pending" as const };
   }
   return { sourceId, revisionId, state: "pending" as const };
 }

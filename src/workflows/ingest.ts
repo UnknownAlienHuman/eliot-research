@@ -1,7 +1,6 @@
 // K1 ingest workflow. Started once per revision by the Library API with the
 // deterministic id `ingest-<revisionId>`; this class never starts itself.
-// Bodies stay in R2, steps carry IDs and counts only. No automatic retry:
-// every failure path marks the revision and returns normally.
+// Bodies stay in R2. Only storage load/commit retry; convert/store runs once.
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { decodeOriginal, getSupportedFormats, hasUtf8Bom, isImageInput, isSupportedFormat } from "../ingest";
@@ -9,6 +8,8 @@ import { nativeConverter, readableTextWarning, stripBomOnce, withTimeout } from 
 import { scanBlocks } from "../blocks";
 import type { Block } from "../blocks";
 import { safeErrorLogProjection } from "../model-transport";
+import { commitRevision, loadRevision, recordStorageFailure } from "../ingest-completion";
+import type { LoadedRevision, Stored } from "../ingest-completion";
 
 // Single conversion attempt bound: a stated workflow bound, not a documented hard limit.
 const CONVERT_TIMEOUT_MS = 60_000;
@@ -24,45 +25,25 @@ const AI_OPTIONS = {
 } as const;
 const CONVERT_FAILED = "Eliot could not convert this file to readable text. The original is kept.";
 
-// Every step runs once: a retried convert/store step would repeat toMarkdown
-// (spend) and silently overwrite the canonical R2 keys it just wrote.
 const NO_RETRY = { retries: { limit: 0, delay: "1 second" } } as const;
-
-interface LoadedRevision {
-  revisionId: string;
-  sourceId: string;
-  revisionNo: number;
-  mime: string;
-  filename: string;
-  originalKey: string;
-}
-
-type Stored =
-  | { outcome: "failed"; error: string; tokens: number | null; calls: number; ms: number }
-  | { outcome: "needs_conversion"; warning: string; tokens: number | null; calls: number; ms: number }
-  | { outcome: "readable"; converter: string; readableSize: number; blockCount: number; warning: string | null; tokens: number | null; calls: number; ms: number };
+const STORAGE_RETRY = { retries: { limit: 2, delay: "1 second" }, timeout: "30 seconds" } as const;
 
 export class IngestWorkflow extends WorkflowEntrypoint<Env, { revisionId: string }> {
   async run(event: Readonly<WorkflowEvent<{ revisionId: string }>>, step: WorkflowStep): Promise<unknown> {
     const revisionId = event.payload.revisionId;
-    const loaded = await step.do("load revision", NO_RETRY, async () => loadRevision(this.env, revisionId));
-    if (loaded === null) return { revisionId, outcome: "unknown-revision" };
-    const stored = await step.do("convert and store", NO_RETRY, async () => convertAndStore(this.env, loaded));
-    const outcome = await step.do("commit revision", NO_RETRY, async () => commitRevision(this.env, loaded, stored));
-    return { revisionId, ...outcome };
+    let stored: Stored | undefined;
+    try {
+      const loaded = await step.do("load revision", STORAGE_RETRY, async () => loadRevision(this.env, revisionId));
+      if (loaded === null) return { revisionId, outcome: "unknown-revision" };
+      stored = await step.do("convert and store", NO_RETRY, async () => convertAndStore(this.env, loaded));
+      const completed = stored;
+      const outcome = await step.do("commit revision", STORAGE_RETRY, async () => commitRevision(this.env, loaded, completed));
+      return { revisionId, stored, ...outcome };
+    } catch {
+      try { await step.do("record storage failure", STORAGE_RETRY, () => recordStorageFailure(this.env, revisionId)); } catch { /* Source read exposes unconfirmed storage status. */ }
+      return { revisionId, stored, completionPending: true };
+    }
   }
-}
-
-async function loadRevision(env: Env, revisionId: string): Promise<LoadedRevision | null> {
-  const row = await env.DB.prepare("SELECT id, source_id, revision_no, original_key, original_mime, original_filename FROM source_revision WHERE id = ?").bind(revisionId).first<{
-    id: string; source_id: string; revision_no: number; original_key: string | null; original_mime: string | null; original_filename: string | null;
-  }>();
-  if (row === null) return null;
-  return {
-    revisionId: row.id, sourceId: row.source_id, revisionNo: row.revision_no,
-    mime: row.original_mime ?? "application/octet-stream", filename: row.original_filename ?? row.id,
-    originalKey: row.original_key ?? `source/${row.id}/original`,
-  };
 }
 
 async function convertAndStore(env: Env, loaded: LoadedRevision): Promise<Stored> {
@@ -100,7 +81,8 @@ async function convertAndStore(env: Env, loaded: LoadedRevision): Promise<Stored
     // fails, the file is never sent for conversion. Converter is set here so a
     // failed row honestly shows which path was attempted.
     try {
-      await env.DB.prepare("UPDATE source_revision SET conversion_calls = 1, converter = 'workers_ai_markdown' WHERE id = ?").bind(loaded.revisionId).run();
+      const claimed = await env.DB.prepare("UPDATE source_revision SET conversion_calls = 1, converter = 'workers_ai_markdown' WHERE id = ? AND conversion_calls=0 AND readable_state='pending' AND deleted_at IS NULL").bind(loaded.revisionId).run();
+      if (claimed.meta.changes !== 1) return fail("Conversion was already claimed or its outcome is unknown. It will not be sent again; replace the source to retry deliberately.");
     } catch {
       return fail("Eliot could not record conversion usage, so the file was not sent for conversion. Try again.");
     }
@@ -149,39 +131,9 @@ async function storeReadable(env: Env, loaded: LoadedRevision, text: string, con
   // A Uint8Array view over the stored bytes: zero-copy reuse for BOM-free
   // 25 MiB natives instead of a second full-size allocation.
   const body: Uint8Array = reuseBytes !== null ? new Uint8Array(reuseBytes) : new TextEncoder().encode(text);
-  await env.BUCKET.put(`source/${loaded.revisionId}/text.md`, body, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
-  await env.BUCKET.put(`source/${loaded.revisionId}/blocks.json`, JSON.stringify(blocks), { httpMetadata: { contentType: "application/json; charset=utf-8" } });
-  return { outcome: "readable", converter, readableSize: body.byteLength, blockCount: blocks.length, warning, tokens, calls, ms: Date.now() - started };
-}
-
-async function commitRevision(env: Env, loaded: LoadedRevision, stored: Stored): Promise<{ outcome: string; advanced: boolean }> {
-  if (stored.outcome === "failed") {
-    await env.DB.prepare("UPDATE source_revision SET readable_state = 'failed', error = ?, conversion_tokens = ?, conversion_calls = ?, conversion_ms = ? WHERE id = ?").bind(stored.error, stored.tokens, stored.calls, stored.ms, loaded.revisionId).run();
-    return { outcome: "failed", advanced: false };
-  }
-  if (stored.outcome === "needs_conversion") {
-    await env.DB.prepare("UPDATE source_revision SET readable_state = 'needs_conversion', warning_summary = ?, conversion_tokens = ?, conversion_calls = ?, conversion_ms = ? WHERE id = ?").bind(stored.warning, stored.tokens, stored.calls, stored.ms, loaded.revisionId).run();
-    return { outcome: "needs_conversion", advanced: false };
-  }
-  const state = stored.warning === null ? "readable" : "readable_with_warnings";
-  await env.DB.prepare("UPDATE source_revision SET readable_state = ?, converter = ?, readable_size = ?, block_count = ?, warning_summary = ?, error = NULL, conversion_tokens = ?, conversion_calls = ?, conversion_ms = ? WHERE id = ?")
-    .bind(state, stored.converter, stored.readableSize, stored.blockCount, stored.warning, stored.tokens, stored.calls, stored.ms, loaded.revisionId).run();
-  // current_revision_id is the newest READABLE revision, never a pending one.
-  // Advance only while this revision is still the newest readable revision.
-  const newest = await env.DB.prepare("SELECT id FROM source_revision WHERE source_id = ? AND readable_state IN ('readable', 'readable_with_warnings') ORDER BY revision_no DESC LIMIT 1").bind(loaded.sourceId).first<{ id: string }>();
-  if (newest === null || newest.id !== loaded.revisionId) return { outcome: state, advanced: false };
-  const head = await env.DB.prepare("SELECT current_revision_id FROM source WHERE id = ?").bind(loaded.sourceId).first<{ current_revision_id: string | null }>();
-  if (head === null || head.current_revision_id === loaded.revisionId) return { outcome: state, advanced: false };
-  // Atomic guard: a newer readable revision committed after our select must win.
-  const guard = "AND NOT EXISTS (SELECT 1 FROM source_revision WHERE source_id = ? AND id != ? AND revision_no > ? AND readable_state IN ('readable', 'readable_with_warnings'))";
-  const now = Date.now();
-  const advanced = head.current_revision_id === null
-    ? await env.DB.prepare(`UPDATE source SET current_revision_id = ?, updated_at = ? WHERE id = ? AND current_revision_id IS NULL ${guard}`).bind(loaded.revisionId, now, loaded.sourceId, loaded.sourceId, loaded.revisionId, loaded.revisionNo).run()
-    : await env.DB.prepare(`UPDATE source SET current_revision_id = ?, updated_at = ? WHERE id = ? AND current_revision_id = ? ${guard}`).bind(loaded.revisionId, now, loaded.sourceId, head.current_revision_id, loaded.sourceId, loaded.revisionId, loaded.revisionNo).run();
-  if ((advanced.meta.changes ?? 0) > 0) return { outcome: state, advanced: true };
-  // Lost the race: a newer readable revision is (or became) current. This text
-  // stays readable for existing citations, but the conflict is visible.
-  const conflict = "A newer revision is current; this text stays available for existing citations.";
-  await env.DB.prepare("UPDATE source_revision SET readable_state = 'readable_with_warnings', warning_summary = ? WHERE id = ?").bind(conflict, loaded.revisionId).run();
-  return { outcome: "readable_with_warnings", advanced: false };
+  const textObject = await env.BUCKET.put(`source/${loaded.revisionId}/text.md`, body, { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
+  if (!textObject) throw new Error("Canonical text already exists; it is not overwritten.");
+  const blocksObject = await env.BUCKET.put(`source/${loaded.revisionId}/blocks.json`, JSON.stringify(blocks), { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "application/json; charset=utf-8" } });
+  if (!blocksObject) throw new Error("Canonical blocks already exist; they are not overwritten.");
+  return { outcome: "readable", converter, readableSize: body.byteLength, blockCount: blocks.length, warning, tokens, calls, ms: Date.now() - started, textEtag: textObject.etag, blocksEtag: blocksObject.etag };
 }
