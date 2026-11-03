@@ -40,10 +40,10 @@ try {
   await mf.ready; const db = await mf.getD1Database('DB', 'metadata'), bucket = await mf.getR2Bucket('BUCKET', 'metadata');
   for (const file of (await readdir(path.join(root, 'migrations'))).filter(f => /^\d+_.+\.sql$/.test(f)).sort())
     await db.batch(unstable_splitSqlQuery(await readFile(path.join(root, 'migrations', file), 'utf8')).map(sql => db.prepare(sql)));
-  for (const mode of ['unknown', 'historical', 'newer-head', 'cached-unicode', 'extraction-references']) {
+  for (const mode of ['unknown', 'historical', 'newer-head', 'cached-unicode', 'extraction-references', 'code-range-references']) {
     const source = crypto.randomUUID(), revision = crypto.randomUUID(), newer = crypto.randomUUID(), prefix = 'source/' + revision + '/';
     const text = mode === 'cached-unicode' ? 'Prefix \u{1f30d}. The \u201cexact quote\u201d ends here. Tail. The method uses normalization. The source retains canonical evidence. The method is described in this source.'
-      : mode === 'extraction-references' ? 'The method uses normalization for 9 layers. The source retains canonical evidence. The method is described in this source.'
+      : ['extraction-references', 'code-range-references'].includes(mode) ? 'The method uses normalization for 9 layers. The source retains canonical evidence. The method is described in this source.'
       : 'References: Мария Ёлкина, 2023. Zoë Example described earlier work in 2024-02.\nThe method uses normalization. The source retains canonical evidence. The method is described in this source.';
     const size = new TextEncoder().encode(text).length;
     const metadata = mode === 'unknown' ? { authors: '', published: null } : { authors: 'Историческая Zoë Łukasz', published: '2021-03' };
@@ -66,9 +66,12 @@ try {
         authors: 'Мария Ёлкина', published: '2023' }, usage })],
       ['distill-call2.json', JSON.stringify({ output: { supportedClaims: ['C0'], additionalClaims: [], guide, digest: [guide[0]], glossary: [] }, usage })],
     ]);
-    if (mode === 'extraction-references') {
+    if (['extraction-references', 'code-range-references'].includes(mode)) {
+      const statements = mode === 'code-range-references'
+        ? ['~~~\n` code\n~~~\nUnknown reference [S9:9]. `', 'The method uses normalization.']
+        : ['Unknown reference [S9:9].', 'The method uses normalization. [S1:1]'];
       originals.set('distill-call1.json', JSON.stringify({ output: { guide, questions: ['Which method?', 'Which evidence?', 'What source?'],
-        claims: ['Unknown reference [S9:9].', 'The method uses normalization. [S1:1]'].map(statement => ({ quoteBlock: '[S1:1]', kind: 'method', statement,
+        claims: statements.map(statement => ({ quoteBlock: '[S1:1]', kind: 'method', statement,
           task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null })) }, usage }));
     }
     const canonicalQuote = mode === 'cached-unicode' ? 'The \u201cexact quote\u201d ends here.' : text;
@@ -98,6 +101,10 @@ try {
     for (let repeat = 0; repeat < 2; repeat++) {
       const before = await request(p + '?revisionId=' + revision); assert.equal(before.state, 'done');
       if (mode === 'extraction-references') assert.equal(before.claims[0]?.statement, 'The method uses normalization. ');
+      if (mode === 'code-range-references') {
+        assert.equal(before.claims[0]?.statement, 'The method uses normalization.');
+        assert(before.report.dropped.some(item => item.index === 0 && item.reason === 'claim-invalid-reference'));
+      }
       assert.equal(before.authors, metadata.authors); assert.equal(before.published, metadata.published); assert.equal(before.report.usage.calls, 2);
       assert.equal(before.claims.length, 1); assert.equal(before.claims[0].quote, canonicalQuote); assert.equal(before.claims[0].start, start); assert.equal(before.claims[0].end, end);
       assert.equal(before.revisionId, revision);
@@ -112,6 +119,6 @@ try {
     for (const [name, body] of originals) { const object = await bucket.get(prefix + name); assert.equal(await object.text(), body); assert.equal(object.etag, etags.get(prefix + name)); }
     assert.equal((await db.prepare('SELECT distill_calls FROM source_revision WHERE id=?').bind(revision).first()).distill_calls, 2);
   }
-  console.log(JSON.stringify({ scope: 'K3_METADATA_STORAGE', runtime: 'pinned Workerd/Workflows/D1/R2', cases: 5, cachedUnicodeQuoteRecheck: true, extractionStatementReferences: true, paidProducerSteps: 'SKIPPED_WITH_RETAINED_SYNTHETIC_OUTPUT', newModelCalls: 0,
+  console.log(JSON.stringify({ scope: 'K3_METADATA_STORAGE', runtime: 'pinned Workerd/Workflows/D1/R2', cases: 6, cachedUnicodeQuoteRecheck: true, extractionStatementReferences: true, codeRangeReferences: true, paidProducerSteps: 'SKIPPED_WITH_RETAINED_SYNTHETIC_OUTPUT', newModelCalls: 0,
     historicalRecordedCallsPerCase: 2, metadataAndHeadPreserved: true, sourceAndRawBytesEtagsPreserved: true, repeatedGetSave: true, semanticAcceptance: 'NOT_RUN' }));
 } finally { await mf.dispose(); }
