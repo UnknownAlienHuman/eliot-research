@@ -1,7 +1,17 @@
 import { Link } from 'react-router';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { Citation } from '../citations';
 import './markdown.css';
+
+export function citationHref(projectId: string, citation: Citation): string {
+  return '/p/' + encodeURIComponent(projectId) + '/source/' + encodeURIComponent(citation.sourceId)
+    + '?revisionId=' + encodeURIComponent(citation.revisionId) + '&start=' + citation.start + '&end=' + citation.end;
+}
+
+export function citationLabel(citation: Citation): string {
+  return citation.sourceTitle + ' · ' + citation.block + (citation.deleted ? ' (deleted)' : '');
+}
 
 export interface MarkdownReference { readonly text: string; readonly href: string; readonly label?: string; }
 interface MarkdownNode {

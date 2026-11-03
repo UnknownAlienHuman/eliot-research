@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
-import { Markdown, type MarkdownReference } from './Markdown';
+import { Markdown, citationHref, citationLabel, type MarkdownReference } from './Markdown';
 
 const compact = '[S1:14]';
 const persistent = '[R11111111-1111-4111-8111-111111111111:14]';
@@ -13,6 +13,17 @@ function render(text: string, refs: readonly MarkdownReference[] = references) {
 }
 
 describe('Markdown citation rendering', () => {
+  it('preserves encoded evidence identity, exact byte offsets and deleted labels', () => {
+    const citation = { sourceId: 'source/😀?', revisionId: 'old/#&', block: 14, start: 42, end: 87,
+      sourceTitle: 'Бумага <&>', deleted: false, label: compact };
+    const target = citationHref('project/я?', citation);
+    expect(target).toBe('/p/project%2F%D1%8F%3F/source/source%2F%F0%9F%98%80%3F?revisionId=old%2F%23%26&start=42&end=87');
+    expect(citationLabel(citation)).toBe('Бумага <&> · 14');
+    const html = render(compact, [{ text: compact, href: target, label: citationLabel({ ...citation, deleted: true }) }]);
+    expect(html).toContain('Бумага &lt;&amp;&gt; · 14 (deleted)</a>');
+    expect(html).toContain('revisionId=old%2F%23%26&amp;start=42&amp;end=87');
+  });
+
   it('links paragraph, tight-list and GFM table labels to their exact reader range', () => {
     const html = render(`Paragraph ${compact}\n\n- Tight list ${compact}\n- Saved label ${persistent}\n\n| Evidence ${compact} | Value |\n| --- | --- |\n| Table cell ${persistent} | **Emphasis ${compact}** |`);
     expect(html.match(/<a /g)).toHaveLength(6);

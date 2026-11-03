@@ -4,7 +4,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { apiJson } from './api';
 import { Link, useLocation, useNavigate } from 'react-router';
-import { Markdown } from './Markdown';
+import { Markdown, citationHref, citationLabel } from './Markdown';
 import type { MarkdownReference } from './Markdown';
 import type { ChatSnapshotState, SourceSelection, TurnPage, TurnView } from '../shared/api';
 import { advanceHistoryHead, mergeTurnHistory } from './chat-history';
@@ -38,15 +38,6 @@ export interface StudioViewProps {
   readonly refreshKey: number;
 }
 
-function hrefFor(projectId: string, citation: Citation): string {
-  return '/p/' + encodeURIComponent(projectId) + '/source/' + encodeURIComponent(citation.sourceId)
-    + '?revisionId=' + encodeURIComponent(citation.revisionId) + '&start=' + citation.start + '&end=' + citation.end;
-}
-
-function citationDisplayLabel(citation: Citation): string {
-  return citation.sourceTitle + ' · ' + citation.block + (citation.deleted ? ' (deleted)' : '');
-}
-
 function storedModelLabel(route: string, models: readonly ModelRoute[]): string {
   const entry = models.find((model) => model.route === route);
   if (entry !== undefined) return entry.label;
@@ -64,8 +55,8 @@ function turnModelSpan(turn: TurnView, models: readonly ModelRoute[]) {
 function collectRefs(projectId: string, citations: readonly Citation[]): MarkdownReference[] {
   const refs: MarkdownReference[] = [];
   for (const citation of citations) {
-    const href = hrefFor(projectId, citation);
-    const label = citationDisplayLabel(citation);
+    const href = citationHref(projectId, citation);
+    const label = citationLabel(citation);
     for (const token of [citation.label, '[R' + citation.revisionId + ':' + citation.block + ']']) {
       if (token !== '' && !refs.some((ref) => ref.text === token)) refs.push({ text: token, label, href });
     }
@@ -79,8 +70,8 @@ function Cites({ projectId, cites }: { readonly projectId: string; readonly cite
     <ul className='er-card er-chat__cites'>
       {cites.map((citation) => (
         <li key={citation.revisionId + ':' + citation.block + ':' + citation.start + ':' + citation.end} className='er-chat__cite'>
-          <Link className='er-chip' to={hrefFor(projectId, citation)} title={'Open the cited passage in ' + citation.sourceTitle}>
-            {citationDisplayLabel(citation)}
+          <Link className='er-chip' to={citationHref(projectId, citation)} title={'Open the cited passage in ' + citation.sourceTitle}>
+            {citationLabel(citation)}
           </Link>
         </li>
       ))}
