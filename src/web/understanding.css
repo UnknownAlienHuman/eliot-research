@@ -23,3 +23,4 @@
 .er-und__row.er-card { display: grid; gap: var(--eliot-space-block-control); min-width: 0; border-radius: var(--eliot-shape-large-increased); }
 .er-und__rowtitle { color: inherit; font-size: var(--eliot-type-body-large-size); overflow-wrap: anywhere; }
 .er-und__questions { display: grid; gap: var(--eliot-space-tight); margin: 0; padding-inline-start: var(--eliot-space-group); color: var(--md-sys-color-on-surface-variant); }
+.er-und__question { display: grid; justify-items: start; gap: var(--eliot-space-tight); overflow-wrap: anywhere; }

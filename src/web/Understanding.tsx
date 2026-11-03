@@ -9,6 +9,7 @@ import type { DistillState, Overview, Understanding } from '../understanding';
 import './understanding.css';
 // Wire types above come from src/understanding.ts; no local duplicates.
 type ModelOption = ModelRoute;
+export interface SuggestedQuestion { readonly sourceId: string; readonly sourceTitle: string; readonly question: string }
 function outputCapOf(m: Pick<ModelOption, 'outputReserveTokens' | 'maxOutputTokens'>): number | null {
   const reserve = m.outputReserveTokens ?? null;
   const max = m.maxOutputTokens ?? null;
@@ -38,7 +39,19 @@ function stateLabel(s: DistillState): string {
   if (s === 'failed') return 'Understanding failed';
   return 'Not yet understood';
 }
-export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTitle }: { readonly projectId: string; readonly sourceId: string; readonly revisionId: string; readonly sourceTitle: string }) {
+function Questions({ questions, onUse, showHint = true }: { readonly questions: readonly string[]; readonly onUse?: ((question: string) => void) | undefined; readonly showHint?: boolean }) {
+  const usable = Array.isArray(questions) ? questions.filter(question => typeof question === 'string' && question.trim() !== '') : [];
+  if (!usable.length) return null;
+  return <div className='er-und__guide'>
+    <h3>Suggested questions</h3>
+    {showHint ? <p className='er-und__hint'>{onUse ? 'Use in chat selects only this source. Send uses its current readable version.' : 'Open the current source revision to use its questions in chat.'}</p> : null}
+    <ul className='er-und__questions'>{usable.map((question, index) => <li key={index}><div className='er-und__question'>
+      <span>{question}</span>{onUse ? <button className='er-button er-button--text' type='button' aria-label={'Use question in chat: ' + question}
+        onClick={() => onUse(question)}>Use in chat</button> : null}
+    </div></li>)}</ul>
+  </div>;
+}
+export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTitle, onUseQuestion }: { readonly projectId: string; readonly sourceId: string; readonly revisionId: string; readonly sourceTitle: string; readonly onUseQuestion?: ((question: string) => void) | undefined }) {
   const queryClient = useQueryClient();
   const [view, setView] = useState<Understanding | undefined>(undefined);
   const [failure, setFailure] = useState('');
@@ -171,6 +184,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
       {(view.state === 'done' || view.state === 'partial') ? (<>
         {view.state === 'partial' ? <p className='er-und__hint'>Partial understanding — some material could not be verified.</p> : view.report && (view.report.dropped.length > 0 || view.report.clearedNumbers > 0) ? <p className='er-und__hint'>Some claims or numeric details could not be verified.</p> : null}
         {view.guide !== null && view.guide !== '' ? (<div className='er-und__guide'><h3>Guide</h3><div className='er-und__answer'><Markdown text={view.guide} references={references} /></div></div>) : null}
+        <Questions questions={view.report?.questions ?? []} onUse={onUseQuestion} />
         {view.digest !== null && view.digest !== '' ? (<div className='er-und__guide'><h3>Digest</h3><div className='er-und__answer'><Markdown text={view.digest} references={references} /></div></div>) : null}
         {view.glossary.length > 0 ? (<div className='er-und__guide'><h3>Glossary</h3><dl className='er-card er-und__glossary'>{view.glossary.map((g, i) => (<div key={g.en + ':' + g.ru + ':' + i}><dt>{g.en} — {g.ru}</dt><dd><Markdown text={g.definition + '\n\n' + g.labels.join(' ')} references={references} /></dd></div>))}</dl></div>) : null}
         <div className='er-und__guide'><h3>Verified claims</h3>{view.claims.length === 0 ? <p className='er-und__hint'>No verified claims stored for this revision.</p> : (<ul className='er-und__claims'>{view.claims.map((c) => (
@@ -186,7 +200,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     </section>
   );
 }
-export function ProjectOverview({ projectId }: { readonly projectId?: string }) {
+export function ProjectOverview({ projectId, onUseQuestion }: { readonly projectId?: string; readonly onUseQuestion?: ((suggestion: SuggestedQuestion) => void) | undefined }) {
   const { projectId: routeId } = useParams();
   const pid = projectId ?? routeId ?? '';
   const queryClient = useQueryClient();
@@ -207,7 +221,7 @@ export function ProjectOverview({ projectId }: { readonly projectId?: string }) 
   return (
     <section className='er-und' aria-label='Project overview' aria-busy={overview.isFetching}>
       <h2 className='er-und__title'>Project overview</h2>
-      <p className='er-und__hint'>Guides and questions from readable project sources. Refresh to include source changes.</p>
+      <p className='er-und__hint'>Guides and questions from readable project sources. Use in chat selects one source; Send uses its current readable version. Refresh to include source changes.</p>
       <div className='er-und__actions'><button className='er-button er-button--text' type='button'
         onClick={() => void queryClient.resetQueries({ queryKey, exact: true })}>Refresh overview</button></div>
       {overview.error ? <p className='er-und__error' role='alert'>{overview.error.message} <button className='er-button er-button--text' type='button'
@@ -219,7 +233,7 @@ export function ProjectOverview({ projectId }: { readonly projectId?: string }) 
           <Link className='er-und__rowtitle' to={'/p/' + encodeURIComponent(pid) + '/source/' + encodeURIComponent(r.sourceId) + '?revisionId=' + encodeURIComponent(r.revisionId)}>{r.title}</Link>
           <span className='er-und__meta'>{stateLabel(r.state)}</span>
           {r.summary !== null && r.summary !== '' ? <div className='er-und__answer'><Markdown text={r.summary} /></div> : null}
-          {r.questions.length > 0 ? <ul className='er-und__questions'>{r.questions.map((q, i) => <li key={i}>{q}</li>)}</ul> : null}
+          <Questions questions={r.questions} showHint={false} onUse={onUseQuestion ? question => onUseQuestion({ sourceId: r.sourceId, sourceTitle: r.title, question }) : undefined} />
         </li>))}</ul>}
       {overview.hasNextPage ? <button className='er-button er-button--text' type='button' disabled={overview.isFetching} onClick={more}>
         {overview.isFetchingNextPage ? 'Loading more sources.' : 'Load more sources'}</button> : null}
