@@ -184,7 +184,7 @@ try {
   const seedMany = async (projectId, count, createdAt = 10) => {
     const rows = [];
     for (let i = 0; i < count; i++) {
-      rows.push(await seedSource(db, bucket, projectId, uuid(sourceSeq++), { createdAt: createdAt + 0, questions: ['Question ' + i] }));
+      rows.push(await seedSource(db, bucket, projectId, uuid(sourceSeq++), { createdAt, questions: ['Question ' + i] }));
     }
     return rows;
   };

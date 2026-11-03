@@ -122,13 +122,21 @@ try {
       await expect.poll(() => held !== null).toBe(true);
       await navigate('/settings'); await navigate('/p/' + project + '/overview');
       await expect(cards()).toHaveCount(50); await release(); await expect(cards()).toHaveCount(50);
+      await page.unroute('**/api/projects/*/overview*');
+      await view.getByRole('button', { name: 'Refresh overview', exact: true }).click();
+      await expect(cards()).toHaveCount(1);
+      const latest = (await api('/api/sources/' + source.id)).source;
+      assert.equal(latest.conversionCalls, 0);
+      await expect(view.getByRole('link', { name: 'Pinned overview source', exact: true }))
+        .toHaveAttribute('href', '/p/' + project + '/source/' + source.id + '?revisionId=' + latest.currentRevisionId);
+      await expect(view).toContainText('Not yet understood');
       await navigate('/p/' + other + '/overview'); otherRows = [];
       await view.getByRole('button', { name: 'Refresh overview', exact: true }).click();
       await expect(view).toContainText('No readable sources yet.');
       await view.getByRole('link', { name: 'Open Sources', exact: true }).click();
       await expect(page).toHaveURL(origin + '/p/' + other + '/sources');
       assert.equal(unexpectedWrites, 0); assert.deepEqual(pageErrors, []);
-      console.log(JSON.stringify({ scope: 'K3_OVERVIEW_BROWSER', viewport, overviewResponses: 'CONTROLLED_FIXTURES', nativeReplacementAndPinnedReader: true,
+      console.log(JSON.stringify({ scope: 'K3_OVERVIEW_BROWSER', viewport, overviewResponses: 'NATIVE_GET_AND_CONTROLLED_RACES', nativeReplacementAndPinnedReader: true,
         initialAndPageRetry: true, refreshCancelsOldPage: true, routeIsolation: true, unexpectedWrites, newModelCalls: 0 }));
     } finally { if (held) await release(); await context.close(); }
   }
