@@ -132,6 +132,11 @@ stays readable with a visible conflict warning and never replaces the newer head
 mutation UUID returns its already committed winner. Old revisions remain readable for old citations. Use UUIDs and Unix milliseconds. Do not add
 a generic effects ledger; each operation stores its own model route, usage and estimate.
 
+Project lists default to active rows; `/api/projects?archived=true` returns only archived projects with the same
+50-row cursor pagination. Archive/restore uses the existing project PATCH and changes no memberships, evidence,
+history or pages. Omitted title/archive fields are preserved by the UPDATE itself so concurrent Rename and Unarchive
+cannot restore one another's stale values. No deletion or model work is part of project archival.
+
 **Freshness repair — implementation and acceptance in MAP.** Ingest publication batches its terminal revision,
 guarded readable head and dependent accepted-head staleness atomically; OCR Apply also invalidates existing accepted
 heads. Match exact string revision IDs in accepted heads' `inputs_json`; do not stale unrelated pages or pages on a
@@ -1075,6 +1080,13 @@ sources. Sources start with readable-source checkboxes and current understanding
 the existing file/text/URL forms in a native dialog. History is a menu and project settings a dialog. Opening a source
 passage temporarily replaces the center reader without dropping the selected chat or source scope. Saved output
 refreshes Studio through the existing storage-only page API.
+Projects exposes Show archived projects and Unarchive. Each list view owns its query/cursor; switching views aborts
+old reads and starts its first page. Failed reads keep loaded rows and offer Retry. A pending write or Rename edit
+disables view switching; failed writes preserve the row/edit, while success refreshes that view. The active-only
+project picker and MCP default remain unchanged.
+Create waits for Rename to finish or be cancelled. If an update removes the edited row from the loaded pages, its
+existing editor stays available above the list with the unsaved name and original target; Save/Cancel never depend
+on that row remaining visible.
 The project header's Switch project opens a native dialog over the existing `/api/projects` pages. Loading, empty,
 initial/page Retry and Refresh stay in that picker; its list reads abort on close or route change. Selecting a project
 opens its chat route without creating a chat or sending a question. Escape/Close returns focus and preserves the

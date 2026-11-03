@@ -127,6 +127,8 @@ its text preview, and Apply a new readable revision while retaining the original
 
 1. Bind D1, R2, Workers AI and `IngestWorkflow`; apply `migrations/0001_library.sql`.
 2. Implement projects, shared Library sources, project memberships and immutable revisions.
+   Projects defaults to active rows; Show archived projects pages through archived rows and exposes the existing
+   Unarchive action. Archive/restore keeps sources, history and saved evidence intact.
    Add sources exposes the existing Library in bounded pages and attaches a saved source without another upload,
    conversion or understanding call. Already attached sources are excluded; Refresh rescans Library changes.
 3. Browser batch UX sends **one file per request**, with at most two uploads in flight. The API accepts one file up to

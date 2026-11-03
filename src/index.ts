@@ -166,7 +166,8 @@ app.post("/api/projects/:id/pages/from-turn", async (c) => {
 });
 app.get("/api/projects/:id/pages", async (c) => c.json(await listPages(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), cursor: c.req.query("cursor") })));
 app.get("/api/projects/:id/pages/:pageId", async (c) => c.json({ page: await getPage(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), pageId: uuid.parse(c.req.param("pageId")) }) }));
-app.get("/api/projects", async (c) => c.json(await listProjects(c.env, c.get("actor"), uuid.optional().parse(c.req.query("cursor")))));
+app.get("/api/projects", async (c) => c.json(await listProjects(c.env, c.get("actor"), uuid.optional().parse(c.req.query("cursor")),
+  z.enum(["false", "true"]).default("false").parse(c.req.query("archived")) === "true")));
 app.post("/api/projects", async (c) => {
   const input = projectInput.parse(await c.req.json());
   return c.json({ project: await createProject(c.env, c.get("actor"), { title: input.title, ...(input.description === undefined ? {} : { description: input.description }) }) }, 201);
