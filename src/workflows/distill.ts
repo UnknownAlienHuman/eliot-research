@@ -188,11 +188,12 @@ async function extract(env: Env, revisionId: string, model: ModelSpec) {
 async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
   const raw = await json<Raw<Extraction>>(env, revisionId, "distill-call1.json");
   if (!raw.output) throw new Error("The retained source material did not produce supported understanding. No paid step will be repeated.");
-  const text = await (await env.BUCKET.get(key(revisionId, "text.md")))?.text();
-  if (text === undefined) throw new Error("Readable text is missing.");
+  const object = await env.BUCKET.get(key(revisionId, "text.md"));
+  if (!object) throw new Error("Readable text is missing.");
+  const bytes = new Uint8Array(await object.arrayBuffer());
   const blocks = await json<Block[]>(env, revisionId, "blocks.json");
   const evidence = (label: string) => {
-    const passage = resolveQuoteBlock(text, blocks, label);
+    const passage = resolveQuoteBlock(bytes, blocks, label);
     if (!passage) throw new Error("The model selected a source block outside the frozen revision.");
     return passage;
   };
@@ -203,7 +204,7 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
     else if (!cleaned.text.trim()) referenceErrors.set(index, "empty-claim-statement");
     return { ...item, statement: cleaned.text, ...evidence(quoteBlock) };
   });
-  const verified = verifyClaims(text, blocks, candidates);
+  const verified = verifyClaims(bytes, blocks, candidates);
   const verifiedClaims = verified.claims;
   const rejectedCandidates = new Set(verified.dropped.map((item) => item.index));
   let verifiedIndex = 0;
@@ -274,16 +275,17 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
     dropped.push({ index, reason: "claim-not-supported-by-own-quote" }); return false;
   });
   const byLabel = new Map(verified.evidence.map((item) => [item.label, item]));
-  const text = await (await env.BUCKET.get(key(revisionId, "text.md")))?.text();
-  if (text === undefined) throw new Error("Readable text is missing.");
+  const object = await env.BUCKET.get(key(revisionId, "text.md"));
+  if (!object) throw new Error("Readable text is missing.");
+  const bytes = new Uint8Array(await object.arrayBuffer());
   const blocks = await json<Block[]>(env, revisionId, "blocks.json");
   for (const item of verified.evidence) {
-    const canonical = resolveQuoteBlock(text, blocks, item.label);
+    const canonical = resolveQuoteBlock(bytes, blocks, item.label);
     if (!canonical || canonical.block !== item.block || canonical.quote !== item.quote)
       throw new Error("The retained excerpts do not match the immutable source revision.");
   }
   // Cached output may predate a verifier fix; it gets the current byte/number checks too.
-  const rechecked = verifyClaims(text, blocks, selected);
+  const rechecked = verifyClaims(bytes, blocks, selected);
   const primary = (item: VerifiedClaim, index: number, stage: string): VerifiedClaim[] => {
     const statement = resultStatement(item);
     if (statement === null) { dropped.push({ index, reason: `${stage}-missing-or-unsupported-primary-result` }); return []; }
@@ -299,7 +301,7 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
       task: item.task ?? null, metric: item.metric ?? null, dataset: item.dataset ?? null,
       valueText: item.valueText ?? null, unit: item.unit ?? null, conditions: item.conditions ?? null });
   }
-  const checked = verifyClaims(text, blocks, additional);
+  const checked = verifyClaims(bytes, blocks, additional);
   dropped.push(...checked.dropped.map((item) => ({ ...item, reason: `additional-${item.reason}` })));
   for (const [index, rawItem] of checked.claims.entries()) {
     const item = primary(rawItem, index, "additional")[0];
