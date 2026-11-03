@@ -196,7 +196,13 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
     if (!passage) throw new Error("The model selected a source block outside the frozen revision.");
     return passage;
   };
-  const candidates: CandidateClaim[] = raw.output.claims.map(({ quoteBlock, ...item }) => ({ ...item, ...evidence(quoteBlock) }));
+  const referenceErrors = new Map<number, string>();
+  const candidates: CandidateClaim[] = raw.output.claims.map(({ quoteBlock, ...item }, index) => {
+    const cleaned = cleanDistillText(item.statement, [quoteBlock], revisionId);
+    if (cleaned.invalidReferences) referenceErrors.set(index, "claim-invalid-reference");
+    else if (!cleaned.text.trim()) referenceErrors.set(index, "empty-claim-statement");
+    return { ...item, statement: cleaned.text, ...evidence(quoteBlock) };
+  });
   const verified = verifyClaims(text, blocks, candidates);
   const verifiedClaims = verified.claims;
   const rejectedCandidates = new Set(verified.dropped.map((item) => item.index));
@@ -205,6 +211,8 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
     if (rejectedCandidates.has(index)) return [];
     const claim = verifiedClaims[verifiedIndex++];
     if (!claim) throw new Error("The call-1 verifier lost candidate ordering.");
+    const referenceError = referenceErrors.get(index);
+    if (referenceError) { verified.dropped.push({ index, reason: referenceError }); return []; }
     if (claim.kind === "result" && resultStatement(claim) === null) {
       verified.dropped.push({ index, reason: "pre-synthesis-missing-or-unsupported-primary-result" });
       return [];

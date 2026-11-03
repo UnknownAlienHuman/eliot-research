@@ -179,6 +179,45 @@ function finished(f: ReturnType<typeof fixture>, error: string) {
 }
 
 describe("DistillWorkflow admitted model snapshot", () => {
+  it("validates extraction statement references before numeric support without losing candidate order", async () => {
+    const document = documentWithBlocks([{ type: "paragraph", text: "The method uses normalization for 9 layers." }]);
+    const f = fixture(snapshot.route, document);
+    const statements = ["Unknown reference [S9:9].", "The method uses normalization. [S1:1]", "Ordinary method.",
+      "The method uses 8 layers. [S1:1]", "The method uses 9 layers.", "[S1:1]",
+      `Persistent reference. [R${revisionId}:1]`, "Block reference. [block 1]", "Literal `[S9:9]` example.",
+      "Unknown reference [S8:8].", "Final method."];
+    const raw = JSON.stringify({ output: {
+      guide: ["The source describes a method.", "The method uses normalization.", "The source retains its text."].map(text => ({ labels: ["[S1:1]"], text })),
+      questions: ["Which method?", "What normalization?", "What evidence?"],
+      claims: statements.map(statement => ({ quoteBlock: "[S1:1]", kind: "method", statement,
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null })),
+    }, usage: { inputTokens: 17, cachedTokens: 0, outputTokens: 8, tokenLimit: 100 } });
+    f.bodies.set(prefix + "distill-call1.json", raw);
+    f.db.prepare("UPDATE source_revision SET distill_calls=1 WHERE id=?").run(revisionId);
+    try {
+      const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) => {
+        if (name === "extract source") return;
+        if (name === "verify source excerpts") return callback();
+        throw new Error("Fixture stops before the next paid step.");
+      });
+      await new DistillWorkflow({} as ExecutionContext, f.env).run(
+        { payload: { revisionId, model: snapshot } } as WorkflowEvent<{ revisionId: string; model: ModelSpec }>, { do: stepDo } as unknown as WorkflowStep);
+      const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
+      expect(verified.claims.map((claim: { statement: string }) => claim.statement)).toEqual([
+        "The method uses normalization. ", "Ordinary method.", "The method uses 9 layers.",
+        "Persistent reference. ", "Block reference. ", "Literal `[S9:9]` example.", "Final method.",
+      ]);
+      expect(verified.dropped).toEqual(expect.arrayContaining([
+        { index: 0, reason: "claim-invalid-reference" }, { index: 3, reason: "unsupported-statement-numbers" },
+        { index: 5, reason: "empty-claim-statement" },
+        { index: 9, reason: "unsupported-statement-numbers" },
+      ]));
+      expect(verified.claims.every((claim: { quote: string }) => claim.quote === document.text)).toBe(true);
+      expect(f.bodies.get(prefix + "distill-call1.json")).toBe(raw);
+      expect(generateText).not.toHaveBeenCalled(); expect(resolveModelTransport).not.toHaveBeenCalled(); expect(f.dispatchCAS).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
   it.each([
     { name: "bibliography", passage: "References\nAda Example. Related research. 2021.", authors: "Ada Example", published: "2021" },
     { name: "body attribution", passage: "We compare the 2024 method described by Ann Example.", authors: "Ann Example", published: "2024" },

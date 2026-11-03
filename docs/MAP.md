@@ -343,8 +343,12 @@ and does not qualify K3.
 **Remaining quality repairs (proposed).** Diagnose each failure against its exact source revision: incorrect canonical
 text, wrong/missing selected evidence, lost statement conditions, numeric-format rejection or unsupported prose.
 A narrow supplementary-Unicode normalized-quote mapping repair is covered by synthetic regressions and storage-only
-Save/GET/range replay (IMPLEMENTATION §5). Current whole-block extraction takes exact matching; this is not evidence of
+Save/GET/range replay (IMPLEMENTATION §5), accepted in [#476](https://github.com/UnknownAlienHuman/eliot-research/pull/476)
+as `ec6ffbfa`. Current whole-block extraction takes exact matching; this is not evidence of
 a repaired fresh-model/corpus failure and does not close the semantic, anchor, claim-mode or latency gates.
+A separate first-call statement-reference repair applies the existing declared-label check before numeric verification
+and preserves candidate/drop ordering (IMPLEMENTATION §6). It has a synthetic whole-block/storage reproduction; no
+inline annotations were found in the inspected retained corpus reports, so it does not close their coverage failures.
 Repair defective PDF text only through the existing reviewed OCR/immutable Apply path; preserve old bytes and citations.
 For correct input, keep candidate statements atomic and complete, then review each against its own frozen evidence
 within the existing two calls. Guide/digest/glossary prose needs the same semantic scrutiny; adding a third verifier,

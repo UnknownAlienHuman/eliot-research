@@ -452,7 +452,15 @@ per task/dataset/metric/condition instead of a compound table row. A result's `v
 quantity; an explicit list such as two percentages is rejected even when both values occur in the quote and
 `valueNumber` is null. Scientific powers count as one quantity. Code does not split the list, infer conditions or relabel
 it to retain a card. Citation annotations are resolved separately from factual numbers; an unknown annotation rejects
-its item. Paid steps have no retry; only deterministic storage steps
+its item. First-call claim statements use the same declared-reference cleaner as guide text and second-call additions
+before numeric verification. Only the claim's own `quoteBlock`, its persistent form and corresponding `[block N]`
+annotation may be removed; unknown references and annotation-only statements reject the candidate. Code literals
+remain literal, factual numbers still need the original quote, and drop indexes retain the original candidate order.
+The raw first output, original block/range and frozen evidence selections remain unchanged. Historical cached candidate
+IDs are not recomputed and no output is automatically rechecked or regenerated. Synthetic retained outputs reproduce
+this gap through current whole-block verification and Workerd/D1/R2 storage; the inspected corpus reports contained no
+such inline annotations. This does not explain their missing anchors or establish model quality.
+Paid steps have no retry; only deterministic storage steps
 may use bounded native Workflow retries, with immutable R2 writes and natural `(revision, ordinal)` claim keys.
 Result cards preserve the original statement selected by call two instead of replacing it with a synthetic scalar
 sentence. Its primary numeric value must occur in that statement, and every authored number must be represented in
