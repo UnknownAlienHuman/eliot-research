@@ -232,6 +232,8 @@ frozen-scope validation; unknown identities and shorthand remain failures.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
 canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
 never retried automatically.
+An explicit repeat of an unconfirmed Send in the same composer reuses its ID, unchanged input and known chat target;
+a new question or a repeat after confirmation has a new ID. See IMPLEMENTATION §8 for the volatile-draft boundary.
 Missing citation/numeric-support spans remain API/eval diagnostics without frames in the owner answer. They do not
 change stream state. A completed generation can
 still fail the quality gate; diagnostics do not waive citation, expected-fact or owner-review requirements.
