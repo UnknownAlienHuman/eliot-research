@@ -2,6 +2,7 @@
 // source selection, active chat routing, and the three-pane workspace. This file
 // owns only chat/history presentation and the storage-backed K2 interactions.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { apiJson } from './api';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { Markdown } from './Markdown';
 import type { MarkdownReference } from './Markdown';
@@ -34,20 +35,6 @@ export interface ChatViewProps {
 export interface StudioViewProps {
   readonly projectId: string;
   readonly refreshKey: number;
-}
-
-async function apiErrorMessage(res: Response): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: { message?: string } };
-    if (body.error?.message) return body.error.message;
-  } catch { /* use the status when the API body is not readable */ }
-  return 'Request failed with status ' + res.status + '.';
-}
-
-async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { credentials: 'same-origin', ...init });
-  if (res.ok) return (await res.json()) as T;
-  throw new Error(await apiErrorMessage(res));
 }
 
 function hrefFor(projectId: string, citation: Citation): string {

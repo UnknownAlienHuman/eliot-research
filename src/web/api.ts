@@ -1,5 +1,19 @@
 import type { MeResponse } from "../shared/api";
 
+export async function apiErrorMessage(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: { message?: string } };
+    if (body.error?.message) return body.error.message;
+  } catch { /* use the status when the API body is not readable */ }
+  return "Request failed with status " + res.status + ".";
+}
+
+export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, { credentials: "same-origin", ...init });
+  if (res.ok) return (await res.json()) as T;
+  throw new Error(await apiErrorMessage(res));
+}
+
 export interface MeRequestError extends Error {
   readonly status: number;
 }

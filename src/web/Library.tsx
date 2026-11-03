@@ -3,6 +3,7 @@
 // No donor runtime/query/byte helpers. Root wires Routes/App/Shell + this CSS
 // and owns routes/schema/shared/api. Ranges: UTF-8 bytes, end-exclusive.
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { apiErrorMessage, apiJson } from "./api";
 import { Link, useLocation, useParams, useSearchParams } from "react-router";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project, Revision, Source, SourceSelection } from "../shared/api";
@@ -41,18 +42,6 @@ function revisionLabel(r: Revision, currentId: string): string {
   const pos = r.id === currentId ? "Current" : "Saved";
   const date = formatRevisionDate(r.createdAt);
   return "Revision " + r.revisionNo + " \u00b7 " + pos + " \u00b7 " + stateLabel(r.readableState) + (date ? " \u00b7 " + date : "");
-}
-async function apiErrorMessage(res: Response): Promise<string> {
-  try {
-    const b = (await res.json()) as { error?: { message?: string } };
-    if (b?.error?.message) return b.error.message;
-  } catch { /* fall through to status text */ }
-  return "Request failed with status " + res.status + ".";
-}
-async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { credentials: "same-origin", ...init });
-  if (res.ok) return res.json() as Promise<T>;
-  throw new Error(await apiErrorMessage(res));
 }
 function decodeCanonical(bytes: ArrayBuffer): string {
   return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
