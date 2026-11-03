@@ -127,6 +127,8 @@ its text preview, and Apply a new readable revision while retaining the original
 
 1. Bind D1, R2, Workers AI and `IngestWorkflow`; apply `migrations/0001_library.sql`.
 2. Implement projects, shared Library sources, project memberships and immutable revisions.
+   Add sources exposes the existing Library in bounded pages and attaches a saved source without another upload,
+   conversion or understanding call. Already attached sources are excluded; Refresh rescans Library changes.
 3. Browser batch UX sends **one file per request**, with at most two uploads in flight. The API accepts one file up to
    25 MiB, never a 100 MiB buffered multipart batch. Text and URL have separate JSON routes/shapes. IMPLEMENTATION §4.
 4. Hash, store original under an immutable R2 key, create pending rows and start deterministic

@@ -12,6 +12,7 @@ import { MaterialSymbol } from "./ui/MaterialSymbol";
 import { SourceUnderstanding } from "./Understanding";
 import type { SuggestedQuestion } from "./Understanding";
 import { SourceOcr } from "./Ocr";
+import { LibraryPicker } from "./LibraryPicker";
 export interface OutlineItem { label: string; start: number; end: number; }
 const FILE_LIMIT = 25 * 1024 * 1024;
 const POLL_MS = 3000;
@@ -197,6 +198,7 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
   const [actionFailure, setFailure] = useState("");
   const [rows, setRows] = useState<UploadRow[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [textTitle, setTextTitle] = useState("");
   const [textBody, setTextBody] = useState("");
   const [url, setUrl] = useState("");
@@ -307,7 +309,7 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
       await load();
     } finally { setUploading(false); }
   }
-  async function attach(sourceId: string) {
+  async function attach(sourceId: string): Promise<boolean> {
     try {
       await apiJson("/api/projects/" + encodeURIComponent(projectId) + "/sources/attach", {
         method: "POST",
@@ -318,7 +320,8 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
         ? { ...row, state: "attached", detail: "Attached from the shared Library." }
         : row));
       await load();
-    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not attach the existing source."); }
+      return true;
+    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not attach the existing source."); return false; }
   }
   async function submitDuplicate(path: string, label: string, payload: unknown): Promise<boolean> {
     let res: Response;
@@ -443,13 +446,15 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
         )}
         {cursor ? <button className="er-button er-button--tonal" type="button" onClick={() => void loadMore()}>Load more sources</button> : null}
       </div>
-      <dialog ref={dialogRef} id={dialogId} className="er-dialog er-sources-pane__dialog" aria-labelledby={dialogHeadingId}>
+      <dialog ref={dialogRef} id={dialogId} className="er-dialog er-sources-pane__dialog" aria-labelledby={dialogHeadingId} onClose={() => setLibraryOpen(false)}>
         <div className="er-sources-pane__dialog-head">
           <h2 className="er-dialog__title" id={dialogHeadingId} ref={dialogHeadingRef} tabIndex={-1}>Add sources</h2>
           <button className="er-button er-button--text" type="button" onClick={() => dialogRef.current?.close()}>Close</button>
         </div>
         <div className="er-dialog__body">
           {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
+          {libraryOpen ? <LibraryPicker projectId={projectId} onAttach={attach} onClose={() => dialogRef.current?.close()} />
+            : <button className="er-button er-button--tonal" type="button" onClick={() => setLibraryOpen(true)}>Browse Library</button>}
           <div className="er-card er-field er-lib__drop">
             <label htmlFor={fileInputId}>Choose files</label>
             <input id={fileInputId} type="file" multiple disabled={uploading} onChange={(event) => { void uploadMany(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />

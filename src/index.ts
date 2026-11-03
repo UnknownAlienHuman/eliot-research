@@ -5,7 +5,7 @@ import { getAgentByName, routeAgentRequest } from "agents";
 import { AuthError, assertOrigin, authenticate } from "./auth";
 import type { Actor } from "./auth";
 import type { ApiError, MeResponse } from "./shared/api";
-import { addSource, attachSource, createProject, getProject, getSource, LibraryError, listProjects, listSources, MAX_SOURCE_BYTES, setProjectScope, updateProject } from "./library";
+import { addSource, attachSource, availableSources, createProject, getProject, getSource, LibraryError, listProjects, listSources, MAX_SOURCE_BYTES, setProjectScope, updateProject } from "./library";
 import { readOriginal, readOutline, readText } from "./read";
 import { captureUrl, UrlGuardError } from "./url-guard";
 import { getModelConnection, getModelProviders, modelProvidersSchema, readModelCatalog, refreshModelCatalog, requireCatalogModel, saveModelProviders, validGatewayId } from "./models";
@@ -179,6 +179,7 @@ app.patch("/api/projects/:id", async (c) => {
   }) });
 });
 app.get("/api/projects/:id/sources", async (c) => c.json(await listSources(c.env, c.get("actor"), uuid.parse(c.req.param("id")), uuid.optional().parse(c.req.query("cursor")))));
+app.get("/api/projects/:id/sources/available", async (c) => c.json(await availableSources(c.env, c.get("actor"), uuid.parse(c.req.param("id")), c.req.query("cursor"))));
 app.post("/api/projects/:id/sources/attach", async (c) => {
   const input = z.object({ sourceId: uuid }).strict().parse(await c.req.json());
   return c.json(await attachSource(c.env, c.get("actor"), uuid.parse(c.req.param("id")), input.sourceId));

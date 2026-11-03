@@ -1,4 +1,5 @@
 import type { Actor } from "./auth";
+import { z } from "zod";
 import type { Project, Revision, Source } from "./shared/api";
 import { recoverIngest, STATUS_UNAVAILABLE, STORAGE_FAILURE } from "./ingest-completion";
 
@@ -49,6 +50,23 @@ export async function listSources(env: Env, actor: Actor, projectId: string, cur
     AND (? IS NULL OR (s.created_at,s.id)<(SELECT created_at,id FROM source WHERE id=?))
     ORDER BY s.created_at DESC,s.id DESC LIMIT 51`).bind(projectId, cursor ?? null, cursor ?? null).all<Source>();
   return { sources: result.results.slice(0, 50).map((source) => ({ ...source, enabled: Boolean(source.enabled) })), nextCursor: result.results.length > 50 ? result.results[49]?.id : null };
+}
+export async function availableSources(env: Env, actor: Actor, projectId: string, cursor: string | undefined) {
+  await getProject(env, actor, projectId);
+  let before: [string, number, string] | undefined;
+  if (cursor !== undefined) {
+    try {
+      if (cursor.length > 512) throw new Error("cursor");
+      before = z.tuple([z.literal(projectId), z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), z.uuid()]).parse(JSON.parse(cursor));
+    } catch { throw new LibraryError("invalid", "This Library cursor is invalid. Refresh the Library.", 400); }
+  }
+  const result = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION}
+    WHERE s.state='active' AND NOT EXISTS(SELECT 1 FROM project_source ps WHERE ps.project_id=? AND ps.source_id=s.id)
+    ${before ? "AND (s.created_at,s.id)<(?,?)" : ""}
+    ORDER BY s.created_at DESC,s.id DESC LIMIT 51`)
+    .bind(projectId, ...(before ? [before[1], before[2]] : [])).all<Source>();
+  const sources = result.results.slice(0, 50), last = sources.at(-1);
+  return { sources, nextCursor: result.results.length > 50 && last ? JSON.stringify([projectId, last.createdAt, last.id]) : null };
 }
 export async function setProjectScope(env: Env, actor: Actor, input: { projectId: string; sourceIds: string[] }) {
   await getProject(env, actor, input.projectId);
