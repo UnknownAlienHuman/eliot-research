@@ -155,11 +155,22 @@ The browser may select many files but sends one file/request with at most two co
 routes. Buffer once, hash SHA-256, store original, create pending rows and start deterministic `ingest-<revisionId>`.
 An exact duplicate returns the existing source plus Attach; never silently merge.
 
-The HTTP surface is `/api/projects`, `/api/projects/:id/sources/{file,text,url,attach}`, `/api/sources/:id` and
+The HTTP surface is `/api/projects`, `/api/projects/:id/sources/{file,text,url,attach,available}`, `/api/sources/:id` and
 `/api/revisions/:id/{text,range,outline,original}`. The file route accepts one multipart `file`; text/URL use separate,
 strict JSON shapes. An explicit `sourceId` replacement creates a new revision of that attached source, including a
 deliberate reconversion of identical bytes. Ordinary duplicate uploads return 409 plus the existing identity; a
 conditional insert in the D1 batch guards concurrent duplicates without a second identity store.
+
+Add sources → Browse Library lists active shared sources not already attached to that project, including saved sources
+not yet readable. `GET /api/projects/:id/sources/available` reads metadata only: 50 rows plus one lookahead, ordered by
+immutable `(source.created_at,source.id)` descending. Its value cursor is JSON `[projectId,createdAt,id]`, checked for
+project, safe nonnegative timestamp and UUID. Attaching a row cannot move the cursor or admit conversion/understanding;
+the existing idempotent Attach reuses the shared source identity. Its source read may finish storage publication
+of an already completed ingest from the existing Workflow result and matching retained artifacts (§4); it starts no
+new conversion, understanding or model call. Membership insertion remains idempotent.
+An attached row opens the listed revision directly, even when it falls beyond the project's loaded source pages.
+Refresh restarts the list for new sources or eligibility changes above its cursor. Closing the dialog cancels reads;
+submitted Attach keeps its original project. The dialog uses the existing query client and Material controls.
 
 Revision metadata records `conversion_calls` before dispatch, nullable `conversion_tokens` when the service returns
 usage, and `conversion_ms`. Load/commit storage steps allow two retries (three attempts, one-second delay, 30 seconds

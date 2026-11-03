@@ -190,6 +190,28 @@ try {
     await expect.poll(() => chatCreatePosts).toBe(1);
     assert.equal(turnPosts, 0, 'A failed synthetic chat-create must not reach the turn endpoint.');
 
+    // The first history read must not restore its old scope over an accepted suggestion.
+    const chatUrl = origin + '/api/projects/' + project + '/chats/' + chats[0];
+    const savedChat = await api('/api/projects/' + project + '/chats/' + chats[0]);
+    let heldHistory;
+    const historyHandler = async route => { heldHistory = route; };
+    await page.route(chatUrl, historyHandler);
+    await navigate(chatPath(project, chats[0]));
+    await expect.poll(() => Boolean(heldHistory)).toBe(true);
+    await questionBox.fill('Draft before the delayed history read.');
+    await navigate(sourcePath(project, sourceB.id, currentRevisionId));
+    await openCurrentQuestion();
+    await page.getByRole('dialog', { name: 'Replace chat draft', exact: true })
+      .getByRole('button', { name: 'Use suggested question', exact: true }).click();
+    const oldTurn = { turnId: crypto.randomUUID(), question: 'Earlier source A question', answer: 'Earlier saved source A answer', state: 'completed',
+      createdAt: 1, historyVersion: 1, model: 'fixture', scopeMode: 'explicit', sourceIds: [sourceA.id], revisionIds: [sourceA.currentRevisionId],
+      citations: [], invalidLabels: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0, firstTokenMs: null, totalMs: 0, error: null };
+    await heldHistory.fulfill({ json: { ...savedChat, turns: [oldTurn] } });
+    await expect(page.getByText(oldTurn.answer, { exact: true })).toBeVisible();
+    await expect(questionBox).toHaveValue(questionB);
+    await revealScope(sourceB);
+    await page.unroute(chatUrl, historyHandler);
+
     // Start in a known existing chat and deliberately select only source A. The question
     // action must replace that visible workspace scope only after explicit confirmation.
     await navigate(chatPath(project, chats[0]));
@@ -294,7 +316,7 @@ try {
       questions: { overview: true, currentReader: true, historicalReaderTextOnly: true },
       prefillCreatesOrSends: 0, visibleSourceScope: true, replaceDialog: { escapeKeepsDraft: true, keepDraftKeepsScope: true, confirmReplacesAndSelectsSource: true },
       heldTurnPosts: turnPosts, lateSuccessAndErrorPreserveNewDraft: true,
-      projectAndRevisionIsolation: true, unexpectedWrites, unexpectedTurnPosts, newModelCalls: 0 }));
+      projectAndRevisionIsolation: true, delayedInitialHistoryPreservesSuggestedScope: true, unexpectedWrites, unexpectedTurnPosts, newModelCalls: 0 }));
     await context.close();
   }
   assert.equal(totalUnexpectedWrites, 0);
