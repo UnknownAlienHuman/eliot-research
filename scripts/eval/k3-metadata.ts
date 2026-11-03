@@ -48,15 +48,19 @@ try {
     await db.batch(unstable_splitSqlQuery(await readFile(path.join(root, 'migrations', file), 'utf8')).map(sql => db.prepare(sql)));
   const boundaryStatements = Array.from({ length: 31 }, (_, index) => 'The method uses variant ' + String.fromCharCode(65 + index % 26) + (index >= 26 ? 'B' : '') + '.');
   const boundaryExtra = ['The method uses an extra variant.', 'The source retains extra evidence.'];
-  for (const mode of ['unknown', 'historical', 'newer-head', 'cached-unicode', 'extraction-references', 'code-range-references', 'byte-reuse', 'decimal-comma', 'cached-decimal-comma', 'empty-additional', 'empty-additional-only', 'claim-boundary', 'prose', 'cached-prose', 'empty-prose']) {
+  for (const mode of ['unknown', 'historical', 'newer-head', 'cached-unicode', 'extraction-references', 'code-range-references', 'byte-reuse', 'decimal-comma', 'cached-decimal-comma', 'empty-additional', 'empty-additional-only', 'claim-boundary', 'prose', 'cached-prose', 'empty-prose', 'code-prose', 'rich-prose', 'cached-rich-prose', 'empty-primary', 'cached-empty-primary', 'ambiguous-claim', 'cached-ambiguous-claim']) {
     const source = crypto.randomUUID(), revision = crypto.randomUUID(), newer = crypto.randomUUID(), prefix = 'source/' + revision + '/';
     const scalar = mode === 'decimal-comma' || mode === 'cached-decimal-comma';
-    const cached = mode === 'cached-unicode' || mode === 'cached-decimal-comma' || mode === 'cached-prose';
+    const cached = mode.startsWith('cached-');
     const noClaims = mode === 'empty-additional-only';
+    const emptyPrimary = mode === 'empty-primary' || mode === 'cached-empty-primary', rich = mode === 'rich-prose' || mode === 'cached-rich-prose';
+    const zeroClaims = noClaims || emptyPrimary;
+    const ambiguousClaim = mode === 'ambiguous-claim' || mode === 'cached-ambiguous-claim';
     const boundary = mode === 'claim-boundary', sparse = mode === 'prose' || mode === 'cached-prose', noProse = mode === 'empty-prose';
     const lead = 'UTF-8 reuse fixture 😀 я. The method uses normalization. The source retains canonical evidence. The method is described in this source. ';
     const chunk = lead + 'x'.repeat(1023 - new TextEncoder().encode(lead).length) + '\n';
-    const text = boundary ? 'The method uses normalization. The source retains canonical evidence. The method is described in this source. ' + [...boundaryStatements, ...boundaryExtra].join(' ')
+    const text = mode === 'code-prose' ? 'The method uses normalization. The source retains canonical evidence. The method is described in this source. Literal 1, [S1:1], ++ and // are code.'
+      : boundary ? 'The method uses normalization. The source retains canonical evidence. The method is described in this source. ' + [...boundaryStatements, ...boundaryExtra].join(' ')
       : scalar ? 'Потеря 😀: 0,500. The method uses normalization. The source retains canonical evidence. The method is described in this source.'
       : mode === 'byte-reuse' ? chunk.repeat(512)
       : mode === 'cached-unicode' ? 'Prefix \u{1f30d}. The \u201cexact quote\u201d ends here. Tail. The method uses normalization. The source retains canonical evidence. The method is described in this source.'
@@ -94,7 +98,7 @@ try {
           task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null })) }, usage }));
     }
     if (mode === 'empty-additional' || noClaims) {
-      const statements = ['[S1:1]', ' \n\t', ...(noClaims ? [] : ['The method uses normalization.', 'The method uses 9999 layers.'])];
+      const statements = ['([S1:1])', '**[S1:1]**', ...(noClaims ? [] : ['The method uses normalization.', 'The method uses 9999 layers.'])];
       originals.set('distill-call2.json', JSON.stringify({ output: { supportedClaims: [],
         additionalClaims: statements.map(statement => ({ quoteBlock: '[S1:1]', kind: 'method', statement,
           task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null })), guide, digest: [guide[0]], glossary: [] }, usage }));
@@ -108,17 +112,36 @@ try {
         additionalClaims: ['[S1:1]', ...boundaryExtra].map(candidate), guide, digest: [guide[0]], glossary: [] }, usage }));
     }
     if (sparse || noProse) {
-      const labelOnly = { labels: ['[S1:1]'], text: '[S1:1]' }, definition = 'The method [S1:1] uses normalization.';
+      const labelOnly = { labels: ['[S1:1]'], text: noProse ? '**[S1:1]**' : cached ? '([S1:1])' : '[S1:1].' }, definition = 'The method [S1:1] uses normalization.';
       originals.set('distill-call2.json', JSON.stringify({ output: { supportedClaims: ['C0'], additionalClaims: [],
         guide: noProse ? [labelOnly, labelOnly, labelOnly] : [{ ...guide[0], text: guide[0].text + ' [S1:1]' }, guide[1], labelOnly],
         digest: noProse ? [labelOnly] : [{ labels: ['[S1:1]'], text: definition }, labelOnly],
         glossary: [
           { en: '', ru: 'Нормализация', definition, labels: ['[S1:1]'] },
           { en: 'Normalization', ru: ' \t', definition, labels: ['[S1:1]'] },
-          { en: 'Normalization', ru: 'Нормализация', definition: '[S1:1]', labels: ['[S1:1]'] },
+          { en: 'Normalization', ru: 'Нормализация', definition: '**[S1:1]**', labels: ['[S1:1]'] },
           { en: 'Normalization', ru: 'Нормализация', definition: ' \n\t', labels: ['[S1:1]'] },
           { en: 'Normalization', ru: 'Нормализация', definition, labels: ['[S1:1]'] },
         ] }, usage }));
+    }
+    if (emptyPrimary || ambiguousClaim) {
+      const raw = JSON.parse(originals.get('distill-call1.json'));
+      raw.output.claims[0].statement = emptyPrimary ? '([S1:1])' : '~[S1:1]~';
+      originals.set('distill-call1.json', JSON.stringify(raw));
+      if (emptyPrimary && !cached) {
+        const output = JSON.parse(originals.get('distill-call2.json'));
+        output.output.supportedClaims = [];
+        originals.set('distill-call2.json', JSON.stringify(output));
+      }
+    }
+    if (mode === 'code-prose' || rich) {
+      const output = JSON.parse(originals.get('distill-call2.json'));
+      output.output.digest = [{ labels: ['[S1:1]'], text: rich ? '[S1:1](https://example.test)' : '`++`' }];
+      if (!rich) {
+        output.output.guide = [...guide.slice(0, 2), { labels: ['[S1:1]'], text: '~~~\n[S1:1]\n~~~' }];
+        output.output.glossary = [{ en: 'Code', ru: 'Код', definition: '`//`', labels: ['[S1:1]'] }];
+      }
+      originals.set('distill-call2.json', JSON.stringify(output));
     }
     const canonicalQuote = mode === 'byte-reuse' ? chunk : mode === 'cached-unicode' ? 'The \u201cexact quote\u201d ends here.' : text;
     const start = new TextEncoder().encode(text.slice(0, text.indexOf(canonicalQuote))).length;
@@ -127,7 +150,7 @@ try {
       // Retained synthetic candidate: current extraction quotes whole canonical blocks exactly.
       // Save-existing still rechecks cached candidates through the conservative normalized matcher.
       originals.set('distill-verified.json', JSON.stringify({
-        claims: [{ kind: scalar ? 'result' : 'method', statement: scalar ? 'Потеря 😀: 0,500.' : 'The source retains a quotation.',
+        claims: [{ kind: scalar ? 'result' : 'method', statement: emptyPrimary ? '****' : ambiguousClaim ? '~~' : scalar ? 'Потеря 😀: 0,500.' : 'The source retains a quotation.',
           quote: mode === 'cached-unicode' ? 'The "exact quote" ends here.' : text, block: 1,
           task: null, metric: scalar ? 'loss' : null, dataset: null, valueText: scalar ? '0,500' : null, unit: null,
           conditions: null, start, end, ambiguous: false, valueNumber: scalar ? 500 : null }],
@@ -147,15 +170,23 @@ try {
     const p = '/api/sources/' + source + '/understanding';
     if (cached) await request(p, { revisionId: revision, saveAvailable: true });
     for (let repeat = 0; repeat < 2; repeat++) {
-      const before = await request(p + '?revisionId=' + revision); assert.equal(before.state, noProse ? 'failed' : noClaims || sparse ? 'partial' : 'done', JSON.stringify({ mode, error: before.report?.error }));
+      const before = await request(p + '?revisionId=' + revision); assert.equal(before.state, noProse ? 'failed' : zeroClaims || sparse || rich || ambiguousClaim ? 'partial' : 'done', JSON.stringify({ mode, error: before.report?.error }));
       if (mode === 'extraction-references') assert.equal(before.claims[0]?.statement, 'The method uses normalization. ');
       if (mode === 'code-range-references') {
         assert.equal(before.claims[0]?.statement, 'The method uses normalization.');
         assert(before.report.dropped.some(item => item.index === 0 && item.reason === 'claim-invalid-reference'));
       }
       assert.equal(before.authors, metadata.authors); assert.equal(before.published, metadata.published); assert.equal(before.report.usage.calls, 2);
-      assert.equal(before.claims.length, noClaims || noProse ? 0 : boundary ? 32 : 1);
-      if (!noClaims && !noProse) { assert.equal(before.claims[0].quote, canonicalQuote); assert.equal(before.claims[0].start, start); assert.equal(before.claims[0].end, end); }
+      assert.equal(before.claims.length, zeroClaims || noProse ? 0 : boundary ? 32 : 1);
+      if (!zeroClaims && !noProse) { assert.equal(before.claims[0].quote, canonicalQuote); assert.equal(before.claims[0].start, start); assert.equal(before.claims[0].end, end); }
+      if (emptyPrimary) assert(before.report.dropped.some(item => item.reason === (cached ? 'retained-empty-statement' : 'empty-claim-statement')));
+      if (ambiguousClaim) assert.equal(before.claims[0].statement, '~~');
+      if (rich) assert.equal(before.digest, '[R' + revision + ':1](https://example.test)\n\n[R' + revision + ':1]');
+      if (mode === 'code-prose') {
+        assert(before.guide.includes('~~~\n[S1:1]\n~~~'));
+        assert.equal(before.digest, '`++`\n\n[R' + revision + ':1]');
+        assert.equal(before.glossary[0].definition, '`//`');
+      }
       if (boundary) {
         assert.deepEqual(before.claims.map(claim => claim.statement), [...boundaryStatements, boundaryExtra[0]]);
         assert(before.report.dropped.some(item => item.index === 2 && item.reason === 'claim-output-bound'));
@@ -187,13 +218,13 @@ try {
       } else await request(p, { revisionId: revision, saveAvailable: true });
     }
     const claim = await db.prepare('SELECT source_revision_id,block_index,quote,start_byte,end_byte,value_text,value_number FROM claim WHERE source_revision_id=?').bind(revision).first();
-    assert.deepEqual(claim, noClaims || noProse ? null : { source_revision_id: revision, block_index: 1, quote: canonicalQuote, start_byte: start, end_byte: end,
+    assert.deepEqual(claim, zeroClaims || noProse ? null : { source_revision_id: revision, block_index: 1, quote: canonicalQuote, start_byte: start, end_byte: end,
       value_text: scalar ? '0,500' : null, value_number: scalar ? 0.5 : null });
     const row = await db.prepare('SELECT authors,published,current_revision_id AS head FROM source WHERE id=?').bind(source).first();
     assert.deepEqual(row, { ...metadata, head: mode === 'newer-head' ? newer : revision });
     for (const [name, body] of originals) { const object = await bucket.get(prefix + name); assert.equal(await object.text(), body); assert.equal(object.etag, etags.get(prefix + name)); }
     assert.equal((await db.prepare('SELECT distill_calls FROM source_revision WHERE id=?').bind(revision).first()).distill_calls, 2);
   }
-  console.log(JSON.stringify({ scope: 'K3_METADATA_STORAGE', runtime: 'pinned Workerd/Workflows/D1/R2', cases: 15, understandingContent: true, claimOutputBound32: true, decimalCommaScalar: true, emptyAdditionalClaims: true, cachedUnicodeQuoteRecheck: true, extractionStatementReferences: true, codeRangeReferences: true, byteReuse: { sourceBytes: 524288, blocks: 512, wholeSourceEncodeForbidden: true }, paidProducerSteps: 'SKIPPED_WITH_RETAINED_SYNTHETIC_OUTPUT', newModelCalls: 0,
+  console.log(JSON.stringify({ scope: 'K3_METADATA_STORAGE', runtime: 'pinned Workerd/Workflows/D1/R2', cases: 22, understandingContent: true, ambiguousMarkdownPartial: true, claimOutputBound32: true, decimalCommaScalar: true, emptyAdditionalClaims: true, cachedUnicodeQuoteRecheck: true, extractionStatementReferences: true, codeRangeReferences: true, byteReuse: { sourceBytes: 524288, blocks: 512, wholeSourceEncodeForbidden: true }, paidProducerSteps: 'SKIPPED_WITH_RETAINED_SYNTHETIC_OUTPUT', newModelCalls: 0,
     historicalRecordedCallsPerCase: 2, metadataAndHeadPreserved: true, sourceAndRawBytesEtagsPreserved: true, repeatedGetSave: true, semanticAcceptance: 'NOT_RUN' }));
 } finally { await mf.dispose(); }

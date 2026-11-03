@@ -1,11 +1,13 @@
 interface CodeRange { start: number; end: number }
+interface FencedCodeRange extends CodeRange { contentStart: number; contentEnd: number; closed: boolean }
 
 /** Ordered half-open UTF-16 ranges for the supported top-level code fences. */
-export function fencedRanges(text: string): CodeRange[] {
-  const ranges: CodeRange[] = [];
+export function fencedCodeRanges(text: string): FencedCodeRange[] {
+  const ranges: FencedCodeRange[] = [];
   const parts = text.split("\n");
   let fence: { char: string; count: number } | undefined;
   let fenceStart = 0;
+  let contentStart = 0;
   let pos = 0;
   for (let i = 0; i < parts.length; i++) {
     const line = parts[i] ?? "";
@@ -15,18 +17,23 @@ export function fencedRanges(text: string): CodeRange[] {
       if (open !== undefined) {
         fence = { char: open[0] ?? "`", count: open.length };
         fenceStart = pos;
+        contentStart = lineEnd;
       }
     } else {
       const trimmed = line.trim();
       if (trimmed.startsWith(fence.char.repeat(fence.count)) && new RegExp(`^${fence.char}+$`).test(trimmed)) {
-        ranges.push({ start: fenceStart, end: lineEnd });
+        ranges.push({ start: fenceStart, end: lineEnd, contentStart, contentEnd: pos, closed: true });
         fence = undefined;
       }
     }
     pos = lineEnd;
   }
-  if (fence !== undefined) ranges.push({ start: fenceStart, end: text.length });
+  if (fence !== undefined) ranges.push({ start: fenceStart, end: text.length, contentStart, contentEnd: text.length, closed: false });
   return ranges;
+}
+
+export function fencedRanges(text: string): CodeRange[] {
+  return fencedCodeRanges(text).map(({ start, end }) => ({ start, end }));
 }
 
 /** Exact backtick runs outside fences; unmatched openers remain literal prose. */

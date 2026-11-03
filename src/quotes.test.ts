@@ -1,6 +1,6 @@
 import { countNumericQuantities, numbersSupported } from "./numbers.js";
 import { describe, expect, it, vi } from "vitest";
-import { cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "./quotes.js";
+import { checkDistillContent, cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "./quotes.js";
 import type { CandidateClaim, VerifiedClaim } from "./quotes.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
@@ -671,6 +671,19 @@ describe("cleanDistillText", () => {
     const kept = cleanDistillText(text, ["[S1:37]"], rev, true);
     expect(kept.invalidReferences).toBe(1);
     expect(kept.text).toBe("Confirmed by block [R" + rev + ":37]. See `[S1:37]` and [S9:1].");
+  });
+});
+
+describe("checkDistillContent", () => {
+  const revision = "revision", labels = ["[S1:1]"];
+  it.each(["", " \n\t", ". ()", "[S1:1].", "([S1:1])", "**[S1:1]**", "**([S1:1])**", "[Rrevision:1].", "([block 1])", "~~~\n \n~~~", "```js\n\n```"])("rejects known empty content %j", (text) => {
+    expect(checkDistillContent(text, labels, revision)).toEqual({ empty: true, requiresReview: false });
+  });
+  it.each(["**A fact. [S1:1]**", "Смысл [S1:1].", "∑", "x ≤ y", "50%", "`++`", "`//`", "`<b>`", "``literal ` [S1:1]``", "~~~\n[S1:1]\n~~~", "```html\n<b>\n```"])("keeps ordinary text and supported code %j", (text) => {
+    expect(checkDistillContent(text, labels, revision)).toEqual({ empty: false, requiresReview: false });
+  });
+  it.each(["[S1:1](https://example.test)", "![image](https://example.test)", "<!-- hidden -->", "<span>hidden</span>", "&#32;", "&Tab;", "[^note]", "[note]: https://example.test", "[^note]: Footnote.", "    [S1:1]", "```", "~[S1:1]~", "~~[S1:1]~~"])("retains ambiguous Markdown for review %j", (text) => {
+    expect(checkDistillContent(text, labels, revision)).toEqual({ empty: false, requiresReview: true });
   });
 });
 
