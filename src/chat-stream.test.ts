@@ -320,6 +320,32 @@ describe("ChatAgent older history", () => {
       expect(fetchCalls).toBe(0);
     } finally { h.db.close(); h.d1.close(); }
   });
+  it.each(["notice", "clear"])("includes the complete out-of-page settlement %s in a newer queue projection", async (outcome) => {
+    const h = makeHarness(); try {
+      await h.agent.onStart(); seed(h.db, 80);
+      const agent = h.agent as unknown as { current: Promise<unknown>; changeState(state: WireAgentState): void;
+        writeTurn(t: TurnView, notify?: boolean): void; notifyQueued(queued: { turnId: string; question: string } | null): void };
+      agent.current = new Promise(() => {});
+      const pending: TurnView = { ...turn(1), settlementPending: true, settlementError: "Older answer needs settlement" };
+      agent.changeState({ active: pending.turnId, queued: null, stopRequested: false });
+      agent.writeTurn(pending, false);
+      const before = await h.agent.getSnapshot(projectId);
+      expect(before.turns.some((item) => item.turnId === pending.turnId)).toBe(false);
+      expect(before.settlementError).toBe(pending.settlementError);
+      if (outcome === "clear") agent.writeTurn(turn(1), false);
+      const snapshot = await h.agent.getSnapshot(projectId);
+      const queued: RunTurnInput = { projectId, chatId, turnId: "queued-notice", question: "Keep the notice and queue together", scopeMode: "empty" };
+      agent.changeState({ active: pending.turnId, queued, stopRequested: false }); agent.notifyQueued({ turnId: queued.turnId, question: queued.question });
+      const frame = JSON.parse(String(vi.mocked(h.agent.broadcast).mock.calls.at(-1)?.[0] ?? "{}"));
+      expect(frame).toEqual({ type: "queued", stateVersion: expect.any(Number), queued: { turnId: queued.turnId, question: queued.question },
+        settlementError: outcome === "clear" ? null : pending.settlementError });
+      expect(frame.stateVersion).toBeGreaterThan(snapshot.stateVersion);
+      const latest = await h.agent.getSnapshot(projectId);
+      expect({ stateVersion: latest.stateVersion, queued: latest.queued, settlementError: latest.settlementError })
+        .toEqual({ stateVersion: frame.stateVersion, queued: frame.queued, settlementError: frame.settlementError });
+      expect(fetchCalls).toBe(0); expect(requireAvailableModel).not.toHaveBeenCalled();
+    } finally { h.db.close(); h.d1.close(); }
+  });
   it.each(["", "{}", "[]", "null", '["other-chat",1,"turn"]', '["wire-chat",-1,"turn"]', '["wire-chat",1.5,"turn"]', '["wire-chat",1,""]', "x".repeat(513)])("rejects malformed or foreign cursor %s without model work", async (cursor) => {
     const h = makeHarness(); try {
       await h.agent.onStart(); await expect(h.agent.getTurnPage(projectId, cursor)).rejects.toMatchObject({ code: "invalid", status: 400 });

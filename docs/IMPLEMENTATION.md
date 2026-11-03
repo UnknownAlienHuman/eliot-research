@@ -677,7 +677,10 @@ The materialization bound below is implemented by the current repair slice; chat
   The same DO has one constant-size `chat_history_clock` row for ordering queue/settlement projections across HTTP
   and WebSocket. Existing state/payload writes advance it before writing; a failed write can leave an unused version
   but cannot publish changed state with an older version. Repeated reads do not advance it. Snapshots and queue frames
-  expose `stateVersion`; older projections cannot resurrect a queue or an obsolete settlement notice. This is transport
+  expose `stateVersion` and the complete queue/settlement-notice projection, including an explicit null to clear a notice.
+  Queue frames use the same bounded pending-turn/latest-50 ID projection as snapshots, including notices for pending
+  turns outside the current page. Both go through the same client merge: a newer queue frame may supersede an older
+  snapshot only with its notice/clear included. Older projections cannot resurrect a queue or an obsolete notice. This is transport
   metadata only, not an admission mechanism, effects ledger or another message store. UI sorts by creation time/ID,
   so delayed pages/snapshots cannot regress streamed text or erase older rows. Ordinary overlapping reconnects keep
   the older cursor. A disjoint latest window after

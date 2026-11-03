@@ -391,8 +391,7 @@ export function ChatView({
             setChatReady(true);
             mergeSnapshotState({ stateVersion: message.stateVersion ?? 0, queued: message.queued ?? null, settlementError: message.settlementError ?? null });
           } else if (message.type === 'queued') {
-            const version = message.stateVersion ?? 0;
-            if (version >= stateVersion.current) { stateVersion.current = version; setQueued(message.queued ?? null); }
+            mergeSnapshotState({ stateVersion: message.stateVersion ?? 0, queued: message.queued ?? null, settlementError: message.settlementError ?? null });
           } else if (message.type === 'turn' && message.turn !== undefined) {
             const receivedTurn = message.turn;
             mergeTurns([receivedTurn]);

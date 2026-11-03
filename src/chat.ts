@@ -11,7 +11,7 @@ import type { ModelSpec } from "./models";
 import { modelFailure, reportedProviderUsage, resolveModelTransport } from "./model-transport";
 import { LibraryError } from "./library";
 import { readText } from "./read";
-import type { RunTurnInput, TurnPage, TurnView } from "./shared/api";
+import type { ChatSnapshotState, RunTurnInput, TurnPage, TurnView } from "./shared/api";
 
 interface ChatState { active: string | null; queued: RunTurnInput | null; stopRequested: boolean }
 interface StoredInput { projectId: string; chatId: string; hasModel: boolean; hasSourceIds: boolean }
@@ -124,7 +124,16 @@ export class ChatAgent extends Agent<Env, ChatState> {
     this.bumpHistoryClock(); this.setState(state);
   }
   private notifyQueued(queued: Pick<RunTurnInput, "turnId" | "question"> | null) {
-    this.notify(JSON.stringify({ type: "queued", queued, stateVersion: this.historyClock() }));
+    try { this.notify(JSON.stringify({ type: "queued", ...this.snapshotState(), queued })); }
+    catch { /* Projection reads, like delivery, cannot interrupt the durable queue transition. */ }
+  }
+  private snapshotState(): ChatSnapshotState {
+    const { queued, active } = this.state;
+    const pending = this.sql<{ id: string; error: string | null }>`SELECT id,json_extract(payload,'$.settlementError') AS error FROM turns
+      WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 1`[0];
+    const visible = pending && this.sql<{ id: string }>`SELECT id FROM turns ORDER BY created_at DESC,id DESC LIMIT 50`.some((turn) => turn.id === pending.id);
+    return { stateVersion: this.historyClock(), queued: queued && queued.turnId !== active ? { turnId: queued.turnId, question: queued.question } : null,
+      settlementError: pending && !visible ? pending.error : null };
   }
   private notify(payload: string) {
     try { this.broadcast(payload); }
@@ -281,11 +290,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
   }
   async getSnapshot(projectId: string) {
     const { turns, nextCursor } = await this.getTurnPage(projectId);
-    const { queued, active } = this.state;
-    const older = this.sql<{ id: string; error: string | null }>`SELECT id,json_extract(payload,'$.settlementError') AS error FROM turns
-      WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 1`[0];
-    return { turns, nextCursor, stateVersion: this.historyClock(), queued: queued && queued.turnId !== active ? { turnId: queued.turnId, question: queued.question } : null,
-      settlementError: older && !turns.some((turn) => turn.turnId === older.id) ? older.error : null };
+    return { turns, nextCursor, ...this.snapshotState() };
   }
   async getStoredTurn(projectId: string, turnId: string) {
     await this.ensureProject(projectId);
