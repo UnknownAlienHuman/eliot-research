@@ -127,7 +127,7 @@ function splitAdjacentPairToken(token: string): [string, string] | undefined {
   return [`[${first}]`, `[${second}]`];
 }
 
-function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean): ResolvedAnswer {
+export function resolveCitations(answer: string, sources: LabelSource[]): ResolvedAnswer {
   const maps = scopeMaps(sources);
   const fences = fencedRanges(answer);
   const inline = inlineCodeRanges(answer, fences);
@@ -173,8 +173,7 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
     parts.push(answer.slice(last, at));
     for (const { parsed, source, atom } of resolved) {
       const key = `${source.revisionId}:${parsed.block}`;
-      const candidate = rewriteCompact && atom[1] === "S" ? `[R${source.revisionId}:${parsed.block}]` : atom;
-      const outToken = seen.get(key) ?? candidate;
+      const outToken = seen.get(key) ?? atom;
       if (!seen.has(key)) {
         seen.set(key, outToken);
         citations.push({
@@ -199,14 +198,6 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
     invalidLabels,
     ...(invalidExamples.length > 0 ? { invalidLabelExamples: invalidExamples } : {}),
   };
-}
-
-export function resolveCitations(answer: string, sources: LabelSource[]): ResolvedAnswer {
-  return resolve(answer, sources, false);
-}
-
-export function persistentAnswer(text: string, sources: LabelSource[]): ResolvedAnswer {
-  return resolve(text, sources, true);
 }
 
 /**
