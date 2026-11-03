@@ -341,6 +341,10 @@ normalization preserves factual prose and citation targets. Repeated references 
 their first emitted label so every occurrence can link through the returned citation metadata. No model call is
 added, and stored turn states are never regraded.
 
+`code-ranges.ts` owns the supported top-level fence/inline ranges for citation and distillation checks. Matching
+backtick runs stay outside fences; an unmatched run remains prose and does not hide later independent spans.
+Code bytes remain literal. Reference authority stays with each caller, using its existing frozen labels.
+
 For each candidate quote, search exact bytes in the stated block, then adjacent blocks; only then apply conservative
 whitespace/quote/dash/soft-hyphen normalization with a map back to original bytes. Prefer the stated block, mark
 ambiguous duplicates, and drop unmatched claims. Numeric support compares complete numeric literals, including their

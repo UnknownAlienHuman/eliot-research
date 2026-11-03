@@ -1,3 +1,4 @@
+import { fencedRanges, inlineCodeRanges } from "./code-ranges.ts";
 import type { Block } from "./blocks.js";
 import { numbersSupported } from "./numbers.ts";
 import type { AnswerWarning } from "./shared/api.js";
@@ -49,40 +50,6 @@ const UUID_RE =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const LABEL_RE = /\[(?:S\d+:[^\]\n[]*|R[^:\]\n[]*:[^\]\n[]*|S\d+)\]/g;
 const DIGITS_RE = /^\d+$/;
-
-interface Fence {
-  char: string;
-  count: number;
-}
-
-/** Char ranges covered by ```/~~~ fenced code; labels inside never resolve. */
-function fencedRanges(text: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
-  const parts = text.split("\n");
-  let fence: Fence | undefined;
-  let fenceStart = 0;
-  let pos = 0;
-  for (let i = 0; i < parts.length; i++) {
-    const line = parts[i] ?? "";
-    const lineEnd = pos + line.length + (i < parts.length - 1 ? 1 : 0);
-    if (fence === undefined) {
-      const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-      if (open !== undefined) {
-        fence = { char: open[0] ?? "`", count: open.length };
-        fenceStart = pos;
-      }
-    } else {
-      const trimmed = line.trim();
-      if (trimmed.startsWith(fence.char.repeat(fence.count)) && new RegExp(`^${fence.char}+$`).test(trimmed)) {
-        ranges.push({ start: fenceStart, end: lineEnd });
-        fence = undefined;
-      }
-    }
-    pos = lineEnd;
-  }
-  if (fence !== undefined) ranges.push({ start: fenceStart, end: text.length });
-  return ranges;
-}
 
 interface ScopeMaps {
   aliasGroups: Map<string, number[]>;
@@ -296,54 +263,6 @@ const sectionHeadings = new Set([
   "\u043a\u0440\u0430\u0442\u043a\u043e", "\u043c\u0435\u0442\u043e\u0434\u044b", "\u043e\u0431\u0441\u0443\u0436\u0434\u0435\u043d\u0438\u0435",
   "\u043e\u0441\u043d\u043e\u0432\u043d\u043e\u0435", "\u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b", "\u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0438",
 ]);
-
-function inlineCodeRanges(text: string, fences: TextRange[]): TextRange[] {
-  const ranges: TextRange[] = [];
-  let i = 0;
-  while (i < text.length) {
-    const fence = fences.find((range) => i >= range.start && i < range.end);
-    if (fence !== undefined) {
-      i = fence.end;
-      continue;
-    }
-    if (text[i] !== "`") {
-      i += 1;
-      continue;
-    }
-
-    let openLength = 1;
-    while (text[i + openLength] === "`") openLength += 1;
-    let j = i + openLength;
-    let closeStart = -1;
-    while (j < text.length) {
-      const containingFence = fences.find((range) => j >= range.start && j < range.end);
-      if (containingFence !== undefined) {
-        j = containingFence.end;
-        continue;
-      }
-      if (text[j] !== "`") {
-        j += 1;
-        continue;
-      }
-      let closeLength = 1;
-      while (text[j + closeLength] === "`") closeLength += 1;
-      if (closeLength === openLength) {
-        closeStart = j;
-        break;
-      }
-      j += closeLength;
-    }
-
-    if (closeStart < 0) {
-      i += openLength;
-      continue;
-    }
-    const end = closeStart + openLength;
-    ranges.push({ start: i, end });
-    i = end;
-  }
-  return ranges;
-}
 
 function maskRanges(text: string, ranges: TextRange[]): string {
   if (ranges.length === 0) return text;

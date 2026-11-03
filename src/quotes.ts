@@ -1,3 +1,4 @@
+import { fencedRanges, inlineCodeRanges } from "./code-ranges.ts";
 import { countNumericQuantities, numbersSupported, parseSingleNumber } from "./numbers.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
@@ -54,11 +55,6 @@ export function sourceContextJson(value: Record<string, unknown>, authorityLabel
       : token.replaceAll("[", "\\u005b").replaceAll("]", "\\u005d"));
 }
 
-interface Fence {
-  char: string;
-  count: number;
-}
-
 interface Slice {
   base: number;
   text: string;
@@ -103,68 +99,6 @@ export function resolveQuoteBlock(
   return { block, quote };
 }
 
-/** Char ranges covered by ```/~~~ fenced code; labels inside never resolve. */
-function fencedRanges(text: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
-  const parts = text.split("\n");
-  let fence: Fence | undefined;
-  let fenceStart = 0;
-  let pos = 0;
-  for (let i = 0; i < parts.length; i++) {
-    const line = parts[i] ?? "";
-    const lineEnd = pos + line.length + (i < parts.length - 1 ? 1 : 0);
-    if (fence === undefined) {
-      const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-      if (open !== undefined) {
-        fence = { char: open[0] ?? "`", count: open.length };
-        fenceStart = pos;
-      }
-    } else {
-      const trimmed = line.trim();
-      if (trimmed.startsWith(fence.char.repeat(fence.count)) && new RegExp(`^${fence.char}+$`).test(trimmed)) {
-        ranges.push({ start: fenceStart, end: lineEnd });
-        fence = undefined;
-      }
-    }
-    pos = lineEnd;
-  }
-  if (fence !== undefined) ranges.push({ start: fenceStart, end: text.length });
-  return ranges;
-}
-
-/** Inline `code` spans; an unclosed backtick run stays literal prose. */
-function inlineCodeRanges(text: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] !== "`") {
-      i += 1;
-      continue;
-    }
-    let open = 0;
-    while (text[i + open] === "`") open++;
-    let j = i + open;
-    let found = -1;
-    while (j < text.length) {
-      if (text[j] !== "`") {
-        j += 1;
-        continue;
-      }
-      let close = 0;
-      while (text[j + close] === "`") close++;
-      if (close === open) {
-        found = j;
-        break;
-      }
-      j += close;
-    }
-    if (found < 0) break;
-    ranges.push({ start: i, end: found + open });
-    i = found + open;
-  }
-  return ranges;
-}
-
 /**
  * Strip only authority-declared reference tokens from model prose outside
  * fenced and inline code: exact declared labels, own persistent forms for
@@ -197,8 +131,9 @@ export function cleanDistillText(
       known.set(`[block ${block}]`, block);
     }
   }
-  const fences = [...fencedRanges(text), ...inlineCodeRanges(text)];
-  const inside = (at: number): boolean => fences.some((range) => at >= range.start && at < range.end);
+  const fences = fencedRanges(text);
+  const code = [...fences, ...inlineCodeRanges(text, fences)];
+  const inside = (at: number): boolean => code.some((range) => at >= range.start && at < range.end);
   const parts: string[] = [];
   let last = 0;
   let invalidReferences = 0;
