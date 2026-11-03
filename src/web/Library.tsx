@@ -514,6 +514,7 @@ export function Reader() {
   const activeRevision = rev?.id ?? "";
   const currentId = source?.currentRevisionId ?? source?.revisionId ?? revisions[0]?.id ?? "";
   const activeState = revisionId ? (rev?.readableState ?? "") : (rev?.readableState ?? source?.readableState ?? "");
+  const conversionError = rev ? rev.error : source?.error;
   const textReady = loadedRev !== "" && loadedRev === activeRevision;
   const readableWarning = useMemo(() => rev?.warningSummary ?? (textReady ? readableTextWarning(text) : null), [rev?.warningSummary, textReady, text]);
   const hasRange = textReady && Number.isSafeInteger(rangeStart) && Number.isSafeInteger(rangeEnd) && rangeStart >= 0 && rangeEnd > rangeStart;
@@ -589,6 +590,7 @@ export function Reader() {
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
       {revisionId && !rev ? <p className="er-lib__error" role="alert">This revision is not available for this source. Open its current revision from the Library.</p> : null}
       {readableWarning ? <p className="er-lib__row-meta">{readableWarning}</p> : null}
+      {activeState !== "failed" && conversionError ? <p className="er-lib__hint" role="status">{conversionError}</p> : null}
       <details className="er-lib__facts"><summary>Details</summary><div className="er-lib__facts-content">
         <p>{sourceKindLabels[source.kind]}</p>
         {source.originalFilename ? <p>Original file: {source.originalFilename}</p> : null}

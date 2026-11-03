@@ -66,9 +66,10 @@ export async function commitRevision(env: Env, loaded: LoadedRevision, stored: S
       AND (current_revision_id IS NULL OR current_revision_id IN (SELECT id FROM source_revision WHERE source_id=? AND revision_no<?))
       AND NOT EXISTS (SELECT 1 FROM source_revision WHERE source_id=? AND revision_no>? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings'))
       AND EXISTS (SELECT 1 FROM source_revision WHERE id=? AND source_id=? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings')
-        AND converter=? AND readable_size=? AND block_count=? AND conversion_ms=?)`;
+        AND converter=? AND readable_size=? AND block_count=? AND conversion_ms=? AND error IS NULL
+        AND conversion_tokens IS COALESCE(?,conversion_tokens) AND conversion_calls>=?)`;
     const headValues = [loaded.sourceId, loaded.sourceId, loaded.revisionNo, loaded.sourceId, loaded.revisionNo,
-      loaded.revisionId, loaded.sourceId, stored.converter, stored.readableSize, stored.blockCount, stored.ms];
+      loaded.revisionId, loaded.sourceId, stored.converter, stored.readableSize, stored.blockCount, stored.ms, stored.tokens, stored.calls];
     const now = Date.now();
     statements.push(env.DB.prepare(`UPDATE page SET freshness='stale',updated_at=? WHERE head_revision_id IN
       (SELECT pr.id FROM page_revision pr JOIN json_each(pr.inputs_json) i WHERE pr.status='accepted' AND i.type='text'
@@ -78,9 +79,10 @@ export async function commitRevision(env: Env, loaded: LoadedRevision, stored: S
       .bind(loaded.revisionId, now, ...headValues));
     statements.push(env.DB.prepare(`UPDATE source_revision SET readable_state='readable_with_warnings',warning_summary=?
       WHERE id=? AND source_id=? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings')
-      AND converter=? AND readable_size=? AND block_count=? AND conversion_ms=?
+      AND converter=? AND readable_size=? AND block_count=? AND conversion_ms=? AND error IS NULL
+      AND conversion_tokens IS COALESCE(?,conversion_tokens) AND conversion_calls>=?
       AND EXISTS (SELECT 1 FROM source_revision WHERE source_id=? AND revision_no>? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings'))`)
-      .bind([stored.warning, CONFLICT].filter(Boolean).join(" "), loaded.revisionId, loaded.sourceId, stored.converter, stored.readableSize, stored.blockCount, stored.ms, loaded.sourceId, loaded.revisionNo));
+      .bind([stored.warning, CONFLICT].filter(Boolean).join(" "), loaded.revisionId, loaded.sourceId, stored.converter, stored.readableSize, stored.blockCount, stored.ms, stored.tokens, stored.calls, loaded.sourceId, loaded.revisionNo));
   }
   let advanced = false;
   try { const results = await env.DB.batch(statements); advanced = (results[2]?.meta.changes ?? 0) > 0; }
@@ -96,22 +98,25 @@ export async function commitRevision(env: Env, loaded: LoadedRevision, stored: S
   return { outcome: after.readable_state, advanced };
 }
 
-export async function recordStorageFailure(env: Env, revisionId: string) {
+export async function recordStorageFailure(env: Env, revisionId: string, stored?: Stored) {
   // A completed terminal projection must not be downgraded after a lost reply.
-  await env.DB.prepare("UPDATE source_revision SET readable_state='failed',error=? WHERE id=? AND readable_state='pending' AND deleted_at IS NULL")
-    .bind(STORAGE_FAILURE, revisionId).run();
+  await env.DB.prepare(`UPDATE source_revision SET readable_state='failed',error=?,conversion_tokens=COALESCE(conversion_tokens,?),
+    conversion_calls=MAX(conversion_calls,?),conversion_ms=COALESCE(conversion_ms,?) WHERE id=? AND readable_state='pending' AND deleted_at IS NULL`)
+    .bind(STORAGE_FAILURE, stored?.tokens ?? null, stored?.calls ?? 0, stored?.ms ?? null, revisionId).run();
 }
 export async function recoverIngest(env: Env, revisionId: string): Promise<string | null> {
   let status: InstanceStatus;
   try { status = await (await env.INGEST.get(`ingest-${revisionId}`)).status(); }
   catch { return STATUS_UNAVAILABLE; }
   if (status.status === "unknown") return STATUS_UNAVAILABLE;
-  try {
-    if (["queued", "running", "waiting", "paused", "waitingForPause"].includes(status.status)) {
+  if (["queued", "running", "waiting", "paused", "waitingForPause"].includes(status.status)) {
+    try {
       await env.DB.prepare("UPDATE source_revision SET error=NULL WHERE id=? AND readable_state='pending' AND error IN (?,?)")
         .bind(revisionId, STATUS_UNAVAILABLE, STORAGE_FAILURE).run();
-      return null;
-    }
+    } catch { return STATUS_UNAVAILABLE; }
+    return null;
+  }
+  try {
     const output = z.object({ revisionId: z.literal(revisionId), stored: storedSchema }).safeParse(status.output);
     if (status.status === "complete" && output.success) {
       const loaded = await loadRevision(env, revisionId);

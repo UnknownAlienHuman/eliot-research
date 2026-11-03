@@ -5,7 +5,7 @@ import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 vi.mock("cloudflare:workers", () => ({ WorkflowEntrypoint: class { constructor(_ctx: unknown, readonly env: Env) {} } }));
 import { IngestWorkflow } from "./ingest";
 import { commitRevision, loadRevision, recoverIngest, STATUS_UNAVAILABLE, STORAGE_FAILURE } from "../ingest-completion";
-import { getSource } from "../library";
+import { addSource, getSource } from "../library";
 import type { Actor } from "../auth";
 
 const owner: Actor = { type: "owner", id: "owner", authentication: "access" };
@@ -19,8 +19,8 @@ function fixture(native = false) {
   const control = { loadFailures: 0, batchFailures: 0, lostBatchReply: false, lostClaimReply: false, failBlocks: false, beforeBatch: undefined as (() => void) | undefined };
   const objects = new Map<string, { bytes: Uint8Array; etag: string; size: number }>();
   let serial = 0, batches = 0, output: unknown;
-  function put(key: string, value: string | Uint8Array) {
-    const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+  function put(key: string, value: string | Uint8Array | ArrayBuffer) {
+    const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value instanceof ArrayBuffer ? new Uint8Array(value) : value;
     const object = { bytes, etag: "etag-" + (++serial), size: bytes.byteLength }; objects.set(key, object); return object;
   }
   put("source/revision/original", "Native original.");
@@ -32,8 +32,8 @@ function fixture(native = false) {
       if (control.lostClaimReply && sql.includes("SET conversion_calls = 1")) { control.lostClaimReply = false; throw new Error("Claim committed, reply lost"); }
       return { meta: { changes: Number(info.changes) } };
     } });
-  const transform = vi.fn(async () => ({ format: "markdown", data: "Converted evidence with a real paragraph.", tokens: 7 }));
-  const bucketPut = vi.fn(async (key: string, value: Uint8Array | string, options?: { onlyIf?: unknown }) => {
+  const transform = vi.fn(async () => ({ format: "markdown", data: "Converted evidence with a real paragraph.", tokens: 7 as number | undefined }));
+  const bucketPut = vi.fn(async (key: string, value: Uint8Array | string | ArrayBuffer, options?: { onlyIf?: unknown }) => {
     if (control.failBlocks && key.endsWith("blocks.json")) throw new Error("R2 blocks unavailable");
     if (options?.onlyIf && objects.has(key)) return null;
     return put(key, value);
@@ -84,7 +84,7 @@ describe("Ingest storage completion", () => {
     const h = fixture();
     try {
       h.control.batchFailures = 3; await h.run();
-      expect(h.row()).toMatchObject({ readable_state: "failed", error: STORAGE_FAILURE, conversion_calls: 1, conversion_tokens: null });
+      expect(h.row()).toMatchObject({ readable_state: "failed", error: STORAGE_FAILURE, conversion_calls: 1, conversion_tokens: 7 });
       expect(h.current()).toEqual({ current_revision_id: null }); expect(h.attempts.get("commit revision")).toBe(3);
       const result = await getSource(h.env, owner, "source");
       expect(result.source).toMatchObject({ readableState: "readable", currentRevisionId: "revision", conversionCalls: 1, conversionTokens: 7, error: null });
@@ -222,6 +222,68 @@ describe("Ingest storage completion", () => {
         { id: "dependent", freshness: headFault ? "current" : "stale" }, { id: "numeric", freshness: "current" }, { id: "unrelated", freshness: "current" },
       ]);
       expect(h.current()).toEqual({ current_revision_id: headFault ? "old" : "revision" });
+    } finally { h.db.close(); }
+  });
+  it("retains uncertain create identity and clears its warning after confirming the existing job is running", async () => {
+    const h = fixture();
+    try {
+      h.db.exec("INSERT INTO project(id,title,created_at,updated_at)VALUES('project','Fixture',1,1)");
+      h.status.mockRejectedValueOnce(new Error("Create/status reply unavailable"));
+      const created = await addSource(h.env, owner, "project", { title: "New upload", kind: "text", bytes: new TextEncoder().encode("New original").buffer, filename: "new.txt", mimeType: "text/plain" });
+      expect(created.state).toBe("pending"); expect(h.create).toHaveBeenCalledTimes(1);
+      expect(h.db.prepare("SELECT readable_state,error FROM source_revision WHERE id=?").get(created.revisionId)).toEqual({ readable_state: "pending", error: STATUS_UNAVAILABLE });
+      h.status.mockResolvedValueOnce({ status: "running", output: undefined });
+      expect((await getSource(h.env, owner, created.sourceId)).source).toMatchObject({ readableState: "pending", error: null });
+      expect(h.create).toHaveBeenCalledTimes(1); expect(h.transform).not.toHaveBeenCalled();
+    } finally { h.db.close(); }
+  });
+  it("retains a confirmed zero call count when the claim fails before dispatch", async () => {
+    const h = fixture();
+    try {
+      h.db.exec("CREATE TRIGGER fail_claim BEFORE UPDATE OF conversion_calls ON source_revision WHEN NEW.conversion_calls=1 AND OLD.conversion_calls=0 BEGIN SELECT RAISE(ABORT,'claim failed'); END");
+      await h.run(); expect(h.row()).toMatchObject({ readable_state: "failed", conversion_calls: 0 }); expect(h.transform).not.toHaveBeenCalled();
+    } finally { h.db.close(); }
+  });
+  it("retains unavailable conversion usage as null through failed commit and reader completion", async () => {
+    const h = fixture();
+    try {
+      h.transform.mockResolvedValueOnce({ format: "markdown", data: "Converted evidence with a real paragraph.", tokens: undefined });
+      h.control.batchFailures = 3; await h.run();
+      expect(h.row()).toMatchObject({ readable_state: "failed", conversion_calls: 1, conversion_tokens: null });
+      await getSource(h.env, owner, "source"); expect(h.row()).toMatchObject({ readable_state: "readable", conversion_calls: 1, conversion_tokens: null });
+      expect(h.transform).toHaveBeenCalledTimes(1);
+    } finally { h.db.close(); }
+  });
+  it("recovers a requested older revision without stealing its newer readable head", async () => {
+    const h = fixture();
+    try {
+      h.control.batchFailures = 3; await h.run();
+      h.db.exec("INSERT INTO source_revision(id,source_id,revision_no,original_key,readable_state,created_by,created_at) VALUES('newer','source',2,'newer/original','readable','owner',2)");
+      h.db.exec("UPDATE source SET current_revision_id='newer'");
+      const result = await getSource(h.env, owner, "source", "revision");
+      expect(result.source.currentRevisionId).toBe("newer");
+      expect(result.revisions.find((revision) => revision.id === "revision")).toMatchObject({ readableState: "readable_with_warnings", conversionCalls: 1, conversionTokens: 7 });
+      expect(h.transform).toHaveBeenCalledTimes(1);
+    } finally { h.db.close(); }
+  });
+  it("does not publish a revision deleted between conversion and the completion transaction", async () => {
+    const h = fixture(true);
+    try {
+      h.control.beforeBatch = () => { h.db.exec("UPDATE source_revision SET deleted_at=2 WHERE id='revision'"); };
+      await h.run(); expect(h.current()).toEqual({ current_revision_id: null }); expect(h.row()).toMatchObject({ deleted_at: 2 });
+      expect(h.objects.has("source/revision/original")).toBe(true); expect(h.transform).not.toHaveBeenCalled();
+    } finally { h.db.close(); }
+  });
+  it("does not advance a head when a conflicting terminal projection wins before the publication batch", async () => {
+    const h = fixture(true);
+    try {
+      h.control.beforeBatch = () => {
+        const stored = h.cache.get("convert and store") as { ms: number; readableSize: number; blockCount: number };
+        h.db.prepare("UPDATE source_revision SET readable_state='readable',converter='local_text',readable_size=?,block_count=?,conversion_ms=?,conversion_tokens=99 WHERE id='revision'")
+          .run(stored.readableSize, stored.blockCount, stored.ms);
+      };
+      await h.run(); expect(h.row()).toMatchObject({ readable_state: "readable", conversion_tokens: 99 });
+      expect(h.current()).toEqual({ current_revision_id: null }); expect(h.transform).not.toHaveBeenCalled();
     } finally { h.db.close(); }
   });
 });

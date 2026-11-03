@@ -40,7 +40,7 @@ export class IngestWorkflow extends WorkflowEntrypoint<Env, { revisionId: string
       const outcome = await step.do("commit revision", STORAGE_RETRY, async () => commitRevision(this.env, loaded, completed));
       return { revisionId, stored, ...outcome };
     } catch {
-      try { await step.do("record storage failure", STORAGE_RETRY, () => recordStorageFailure(this.env, revisionId)); } catch { /* Source read exposes unconfirmed storage status. */ }
+      try { await step.do("record storage failure", STORAGE_RETRY, () => recordStorageFailure(this.env, revisionId, stored)); } catch { /* Source read exposes unconfirmed storage status. */ }
       return { revisionId, stored, completionPending: true };
     }
   }
