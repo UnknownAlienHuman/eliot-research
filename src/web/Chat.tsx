@@ -9,6 +9,8 @@ import type { MarkdownReference } from './Markdown';
 import type { ChatSnapshotState, SourceSelection, TurnPage, TurnView } from '../shared/api';
 import { advanceHistoryHead, mergeTurnHistory } from './chat-history';
 import type { HistoryHead } from './chat-history';
+import { useChatHistory } from './use-chat-history';
+import type { ChatRow } from './use-chat-history';
 import type { Citation } from '../citations';
 import { ModelSettings } from './ModelSettings';
 import { ProposalsInbox } from './Proposals';
@@ -16,7 +18,6 @@ import { ModelPicker } from './ModelPicker';
 import type { ModelRoute } from './ModelPicker';
 import './chat.css';
 
-interface ChatRow { readonly id: string; readonly title: string; readonly updatedAt: number; }
 import type { PageList, PageSummary, SavedPage } from '../pages';
 import { mergeStudioPages, newerPage, pageSummary } from './studio-pages';
 interface QueuedTurn { readonly turnId: string; readonly question: string; }
@@ -97,10 +98,7 @@ export function ChatView({
 }: ChatViewProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [chats, setChats] = useState<ChatRow[] | undefined>(undefined);
-  const [chatsCursor, setChatsCursor] = useState<string | null>(null);
-  const [chatsBusy, setChatsBusy] = useState(false);
-  const [chatsError, setChatsError] = useState('');
+  const { chats, cursor: chatsCursor, busy: chatsBusy, error: chatsError, loadMore: moreChats, addChat } = useChatHistory(projectId);
   const [historyRetry, setHistoryRetry] = useState(0);
   const [turns, setTurns] = useState<TurnView[]>([]);
   const turnsRef = useRef<TurnView[]>([]);
@@ -241,45 +239,6 @@ export function ChatView({
       });
     return () => { controller.abort(); };
   }, []);
-
-  useEffect(() => {
-    let live = true;
-    setChats(undefined);
-    setChatsCursor(null);
-    setChatsBusy(false);
-    setChatsError('');
-    void apiJson<{ chats: ChatRow[]; nextCursor: string | null }>('/api/projects/' + encodeURIComponent(projectId) + '/chats')
-      .then((data) => {
-        if (!live) return;
-        setChats(data.chats);
-        setChatsCursor(data.nextCursor);
-        setChatsError('');
-      })
-      .catch((error: unknown) => {
-        if (live) setChatsError(error instanceof Error ? error.message : 'Could not load chat history.');
-      });
-    return () => { live = false; };
-  }, [projectId]);
-
-  async function moreChats(): Promise<void> {
-    if (!chatsCursor || chatsBusy) return;
-    const requestProject = projectId;
-    const requestCursor = chatsCursor;
-    setChatsBusy(true);
-    try {
-      const data = await apiJson<{ chats: ChatRow[]; nextCursor: string | null }>(
-        '/api/projects/' + encodeURIComponent(requestProject) + '/chats?cursor=' + encodeURIComponent(requestCursor),
-      );
-      if (projectRef.current !== requestProject) return;
-      setChats((current) => [...(current ?? []), ...data.chats.filter((chat) => !current?.some((existing) => existing.id === chat.id))]);
-      setChatsCursor(data.nextCursor);
-      setChatsError('');
-    } catch (error) {
-      if (projectRef.current === requestProject) setChatsError(error instanceof Error ? error.message : 'Could not load more chats.');
-    } finally {
-      if (projectRef.current === requestProject) setChatsBusy(false);
-    }
-  }
 
   useEffect(() => {
     const sequence = historySeq.current + 1;
@@ -507,7 +466,7 @@ export function ChatView({
         });
         if (!current()) return; // No new turn is admitted from a departed creation view.
         targetChat = created.chat.id;
-        setChats((current) => [created.chat, ...(current ?? []).filter((chat) => chat.id !== created.chat.id)]);
+        addChat(created.chat);
       }
       await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/chats/' + encodeURIComponent(targetChat) + '/turns', {
         method: 'POST',
@@ -581,10 +540,12 @@ export function ChatView({
             <div className='er-chat__history-menu'>
               <nav aria-label='Chat history'>
                 {chatsError !== '' ? (
-                  <p className='er-chat__error' role='alert'>{chatsError}</p>
-                ) : chats === undefined ? (
+                  <p className='er-chat__error' role='alert'>{chatsError}{chatsCursor === null
+                    ? <button className='er-button er-button--text' type='button' disabled={chatsBusy} onClick={() => void moreChats()}>Retry chat history</button> : null}</p>
+                ) : null}
+                {chats === undefined && chatsError === '' ? (
                   <p className='er-chat__hint' role='status'>Loading chat history…</p>
-                ) : chats.length === 0 ? (
+                ) : chats === undefined ? null : chats.length === 0 ? (
                   <p className='er-chat__hint'>No saved chats yet.</p>
                 ) : (
                   <ul className='er-chat__history-list'>

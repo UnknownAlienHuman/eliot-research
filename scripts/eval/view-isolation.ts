@@ -24,6 +24,9 @@ await api('/api/projects/' + other + '/sources/attach', { sourceId: sources[0].s
 const chatPath = id => '/p/' + project + '/chat' + (id ? '/' + id : '');
 const sourcePath = i => '/p/' + project + '/source/' + sources[i].source.id;
 const turnsUrl = id => origin + '/api/projects/' + project + '/chats/' + id + '/turns';
+const historyProject = (await api('/api/projects', { title: 'History race ' + crypto.randomUUID() })).project.id;
+const historyUrl = origin + '/api/projects/' + historyProject + '/chats';
+for (let index = 0; index < 54; index++) await api('/api/projects/' + historyProject + '/chats', { title: 'History ' + index });
 const browser = await chromium.launch();
 let interceptedTurns = 0, interceptedUploads = 0, nativeUploads = 0, unexpectedTurns = 0, unexpectedUploads = 0;
 try {
@@ -61,6 +64,49 @@ try {
       return { waiting, body: () => route.request().postDataJSON(), request: () => route.request(),
         release: async (body = {}, status = 200) => { await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {}); await page.unroute(url, handler); await settle(); } };
     };
+    // A first-page read started before chat creation must not erase the new row.
+    const oldHead = await api('/api/projects/' + historyProject + '/chats');
+    let heads = [];
+    const captureHead = route => { if (route.request().method() === 'GET') heads.push(route); else return route.continue(); };
+    await page.route(historyUrl, captureHead);
+    await page.goto(origin + '/p/' + historyProject + '/chat'); await expect.poll(() => heads.length).toBeGreaterThan(0);
+    const createdTurn = await hold(historyUrl + '/*/turns');
+    await question.fill('New chat during initial history'); await send.click(); await createdTurn.waiting; interceptedTurns++;
+    const createdId = new URL(createdTurn.request().url()).pathname.split('/').at(-2);
+    await Promise.all(heads.map(route => route.fulfill({ json: oldHead }).catch(() => {})));
+    await page.unroute(historyUrl, captureHead); await settle();
+    await page.getByText('History', { exact: true }).click();
+    const historyLinks = page.locator('.er-chat__history-link');
+    await expect(page.locator('.er-chat__history-link[href="/p/' + historyProject + '/chat/' + createdId + '"]')).toHaveCount(1);
+    await createdTurn.release();
+    await expect(page).toHaveURL(origin + '/p/' + historyProject + '/chat/' + createdId);
+    const olderUrl = historyUrl + '?cursor=' + encodeURIComponent(oldHead.nextCursor);
+    const older = await api('/api/projects/' + historyProject + '/chats?cursor=' + encodeURIComponent(oldHead.nextCursor));
+    let olderRead = await hold(olderUrl, 'GET');
+    await page.getByRole('button', { name: 'Load more chats', exact: true }).click(); await olderRead.waiting;
+    await olderRead.release({ error: { message: 'History page unavailable' } }, 503);
+    await expect(historyLinks).toHaveCount(51);
+    await expect(page.getByRole('alert')).toContainText('History page unavailable');
+    olderRead = await hold(olderUrl, 'GET');
+    await page.getByRole('button', { name: 'Load more chats', exact: true }).click(); await olderRead.waiting; await olderRead.release(older);
+    const allIds = await historyLinks.evaluateAll(links => links.map(link => link.getAttribute('href')));
+    assert.deepEqual(allIds, [createdId, ...oldHead.chats.map(chat => chat.id), ...older.chats.map(chat => chat.id)]
+      .map(id => '/p/' + historyProject + '/chat/' + id));
+    // A failed initial read has an explicit storage-only retry.
+    heads = []; await page.route(historyUrl, captureHead); await page.reload(); await expect.poll(() => heads.length).toBeGreaterThan(0);
+    await Promise.all(heads.map(route => route.fulfill({ status: 503, json: { error: { message: 'Initial history unavailable' } } }).catch(() => {})));
+    await page.unroute(historyUrl, captureHead); await settle();
+    await page.getByText('History', { exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Initial history unavailable');
+    await page.getByRole('button', { name: 'Retry chat history', exact: true }).click();
+    await expect(historyLinks).toHaveCount(50);
+    // An abandoned older read cannot affect a remounted project workspace.
+    const freshHead = await api('/api/projects/' + historyProject + '/chats');
+    olderRead = await hold(historyUrl + '?cursor=' + encodeURIComponent(freshHead.nextCursor), 'GET');
+    await page.getByRole('button', { name: 'Load more chats', exact: true }).click(); await olderRead.waiting;
+    await navigate('/settings'); await navigate('/p/' + historyProject + '/chat/' + createdId);
+    await olderRead.release({ error: { message: 'Abandoned history page' } }, 503);
+    await expect(historyLinks).toHaveCount(50); await expect(page.getByText('Abandoned history page')).toHaveCount(0);
     await page.goto(origin + chatPath(chats[0]));
     await question.fill('A original'); await expect(send).toBeEnabled();
     let pending = await hold(turnsUrl(chats[0])); await send.click(); await pending.waiting; interceptedTurns++;
