@@ -30,9 +30,9 @@ function expected(stored: Stored) {
 }
 function matches(row: RevisionResult, stored: Stored) {
   const p = expected(stored);
-  const warning = row.warning_summary === p.warning || (stored.outcome === "readable" && row.warning_summary === [p.warning, CONFLICT].filter(Boolean).join(" "));
-  return (row.readable_state === p.state || (stored.outcome === "readable" && row.readable_state === "readable_with_warnings" && warning))
-    && warning && row.error === p.error && row.conversion_calls >= stored.calls
+  const normal = row.readable_state === p.state && row.warning_summary === p.warning;
+  const conflict = stored.outcome === "readable" && row.readable_state === "readable_with_warnings" && row.warning_summary === [p.warning, CONFLICT].filter(Boolean).join(" ");
+  return (normal || conflict) && row.error === p.error && row.conversion_calls >= stored.calls
     && (stored.tokens === null || row.conversion_tokens === stored.tokens) && row.conversion_ms === stored.ms
     && (stored.outcome !== "readable" || (row.converter === stored.converter && row.readable_size === stored.readableSize && row.block_count === stored.blockCount));
 }
@@ -62,14 +62,18 @@ export async function commitRevision(env: Env, loaded: LoadedRevision, stored: S
   if (stored.outcome === "readable") {
     // A monotonic CAS plus the newest-readable guard is evaluated inside the same
     // transaction as publication. A concurrent older head cannot create a false race.
+    const terminalGuard = `converter=? AND readable_size=? AND block_count=? AND conversion_ms=? AND error IS NULL
+      AND conversion_tokens IS ? AND conversion_calls=?
+      AND ((readable_state=? AND warning_summary IS ?) OR (readable_state='readable_with_warnings' AND warning_summary=?))`;
+    const conflictWarning = [stored.warning, CONFLICT].filter(Boolean).join(" ");
+    const terminalValues = [stored.converter, stored.readableSize, stored.blockCount, stored.ms,
+      before.conversion_tokens ?? stored.tokens, Math.max(before.conversion_calls, stored.calls), p.state, p.warning, conflictWarning];
     const headGuard = `id=? AND state!='deleted'
       AND (current_revision_id IS NULL OR current_revision_id IN (SELECT id FROM source_revision WHERE source_id=? AND revision_no<?))
       AND NOT EXISTS (SELECT 1 FROM source_revision WHERE source_id=? AND revision_no>? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings'))
-      AND EXISTS (SELECT 1 FROM source_revision WHERE id=? AND source_id=? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings')
-        AND converter=? AND readable_size=? AND block_count=? AND conversion_ms=? AND error IS NULL
-        AND conversion_tokens IS COALESCE(?,conversion_tokens) AND conversion_calls>=?)`;
+      AND EXISTS (SELECT 1 FROM source_revision WHERE id=? AND source_id=? AND deleted_at IS NULL AND ${terminalGuard})`;
     const headValues = [loaded.sourceId, loaded.sourceId, loaded.revisionNo, loaded.sourceId, loaded.revisionNo,
-      loaded.revisionId, loaded.sourceId, stored.converter, stored.readableSize, stored.blockCount, stored.ms, stored.tokens, stored.calls];
+      loaded.revisionId, loaded.sourceId, ...terminalValues];
     const now = Date.now();
     statements.push(env.DB.prepare(`UPDATE page SET freshness='stale',updated_at=? WHERE head_revision_id IN
       (SELECT pr.id FROM page_revision pr JOIN json_each(pr.inputs_json) i WHERE pr.status='accepted' AND i.type='text'
@@ -78,11 +82,9 @@ export async function commitRevision(env: Env, loaded: LoadedRevision, stored: S
     statements.push(env.DB.prepare(`UPDATE source SET current_revision_id=?,updated_at=? WHERE ${headGuard}`)
       .bind(loaded.revisionId, now, ...headValues));
     statements.push(env.DB.prepare(`UPDATE source_revision SET readable_state='readable_with_warnings',warning_summary=?
-      WHERE id=? AND source_id=? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings')
-      AND converter=? AND readable_size=? AND block_count=? AND conversion_ms=? AND error IS NULL
-      AND conversion_tokens IS COALESCE(?,conversion_tokens) AND conversion_calls>=?
+      WHERE id=? AND source_id=? AND deleted_at IS NULL AND ${terminalGuard}
       AND EXISTS (SELECT 1 FROM source_revision WHERE source_id=? AND revision_no>? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings'))`)
-      .bind([stored.warning, CONFLICT].filter(Boolean).join(" "), loaded.revisionId, loaded.sourceId, stored.converter, stored.readableSize, stored.blockCount, stored.ms, stored.tokens, stored.calls, loaded.sourceId, loaded.revisionNo));
+      .bind(conflictWarning, loaded.revisionId, loaded.sourceId, ...terminalValues, loaded.sourceId, loaded.revisionNo));
   }
   let advanced = false;
   try { const results = await env.DB.batch(statements); advanced = (results[2]?.meta.changes ?? 0) > 0; }

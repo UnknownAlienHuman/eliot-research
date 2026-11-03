@@ -71,8 +71,13 @@ export async function getSource(env: Env, _actor: Actor, id: string, requestedRe
     target = selected;
   }
   let completionError: string | null = null;
+  const unpublished = ["readable", "readable_with_warnings"].includes(target.readableState) && source.currentRevisionId !== target.revisionId
+    && await env.DB.prepare(`SELECT 1 FROM source_revision r WHERE r.id=? AND r.source_id=? AND r.deleted_at IS NULL
+      AND NOT EXISTS(SELECT 1 FROM source_revision newer WHERE newer.source_id=r.source_id AND newer.revision_no>r.revision_no
+        AND newer.deleted_at IS NULL AND newer.readable_state IN ('readable','readable_with_warnings'))`)
+      .bind(target.revisionId, id).first();
   if (target.readableState === "pending" || target.error === STORAGE_FAILURE ||
-    (target.revisionId === source.revisionId && ["readable", "readable_with_warnings"].includes(target.readableState) && source.currentRevisionId !== target.revisionId)) {
+    unpublished) {
     completionError = await recoverIngest(env, target.revisionId);
     source = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION} WHERE s.id=? AND s.state!='deleted'`).bind(id).first<Source>();
     if (!source) throw new LibraryError("not_found", "Source not found.", 404);

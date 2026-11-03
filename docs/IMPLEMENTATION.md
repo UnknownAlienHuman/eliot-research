@@ -171,7 +171,9 @@ previous accepted head and advances the source only to a newer readable revision
 ownership and non-deleted guards remain; an older completion stays readable with a conflict warning and cannot
 replace a newer readable head. A newer pending/unreadable replacement does not hide the older readable result.
 Read-back adopts a committed batch whose reply was lost; different terminal metadata is not overwritten. A matching
-older readable-but-unpublished result can finish publication without replaying conversion. Historical capture fields
+older readable-but-unpublished result can finish publication without replaying conversion even when a newer revision
+is pending. Preflight checks newest readable, and the batch checks the full terminal projection (including the
+warning/state pair) again before head advancement or staleness. Historical capture fields
 remain immutable under migration `0006`; later Save/Accept freshness is a separate repair.
 Canonical R2 writes use conditional create, never overwrite an existing text or block object, and retain returned
 ETags in the small cached conversion result. Commit/reconciliation checks both objects' ETags and text size. Text

@@ -286,4 +286,43 @@ describe("Ingest storage completion", () => {
       expect(h.current()).toEqual({ current_revision_id: null }); expect(h.transform).not.toHaveBeenCalled();
     } finally { h.db.close(); }
   });
+  it.each(["pending", "readable", "racing-readable"])("publishes requested readable-but-unpublished R1 under an R2 %s replacement", async (replacement) => {
+    const h = fixture();
+    try {
+      await h.run();
+      h.db.exec("UPDATE source SET current_revision_id=NULL"); // The legacy readable/head split, with cached conversion output retained.
+      h.db.prepare("INSERT INTO source_revision(id,source_id,revision_no,original_key,readable_state,created_by,created_at) VALUES('newer','source',2,'newer/original',?,'owner',2)")
+        .run(replacement === "readable" ? "readable" : "pending");
+      if (replacement === "readable") h.db.exec("UPDATE source SET current_revision_id='newer'");
+      if (replacement === "racing-readable") h.control.beforeBatch = () => {
+        h.db.exec("UPDATE source_revision SET readable_state='readable' WHERE id='newer'; UPDATE source SET current_revision_id='newer'");
+      };
+      const writes = h.bucketPut.mock.calls.length;
+      const result = await getSource(h.env, owner, "source", "revision");
+      expect(result.source.currentRevisionId).toBe(replacement === "pending" ? "revision" : "newer");
+      expect(result.revisions.find((r) => r.id === "revision")?.readableState).toBe(replacement === "racing-readable" ? "readable_with_warnings" : "readable");
+      expect(h.transform).toHaveBeenCalledTimes(1); expect(h.bucketPut).toHaveBeenCalledTimes(writes); expect(h.create).not.toHaveBeenCalled();
+      if (replacement === "readable") expect(h.status).not.toHaveBeenCalled();
+      else expect(h.status).toHaveBeenCalledTimes(1);
+    } finally { h.db.close(); }
+  });
+  it("requires matching terminal warning/state before head publication or page staleness", async () => {
+    const h = fixture(true);
+    try {
+      h.db.exec("INSERT INTO source_revision(id,source_id,revision_no,original_key,readable_state,created_by,created_at)VALUES('old','source',0,'old/original','readable','owner',0); UPDATE source SET current_revision_id='old'");
+      h.db.exec("INSERT INTO project(id,title,created_at,updated_at)VALUES('project','Fixture',1,1); INSERT INTO page(id,project_id,kind,title,created_at,updated_at)VALUES('page','project','note','Dependent',1,1)");
+      h.db.prepare("INSERT INTO page_revision(id,page_id,revision_no,status,origin,actor,body_key,inputs_json,mutation_id,created_at)VALUES('head','page',1,'accepted','owner','owner','fixture',?,'mutation',1)").run('["old"]');
+      h.db.exec("UPDATE page SET head_revision_id='head'");
+      h.control.beforeBatch = () => {
+        const stored = h.cache.get("convert and store") as { ms: number; readableSize: number; blockCount: number };
+        h.db.prepare("UPDATE source_revision SET readable_state='readable_with_warnings',warning_summary='Different terminal warning',converter='local_text',readable_size=?,block_count=?,conversion_ms=?,conversion_tokens=0 WHERE id='revision'")
+          .run(stored.readableSize, stored.blockCount, stored.ms);
+      };
+      await h.run();
+      expect(h.row()).toMatchObject({ warning_summary: "Different terminal warning", readable_state: "readable_with_warnings" });
+      expect(h.current()).toEqual({ current_revision_id: "old" });
+      expect(h.db.prepare("SELECT freshness FROM page WHERE id='page'").get()).toEqual({ freshness: "current" });
+      expect(h.transform).not.toHaveBeenCalled();
+    } finally { h.db.close(); }
+  });
 });
