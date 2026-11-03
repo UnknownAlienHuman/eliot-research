@@ -62,7 +62,11 @@ try {
       const handler = async incoming => { if (incoming.request().method() !== method) return incoming.continue(); if (route) return incoming.fallback(); route = incoming; resolve(); };
       await page.route(url, handler);
       return { waiting, body: () => route.request().postDataJSON(), request: () => route.request(),
-        release: async (body = {}, status = 200) => { await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {}); await page.unroute(url, handler); await settle(); } };
+        release: async (body?, status = 200) => {
+          const reply = body ?? (method === 'POST' && url.endsWith('/turns') ? { turnId: route.request().postDataJSON().turnId } : {});
+          await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(reply) }).catch(() => {});
+          await page.unroute(url, handler); await settle();
+        } };
     };
     // A first-page read started before chat creation must not erase the new row.
     const oldHead = await api('/api/projects/' + historyProject + '/chats');

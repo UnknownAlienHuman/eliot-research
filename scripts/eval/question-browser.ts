@@ -178,10 +178,10 @@ try {
       return {
         waiting: arrivedPromise,
         body: () => held.request?.postDataJSON(),
-        release: async (status = 200, data = { accepted: true }) => {
+        release: async (status = 200, data?) => {
           assert(held.request, 'No held turn POST reached the route.');
           assert(held.respond, 'The intercepted turn route is not ready to release.');
-          await held.respond(status, data);
+          await held.respond(status, data ?? { turnId: held.request.postDataJSON().turnId });
         },
       };
     };
@@ -317,7 +317,7 @@ try {
       await replaceDialog.getByRole('button', { name: 'Use suggested question', exact: true }).click();
       await expect(page).toHaveURL(origin + chatPath(project, chats[1]));
       await expect(questionBox).toHaveValue(questionB);
-      await sentLate.release(status, status === 200 ? { accepted: true } : { error: { message: 'Late departed failure ' + status } });
+      await sentLate.release(status, status === 200 ? undefined : { error: { message: 'Late departed failure ' + status } });
       await expect(questionBox).toHaveValue(questionB);
       await expect(page.getByText('Late departed failure ' + status, { exact: true })).toHaveCount(0);
       await revealScope(sourceB);

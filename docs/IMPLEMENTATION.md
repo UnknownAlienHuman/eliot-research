@@ -660,7 +660,13 @@ read/reconnect may finish the idempotent local save of an already accepted, prov
 an already stored answer's D1 projection, as specified below; it does not admit work or change terminal D1 accounting.
 GET, history, reconnect and Save never start model/search work. One active turn
 and one queued submission are allowed; the next returns `409/busy`. Stop stores partial text, closing a tab does not
-cancel, and failed streams are not automatically continued. Retry is a new owner submission.
+cancel, and failed streams are not automatically continued. Retrying a confirmed failed generation is a new owner submission.
+The mounted composer retains one unconfirmed Send ID, its normalized question/scope/ordered source IDs/explicit model
+and any acknowledged chat ID. An explicit Send with identical input reuses them after a lost or unreadable response;
+only a matching turn-ID acknowledgement consumes the attempt in its visible view. Sources/overview navigation retains
+it with the draft. Changed input has a new turn ID in the same known chat; changing chats or unmounting discards the draft and attempt.
+No read or timer sends it again, and an empty history read does not prove rejection. Chat creation itself has no
+idempotency key: losing its acknowledgement can leave a duplicate empty chat, but no turn is sent without a known chat ID.
 The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
 cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
 Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the recorded

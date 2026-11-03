@@ -135,6 +135,7 @@ export function ChatView({
     || actionView.current.search !== location.search || actionView.current.key !== location.key)
     actionView.current = { projectId, chatId, path: location.pathname, search: location.search, key: location.key };
   const mounted = useRef(false), sendLock = useRef(false), draftSequence = useRef(0);
+  const sendAttempt = useRef<{ projectId: string; chatId: string | undefined; input: string; turnId: string; createdChat: ChatRow | undefined } | null>(null);
   const sendSequence = useRef(0), saveSequence = useRef(0);
   const sentNavigation = useRef<{ projectId: string; chatId: string; path: string } | null>(null);
   const turnsRoute = useRef<{ projectId: string; chatId?: string } | null>(null);
@@ -195,7 +196,7 @@ export function ChatView({
     if (!keepDraft) sentNavigation.current = null;
     if (routeRef.current.projectId === projectId && routeRef.current.chatId === chatId) return;
     routeRef.current = { projectId, chatId };
-    if (!keepDraft) setQuestion('');
+    if (!keepDraft) { setQuestion(''); sendAttempt.current = null; }
     setSendError('');
     setSaveNote('');
     setSavingId('');
@@ -443,32 +444,43 @@ export function ChatView({
     if (nextQuestion === '' || sendLock.current || !chatReady || queued !== null || modelSelectionPending) return;
     const owner = actionView.current, draft = draftSequence.current, request = ++sendSequence.current;
     const current = () => mounted.current && actionView.current === owner;
-    const body: { turnId: string; question: string; scopeMode: TurnView['scopeMode']; sourceIds?: string[]; model?: string } = {
-      turnId: crypto.randomUUID(), question: nextQuestion, scopeMode: selection.scopeMode,
+    const input = {
+      question: nextQuestion, scopeMode: selection.scopeMode,
       ...(selection.scopeMode === 'explicit' ? { sourceIds: [...selection.sourceIds] } : {}), ...(modelRoute !== '' ? { model: modelRoute } : {}),
     };
+    const serialized = JSON.stringify(input), previous = sendAttempt.current;
+    const createdChat = previous?.projectId === projectId && previous.chatId === chatId ? previous.createdChat : undefined;
+    const attempt = previous?.projectId === projectId && previous.chatId === chatId && previous.input === serialized ? previous
+      : { projectId, chatId, input: serialized, turnId: crypto.randomUUID(), createdChat };
+    sendAttempt.current = attempt;
+    const body = { turnId: attempt.turnId, ...input };
     sendLock.current = true;
     setBusy(true);
     setSendError('');
     setSaveNote('');
     try {
-      let targetChat = chatId;
+      let targetChat = chatId ?? attempt.createdChat?.id;
       if (targetChat === undefined) {
         const created = await apiJson<{ chat: ChatRow }>('/api/projects/' + encodeURIComponent(projectId) + '/chats', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: nextQuestion.slice(0, 80) }),
         });
-        if (!current()) return; // No new turn is admitted from a departed creation view.
+        if (typeof created?.chat?.id !== 'string' || !created.chat.id) throw new Error('Could not confirm the new conversation. Try Send again.');
         targetChat = created.chat.id;
-        addChat(created.chat);
+        attempt.createdChat = created.chat;
+        if (!current()) return; // No new turn is admitted from a departed creation view.
       }
-      await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/chats/' + encodeURIComponent(targetChat) + '/turns', {
+      if (attempt.createdChat) addChat(attempt.createdChat);
+      const receipt = await apiJson<unknown>('/api/projects/' + encodeURIComponent(projectId) + '/chats/' + encodeURIComponent(targetChat) + '/turns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      if (!receipt || typeof receipt !== 'object' || !('turnId' in receipt) || receipt.turnId !== attempt.turnId)
+        throw new Error('Could not confirm that the question was received. Try Send again.');
       if (!current()) return;
+      if (sendAttempt.current === attempt) sendAttempt.current = null;
       if (draftSequence.current === draft) setQuestion('');
       if (chatId === undefined) {
         const path = '/p/' + encodeURIComponent(projectId) + '/chat/' + encodeURIComponent(targetChat);
