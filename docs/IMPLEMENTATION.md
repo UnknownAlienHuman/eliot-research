@@ -520,7 +520,9 @@ Guide/digest sentences need content beyond declared citations and punctuation/fo
 `([S1:1])` and `**[S1:1]**` do not count toward completion. Glossary entries also require nonblank EN/RU terms.
 Ordinary letters, numbers, Unicode symbols and nonblank supported fenced/inline code remain content. The bounded
 check does not parse Markdown: explicit links, images, HTML/entities, footnotes, reference definitions, indented code
-and ambiguous marker-only output are retained for review as `partial`, even with three guide units and kept claims.
+and ambiguous marker-only output are kept as whole review units rather than sentence-split, and force `partial`
+even with three guide units and kept claims. Only the existing fenced/inline forms promise code-literal treatment;
+other constructs retain the existing reference-cleaning policy, and the original raw output remains available.
 Ambiguous surviving claim statements, such as a tilde-only remainder, also prevent `done` without discarding the card.
 This gives up automatic visibility classification of those constructs; it does not discard them or establish
 semantic support. Both normal completion and storage-only Save apply this policy without another model call.

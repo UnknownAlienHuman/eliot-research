@@ -325,7 +325,7 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
     if (cleaned.invalidReferences || !item.labels.every((label) => byLabel.has(label))) {
       dropped.push({ index, reason: `${stage}-invalid-reference` }); return [];
     }
-    const statements = splitDistillStatements(item.text);
+    const statements = checkDistillContent(item.text, item.labels, revisionId).requiresReview ? [item.text] : splitDistillStatements(item.text);
     return statements.flatMap((statement) => {
       const content = cleanDistillText(statement, item.labels, revisionId).text;
       const check = checkDistillContent(statement, item.labels, revisionId);

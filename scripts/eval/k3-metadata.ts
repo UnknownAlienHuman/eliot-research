@@ -136,7 +136,7 @@ try {
     }
     if (mode === 'code-prose' || rich) {
       const output = JSON.parse(originals.get('distill-call2.json'));
-      output.output.digest = [{ labels: ['[S1:1]'], text: rich ? '[S1:1](https://example.test)' : '`++`' }];
+      output.output.digest = [{ labels: ['[S1:1]'], text: rich ? cached ? '    //' : '[S1:1](https://example.test)' : '`++`' }];
       if (!rich) {
         output.output.guide = [...guide.slice(0, 2), { labels: ['[S1:1]'], text: '~~~\n[S1:1]\n~~~' }];
         output.output.glossary = [{ en: 'Code', ru: 'Код', definition: '`//`', labels: ['[S1:1]'] }];
@@ -181,7 +181,7 @@ try {
       if (!zeroClaims && !noProse) { assert.equal(before.claims[0].quote, canonicalQuote); assert.equal(before.claims[0].start, start); assert.equal(before.claims[0].end, end); }
       if (emptyPrimary) assert(before.report.dropped.some(item => item.reason === (cached ? 'retained-empty-statement' : 'empty-claim-statement')));
       if (ambiguousClaim) assert.equal(before.claims[0].statement, '~~');
-      if (rich) assert.equal(before.digest, '[R' + revision + ':1](https://example.test)\n\n[R' + revision + ':1]');
+      if (rich) assert.equal(before.digest, (cached ? '    //' : '[R' + revision + ':1](https://example.test)') + '\n\n[R' + revision + ':1]');
       if (mode === 'code-prose') {
         assert(before.guide.includes('~~~\n[S1:1]\n~~~'));
         assert.equal(before.digest, '`++`\n\n[R' + revision + ':1]');
