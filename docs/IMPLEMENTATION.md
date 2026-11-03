@@ -455,7 +455,8 @@ it to retain a card. Citation annotations are resolved separately from factual n
 its item. First-call claim statements use the same declared-reference cleaner as guide text and second-call additions
 before numeric verification. Only the claim's own `quoteBlock`, its persistent form and corresponding `[block N]`
 annotation may be removed; unknown references and annotation-only statements reject the candidate. Code literals
-remain literal, factual numbers still need the original quote, and drop indexes retain the original candidate order.
+remain literal and factual numbers still need the original quote. Drop indexes identify the original candidates;
+diagnostic entries need not be sorted. Surviving claims retain their order.
 The raw first output, original block/range and frozen evidence selections remain unchanged. Historical cached candidate
 IDs are not recomputed and no output is automatically rechecked or regenerated. Synthetic retained outputs reproduce
 this gap through current whole-block verification and Workerd/D1/R2 storage; the inspected corpus reports contained no
