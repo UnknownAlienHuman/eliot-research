@@ -300,6 +300,8 @@ re-distilled automatically.
    API progress retains the admitted job bound independently of later model-default or catalogue changes.
    A successful Understand or Save refreshes the workspace source badge without reloading the document or resetting
    loaded pages or source selection; list/progress reads perform no inference.
+   If the following status read fails, the accepted request remains visible and Reload understanding retries only
+   the read. No second Understand/Save is offered until that status is read successfully.
 
 **Hard acceptance — `pnpm eval k3`**
 

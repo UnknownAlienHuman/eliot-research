@@ -412,10 +412,15 @@ against Workflow ID `distill-<revisionId>`; it never admits queued work. Migrati
 removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
 resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
 
-After a successful Understand or Save-existing POST the reader refreshes its workspace source metadata before the
-follow-up view GET by invalidating the active `sources` query for that project in the existing QueryClient. Infinite
-query pages retain loaded pagination; queued/running work is polled to its terminal state without a document reload
-or selection reset. These reads never dispatch understanding.
+After a successful Understand or Save-existing POST the reader invalidates the active `sources` query for that project
+and rereads understanding. Infinite source pages retain loaded pagination and source selection. A failed follow-up GET
+shows the accepted request with a storage-only Reload action; Understand/Save stay unavailable until a successful read.
+POST errors remain distinct and also offer Reload, without an automatic resubmission.
+The existing QueryClient owns revision-scoped status reads, passes their AbortSignal and polls queued/running work
+without overlapping reads. A read error stops polling until Reload; the last received view is retained with its error.
+Navigation cancels reads and ignores the departed reader's action continuation. Submitted POSTs keep their original
+source/revision; a successful late POST may still invalidate its owning project's source badge query. These reads never
+dispatch understanding, and no document reload or new server state is introduced.
 
 **Bibliographic metadata — implementation and acceptance in MAP.** Current ingest/OCR inputs have no separate,
 reliably attributed author/date fields; PDF conversion explicitly disables PDF metadata. Canonical text, including
