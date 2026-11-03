@@ -17,6 +17,8 @@
 .er-chat--studio {
   grid-template-rows: auto minmax(0, 1fr);
 }
+.er-chat--studio .er-chat__head { flex-direction: column; align-items: stretch; }
+.er-chat--studio .er-chat__head-actions { justify-content: flex-start; }
 
 .er-chat__head {
   position: relative;

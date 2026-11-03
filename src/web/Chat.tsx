@@ -791,6 +791,7 @@ export function StudioView({ projectId, refreshKey }: StudioViewProps) {
       <header className='er-chat__head'>
         <div className='er-chat__head-title'><h1 className='er-chat__title'>Studio</h1><p className='er-chat__hint'>Answers you saved from chat. Refresh to see changes from other sessions.</p></div>
         <div className='er-chat__head-actions'>
+          <Link className='er-button er-button--text' to={'/p/' + encodeURIComponent(projectId) + '/overview'}>Project overview</Link>
           <button className='er-button er-button--text' type='button' disabled={listBusy} onClick={() => setScan((value) => value + 1)}>Refresh pages</button>
           <ProposalsInbox projectId={projectId} onAccepted={(pageId) => { setSelection({ projectId, pageId }); setScan((value) => value + 1); }} />
         </div>

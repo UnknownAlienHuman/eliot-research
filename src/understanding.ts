@@ -1,7 +1,5 @@
-// K3 storage reader: per-source understanding and deterministic project
-// overview. Product functions only: (env, actor, input). R2 holds the
-// writer-validated bodies and report; D1 holds identity and verified
-// claims. No model, network, page-write or schema work.
+// Storage-only source understanding and deterministic project overview.
+import { z } from "zod";
 import { LibraryError } from "./library";
 import type { Actor } from "./auth";
 import type { Block } from "./blocks";
@@ -36,7 +34,7 @@ export interface Understanding { sourceId: string; revisionId: string; state: Di
 export interface OverviewSource { sourceId: string; revisionId: string; title: string; state: DistillState;
   summary: string | null; questions: string[] }
 
-export interface Overview { sources: OverviewSource[] }
+export interface Overview { sources: OverviewSource[]; nextCursor: string | null }
 
 const MAX_CLAIMS = 32;
 
@@ -143,17 +141,31 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
   };
 }
 
-export async function getOverview(env: Env, _actor: Actor, input: { projectId: string }): Promise<Overview> {
+export async function getOverview(env: Env, _actor: Actor, input: { projectId: string; cursor?: string | undefined }): Promise<Overview> {
   if (!input.projectId) throw new LibraryError("invalid", "Check the request fields and try again.", 400);
   const project = await env.DB.prepare("SELECT id FROM project WHERE id=?").bind(input.projectId).first<{ id: string }>();
   if (!project) throw new LibraryError("not_found", "Project not found.", 404);
+  let after: { at: number; id: string } | undefined;
+  if (input.cursor !== undefined) {
+    try {
+      if (typeof input.cursor !== "string" || input.cursor.length > 512) throw new Error("cursor");
+      const value: unknown = JSON.parse(input.cursor);
+      if (!Array.isArray(value) || value.length !== 3 || value[0] !== input.projectId
+        || !Number.isSafeInteger(value[1]) || value[1] < 0) throw new Error("cursor");
+      after = { at: value[1] as number, id: z.uuid().parse(value[2]) };
+    } catch { throw new LibraryError("invalid", "This overview cursor is invalid. Refresh the overview.", 400); }
+  }
+  const args: (string | number)[] = [input.projectId];
+  if (after) args.push(after.at, after.id);
   const result = await env.DB.prepare("SELECT s.id AS sourceId, s.title AS title, s.current_revision_id AS revisionId,"
-    + " r.distill_state AS state, r.guide_summary AS summary,r.distill_report_key AS reportKey FROM project_source ps"
+    + " s.created_at AS createdAt,r.distill_state AS state,r.guide_summary AS summary,r.distill_report_key AS reportKey FROM project_source ps"
     + " JOIN source s ON s.id=ps.source_id JOIN source_revision r ON r.id=s.current_revision_id"
     + " WHERE ps.project_id=? AND s.state='active' AND r.deleted_at IS NULL"
-    + " AND r.readable_state IN ('readable','readable_with_warnings') ORDER BY s.created_at ASC, s.id ASC")
-    .bind(input.projectId).all<{ sourceId: string; title: string; revisionId: string; state: DistillState; summary: string | null; reportKey: string | null }>();
-  const sources = await Promise.all(result.results.map(async (item) => ({
+    + " AND r.readable_state IN ('readable','readable_with_warnings')"
+    + (after ? " AND (s.created_at,s.id)>(?,?)" : "") + " ORDER BY s.created_at ASC,s.id ASC LIMIT 51")
+    .bind(...args).all<{ sourceId: string; title: string; revisionId: string; createdAt: number; state: DistillState; summary: string | null; reportKey: string | null }>();
+  const page = result.results.slice(0, 50), last = page.at(-1);
+  const sources = await Promise.all(page.map(async (item) => ({
     sourceId: item.sourceId,
     revisionId: item.revisionId,
     title: item.title,
@@ -161,5 +173,5 @@ export async function getOverview(env: Env, _actor: Actor, input: { projectId: s
     summary: item.summary,
     questions: await revisionQuestions(env, item.revisionId, item.reportKey),
   })));
-  return { sources };
+  return { sources, nextCursor: result.results.length > 50 && last ? JSON.stringify([input.projectId, last.createdAt, last.sourceId]) : null };
 }

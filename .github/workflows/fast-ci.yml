@@ -62,6 +62,8 @@ jobs:
           pnpm eval k2 --models-only
           pnpm eval k3 --native-only
           pnpm eval k3 --metadata-only
+          pnpm eval k3 --overview-only
+          pnpm eval k3 --overview-browser
       - name: Upload checked build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

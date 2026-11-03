@@ -5,4 +5,6 @@ if (contour !== 'k0' && contour !== 'k1' && contour !== 'k2' && contour !== 'k3'
 await import('./' + (contour === 'k2' && process.argv.includes('--context-only') ? 'k2-context'
   : contour === 'k2' && process.argv.includes('--view-isolation') ? 'view-isolation'
   : contour === 'k3' && process.argv.includes('--metadata-only') ? 'k3-metadata'
+  : contour === 'k3' && process.argv.includes('--overview-only') ? 'k3-overview'
+  : contour === 'k3' && process.argv.includes('--overview-browser') ? 'overview-browser'
   : contour === 'k1' && process.argv.includes('--ocr') ? 'k1-ocr' : contour) + '.ts');
