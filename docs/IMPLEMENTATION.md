@@ -1113,7 +1113,11 @@ Chat uses compact provider then model controls with project default available. A
 unambiguous catalogue choices is visibly unavailable. Model changes affect the next Send; each answer shows its stored
 model's name. New chats may Send with no sources, while existing chats wait for their history to load. Changing chats
 clears the previous queue view and ignores messages from the closed connection. The inherited model name is displayed
-without sending an explicit override. Settings keeps human provider names and known quota values on compact rows,
+without sending an explicit override.
+History and New chat confirm before discarding a nonblank question draft. Cancel preserves the open menu, chat, draft
+and source scope. Choosing the current chat, remaining in a new chat or using a modified link leaves its draft intact
+without confirmation; blank drafts follow the existing navigation. This applies to these controls, not browser Back/Forward.
+Settings keeps human provider names and known quota values on compact rows,
 with provider addresses and Gateway routing in connection dialogs. Both owner billing and data-use choices remain.
 Unknown metadata stays visible, and model-job admission remains separate
 from selection.

@@ -17,6 +17,10 @@ const projects = [];
 for (let index = 0; index < 52; index++) projects.push((await api('/api/projects', { title: prefix + index })).project);
 const first = projects[0], target = projects.at(-1);
 assert(first && target);
+const chats = await Promise.all(['First chat', 'Second chat'].map(async title =>
+  (await api('/api/projects/' + first.id + '/chats', { title })).chat));
+const chatPath = chat => '/p/' + first.id + '/chat/' + chat.id;
+const chatBefore = await Promise.all(chats.map(chat => api('/api/projects/' + first.id + '/chats/' + chat.id)));
 await api('/api/projects/' + projects[1].id, { archived: true }, 'PATCH');
 // Include pre-existing native eval projects, not just this fixture's 51 active rows.
 const expected = [];
@@ -41,13 +45,14 @@ try {
     let confirmSwitch = false;
     page.on('dialog', async prompt => {
       assert.equal(prompt.type(), 'confirm');
-      assert.equal(prompt.message(), 'Discard your unsent question and switch project?');
+      assert(['Discard your unsent question and switch project?', 'Discard your question draft and switch chats?',
+        'Discard your question draft and start a new chat?'].includes(prompt.message()));
       confirmations.push(prompt.message());
       if (confirmSwitch) await prompt.accept();
       else await prompt.dismiss();
     });
     let writes = 0, fault = '', held;
-    await page.route('**/api/**', route => {
+    await context.route('**/api/**', route => {
       if (route.request().method() === 'GET') return route.fallback();
       writes++; return route.abort('blockedbyclient');
     });
@@ -198,12 +203,89 @@ try {
     await page.goBack();
     await expect(page).toHaveURL(origin + '/p/' + first.id + '/chat');
     await expect(dialog).toHaveCount(0);
+
+    // Manual chat navigation must not silently discard the controlled composer.
+    await page.goto(origin + chatPath(chats[0]));
+    const history = page.getByRole('navigation', { name: 'Chat history', exact: true });
+    const historyToggle = page.getByRole('region', { name: 'Chat', exact: true }).getByText('History', { exact: true });
+    const openHistory = async () => { if (!await history.isVisible()) await historyToggle.click(); };
+    const chatLink = chat => history.getByRole('link', { name: chat.title, exact: true });
+    await expect(page.locator('.er-chat__history-link[aria-current="page"]')).toHaveAttribute('href', chatPath(chats[0]));
+    if (viewport.width <= 600) await page.getByRole('navigation', { name: 'Primary', exact: true }).getByRole('link', { name: 'Sources', exact: true }).click();
+    await scope.uncheck();
+    if (viewport.width <= 600) await page.getByRole('navigation', { name: 'Primary', exact: true }).getByRole('link', { name: 'Chat', exact: true }).click();
+    await expect(page).toHaveURL(origin + chatPath(chats[0]));
+    await question.fill('Keep this draft while choosing another chat.');
+    const projectPrompts = confirmations.length;
+    await openHistory();
+    await chatLink(chats[0]).click();
+    assert.equal(confirmations.length, projectPrompts);
+    await expect(question).toHaveValue('Keep this draft while choosing another chat.');
+
+    await openHistory();
+    const opening = context.waitForEvent('page');
+    await chatLink(chats[1]).click({ modifiers: ['Control'] });
+    const separateTab = await opening;
+    await expect(separateTab).toHaveURL(origin + chatPath(chats[1]));
+    await separateTab.close();
+    await expect(page).toHaveURL(origin + chatPath(chats[0]));
+    await expect(question).toHaveValue('Keep this draft while choosing another chat.');
+    assert.equal(confirmations.length, projectPrompts, 'Opening a separate tab must not ask to discard this tab\'s draft.');
+
+    confirmSwitch = false;
+    await openHistory();
+    await chatLink(chats[1]).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => confirmations.length).toBe(projectPrompts + 1);
+    await expect(page).toHaveURL(origin + chatPath(chats[0]));
+    await expect(history).toBeVisible();
+    await expect(question).toHaveValue('Keep this draft while choosing another chat.');
+    await expect(scope).not.toBeChecked();
+    confirmSwitch = true;
+    await chatLink(chats[1]).click();
+    await expect(page).toHaveURL(origin + chatPath(chats[1]));
+    await expect(page.locator('.er-chat__history-link[aria-current="page"]')).toHaveAttribute('href', chatPath(chats[1]));
+    await expect(question).toHaveValue('');
+
+    await question.fill('Keep this draft before New chat.');
+    confirmSwitch = false;
+    await openHistory();
+    await historyToggle.locator('..').getByRole('button', { name: 'New chat', exact: true }).click();
+    await expect.poll(() => confirmations.length).toBe(projectPrompts + 3);
+    await expect(page).toHaveURL(origin + chatPath(chats[1]));
+    await expect(history).toBeVisible();
+    await expect(question).toHaveValue('Keep this draft before New chat.');
+    await expect(scope).not.toBeChecked();
+    confirmSwitch = true;
+    await historyToggle.locator('..').getByRole('button', { name: 'New chat', exact: true }).click();
+    await expect(page).toHaveURL(origin + '/p/' + first.id + '/chat');
+    await expect(question).toHaveValue('');
+    await expect(history).toBeHidden();
+
+    await question.fill('Already composing a new chat.');
+    await openHistory();
+    await historyToggle.locator('..').getByRole('button', { name: 'New chat', exact: true }).click();
+    await expect(question).toHaveValue('Already composing a new chat.');
+    assert.equal(confirmations.length, projectPrompts + 4, 'Staying in a new chat must preserve its draft without confirmation.');
+    await question.fill('  \n  ');
+    await openHistory();
+    await chatLink(chats[0]).click();
+    await expect(page).toHaveURL(origin + chatPath(chats[0]));
+    await expect(question).toHaveValue('');
+    assert.equal(confirmations.length, projectPrompts + 4, 'Whitespace-only questions need no confirmation.');
+    for (let index = 0; index < chats.length; index++) {
+      const after = await api('/api/projects/' + first.id + '/chats/' + chats[index].id);
+      assert.deepEqual(after.chat, chatBefore[index].chat);
+      assert.deepEqual(after.turns, chatBefore[index].turns);
+    }
     assert.equal(writes, 0);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ scope: 'K2_PROJECT_PICKER_BROWSER', viewport, projects: expected.length,
       paging: true, initialAndPageRetry: true, escapePreservesDraft: true, delayedCloseAndReopen: true,
       projectAndSettingsNavigation: true, draftSwitch: { cancelPreservesDraftAndScope: true, confirmNavigates: true,
-        currentAndBlankSkipConfirmation: true, prompts: confirmations.length }, unexpectedWrites: writes, newModelCalls: 0 }));
+        currentAndBlankSkipConfirmation: true, prompts: projectPrompts },
+      chatDraft: { historyCancelAndConfirm: true, newChatCancelAndConfirm: true, currentAndBlankKeepBehavior: true,
+        modifiedClickPreservesDraft: true, retainedStoredChats: true, prompts: confirmations.length - projectPrompts }, unexpectedWrites: writes, newModelCalls: 0 }));
     await context.close();
   }
 } finally { await browser.close(); }

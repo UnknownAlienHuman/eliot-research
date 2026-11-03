@@ -432,6 +432,7 @@ export function ChatView({
   }
 
   function startNewChat(): void {
+    if (chatId !== undefined && question.trim() !== '' && !window.confirm('Discard your question draft and start a new chat?')) return;
     onNewChat();
     if (historyRef.current !== null) historyRef.current.open = false;
     navigate('/p/' + encodeURIComponent(projectId) + '/chat');
@@ -549,7 +550,15 @@ export function ChatView({
                           className='er-chat__history-link'
                           to={'/p/' + encodeURIComponent(projectId) + '/chat/' + encodeURIComponent(chat.id)}
                           aria-current={chat.id === chatId ? 'page' : undefined}
-                          onClick={() => { if (historyRef.current !== null) historyRef.current.open = false; }}
+                          onClick={event => {
+                            if (chat.id !== chatId && question.trim() !== '' && event.button === 0
+                              && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+                              && !window.confirm('Discard your question draft and switch chats?')) {
+                              event.preventDefault();
+                              return;
+                            }
+                            if (historyRef.current !== null) historyRef.current.open = false;
+                          }}
                         >
                           {chat.title === '' ? 'Untitled chat' : chat.title}
                         </Link>
