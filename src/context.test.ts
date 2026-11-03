@@ -7,6 +7,7 @@ import { modelOutputLimit } from "./models.js";
 import type { Actor } from "./auth";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
+import { readFileSync, readdirSync } from "node:fs";
 
 const NL = String.fromCharCode(10);
 const actor = { type: "owner", id: "o1", authentication: "local" } as unknown as Actor;
@@ -86,19 +87,20 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
                 const known = id === "p1" || opts.memberships.some((m) => m.projectId === id);
                 return known ? { id } : null;
               }
-              if (sql.includes("ps.source_id=?")) {
-                const projectId = params[0] as string;
-                const sourceId = params[1] as string;
-                const m = opts.memberships.find((x) => x.projectId === projectId && x.sourceId === sourceId);
-                if (!m) return null;
-                const s = opts.sources.find((x) => x.id === sourceId);
-                if (!s || s.state !== "active" || !s.currentRevisionId) return null;
-                const r = opts.revisions.find((x) => x.id === s.currentRevisionId);
-                return { id: s.id, title: s.title, revisionId: s.currentRevisionId, readableState: r ? r.readableState : null, readableSize: r ? r.readableSize : null, distillState: r ? r.distillState : null, guideSummary: r ? r.guideSummary : null, reportKey: r?.reportKey ?? null };
-              }
               return null;
             },
             async all() {
+              if (sql.includes("FROM json_each(?) wanted")) {
+                const ids = JSON.parse(params[0] as string) as string[], projectId = params[1] as string;
+                return { results: ids.map(id => {
+                  const membership = opts.memberships.find(m => m.projectId === projectId && m.sourceId === id);
+                  const source = membership && opts.sources.find(s => s.id === id && s.state === "active");
+                  const revision = source && opts.revisions.find(r => r.id === source.currentRevisionId);
+                  return { id: source?.id, title: source?.title, revisionId: source?.currentRevisionId,
+                    readableState: revision?.readableState, readableSize: revision?.readableSize, distillState: revision?.distillState,
+                    guideSummary: revision?.guideSummary, reportKey: revision?.reportKey ?? null };
+                }) };
+              }
               if (sql.includes("FROM claim")) {
                 const rev = params[0] as string;
                 const head = opts.revisions.find((x) => x.id === rev)?.claimCount;
@@ -1366,6 +1368,107 @@ describe("bounded context materialization", () => {
         [{ ordinal: 0, statement: text, quote: text, conditions: null, blockIndex: 1, ambiguous: 0 }]])),
     });
   }
+  function strictScope(ids: string[]) {
+    const fixture = scope(ids.length), db = new DatabaseSync(":memory:"), calls: string[] = [];
+    const transferred: Record<string, unknown>[] = [];
+    for (const file of readdirSync(new URL("../migrations/", import.meta.url)).filter(name => /^\d+_.+\.sql$/.test(name)).sort())
+      db.exec(readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"));
+    db.exec("INSERT INTO project(id,title,created_at,updated_at) VALUES('p1','Project',1,1)");
+    for (const [i, id] of ids.entries()) {
+      db.prepare("INSERT INTO source(id,title,kind,created_by,created_at,updated_at) VALUES(?,?,'text','owner',?,1)").run(id, "Paper " + i, i);
+      db.prepare("INSERT INTO source_revision(id,source_id,revision_no,readable_state,readable_size,created_by,created_at) VALUES(?,?,1,'readable',9,'owner',1)").run("r" + i, id);
+      db.prepare("UPDATE source SET current_revision_id=? WHERE id=?").run("r" + i, id);
+      db.prepare("INSERT INTO project_source(project_id,source_id,added_by,added_at) VALUES('p1',?,'owner',1)").run(id);
+    }
+    fixture.env.DB = { prepare(sql: string) {
+      const statement = db.prepare(sql);
+      return { bind(...params: SQLInputValue[]) { return {
+        async first() { calls.push(sql); return statement.get(...params) ?? null; },
+        async all() { calls.push(sql); const rows = statement.all(...params); transferred.push(...rows); return { results: rows }; },
+      }; } };
+    } } as unknown as D1Database;
+    return { ...fixture, db, calls, transferred };
+  }
+  it.each([0, 1, 1024])("freezes %i explicit sources with one bounded metadata query", async (count) => {
+    const ids = Array.from({ length: count }, (_, i) => "s" + i), fixture = strictScope(ids);
+    try {
+      const order = [...ids].reverse();
+      const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: order, model: MODEL });
+      expect(result.revisionIds).toEqual(order.map(id => "r" + id.slice(1)));
+      expect(result.sources.map(source => source.sourceId)).toEqual(order);
+      expect(fixture.calls).toHaveLength(count ? 2 : 1);
+    } finally { fixture.db.close(); }
+  });
+  it("keeps first-occurrence order, disabled membership and exact JSON string IDs", async () => {
+    const ids = ["s0", "Пример😀\"'", "s2"], fixture = strictScope(ids);
+    try {
+      fixture.db.prepare("UPDATE project_source SET enabled=0 WHERE source_id=?").run(ids[1] ?? "");
+      const input = { projectId: "p1", scopeMode: "explicit" as const, model: MODEL };
+      const result = await buildContext(fixture.env, actor, { ...input, sourceIds: [ids[2] ?? "", ids[1] ?? "", ids[2] ?? "", "s0"] });
+      expect(fixture.calls).toHaveLength(2);
+      expect(result.revisionIds).toEqual(["r2", "r1", "r0"]);
+      expect(result.sources.map(source => [source.sourceId, source.alias])).toEqual([[ids[2], "S1"], [ids[1], "S2"], [ids[0], "S3"]]);
+      expect(resolveCitations("[S1:1] [S2:1] [S3:1]", result.sources).citations.map(c => [c.revisionId, c.start, c.end]))
+        .toEqual([["r2", 0, 9], ["r1", 0, 9], ["r0", 0, 9]]);
+      expect(result).toEqual(await buildContext(fixture.env, actor, { ...input, sourceIds: [ids[2] ?? "", ids[1] ?? "", "s0"] }));
+    } finally { fixture.db.close(); }
+  });
+  it.each(["missing", "detached", "deleted", "archived", "null head", "wrong project"])("rejects %s scope before source body reads", async (kind) => {
+    const fixture = strictScope(["s0"]);
+    try {
+      if (kind === "detached") fixture.db.exec("DELETE FROM project_source");
+      if (kind === "deleted" || kind === "archived") fixture.db.prepare("UPDATE source SET state=?").run(kind);
+      if (kind === "null head") fixture.db.exec("UPDATE source SET current_revision_id=NULL");
+      if (kind === "wrong project") fixture.db.exec("INSERT INTO project(id,title,created_at,updated_at) VALUES('p2','Other',2,2)");
+      await expect(buildContext(fixture.env, actor, { projectId: kind === "wrong project" ? "p2" : "p1", scopeMode: "explicit", sourceIds: [kind === "missing" ? "no-source" : "s0"], model: MODEL }))
+        .rejects.toMatchObject({ code: "invalid", status: 400, message: "Narrow the source selection to readable sources in this project." });
+      expect(fixture.calls).toHaveLength(2);
+      expect(fixture.requested).toEqual([]);
+    } finally { fixture.db.close(); }
+  });
+  it("preserves metadata-versus-missing error order and raw-list limits", async () => {
+    const fixture = strictScope(["s0"]);
+    try {
+      fixture.db.prepare("UPDATE source SET title=?").run("x".repeat(4097));
+      for (const [sourceIds, message] of [
+        [["s0", "missing"], "Narrow the source selection so the answer fits."],
+        [["missing", "s0"], "Narrow the source selection to readable sources in this project."],
+        [["missing", "x".repeat(129)], "Narrow the source selection to readable sources in this project."],
+        [Array<string>(1025).fill("s0"), "Narrow the source selection so the answer fits."],
+      ] as const) {
+        await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [...sourceIds], model: MODEL })).rejects.toMatchObject({ message });
+      }
+      expect(fixture.calls).toHaveLength(7);
+      expect(fixture.requested).toEqual([]);
+    } finally { fixture.db.close(); }
+  });
+  it("retains the existing explicit policy for a head deleted after assignment", async () => {
+    const fixture = strictScope(["s0"]);
+    try {
+      fixture.db.exec("UPDATE source_revision SET deleted_at=2");
+      const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"], model: MODEL });
+      expect(result.revisionIds).toEqual(["r0"]);
+      const defaults = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
+      expect(defaults.revisionIds).toEqual([]);
+    } finally { fixture.db.close(); }
+  });
+  it("bounds conservative Unicode metadata and a previously occupied allocation allowance", async () => {
+    const ids = Array.from({ length: 600 }, (_, i) => "s" + i), fixture = strictScope(ids);
+    const input = { projectId: "p1", scopeMode: "explicit" as const, sourceIds: ids, model: MODEL };
+    try {
+      fixture.db.prepare("UPDATE source_revision SET guide_summary=?").run("g".repeat(4096));
+      expect((await buildContext(fixture.env, actor, input)).revisionIds).toHaveLength(600);
+      for (const [summary, question] of [["я".repeat(4096), ""], ["g".repeat(8192), "q".repeat(1000000)]] as const) {
+        fixture.requested.length = 0; fixture.transferred.length = 0; fixture.calls.length = 0;
+        fixture.db.prepare("UPDATE source_revision SET guide_summary=?").run(summary);
+        await expect(buildContext(fixture.env, actor, { ...input, question }))
+          .rejects.toMatchObject({ message: "Narrow the source selection so the answer fits." });
+        expect(fixture.calls).toHaveLength(2);
+        expect(fixture.requested).toEqual([]);
+        expect(new TextEncoder().encode(JSON.stringify(fixture.transferred)).length).toBeLessThan(limit / 4 + 200000);
+      }
+    } finally { fixture.db.close(); }
+  });
   it("rejects an oversized undistilled block before opening its text body", async () => {
     const fixture = scope(3, "x".repeat(limit + 1), limit + 1);
     await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
@@ -1502,7 +1605,8 @@ describe("bounded context materialization", () => {
       .rejects.toMatchObject({ code: "invalid", status: 400 });
     expect(fixture.requested.filter((key) => key.includes("text.md#r"))).toHaveLength(256);
   });
-  it.each(["sources", "source NUL", "summary NUL", "report NUL", "claims", "claim NUL", "source aggregate", "IDs"])("bounds %s inside SQLite before transferring oversized fields", async (kind) => {
+  it.each(["sources", "source NUL", "summary NUL", "report NUL", "claims", "claim NUL", "source aggregate", "IDs"]
+    .flatMap(kind => (["project_default", "explicit"] as const).map(scopeMode => ({ kind, scopeMode }))))("bounds $kind for $scopeMode before transferring oversized fields", async ({ kind, scopeMode }) => {
     const db = new DatabaseSync(":memory:");
     const fixture = scope();
     const transferred: Record<string, unknown>[] = [];
@@ -1535,10 +1639,11 @@ describe("bounded context materialization", () => {
           async all() { const rows = statement.all(...params); transferred.push(...rows); return { results: rows }; },
         }; } };
       } } as unknown as D1Database;
-      await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      const sourceIds = db.prepare("SELECT id FROM source ORDER BY id").all().map(row => row.id as string);
+      await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode, sourceIds, model: MODEL }))
         .rejects.toMatchObject({ code: "invalid", status: 400 });
       expect(fixture.requested).toEqual([]);
-      expect(JSON.stringify(transferred).length).toBeLessThan(kind === "source aggregate" ? 200000 : 2000);
+      expect(JSON.stringify(transferred).length).toBeLessThan(kind === "source aggregate" ? (scopeMode === "explicit" ? limit / 4 + 200000 : 200000) : 2000);
     } finally { db.close(); }
   });
 });

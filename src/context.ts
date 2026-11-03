@@ -193,6 +193,8 @@ const SOURCE_METADATA = "CASE WHEN length(CAST(s.id AS BLOB))<=128 THEN s.id ELS
   "CASE WHEN length(CAST(r.distill_report_key AS BLOB))<=4096 THEN r.distill_report_key ELSE NULL END AS reportKey, " +
   "(length(CAST(s.id AS BLOB))>128 OR coalesce(length(CAST(s.current_revision_id AS BLOB)),0)>128 OR " +
   "length(CAST(s.title AS BLOB))>4096 OR coalesce(length(CAST(r.guide_summary AS BLOB)),0)>32768 OR coalesce(length(CAST(r.distill_report_key AS BLOB)),0)>4096) AS metadataTooLarge, ";
+const SOURCE_METADATA_COST = "256 + 4 * (length(CAST(id AS BLOB)) + length(CAST(revisionId AS BLOB)) + length(CAST(title AS BLOB)) + " +
+  "coalesce(length(CAST(guideSummary AS BLOB)),0) + coalesce(length(CAST(reportKey AS BLOB)),0))";
 function retainFrozen(assembly: Materialization, rows: Array<Frozen & { metadataTooLarge?: number }>): Frozen[] {
   if (rows.length > MAX_SOURCES) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   for (const row of rows) {
@@ -220,24 +222,35 @@ async function freezeExplicit(env: Env, projectId: string, ids: string[], assemb
   if (ids.length > MAX_SOURCES) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   const out: Frozen[] = [];
   const seen = new Set<string>();
+  let oversizedId = false;
   for (const id of ids) {
-    if (utf8Bytes(id) > 128) throw new LibraryError("invalid", NARROW_SCOPE, 400);
-    if (seen.has(id)) continue;
+    if (utf8Bytes(id) > 128) { oversizedId = true; break; }
     seen.add(id);
-    const row = await env.DB.prepare(
-      "SELECT " + SOURCE_METADATA +
-        "r.readable_state AS readableState, r.readable_size AS readableSize, " +
-        "r.distill_state AS distillState FROM project_source ps " +
-        "JOIN source s ON s.id=ps.source_id LEFT JOIN source_revision r ON r.id=s.current_revision_id " +
-        "WHERE ps.project_id=? AND ps.source_id=? AND s.state='active'",
-    )
-      .bind(projectId, id)
-      .first<{ id: string; title: string; revisionId: string | null; readableState: string | null; readableSize: number | null; distillState: string | null; guideSummary: string | null; reportKey: string | null; metadataTooLarge?: number }>();
+  }
+  if (seen.size === 0) {
+    if (oversizedId) throw new LibraryError("invalid", NARROW_SCOPE, 400);
+    return out;
+  }
+  const requested = JSON.stringify([...seen]);
+  reserve(assembly, 2 * requested.length);
+  const result = await env.DB.prepare("WITH selected AS (SELECT CAST(wanted.key AS INTEGER) AS ordinal, " + SOURCE_METADATA +
+    "r.readable_state AS readableState,r.readable_size AS readableSize,r.distill_state AS distillState " +
+    "FROM json_each(?) wanted LEFT JOIN project_source ps ON ps.project_id=? AND ps.source_id=wanted.value " +
+    "LEFT JOIN source s ON s.id=ps.source_id AND s.state='active' LEFT JOIN source_revision r ON r.id=s.current_revision_id " +
+    "ORDER BY ordinal LIMIT " + (MAX_SOURCES + 1) + "), bounded AS (SELECT *, " +
+    "sum(" + SOURCE_METADATA_COST + ") OVER (ORDER BY ordinal) <= ? AS fits FROM selected) " +
+    "SELECT id,revisionId,readableState,readableSize,distillState,CASE WHEN fits THEN title ELSE '' END AS title, " +
+    "CASE WHEN fits THEN guideSummary END AS guideSummary,CASE WHEN fits THEN reportKey END AS reportKey, " +
+    "(metadataTooLarge OR NOT fits) AS metadataTooLarge FROM bounded ORDER BY ordinal")
+    .bind(requested, projectId, MATERIALIZATION_BYTES - assembly.used)
+    .all<{ id: string; title: string; revisionId: string | null; readableState: string | null; readableSize: number | null; distillState: string | null; guideSummary: string | null; reportKey: string | null; metadataTooLarge?: number }>();
+  for (const row of result.results) {
     if (!row?.revisionId || !READABLE.has(row.readableState ?? "")) {
       throw new LibraryError("invalid", "Narrow the source selection to readable sources in this project.", 400);
     }
     out.push(...retainFrozen(assembly, [{ sourceId: row.id, title: row.title, revisionId: row.revisionId, readableSize: row.readableSize, distillState: row.distillState, guideSummary: row.guideSummary, reportKey: row.reportKey ?? null, ...(row.metadataTooLarge ? { metadataTooLarge: row.metadataTooLarge } : {}) }]));
   }
+  if (oversizedId) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   return out;
 }
 
@@ -250,7 +263,7 @@ async function freezeProjectDefault(env: Env, projectId: string, assembly: Mater
       "AND r.readable_state IN ('readable','readable_with_warnings') AND r.deleted_at IS NULL " +
       "ORDER BY s.created_at ASC, s.id ASC LIMIT " + (MAX_SOURCES + 1);
   const result = await env.DB.prepare("WITH selected AS (" + selection + "), bounded AS (SELECT *, " +
-    "sum(256 + 4 * (length(CAST(id AS BLOB)) + length(CAST(revisionId AS BLOB)) + length(CAST(title AS BLOB)) + coalesce(length(CAST(guideSummary AS BLOB)),0) + coalesce(length(CAST(reportKey AS BLOB)),0))) OVER () <= ? AS fits FROM selected) " +
+    "sum(" + SOURCE_METADATA_COST + ") OVER () <= ? AS fits FROM selected) " +
     "SELECT CASE WHEN fits THEN id ELSE '' END AS id,CASE WHEN fits THEN revisionId ELSE '' END AS revisionId,readableSize,distillState,CASE WHEN fits THEN title ELSE '' END AS title, " +
     "CASE WHEN fits THEN guideSummary END AS guideSummary,CASE WHEN fits THEN reportKey END AS reportKey, " +
     "(metadataTooLarge OR NOT fits) AS metadataTooLarge FROM bounded ORDER BY createdAt ASC,id ASC")

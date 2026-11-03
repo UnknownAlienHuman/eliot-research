@@ -664,6 +664,8 @@ The materialization bound below is implemented by the current repair slice; chat
   preventing small passages from turning the byte allowance into thousands of serial reads.
   Declared sizes cannot waive the streamed checks. No subsequent body is fetched after exhaustion.
   Source queries return at most 1,025 rows and reject more than **1,024** sources; explicit ID arrays share that cap.
+  Explicit selection uses one `json_each` query in first-occurrence order and the same conservative byte-based SQL
+  metadata bound as default selection. Near the allowance, non-ASCII metadata may reject earlier than the old JS loop.
   IDs and explicit input IDs are capped at 128 UTF-8 bytes. SQL clips title/summary/report-key fields above
   4,096/32,768/4,096 bytes and marks the complete request invalid, rather than publishing truncated metadata.
   Lengths use `length(CAST(field AS BLOB))`, including NUL tails. Window sums include IDs and suppress oversized
