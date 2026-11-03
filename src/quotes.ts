@@ -269,16 +269,10 @@ function foldText(input: string): { folded: string; map: number[] } {
       continue;
     }
     const foldedChar = SINGLES.has(unit) ? "'" : DOUBLES.has(unit) ? '"' : DASHES.has(unit) ? "-" : undefined;
-    if (foldedChar === undefined) {
-      const width = (input.codePointAt(i) ?? 0) > 0xffff ? 2 : 1;
-      folded += input.slice(i, i + width);
-      map.push(i);
-      i += width;
-    } else {
-      folded += foldedChar;
-      map.push(i);
-      i += 1;
-    }
+    // String search uses UTF-16 indexes: retain an entry for each surrogate unit too.
+    folded += foldedChar ?? unit;
+    map.push(i);
+    i += 1;
   }
   return { folded, map };
 }

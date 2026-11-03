@@ -364,6 +364,13 @@ The production verifier and K3 stored eval share `src/numbers.ts`; the eval does
 
 The verifier stores the original canonical slice, including original whitespace and punctuation, after normalized
 matching. Candidate statements with unsupported digit groups are dropped rather than retained with misleading prose.
+The normalization map has one entry per UTF-16 unit, including both units of a supplementary character, because string
+search returns UTF-16 indexes. A supplementary character before or within a normalized quote must not shift its
+original UTF-8 range. Exact matches, stated-block preference and duplicate ambiguity retain their existing behavior.
+This exported fallback is covered by synthetic quote regressions and a retained-candidate Save/GET/range case on
+Workerd/D1/R2. Current extraction resolves whole canonical blocks and normally takes the exact-match path; no observed
+fresh-model or corpus failure is attributed to this fallback. The fixture establishes range/storage correctness,
+not semantic support, missing-anchor recovery or live model quality.
 Digest/glossary numeric statements are checked against only the verified quotes selected by their labels; a valid
 label alone does not authorize a new number or experiment condition.
 
@@ -405,7 +412,10 @@ and official [prepared statements](https://developers.cloudflare.com/d1/worker-a
 [Workflow steps](https://developers.cloudflare.com/workflows/build/workers-api/) contracts.
 `pnpm eval k3 --metadata-only` runs the production verification/storage/GET/Save paths on isolated Workerd/D1/R2,
 with retained synthetic outputs and both paid producer callbacks skipped. It checks default/historical metadata,
-replacement heads and immutable bytes/ETags. It establishes storage behavior, not model quality or paid-step replay.
+replacement heads and immutable bytes/ETags. A separate synthetic cached-candidate case uses storage-only Save to
+recheck normalized supplementary-Unicode quotes, then verifies D1 and exact revision/range reads and repeated Save.
+The two recorded calls remain historical fixture data; no producer is invoked. It establishes storage behavior,
+not model quality or paid-step replay.
 
 `DistillWorkflow` uses two bounded calls:
 
