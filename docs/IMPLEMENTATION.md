@@ -505,17 +505,30 @@ Capture the fixed safe provider-failure projection on the owning revision before
 The final report and reader retain that cause even when Workflow serialization strips the original error class;
 provider response bodies, request headers and credentials remain excluded.
 `done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal
-filtering and remains diagnostic. `partial` records a missing required component or an interrupted/error outcome,
+filtering and remains diagnostic. `partial` records a missing required component, ambiguous Markdown visibility or an interrupted/error outcome,
 not a nonzero drop percentage. The same exact-quote, numeric-support and anchor gates apply to both states.
 In particular, nonempty validated final guide and digest may be stored with zero claims as `partial`; missing claims
 alone must not discard those readable artifacts. Zero claims never produces `done`: both normal finish and storage-only
 Save available output require at least three guide sentences and at least one kept final claim for `done`. Only the
 second call's supported selections/additions become cards; first-call draft candidates are never promoted to fill an
 empty final claim set. A readable zero-claim partial result is not full K3 acceptance or proof of semantic quality.
-Additional statements containing only whitespace or declared reference annotations are rejected after reference
-cleaning; they do not count as kept claims. Additional-claim drop reasons retain their original call-two array indexes.
+Known empty claim statements (whitespace or punctuation/formatting wrappers around declared references) do not count
+as kept claims, including cached rechecks. Additional-claim drop reasons retain their original call-two array indexes.
 Guide/digest describe the paper for the owner rather than candidate review or model reasoning. Conflicting source
 values remain attributed to their separate source passages instead of being silently reconciled.
+Guide/digest sentences need content beyond declared citations and punctuation/formatting wrappers; `[S1:1].`,
+`([S1:1])` and `**[S1:1]**` do not count toward completion. Glossary entries also require nonblank EN/RU terms.
+Ordinary letters, numbers, Unicode symbols and nonblank supported fenced/inline code remain content. The bounded
+check does not parse Markdown: explicit links, images, HTML/entities, footnotes, reference definitions, indented code
+and ambiguous marker-only output are kept as whole review units rather than sentence-split, and force `partial`
+even with three guide units and kept claims. Only the existing fenced/inline forms promise code-literal treatment;
+other constructs retain the existing reference-cleaning policy, and the original raw output remains available.
+Ambiguous surviving claim statements, such as a tilde-only remainder, also prevent `done` without discarding the card.
+Claim review uses the original statement before reference cleaning or result formatting, and counts only final kept
+cards. Retained claims recover this origin from call one and its recorded claim-drop indexes, with block/text alignment;
+missing or unmatched legacy origins conservatively keep surviving cards as `partial`. No stored field is added.
+This gives up automatic visibility classification of those constructs; it does not discard them or establish
+semantic support. Both normal completion and storage-only Save apply this policy without another model call.
 Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels
 in guide/digest/glossary storage, including within sentence-level validation. Code literals remain literal; unknown
 annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.

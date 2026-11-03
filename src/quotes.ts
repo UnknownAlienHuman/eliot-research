@@ -1,4 +1,4 @@
-import { fencedRanges, inlineCodeRanges } from "./code-ranges.ts";
+import { fencedCodeRanges, fencedRanges, inlineCodeRanges } from "./code-ranges.ts";
 import { countNumericQuantities, numbersSupported, parseSingleNumber } from "./numbers.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
@@ -154,6 +154,24 @@ export function cleanDistillText(
   }
   parts.push(text.slice(last));
   return { text: parts.join(""), invalidReferences };
+}
+
+/** Retain ambiguous markup for review instead of claiming verified completion. */
+export function checkDistillContent(text: string, labels: readonly string[], revisionId: string): { empty: boolean; requiresReview: boolean } {
+  if (!text.trim()) return { empty: true, requiresReview: false };
+  const fences = fencedCodeRanges(text), inline = inlineCodeRanges(text, fences);
+  const code = fences.some((range) => text.slice(range.contentStart, range.contentEnd).trim() !== "")
+    || inline.some((range) => text.slice(range.start, range.end).replace(/^`+|`+$/g, "").trim() !== "");
+  let prose = "", start = 0;
+  for (const range of [...fences, ...inline].sort((a, b) => a.start - b.start)) {
+    prose += text.slice(start, range.start); start = range.end;
+  }
+  prose += text.slice(start);
+  const cleaned = cleanDistillText(prose, labels, revisionId).text;
+  const requiresReview = /!\[|\]\s*(?:\(|\[)|\[\^|^\s*\[[^\]]+\]:|<\/?[A-Za-z][^>]*>|<!--|&[^;\s]+;|^(?: {4}|\t)/mu.test(prose)
+    || fences.some((range) => !range.closed && text.slice(range.contentStart, range.contentEnd).trim() === "")
+    || (!/[\p{L}\p{N}]/u.test(cleaned) && /[~|+<>=]/u.test(cleaned));
+  return { empty: !code && !/[\p{L}\p{N}\p{S}]/u.test(cleaned) && !(requiresReview && text.trim()), requiresReview };
 }
 
 /**

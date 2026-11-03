@@ -11,7 +11,7 @@ import { modelOutputLimit, modelTokenLimit, requireAvailableModel } from "../mod
 import type { ModelSpec } from "../models";
 import type { DistillInput } from "../shared/api";
 import { modelFailure, resolveModelTransport, safeErrorLogProjection } from "../model-transport";
-import { cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "../quotes";
+import { checkDistillContent, cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "../quotes";
 import type { CandidateClaim, VerifiedClaim } from "../quotes";
 import { AuthError } from "../auth";
 import type { Actor } from "../auth";
@@ -37,7 +37,7 @@ interface Raw<T> { output: T | null; usage: Usage; validation?: { dropped: { ind
 interface Evidence { label: string; block: number; quote: string }
 interface GuideItem { labels: string[]; text: string }
 interface Verified { claims: VerifiedClaim[]; guide: GuideItem[]; evidence: Evidence[]; questions: string[]; dropped: { index: number; reason: string }[]; clearedNumbers: number }
-interface Projection { kept: number; guideSentences: number; dropped: { index: number; reason: string }[]; clearedNumbers: number }
+interface Projection { kept: number; guideSentences: number; dropped: { index: number; reason: string }[]; clearedNumbers: number; requiresReview?: boolean }
 interface Prepared extends Projection { guide: string; digest: string; glossary: GlossaryEntry[]; claims: VerifiedClaim[]; summary: string }
 function synthesisSchema(labels: [string, ...string[]], claimIds: string[], requireAdditionalMetadata = false) {
   const label = z.enum(labels), claimId = claimIds.length ? z.enum(claimIds as [string, ...string[]]) : z.string();
@@ -201,7 +201,7 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
   const candidates: CandidateClaim[] = raw.output.claims.map(({ quoteBlock, ...item }, index) => {
     const cleaned = cleanDistillText(item.statement, [quoteBlock], revisionId);
     if (cleaned.invalidReferences) referenceErrors.set(index, "claim-invalid-reference");
-    else if (!cleaned.text.trim()) referenceErrors.set(index, "empty-claim-statement");
+    else if (checkDistillContent(item.statement, [quoteBlock], revisionId).empty) referenceErrors.set(index, "empty-claim-statement");
     return { ...item, statement: cleaned.text, ...evidence(quoteBlock) };
   });
   const verified = verifyClaims(bytes, blocks, candidates);
@@ -269,10 +269,26 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
   if (!raw.output) throw new Error("The retained source material did not produce supported understanding. No paid step will be repeated.");
   raw.output = synthesisSchema(verified.evidence.map((e) => e.label) as [string, ...string[]], verified.claims.map((_, i) => "C" + i), false).parse(raw.output);
   const dropped = [...verified.dropped];
+  let requiresReview = false;
   const retained = new Set(raw.output.supportedClaims);
-  const selected = verified.claims.filter((_item, index) => {
-    if (retained.has("C" + index)) return true;
-    dropped.push({ index, reason: "claim-not-supported-by-own-quote" }); return false;
+  // Legacy cached statements are already cleaned; unresolved origins require review.
+  const retainedReview = verified.claims.map(() => true);
+  const first = retained.size ? await env.BUCKET.get(key(revisionId, "distill-call1.json")) : null;
+  const extraction = first ? await first.json<Raw<Extraction>>().catch(() => null) : null;
+  if (Array.isArray(extraction?.output?.claims)) {
+    const rejected = new Set(verified.dropped.filter((item) => !item.reason.startsWith("guide-")).map((item) => item.index));
+    const originals = extraction.output.claims.filter((_item, index) => !rejected.has(index));
+    if (originals.length === verified.claims.length) for (const [index, item] of originals.entries()) {
+      if (typeof item?.quoteBlock !== "string" || typeof item.statement !== "string") continue;
+      const saved = verified.claims[index];
+      retainedReview[index] = item.quoteBlock !== `[S1:${saved?.block}]`
+        || cleanDistillText(item.statement, [item.quoteBlock], revisionId).text !== saved?.statement
+        || checkDistillContent(item.statement, [item.quoteBlock], revisionId).requiresReview;
+    }
+  }
+  const selected = verified.claims.flatMap((item, index) => {
+    if (retained.has("C" + index)) return [{ ...item, requiresReview: retainedReview[index] ?? true }];
+    dropped.push({ index, reason: "claim-not-supported-by-own-quote" }); return [];
   });
   const byLabel = new Map(verified.evidence.map((item) => [item.label, item]));
   const object = await env.BUCKET.get(key(revisionId, "text.md"));
@@ -289,16 +305,27 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
   const primary = (item: VerifiedClaim, index: number, stage: string): VerifiedClaim[] => {
     const statement = resultStatement(item);
     if (statement === null) { dropped.push({ index, reason: `${stage}-missing-or-unsupported-primary-result` }); return []; }
+    if (checkDistillContent(statement, [`[S1:${item.block}]`], revisionId).empty) { dropped.push({ index, reason: `${stage}-empty-statement` }); return []; }
     return [{ ...item, statement }];
   };
-  const claims = rechecked.claims.flatMap((item, index) => primary(item, index, "retained"));
+  const rejected = new Set(rechecked.dropped.map((item) => item.index));
+  let retainedIndex = 0;
+  const claims = selected.flatMap((original, index) => {
+    if (rejected.has(index)) return [];
+    const item = rechecked.claims[retainedIndex++];
+    if (!item) throw new Error("The retained verifier lost candidate ordering.");
+    const kept = primary(item, index, "retained");
+    if (kept.length) requiresReview ||= original.requiresReview;
+    return kept;
+  });
+  if (retainedIndex !== rechecked.claims.length) throw new Error("The retained verifier lost candidate ordering.");
   dropped.push(...rechecked.dropped.map((item) => ({ ...item, reason: `retained-${item.reason}` })));
   const additional: CandidateClaim[] = [];
   const additionalIndexes: number[] = [];
   for (const [index, item] of raw.output.additionalClaims.entries()) {
     const quote = byLabel.get(item.quoteBlock), cleaned = cleanDistillText(item.statement, [item.quoteBlock], revisionId);
     if (!quote || cleaned.invalidReferences) { dropped.push({ index, reason: "additional-invalid-reference" }); continue; }
-    if (!cleaned.text.trim()) { dropped.push({ index, reason: "additional-empty-statement" }); continue; }
+    if (checkDistillContent(item.statement, [item.quoteBlock], revisionId).empty) { dropped.push({ index, reason: "additional-empty-statement" }); continue; }
     additionalIndexes.push(index);
     additional.push({ kind: item.kind, statement: cleaned.text, quote: quote.quote, block: quote.block,
       task: item.task ?? null, metric: item.metric ?? null, dataset: item.dataset ?? null,
@@ -314,7 +341,12 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
     const item = primary(rawItem, originalIndex, "additional")[0];
     if (!item) continue;
     if (claims.some((c) => c.block === item.block && c.statement === item.statement)) continue;
-    if (claims.length < 32) claims.push(item); else dropped.push({ index: originalIndex, reason: "claim-output-bound" });
+    if (claims.length < 32) {
+      claims.push(item);
+      const original = raw.output.additionalClaims[originalIndex];
+      if (!original) throw new Error("The call-2 verifier lost candidate ordering.");
+      requiresReview ||= checkDistillContent(original.statement, [original.quoteBlock], revisionId).requiresReview;
+    } else dropped.push({ index: originalIndex, reason: "claim-output-bound" });
   }
   if (checkedIndex !== checked.claims.length) throw new Error("The call-2 verifier lost candidate ordering.");
   const evidence = (labels: string[]) => labels.map((label) => byLabel.get(label)?.quote ?? "").join("\n");
@@ -323,23 +355,33 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
     if (cleaned.invalidReferences || !item.labels.every((label) => byLabel.has(label))) {
       dropped.push({ index, reason: `${stage}-invalid-reference` }); return [];
     }
-    const statements = splitDistillStatements(item.text);
+    const statements = checkDistillContent(item.text, item.labels, revisionId).requiresReview ? [item.text] : splitDistillStatements(item.text);
     return statements.flatMap((statement) => {
-      if (!numbersSupported(cleanDistillText(statement, item.labels, revisionId).text, evidence(item.labels))) {
+      const content = cleanDistillText(statement, item.labels, revisionId).text;
+      const check = checkDistillContent(statement, item.labels, revisionId);
+      if (check.empty) { dropped.push({ index, reason: `${stage}-empty-statement` }); return []; }
+      if (!numbersSupported(content, evidence(item.labels))) {
         dropped.push({ index, reason: `${stage}-unsupported-numbers` }); return [];
       }
+      requiresReview ||= check.requiresReview;
       return [{ text: cleanDistillText(statement, item.labels, revisionId, true).text, labels: item.labels }];
     });
   });
   const guide = prose(raw.output.guide, "guide").slice(0, 5), digest = prose(raw.output.digest, "digest");
   const glossary = raw.output.glossary.flatMap((item, index) => {
     const cleaned = cleanDistillText(item.definition, item.labels, revisionId);
+    const check = checkDistillContent(item.definition, item.labels, revisionId);
+    if (!item.en.trim() || !item.ru.trim() || check.empty) {
+      dropped.push({ index, reason: "glossary-empty-output" }); return [];
+    }
     if (cleaned.invalidReferences || !item.labels.every((label) => byLabel.has(label)) || !numbersSupported(`${item.en} ${item.ru} ${cleaned.text}`, evidence(item.labels))) {
       dropped.push({ index, reason: "glossary-unsupported-output" }); return [];
     }
+    requiresReview ||= check.requiresReview;
     return [{ ...item, definition: cleanDistillText(item.definition, item.labels, revisionId, true).text }];
   });
   if (!guide.length || !digest.length) throw new Error("The retained source material did not produce supported understanding. No paid step will be repeated.");
+  requiresReview ||= claims.some((item) => checkDistillContent(item.statement, [`[S1:${item.block}]`], revisionId).requiresReview);
   const persistent = (labels: string[]) => labels.map((label) => {
     const passage = byLabel.get(label);
     if (!passage) throw new Error("A generated reference is outside the frozen evidence.");
@@ -348,7 +390,7 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
   const render = (items: { text: string; labels: string[] }[]) => items.map((item) => `${item.text}\n\n${persistent(item.labels).join(" ")}`).join("\n\n");
   return { guide: render(guide), digest: render(digest), glossary: glossary.map((item) => ({ ...item, labels: persistent(item.labels) })),
     summary: guide.map((item) => item.text).join(" "), claims,
-    kept: claims.length, guideSentences: guide.length, dropped, clearedNumbers: verified.clearedNumbers + rechecked.clearedNumbers + checked.clearedNumbers };
+    kept: claims.length, guideSentences: guide.length, dropped, requiresReview, clearedNumbers: verified.clearedNumbers + rechecked.clearedNumbers + checked.clearedNumbers };
 }
 async function storeSynthesis(env: Env, revisionId: string, prepared: Prepared, checked = false) {
   const path = checked ? "checked/" : "";
@@ -375,7 +417,7 @@ async function commitSynthesis(env: Env, revisionId: string): Promise<Projection
   await env.DB.batch([...claimWrites(env, revisionId, prepared.claims),
     env.DB.prepare("UPDATE source_revision SET guide_summary=?,claim_count=? WHERE id=? AND distill_state='running'")
       .bind(prepared.summary, prepared.kept, revisionId)]);
-  return { kept: prepared.kept, guideSentences: prepared.guideSentences, dropped: prepared.dropped, clearedNumbers: prepared.clearedNumbers };
+  return { kept: prepared.kept, guideSentences: prepared.guideSentences, dropped: prepared.dropped, clearedNumbers: prepared.clearedNumbers, requiresReview: prepared.requiresReview ?? false };
 }
 async function finish(env: Env, revisionId: string, error?: unknown, projection?: Projection) {
   const row = await env.DB.prepare("SELECT distill_state,distill_started_at,distill_calls,guide_summary,distill_token_limit,distill_error FROM source_revision WHERE id=?")
@@ -397,7 +439,7 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
   const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM claim c JOIN source_revision r ON r.id=c.source_revision_id WHERE r.id=? AND c.ordinal<r.claim_count").bind(revisionId).first<{ n: number }>();
   const kept = count?.n ?? 0;
   const dropped = projection?.dropped ?? [...(verified?.dropped ?? []), ...measured.flatMap((item) => item.validation?.dropped ?? [])];
-  const partial = !!error || !kept || !row.guide_summary || (projection?.guideSentences ?? 0) < 3;
+  const partial = !!error || !kept || !row.guide_summary || (projection?.guideSentences ?? 0) < 3 || !!projection?.requiresReview;
   const state = error && !row.guide_summary ? "failed" : partial ? "partial" : "done";
   const wallMs = Date.now() - row.distill_started_at;
   await put(env, revisionId, "distill.json", { state, questions: verified?.questions ?? [],
@@ -497,7 +539,7 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: { sour
       const previous = await previousObject.json<FinalReport>();
       const prepared = await prepareSynthesis(env, row.id);
       const artifacts = await storeSynthesis(env, row.id, prepared, true);
-      const state = prepared.guideSentences >= 3 && prepared.kept > 0 ? "done" : "partial";
+      const state = prepared.guideSentences >= 3 && prepared.kept > 0 && !prepared.requiresReview ? "done" : "partial";
       const report: FinalReport = { ...previous, state, kept: prepared.kept, dropped: prepared.dropped,
         clearedNumbers: prepared.clearedNumbers, artifacts, error: null };
       await put(env, row.id, "checked/distill.json", report);
