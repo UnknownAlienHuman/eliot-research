@@ -6,6 +6,7 @@ import { Reader, SourcesPane } from "./Library";
 import type { SourceReplacementProps } from "./Library";
 import { ProjectOverview } from "./Understanding";
 import type { SuggestedQuestion } from "./Understanding";
+import { ProjectPicker } from "./ProjectPicker";
 import "./project-workspace.css";
 
 export function ProjectWorkspace(replacements: SourceReplacementProps) {
@@ -73,6 +74,7 @@ export function ProjectWorkspace(replacements: SourceReplacementProps) {
   return <section className="er-project-workspace" data-active-pane={activePane} data-reading={reading}>
     <header className="er-project-workspace__header">
       <h1 id="workspace-heading" tabIndex={-1}>{project?.title ?? "Project"}</h1>
+      <ProjectPicker projectId={projectId} hasDraft={question.trim() !== ""} />
       {reading ? <Link className="er-button er-button--text" to={chatPath}>Back to chat</Link> : null}
       {projectError ? <p className="er-status er-status--error" role="alert">{projectError}</p> : null}
     </header>
