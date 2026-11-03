@@ -89,61 +89,71 @@ function LoadGate({ text, failure, onRetry }: { text: string; failure: string; o
   return (<section className="er-lib" aria-busy={!failure}><p className="er-lib__hint" role={failure ? "alert" : "status"}>{failure || text}</p>{failure ? <button className="er-button er-button--tonal" type="button" onClick={onRetry}>Retry</button> : null}</section>);
 }
 export function Projects() {
-  const [projects, setProjects] = useState<Project[] | undefined>(undefined);
-  const [cursor, setCursor] = useState<string | null>(null);
+  const [archived, setArchived] = useState(false);
+  const client = useQueryClient();
+  const queryKey = ["projects", archived];
+  const listing = useInfiniteQuery({
+    queryKey,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam, signal }) => apiJson<{ projects: Project[]; nextCursor: string | null }>(
+      "/api/projects?archived=" + archived + (pageParam ? "&cursor=" + encodeURIComponent(pageParam) : ""), { signal }),
+    getNextPageParam: page => page.nextCursor ?? undefined,
+    gcTime: 0,
+  });
+  const projects = listing.data?.pages.flatMap(page => page.projects);
   const [failure, setFailure] = useState("");
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<{ id: string; title: string } | undefined>(undefined);
-  async function load() {
-    try { const d = await apiJson<{ projects: Project[]; nextCursor: string | null }>("/api/projects"); setProjects(d.projects); setCursor(d.nextCursor); setFailure(""); }
-    catch (err) { setFailure(err instanceof Error ? err.message : "Could not load projects."); }
-  }
-  useEffect(() => { void load(); }, []);
-  async function loadMore() {
-    if (!cursor) return;
-    try { const d = await apiJson<{ projects: Project[]; nextCursor: string | null }>("/api/projects?cursor=" + encodeURIComponent(cursor)); setProjects((p) => [...(p ?? []), ...d.projects]); setCursor(d.nextCursor); }
-    catch (err) { setFailure(err instanceof Error ? err.message : "Could not load more projects."); }
-  }
+  const loadMore = () => { if (!listing.isFetching) void listing.fetchNextPage({ cancelRefetch: false }); };
   async function create() {
     const next = title.trim();
     if (!next || busy) return;
-    setBusy(true);
+    setBusy(true); setFailure("");
     try {
       await apiJson("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: next }) });
-      setTitle(""); await load();
+      setTitle(""); await client.resetQueries({ queryKey, exact: true });
     } catch (err) { setFailure(err instanceof Error ? err.message : "Could not create the project."); }
-    setBusy(false);
+    finally { setBusy(false); }
   }
   async function patch(id: string, body: { title?: string; archived?: boolean }) {
+    if (busy) return;
+    setBusy(true); setFailure("");
     try {
       await apiJson("/api/projects/" + encodeURIComponent(id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      setEditing(undefined); await load();
+      setEditing(undefined); await client.resetQueries({ queryKey, exact: true });
     } catch (err) { setFailure(err instanceof Error ? err.message : "Could not update the project."); }
+    finally { setBusy(false); }
   }
-  if (projects === undefined) return <LoadGate text="Opening your projects…" failure={failure} onRetry={() => void load()} />;
   return (
     <section className="er-lib" aria-labelledby="er-lib-projects">
-      <header className="er-lib__head"><h1 className="er-lib__title" id="er-lib-projects">Projects</h1><p className="er-lib__hint">Create a project, then open its sources.</p></header>
+      <header className="er-lib__head"><h1 className="er-lib__title" id="er-lib-projects">Projects</h1><p className="er-lib__hint">{archived ? "Unarchive a project to return it to the active list." : "Create a project, then open its sources."}</p></header>
+      <label className="er-field"><span>Show archived projects</span><input type="checkbox" checked={archived}
+        disabled={busy || editing !== undefined} onChange={event => { setArchived(event.currentTarget.checked); setFailure(""); }} /></label>
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
-      <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void create(); }}>
+      {listing.error ? <p className="er-lib__error" role="alert">{listing.error.message}{" "}
+        <button className="er-button er-button--text" type="button" disabled={listing.isFetching}
+          onClick={() => listing.isFetchNextPageError ? loadMore() : void listing.refetch()}>Retry projects</button></p> : null}
+      {!archived ? <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void create(); }}>
         <label className="er-field__label" htmlFor="er-lib-new-title">New project</label><input id="er-lib-new-title" value={title} onChange={(e) => setTitle(e.currentTarget.value)} placeholder="Paper trail" maxLength={200} />
         <button className="er-button er-button--primary" type="submit" disabled={busy || !title.trim()}>Create</button>
-      </form>
-      {projects.length === 0 ? <p className="er-card er-lib__empty">No projects yet. Create the first one above.</p> : (
+      </form> : null}
+      {projects === undefined ? listing.error ? null : <p role="status">Opening your projects.</p>
+        : projects.length === 0 ? <p className="er-card er-lib__empty">{archived ? "No archived projects." : "No projects yet. Create the first one above."}</p> : (
         <ul className="er-lib__list">{projects.map((p) => (
           <li className="er-lib__row" key={p.id}>
             <span className="er-lib__row-main"><MaterialSymbol name="home" /><span><Link className="er-lib__row-title" to={"/p/" + encodeURIComponent(p.id) + "/sources"}>{p.title}</Link>{p.archivedAt !== null ? <span className="er-chip er-lib__badge">Archived</span> : null}{p.description ? <span className="er-lib__row-meta">{p.description}</span> : null}</span></span>
             <span className="er-lib__actions">{editing?.id === p.id ? (<>
               <input aria-label="Project title" value={editing.title} maxLength={200} onChange={(e) => setEditing({ id: p.id, title: e.currentTarget.value })} />
-              <button className="er-button er-button--tonal" type="button" disabled={!editing.title.trim()} onClick={() => void patch(p.id, { title: editing.title.trim() })}>Save</button>
-              <button className="er-button er-button--text" type="button" onClick={() => setEditing(undefined)}>Cancel</button></>) : (<>
-              <button className="er-button er-button--text" type="button" onClick={() => setEditing({ id: p.id, title: p.title })}>Rename</button>
-              <button className="er-button er-button--text" type="button" onClick={() => void patch(p.id, { archived: p.archivedAt === null })}>{p.archivedAt === null ? "Archive" : "Unarchive"}</button></>)}
+              <button className="er-button er-button--tonal" type="button" disabled={busy || !editing.title.trim()} onClick={() => void patch(p.id, { title: editing.title.trim() })}>Save</button>
+              <button className="er-button er-button--text" type="button" disabled={busy} onClick={() => setEditing(undefined)}>Cancel</button></>) : (<>
+              <button className="er-button er-button--text" type="button" disabled={busy || editing !== undefined} onClick={() => setEditing({ id: p.id, title: p.title })}>Rename</button>
+              <button className="er-button er-button--text" type="button" disabled={busy || editing !== undefined} onClick={() => void patch(p.id, { archived: p.archivedAt === null })}>{p.archivedAt === null ? "Archive" : "Unarchive"}</button></>)}
             </span>
           </li>))}
         </ul>)}
-      {cursor ? <button className="er-button er-button--tonal" type="button" onClick={() => void loadMore()}>Load more</button> : null}
+      {listing.hasNextPage ? <button className="er-button er-button--tonal" type="button" disabled={listing.isFetching || busy} onClick={loadMore}>
+        {listing.isFetchingNextPage ? "Loading projects." : "Load more"}</button> : null}
     </section>
   );
 }

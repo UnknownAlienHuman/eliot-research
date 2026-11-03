@@ -25,8 +25,8 @@ export async function getProject(env: Env, _actor: Actor, id: string): Promise<P
   if (!project) throw new LibraryError("not_found", "Project not found.", 404);
   return project;
 }
-export async function listProjects(env: Env, _actor: Actor, cursor: string | undefined) {
-  const result = await env.DB.prepare(`SELECT ${PROJECT_FIELDS} FROM project WHERE archived_at IS NULL
+export async function listProjects(env: Env, _actor: Actor, cursor: string | undefined, archived = false) {
+  const result = await env.DB.prepare(`SELECT ${PROJECT_FIELDS} FROM project WHERE archived_at IS ${archived ? "NOT NULL" : "NULL"}
     AND (? IS NULL OR (created_at,id)<(SELECT created_at,id FROM project WHERE id=?))
     ORDER BY created_at DESC,id DESC LIMIT 51`).bind(cursor ?? null, cursor ?? null).all<Project>();
   return { projects: result.results.slice(0, 50), nextCursor: result.results.length > 50 ? result.results[49]?.id : null };
@@ -38,9 +38,9 @@ export async function createProject(env: Env, actor: Actor, input: { title: stri
   return getProject(env, actor, id);
 }
 export async function updateProject(env: Env, actor: Actor, id: string, input: { title?: string; archived?: boolean }) {
-  const project = await getProject(env, actor, id);
-  await env.DB.prepare("UPDATE project SET title=?,archived_at=?,updated_at=? WHERE id=?")
-    .bind(input.title ?? project.title, input.archived === undefined ? project.archivedAt : input.archived ? Date.now() : null, Date.now(), id).run();
+  await getProject(env, actor, id);
+  await env.DB.prepare("UPDATE project SET title=coalesce(?,title),archived_at=CASE WHEN ? IS NULL THEN archived_at ELSE ? END,updated_at=? WHERE id=?")
+    .bind(input.title ?? null, input.archived === undefined ? null : Number(input.archived), input.archived ? Date.now() : null, Date.now(), id).run();
   return getProject(env, actor, id);
 }
 export async function listSources(env: Env, actor: Actor, projectId: string, cursor: string | undefined) {

@@ -18,6 +18,7 @@ const runtime = await mkdtemp(path.join(os.tmpdir(), 'eliot-k1-library-'));
 const origin = 'http://127.0.0.1';
 const entry = `
 import app from ${JSON.stringify(path.join(root, 'src/index.ts'))};
+import {updateProject} from ${JSON.stringify(path.join(root, 'src/library.ts'))};
 const metrics={r2Gets:[],r2Writes:0,d1Writes:0};
 const writeSql=/^\\s*(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|VACUUM|ATTACH|DETACH|PRAGMA)\\b/i;
 function instrumentStatement(statement,write){return new Proxy(statement,{get(target,key){
@@ -37,6 +38,27 @@ function instrumentBucket(bucket){return new Proxy(bucket,{get(target,key){
 }});}
 export default {async fetch(request,env,ctx){
   const url=new URL(request.url);
+  if(url.pathname==='/__project-pair'){
+    const {id,title}=await request.json();
+    let reads=0,release,reject;
+    const gate=new Promise((resolve,fail)=>{release=resolve;reject=fail;});
+    const timer=setTimeout(()=>reject(new Error('Two project reads did not overlap')),3000);
+    const db=new Proxy(env.DB,{get(target,key){
+      if(key==='prepare')return sql=>{
+        const statement=target.prepare(sql);
+        if(!sql.includes('FROM project WHERE id=?'))return statement;
+        return {bind(...args){const bound=statement.bind(...args);return {async first(){
+          const row=await bound.first();if(++reads===2)release();await gate;return row;
+        }};}};
+      };
+      const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
+    }});
+    try{await Promise.all([
+      updateProject({...env,DB:db},{type:'owner'},id,{title}),
+      updateProject({...env,DB:db},{type:'owner'},id,{archived:false}),
+    ]);}finally{clearTimeout(timer);}
+    return Response.json({reads});
+  }
   if(url.pathname==='/__library-metrics/reset'){metrics.r2Gets.length=0;metrics.r2Writes=0;metrics.d1Writes=0;return Response.json({ok:true});}
   if(url.pathname==='/__library-metrics')return Response.json(metrics);
   const wrapped=new Proxy(env,{get(target,key){
@@ -215,6 +237,7 @@ try {
     await db.batch(unstable_splitSqlQuery(sql).map((statement) => db.prepare(statement)));
   }
   let projectSeq = 10_000;
+  assert.deepEqual(await requestJson('/api/projects?archived=true'),{projects:[],nextCursor:null});
   const nextProject = async (name = 'K1 Library fixture') => {
     const id = uuid(projectSeq++);
     await createProject(db, id, name);
@@ -408,8 +431,78 @@ try {
   const finalMetrics = await readMetrics();
   assert.equal(finalMetrics.r2Writes, 0);
   assert.equal(finalMetrics.d1Writes, 0);
+  const archivedProjects=[];
+  for(let i=0;i<105;i++){
+    const id=uuid(80_000+i);archivedProjects.push(id);
+    await db.prepare('INSERT INTO project(id,title,archived_at,created_at,updated_at) VALUES(?,?,1,700,700)')
+      .bind(id,'Archived project '+i).run();
+  }
+  const activeList=await requestJson('/api/projects');
+  assert(activeList.projects.every(project=>project.archivedAt===null));
+  const archivedSeen=[],archivedPageSizes=[];
+  let archivedCursor=null;
+  do{
+    const result=await requestJson('/api/projects?archived=true'+(archivedCursor?'&cursor='+archivedCursor:''));
+    assert(result.projects.every(project=>project.archivedAt!==null));
+    archivedPageSizes.push(result.projects.length);archivedSeen.push(...result.projects.map(project=>project.id));
+    if(archivedCursor===null){
+      await requestJson('/api/projects/'+result.nextCursor,'PATCH',{archived:false});
+      assert((await requestJson('/api/projects')).projects.some(project=>project.id===result.nextCursor));
+    }
+    archivedCursor=result.nextCursor;
+  }while(archivedCursor);
+  assert.deepEqual(archivedPageSizes,[50,50,5]);
+  assert.deepEqual(archivedSeen,[...archivedProjects].reverse());
+  assert.equal(new Set(archivedSeen).size,105);
+  assert.equal((await rawRequest('/api/projects?archived=yes')).status,400);
+  const concurrentId=archivedProjects[0];
+  assert.equal((await requestJson('/__project-pair','POST',{id:concurrentId,title:'Renamed during restore'})).reads,4);
+  const concurrent=await requestJson('/api/projects/'+concurrentId);
+  assert.equal(concurrent.project.title,'Renamed during restore');
+  assert.equal(concurrent.project.archivedAt,null);
+  const historyChat=uuid(90_000),historyTurn=uuid(90_001),historyPage=uuid(90_002),historyRevision=uuid(90_003);
+  const pageBody='page/'+historyRevision+'/body.md',pageCites='page/'+historyRevision+'/citations.json';
+  await bucket.put(pageBody,'Saved synthetic answer [S1:1]');
+  await bucket.put(pageCites,JSON.stringify([{label:'[S1:1]',revisionId:reusable.revisions[1].id,block:0,start:0,
+    end:new TextEncoder().encode(currentText).byteLength,sourceId:reusable.id,sourceTitle:reusable.title}]));
+  await db.batch([
+    db.prepare("INSERT INTO chat(id,project_id,title,created_by,created_at,updated_at) VALUES(?,?,'Retained chat','owner',1,1)").bind(historyChat,attachProject),
+    db.prepare("INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at) VALUES(?,?,'','empty','[]','none','failed',1)")
+      .bind(historyChat,historyTurn),
+    db.prepare("INSERT INTO page(id,project_id,kind,title,created_at,updated_at) VALUES(?,?,'answer','Retained page',1,1)").bind(historyPage,attachProject),
+    db.prepare("INSERT INTO page_revision(id,page_id,revision_no,status,origin,actor,body_key,citations_key,inputs_json,mutation_id,created_at) VALUES(?,?,1,'accepted','chat','owner',?,?,?,?,1)")
+      .bind(historyRevision,historyPage,pageBody,pageCites,JSON.stringify([reusable.revisions[1].id]),uuid(90_004)),
+    db.prepare('UPDATE page SET head_revision_id=? WHERE id=?').bind(historyRevision,historyPage),
+  ]);
+  const evidenceSql=[
+    'SELECT * FROM project_source ORDER BY project_id,source_id',
+    'SELECT * FROM source ORDER BY id','SELECT * FROM source_revision ORDER BY id','SELECT * FROM claim ORDER BY id',
+    'SELECT * FROM chat ORDER BY id','SELECT * FROM chat_turn ORDER BY chat_id,turn_id',
+    'SELECT * FROM page ORDER BY id','SELECT * FROM page_revision ORDER BY id',
+  ];
+  const readEvidence=()=>Promise.all(evidenceSql.map(async sql=>(await db.prepare(sql).all()).results));
+  const evidenceBefore=await readEvidence();
+  const storedObjects=async()=>{
+    const result=await bucket.list();assert.equal(result.truncated,false);
+    assert(result.objects.every(object=>typeof object.key==='string'&&typeof object.etag==='string'&&typeof object.version==='string'));
+    return result.objects.map(object=>[object.key,object.size,object.etag,object.version]);
+  };
+  const objectsBefore=await storedObjects();
+  const bodyBefore=await (await bucket.get(pageBody)).text(),citesBefore=await (await bucket.get(pageCites)).text();
+  await resetMetrics();
+  await requestJson('/api/projects/'+attachProject,'PATCH',{archived:true});
+  await requestJson('/api/projects/'+attachProject,'PATCH',{title:'Renamed while archived'});
+  assert.notEqual((await requestJson('/api/projects/'+attachProject)).project.archivedAt,null);
+  await requestJson('/api/projects/'+attachProject,'PATCH',{archived:false});
+  assert.equal((await requestJson('/api/projects/'+attachProject)).project.title,'Renamed while archived');
+  assert.deepEqual(await readEvidence(),evidenceBefore);
+  assert.deepEqual(await storedObjects(),objectsBefore);
+  assert.equal(await (await bucket.get(pageBody)).text(),bodyBefore);
+  assert.equal(await (await bucket.get(pageCites)).text(),citesBefore);
+  assert.equal((await readMetrics()).r2Writes,0);
   console.log(JSON.stringify({
     scope: 'K1_LIBRARY_STORAGE', runtime: 'pinned Workerd/D1/R2',
+    projectArchive:{pages:archivedPageSizes,restoredCursorStillPages:true,concurrentRenameAndRestore:true,evidenceUnchanged:true},
     availablePages: { empty: 0, single: 1, tiedTimestampTotal: 103, pageSizes: [50, 50, 3] },
     localFirstPageWallMs: { samples: fiftyRowSamples.length, p50: percentile(fiftyRowSamples, 0.5), p95: percentile(fiftyRowSamples, 0.95),
       includes: 'local Workerd request and JSON body read; excludes metric/reset calls' },
