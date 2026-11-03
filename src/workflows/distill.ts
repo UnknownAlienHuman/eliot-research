@@ -271,9 +271,24 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
   const dropped = [...verified.dropped];
   let requiresReview = false;
   const retained = new Set(raw.output.supportedClaims);
-  const selected = verified.claims.filter((_item, index) => {
-    if (retained.has("C" + index)) return true;
-    dropped.push({ index, reason: "claim-not-supported-by-own-quote" }); return false;
+  // Legacy cached statements are already cleaned; unresolved origins require review.
+  const retainedReview = verified.claims.map(() => true);
+  const first = retained.size ? await env.BUCKET.get(key(revisionId, "distill-call1.json")) : null;
+  const extraction = first ? await first.json<Raw<Extraction>>().catch(() => null) : null;
+  if (Array.isArray(extraction?.output?.claims)) {
+    const rejected = new Set(verified.dropped.filter((item) => !item.reason.startsWith("guide-")).map((item) => item.index));
+    const originals = extraction.output.claims.filter((_item, index) => !rejected.has(index));
+    if (originals.length === verified.claims.length) for (const [index, item] of originals.entries()) {
+      if (typeof item?.quoteBlock !== "string" || typeof item.statement !== "string") continue;
+      const saved = verified.claims[index];
+      retainedReview[index] = item.quoteBlock !== `[S1:${saved?.block}]`
+        || cleanDistillText(item.statement, [item.quoteBlock], revisionId).text !== saved?.statement
+        || checkDistillContent(item.statement, [item.quoteBlock], revisionId).requiresReview;
+    }
+  }
+  const selected = verified.claims.flatMap((item, index) => {
+    if (retained.has("C" + index)) return [{ ...item, requiresReview: retainedReview[index] ?? true }];
+    dropped.push({ index, reason: "claim-not-supported-by-own-quote" }); return [];
   });
   const byLabel = new Map(verified.evidence.map((item) => [item.label, item]));
   const object = await env.BUCKET.get(key(revisionId, "text.md"));
@@ -293,7 +308,17 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
     if (checkDistillContent(statement, [`[S1:${item.block}]`], revisionId).empty) { dropped.push({ index, reason: `${stage}-empty-statement` }); return []; }
     return [{ ...item, statement }];
   };
-  const claims = rechecked.claims.flatMap((item, index) => primary(item, index, "retained"));
+  const rejected = new Set(rechecked.dropped.map((item) => item.index));
+  let retainedIndex = 0;
+  const claims = selected.flatMap((original, index) => {
+    if (rejected.has(index)) return [];
+    const item = rechecked.claims[retainedIndex++];
+    if (!item) throw new Error("The retained verifier lost candidate ordering.");
+    const kept = primary(item, index, "retained");
+    if (kept.length) requiresReview ||= original.requiresReview;
+    return kept;
+  });
+  if (retainedIndex !== rechecked.claims.length) throw new Error("The retained verifier lost candidate ordering.");
   dropped.push(...rechecked.dropped.map((item) => ({ ...item, reason: `retained-${item.reason}` })));
   const additional: CandidateClaim[] = [];
   const additionalIndexes: number[] = [];
@@ -316,7 +341,12 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
     const item = primary(rawItem, originalIndex, "additional")[0];
     if (!item) continue;
     if (claims.some((c) => c.block === item.block && c.statement === item.statement)) continue;
-    if (claims.length < 32) claims.push(item); else dropped.push({ index: originalIndex, reason: "claim-output-bound" });
+    if (claims.length < 32) {
+      claims.push(item);
+      const original = raw.output.additionalClaims[originalIndex];
+      if (!original) throw new Error("The call-2 verifier lost candidate ordering.");
+      requiresReview ||= checkDistillContent(original.statement, [original.quoteBlock], revisionId).requiresReview;
+    } else dropped.push({ index: originalIndex, reason: "claim-output-bound" });
   }
   if (checkedIndex !== checked.claims.length) throw new Error("The call-2 verifier lost candidate ordering.");
   const evidence = (labels: string[]) => labels.map((label) => byLabel.get(label)?.quote ?? "").join("\n");

@@ -524,6 +524,9 @@ and ambiguous marker-only output are kept as whole review units rather than sent
 even with three guide units and kept claims. Only the existing fenced/inline forms promise code-literal treatment;
 other constructs retain the existing reference-cleaning policy, and the original raw output remains available.
 Ambiguous surviving claim statements, such as a tilde-only remainder, also prevent `done` without discarding the card.
+Claim review uses the original statement before reference cleaning or result formatting, and counts only final kept
+cards. Retained claims recover this origin from call one and its recorded claim-drop indexes, with block/text alignment;
+missing or unmatched legacy origins conservatively keep surviving cards as `partial`. No stored field is added.
 This gives up automatic visibility classification of those constructs; it does not discard them or establish
 semantic support. Both normal completion and storage-only Save apply this policy without another model call.
 Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels

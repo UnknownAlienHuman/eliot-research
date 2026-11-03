@@ -582,6 +582,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
     const originalCachedBodies = new Map(cached.bodies);
     try {
       expect(await hasAvailableUnderstanding(cached.env, revisionId)).toBe(true);
+      expect(cached.bodies.has(prefix + "distill-call1.json")).toBe(false);
       vi.mocked(generateText).mockClear();
       vi.mocked(resolveModelTransport).mockClear();
       await expect(requestUnderstanding(cached.env, { type: "owner" } as Actor, {
@@ -592,7 +593,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const savedBody = cached.bodies.get(prefix + "checked/distill.json");
       if (!savedBody) throw new Error("Historical call-two output was not saved.");
       const saved = JSON.parse(savedBody) as DistillReport & { state: string };
-      expect(saved.state).toBe("done");
+      expect(saved.state).toBe("partial"); // Cards survive; original claim markup cannot be recovered.
       expect(saved.kept).toBe(2);
       expect(saved.usage.calls).toBe(2);
       expect(cached.db.prepare("SELECT authors,published FROM source WHERE id=?").get(sourceId))
