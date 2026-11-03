@@ -294,6 +294,13 @@ describe("DistillWorkflow admitted model snapshot", () => {
         ]);
       expect(generateText).not.toHaveBeenCalled();
 
+      // Discarding the first receipt does not authorise another Workflow for this revision.
+      await requestUnderstanding(f.env, { type: "owner" } as Actor, {
+        sourceId: explicitlySelectedSourceId, revisionId: explicitlySelectedRevisionId, model: snapshot.route,
+      });
+      expect(f.createWorkflow).toHaveBeenCalledTimes(1);
+      expect(generateText).not.toHaveBeenCalled();
+
       // Cron (no target) only reconciles stale running: it must not admit queued work.
       await scheduleDistillation(f.env);
       expect(f.createWorkflow).toHaveBeenCalledTimes(1);

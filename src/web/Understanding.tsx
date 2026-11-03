@@ -55,7 +55,9 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
-  const [awaitingStatus, setAwaitingStatus] = useState(false);
+  const [awaitingStatus, setAwaitingStatus] = useState<null | 'unknown' | 'accepted'>(null);
+  const statusKey = sourceId + ':' + revisionId;
+  const [statusReadKey, setStatusReadKey] = useState('');
   const mounted = useRef(false);
   const [models, setModels] = useState<readonly ModelOption[]>([]);
   const [modelChoice, setModelChoice] = useState('');
@@ -69,7 +71,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const understanding = useQuery({
     queryKey: ['understanding', sourceId, revisionId],
     queryFn: ({ signal }) => apiJson<Understanding>(url, { signal }),
-    enabled: sourceId !== '' && revisionId !== '',
+    enabled: sourceId !== '' && revisionId !== '' && statusReadKey === statusKey,
     staleTime: Infinity,
     gcTime: 0,
     networkMode: 'always',
@@ -79,6 +81,18 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const failure = understanding.error?.message ?? '';
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setModelChoice(''); }, [sourceId, revisionId]);
+  const refetchUnderstanding = understanding.refetch;
+  useEffect(() => {
+    if (sourceId === '' || revisionId === '') return;
+    let live = true;
+    queueMicrotask(() => {
+      if (!live) return;
+      void refetchUnderstanding({ cancelRefetch: false }).then(result => {
+        if (live && !result.error) setStatusReadKey(statusKey);
+      });
+    });
+    return () => { live = false; };
+  }, [statusKey, refetchUnderstanding]);
   useEffect(() => {
     let live = true;
     setCatalogueLoaded(false);
@@ -87,10 +101,10 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   }, [catalogVersion]);
   async function reload(): Promise<void> {
     const result = await understanding.refetch();
-    if (mounted.current && !result.error) { setAwaitingStatus(false); setNote(''); }
+    if (mounted.current && !result.error) { setStatusReadKey(statusKey); setAwaitingStatus(null); setNote(''); }
   }
   async function request(saveAvailable = false): Promise<void> {
-    if (sourceId === '' || revisionId === '' || busy || awaitingStatus || understanding.isFetching || (!saveAvailable && modelRoutePending)) return;
+    if (sourceId === '' || revisionId === '' || busy || awaitingStatus || statusReadKey !== statusKey || failure !== '' || understanding.isFetching || (!saveAvailable && modelRoutePending)) return;
     if (!saveAvailable) {
       const chosen = models.find((m) => m.route === modelChoice);
       if (modelChoice !== '' && (!chosen || !chosen.enabled)) { setNote(chosen && chosen.unavailableReason ? 'Selected model is unavailable: ' + chosen.unavailableReason : 'Selected model is unavailable.'); return; }
@@ -98,13 +112,14 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
       if (modelChoice !== '' && chosen !== undefined && chosen.enabled && twoCallBound(chosen) === null) { setNote('The selected model is currently unavailable, so Understand cannot start yet.'); return; }
     }
     setBusy(true);
+    setAwaitingStatus('unknown');
     setNote('');
     try {
       const input = saveAvailable ? { revisionId, saveAvailable: true } : modelChoice === '' ? { revisionId } : { revisionId, model: modelChoice };
       await apiJson(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
       void queryClient.invalidateQueries({ queryKey: ['sources', projectId], exact: true });
       if (!mounted.current) return;
-      setAwaitingStatus(true);
+      setAwaitingStatus('accepted');
       await reload();
     } catch (err) { if (mounted.current) setNote(err instanceof Error ? err.message : 'Could not confirm the request. Reload understanding to check its status.'); }
     finally { if (mounted.current) setBusy(false); }
@@ -125,8 +140,9 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const canRecover = view.canRecover === true;
   const understandingError = view.error;
   const active = view.state === 'queued' || view.state === 'running';
-  const canStart = !awaitingStatus && !active && (view.state === 'none' || view.state === 'paused');
-  const canSaveAvailable = !awaitingStatus && !active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial');
+  const statusReady = statusReadKey === statusKey && failure === '' && !understanding.isFetching;
+  const canStart = !awaitingStatus && statusReady && !active && (view.state === 'none' || view.state === 'paused');
+  const canSaveAvailable = !awaitingStatus && statusReady && !active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial');
   const references = view.citations.map((c, index) => ({
     text: '[R' + view.revisionId + ':' + c.block + ']',
     label: 'Open quote · ' + sourceTitle + ' · ' + (index + 1),
@@ -145,12 +161,17 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const progressTokens = view.progress.maximumTokens ?? null;
   const configuredBound = configuredSpec !== undefined ? (configuredSpec.enabled ? twoCallBound(configuredSpec) : null) : progressTokens;
   const pickerEmptyLabel = 'Use configured default' + (configuredLabel !== null ? ' (' + configuredLabel + ')' : '');
-  const understandDisabled = busy || understanding.isFetching || modelRoutePending || (modelChoice === '' ? configuredBound === null : chosenDisabled || chosenBound === null);
+  const understandDisabled = busy || failure !== '' || understanding.isFetching || modelRoutePending || (modelChoice === '' ? configuredBound === null : chosenDisabled || chosenBound === null);
+  const requestStatus = awaitingStatus === null
+    ? statusReady ? stateLabel(view.state) : 'Checking understanding status.'
+    : busy ? 'Sending request.'
+      : (awaitingStatus === 'accepted' ? 'Request accepted.' : 'Request outcome is unknown.')
+        + (understanding.isFetching ? ' Reading status.' : ' Reload understanding to check its status.');
   const reloadSnapshot = () => { setCatalogError(''); setCatalogWarnings([]); setCatalogVersion((v) => v + 1); };
   return (
-    <section className='er-und' aria-label='Understanding' aria-busy={busy || understanding.isFetching}>
+    <section className='er-und' aria-label='Understanding' aria-busy={busy || understanding.isFetching || !statusReady}>
       <h2 className='er-und__title'>Understanding</h2>
-      <p className='er-und__hint' role='status'>{awaitingStatus ? understanding.isFetching ? 'Request accepted. Reading status.' : 'Request accepted. Reload understanding to check its status.' : stateLabel(view.state)}</p>
+      <p className='er-und__hint' role='status'>{requestStatus}</p>
       {view.authors || view.published ? <p className='er-und__meta'>{[view.authors, view.published].filter(Boolean).join(' · ')}</p> : null}
       {understandingError !== null && understandingError !== '' ? <p className='er-und__error' role='alert'>{understandingError}</p> : null}
       {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : null}

@@ -73,7 +73,7 @@ The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `
 | `pnpm eval k3 --overview-only` | isolated Workerd/D1/R2 overview pages, stable cursors, scoped filters and per-page report reads; no writes, models or outbound network |
 | `pnpm eval k3 --overview-browser` | desktop/phone Studio-to-overview navigation, controlled response races/Retry/Refresh, real local native-text replacement and revision-pinned Reader; zero model calls |
 | `pnpm eval k3 --question-browser` | desktop/phone stored-question drafting, existing-draft confirmation, visible single-source scope and delayed Send/view isolation; native local setup with stored-output fixtures and intercepted turn POSTs, zero model calls |
-| `pnpm eval k3 --understanding-browser` | desktop/phone accepted Understand/Save followed by failed status reads, storage-only Reload, polling and route isolation; native setup and intercepted POSTs, zero model calls |
+| `pnpm eval k3 --understanding-browser` | desktop/phone uncertain Understand/Save outcomes, status recovery after network/HTTP/malformed replies, failed reads, storage-only Reload, polling and route isolation; native setup and intercepted POSTs, zero model calls |
 | `pnpm eval k3` without model opt-in | stored hard-gate validation; nonzero on missing/failed work, unsupported quotes/numbers, missing anchors or unverified claim-mode C1–C4 |
 | `pnpm eval k3 --unchanged-only` | preflight ten terminal revisions, submit each exact revision once and verify unchanged reports, claims, call counts and usage; no inference |
 | `pnpm eval k4 --signed-agent-miniflare` | signed test-JWKS protocol and proposal fixture with no AI binding; not deployed Access acceptance |
