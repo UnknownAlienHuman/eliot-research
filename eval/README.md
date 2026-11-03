@@ -35,12 +35,17 @@ retained in ignored `eval/out/notebooklm-20261026/answers.md` and is absent from
 or `ELIOT_K2_NOTEBOOKLM_ANSWERS`; if missing, it uses recorded summaries and placeholders for missing question text.
 This fallback keeps automated fact/citation checks runnable but is not a complete answer-by-answer comparison.
 
-Open repair: recover the exact retained export, preserve it in a durable owner-accessible location, and record that
-location and access instructions in the existing baseline file. A second checkout must be able to obtain it and set
-`ELIOT_K2_NOTEBOOKLM_ANSWERS`. Keep private notebook data outside public Git unless publication is explicitly intended.
-If the original is unavailable, mark full comparison evidence missing; do not reconstruct answers from summaries or
-silently substitute a new run under the old date. Report full-export versus summary-only evidence per question, so a
-partly loaded export cannot be described as complete. Owner review remains open until its required answers are available.
+The exact retained export and all six sidecars were copied to the owner's local archive; originals remain
+unchanged. The existing [baseline access section](arxiv-10/baseline.md#private-retained-export-access-and-completeness-verified-2026-11-03)
+records the private path, nontrivial file hashes and a content-free independent second-checkout check of unique IDs,
+frozen questions and answer bodies against `runs.json`. K2's parser also loads twelve entries, but can overwrite
+duplicate IDs and silently fall back to summaries; it does not perform that independent check. Archive contents were
+not published; only access/hash/completeness metadata is recorded here. The one-byte probe digest is withheld.
+This is local owner access, not cross-machine delivery or semantic acceptance. The Transformer citation probe is a
+one-byte incomplete capture;
+the citation-target audit remains incomplete. A remote checkout needs a separately authorized private transfer and
+hash check. If the archive is unavailable, mark comparison evidence incomplete; do not reconstruct answers from the
+summary or substitute a new run under the old date. Report full-export versus summary-only evidence per question.
 
 ## Runtime
 

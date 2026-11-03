@@ -1,5 +1,86 @@
 # Baseline — NotebookLM (Gemini Notebook) and the old Eliot, 2026-10-16
 
+## Private retained export: access and completeness (verified 2026-11-03)
+
+The complete **retained answer text** for C1–C4 and O1–O8 is available in the owner's private local archive:
+`%USERPROFILE%\Documents\EliotResearchEvidence\notebooklm-20261026\answers.md`.
+It was copied, with all six sidecars, from ignored `eval/out/notebooklm-20261026/` in the original retained checkout.
+Original files remain untouched. All seven archive files match their originals byte for byte. Archive contents were
+not uploaded or published; this document publishes access, hash and completeness metadata only. Sharing was unchanged
+and no new NotebookLM generation was performed. The archive is outside Git and managed task worktrees.
+
+From a second checkout on the same machine under the owner account, an **independent local check** verified valid UTF-8,
+12 distinct nonempty sections with no missing/duplicate C1–C4/O1–O8 IDs, frozen-question matches and exact answer-body
+matches against `runs.json` after a common 21-character UI prefix was removed. The content-free check below reproduces
+those assertions and verifies the two frozen input-file hashes. All seven original/archive files were separately
+compared byte for byte locally; the command below does not recheck every sidecar or inspect citation targets.
+
+The actual K2 parser also loaded twelve entries from this file. That parser alone proves neither uniqueness nor
+capture equality: its Map overwrites duplicate IDs, it never compares `runs.json`, and missing/unreadable exports or
+missing IDs silently fall back to tracked summaries/placeholders. The independent check fails instead of falling back.
+These checks establish retained answer-text coverage, not semantic acceptance or fresh notebook state.
+
+| Private archive file | Bytes | SHA-256 |
+|---|---:|---|
+| `answers.md` | 73907 | `4703f0023b35509a0e46375de2e09c9cf7e1f75c0be0e986b8f6aca9739435f9` |
+| `runs.json` | 868373 | `20c06d901ed1da4992455f23a9ad7d2b78c116e0e446258eb016956d78174e17` |
+| `citation-adam.txt` | 1569 | `fd6bdf93d7ffcbf3993688b851fe6ac7131d61277ec16ad8d8a99eb9e2fb52b5` |
+| `citation-cot.txt` | 1179 | `c0dc9073b38662b7e29e70e18ccb831f2bedd35ca13cce84b81282b78b0aa993` |
+| `citation-transformer.txt` | 1 | withheld: a one-byte digest would disclose its content |
+| `notebooklm-citation.png` | 280646 | `f84c637bb26ecf928ccdec2acc9779c5913428c1580fdb56be17156a786266cb` |
+| `notebooklm-results.png` | 280730 | `cf959225093763d4a3a3c4537febc2dfaa0098bc377075bc81919dd775f7476a` |
+
+From the root directory of another authorized local checkout, select and independently verify the existing archive without printing its
+contents or copying private answers into Git. Any failure returns a fixed message without answer text:
+
+```powershell
+$env:ELIOT_K2_NOTEBOOKLM_ANSWERS = Join-Path $env:USERPROFILE 'Documents\EliotResearchEvidence\notebooklm-20261026\answers.md'
+@'
+const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
+const need = condition => { if (!condition) throw new Error('verification failed'); };
+try {
+  const file = process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS; need(!!file);
+  const bytes = fs.readFileSync(file), saved = fs.readFileSync(path.join(path.dirname(file), 'runs.json'));
+  const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+  need(bytes.length === 73907 && sha(bytes) === '4703f0023b35509a0e46375de2e09c9cf7e1f75c0be0e986b8f6aca9739435f9');
+  need(saved.length === 868373 && sha(saved) === '20c06d901ed1da4992455f23a9ad7d2b78c116e0e446258eb016956d78174e17');
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes), runs = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(saved));
+  const ids = ['C1','C2','C3','C4','O1','O2','O3','O4','O5','O6','O7','O8'];
+  const headings = [...text.matchAll(/^##\s+(C[1-4]|O[1-8])(?:\s|[—–-]).*$/gm)];
+  need(JSON.stringify(headings.map(m => m[1])) === JSON.stringify(ids));
+  need(Array.isArray(runs) && JSON.stringify(runs.map(r => r.id)) === JSON.stringify(ids));
+  const questions = new Map();
+  for (const line of fs.readFileSync('eval/arxiv-10/questions.md', 'utf8').split('\n')) {
+    const cells = line.split('|').map(s => s.trim());
+    if (ids.includes(cells[1])) { need(!questions.has(cells[1])); questions.set(cells[1], cells[2]); }
+  }
+  need(questions.size === ids.length);
+  const ui = 'Thoughts\nexpand_more\n';
+  for (let i = 0; i < ids.length; i++) {
+    const body = text.slice(headings[i].index + headings[i][0].length, headings[i + 1]?.index ?? text.length).trim();
+    need(!!body && typeof runs[i].answer === 'string' && runs[i].answer.startsWith(ui));
+    need(body === runs[i].answer.slice(ui.length)); need(runs[i].question.trim() === questions.get(ids[i]));
+  }
+  console.log('PASS: frozen hashes, UTF-8, 12 unique IDs, retained answer bodies and frozen questions; citation targets NOT_VERIFIED.');
+} catch {
+  console.error('FAIL: private baseline verification; no archive content printed.'); process.exitCode = 1;
+}
+'@ | node
+if ($LASTEXITCODE -ne 0) { throw 'Private baseline verification failed.' }
+```
+
+**Portability:** this is an owner-controlled local Windows path, not a repository download, cloud attachment or remote
+reviewer link. A checkout on another machine needs a separately authorized private transfer of the exact files and a
+hash check, then its own `ELIOT_K2_NOTEBOOKLM_ANSWERS` path. No cross-machine access or independent off-host backup is
+claimed. Keep the archive and any local comparison outputs private; this access recipe authorizes no publication or
+model run. If the export is unavailable, the evaluator's tracked-summary fallback is incomplete comparison evidence.
+
+**Citation probe remains incomplete:** `citation-transformer.txt` is a one-byte incomplete capture, not usable target
+evidence. Adam/CoT probes and the
+screenshots are retained as private context; they do not establish a complete audit of every citation target. Full
+K2/K3 citation, latency and owner quality gates remain open. The historical summary below is not a replacement for
+the archived answer bodies.
+
 Recorded by the owner on the same ten PDFs. Kept as the bar for K2/K3 acceptance.
 
 
