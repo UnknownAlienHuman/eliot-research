@@ -476,9 +476,10 @@ omit these fields; storage-only rechecks retain that shape and treat omissions a
 Store raw result/report in R2, compact verified claims in D1, and usage
 and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
-The K3 A3 GPU-memory gate accepts the frozen source sentence or closed whole-sentence EN/RU assertions naming LoRA,
-GPT-3 175B and threefold memory reduction. The statement and every quoted memory sentence must match; extra wording,
-qualifiers or other subjects stay `NOT_VERIFIED` and require explicit review. This is not general semantic verification.
+The K3 A3 GPU-memory gate accepts the frozen source sentence or exact EN/RU assertion forms naming LoRA,
+GPT-3 175B and threefold memory reduction. The complete statement and complete quote must match. Additional prose,
+including multi-sentence source blocks, stays `NOT_VERIFIED` and requires explicit review; no sentence is discarded.
+This is not general semantic verification.
 `pnpm eval k3 --anchors-only` runs synthetic full-gate checks before API calls and rejects
 model opt-in. Ordinary K3 eval runs the same checks. Frozen questions and production claim verification are unchanged.
 Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.providerUsage` from AI SDK `usage.raw`
