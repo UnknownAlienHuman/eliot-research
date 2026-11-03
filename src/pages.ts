@@ -30,6 +30,20 @@ export interface PageSummary {
 const PAGE_KINDS: readonly PageKind[] = ["overview", "note", "answer", "report", "wiki", "map"];
 const MAX_BODY_CHARS = 1_000_000;
 
+// One bound parameter: the newly accepted page revision. Evaluate inside the
+// guarded head UPDATE, after its immutable inputs are inserted/accepted.
+export const PAGE_FRESHNESS_SQL = `SELECT CASE
+  WHEN json_valid(published.inputs_json)=0 THEN 'stale'
+  WHEN json_type(published.inputs_json)!='array' THEN 'stale'
+  WHEN EXISTS(SELECT 1 FROM json_each(published.inputs_json) input
+    LEFT JOIN source_revision revision ON input.type='text' AND revision.id=input.value
+    LEFT JOIN source source ON source.id=revision.source_id
+    WHERE input.type!='text' OR revision.id IS NULL OR revision.deleted_at IS NOT NULL
+      OR revision.readable_state NOT IN ('readable','readable_with_warnings')
+      OR source.id IS NULL OR source.state='deleted' OR source.current_revision_id IS NOT revision.id)
+    THEN 'stale' ELSE 'current' END
+  FROM page_revision published WHERE published.id=?`;
+
 function cleanTitle(title: unknown): string {
   const trimmed = typeof title === "string" ? title.trim() : "";
   if (!trimmed || trimmed.length > 200) throw new LibraryError("invalid", "Give the page a title of 1 to 200 characters.", 400);
@@ -109,7 +123,8 @@ export async function saveAnswer(env: Env, actor: Actor, input: { projectId: str
     await env.DB.batch([
       env.DB.prepare("INSERT INTO page(id,project_id,kind,title,head_revision_id,freshness,created_at,updated_at) VALUES(?,?,'answer',?,NULL,'current',?,?)").bind(pageId, input.projectId, title, now, now),
       env.DB.prepare("INSERT INTO page_revision(id,page_id,revision_no,status,origin,actor,body_key,citations_key,inputs_json,mutation_id,created_at) VALUES(?,?,1,'accepted','chat',?,?,?,?,?,?)").bind(revisionId, pageId, actor.type, bodyKey, citationsKey, JSON.stringify(scope), input.mutationId, now),
-      env.DB.prepare("UPDATE page SET head_revision_id=?,updated_at=? WHERE id=? AND head_revision_id IS NULL").bind(revisionId, now, pageId),
+      env.DB.prepare(`UPDATE page SET head_revision_id=?,freshness=(${PAGE_FRESHNESS_SQL}),updated_at=? WHERE id=? AND head_revision_id IS NULL`)
+        .bind(revisionId, revisionId, now, pageId),
     ]);
     const head = await env.DB.prepare("SELECT head_revision_id AS headRevisionId FROM page WHERE id=?").bind(pageId).first<{ headRevisionId: string | null }>();
     if (head?.headRevisionId !== revisionId) throw new LibraryError("conflict", "The page changed while saving. Try again.", 409);
