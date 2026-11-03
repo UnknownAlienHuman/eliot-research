@@ -3,10 +3,11 @@ import { Link, Route, Routes, useLocation, useMatch, useNavigate, useParams } fr
 import type { Project, SourceSelection } from "../shared/api";
 import { ChatView, StudioView } from "./Chat";
 import { Reader, SourcesPane } from "./Library";
+import type { SourceReplacementProps } from "./Library";
 import { ProjectOverview } from "./Understanding";
 import "./project-workspace.css";
 
-export function ProjectWorkspace() {
+export function ProjectWorkspace(replacements: SourceReplacementProps) {
   const { projectId = "" } = useParams();
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -62,7 +63,7 @@ export function ProjectWorkspace() {
         </div>
         <div className="er-project-workspace__reader" hidden={!reading}>
           <Routes>
-            <Route path="source/:sourceId" element={<Reader />} />
+            <Route path="source/:sourceId" element={<Reader {...replacements} />} />
             <Route path="overview" element={<ProjectOverview />} />
             <Route path="*" element={null} />
           </Routes>

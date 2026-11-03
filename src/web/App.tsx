@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useCallback, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router";
 import { fetchMe } from "./api";
 import { Shell } from "./Shell";
@@ -12,6 +13,20 @@ export function App() {
   const { pathname } = useLocation();
   const [theme, setTheme] = useTheme();
   const me = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => fetchMe(signal), retry: false });
+  const [replacingSources, setReplacingSources] = useState<ReadonlySet<string>>(() => new Set());
+  const replacementLocks = useRef(replacingSources);
+  // App survives same-tab project/settings navigation. Keys identify only pending file POSTs;
+  // acquire synchronously, then remove the key only in that request's finally.
+  const beginReplacement = useCallback((projectId: string, sourceId: string) => {
+    const key = projectId + ":" + sourceId;
+    if (replacementLocks.current.has(key)) return false;
+    const next = new Set(replacementLocks.current).add(key);
+    replacementLocks.current = next; setReplacingSources(next); return true;
+  }, []);
+  const endReplacement = useCallback((projectId: string, sourceId: string) => {
+    const next = new Set(replacementLocks.current); next.delete(projectId + ":" + sourceId);
+    replacementLocks.current = next; setReplacingSources(next);
+  }, []);
   if (me.isPending) {
     return (
       <main className="er-access" aria-busy="true">
@@ -35,7 +50,8 @@ export function App() {
     <Routes>
       <Route element={<Shell theme={theme} onThemeChange={setTheme} />}>
         <Route index element={<Projects />} />
-        <Route path="p/:projectId/*" element={<ProjectWorkspace key={pathname.split("/")[2]} />} />
+        <Route path="p/:projectId/*" element={<ProjectWorkspace key={pathname.split("/")[2]}
+          replacingSources={replacingSources} beginReplacement={beginReplacement} endReplacement={endReplacement} />} />
         <Route path="settings" element={
           <>
             <h1 id="workspace-heading" tabIndex={-1}>Settings</h1>

@@ -2,7 +2,7 @@
 // source selection, active chat routing, and the three-pane workspace. This file
 // owns only chat/history presentation and the storage-backed K2 interactions.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { Markdown } from './Markdown';
 import type { MarkdownReference } from './Markdown';
 import type { ChatSnapshotState, SourceSelection, TurnPage, TurnView } from '../shared/api';
@@ -109,6 +109,7 @@ export function ChatView({
   projectAnswerModel,
 }: ChatViewProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [chats, setChats] = useState<ChatRow[] | undefined>(undefined);
   const [chatsCursor, setChatsCursor] = useState<string | null>(null);
   const [chatsBusy, setChatsBusy] = useState(false);
@@ -150,6 +151,13 @@ export function ChatView({
   const settingsDialogRef = useRef<HTMLDialogElement | null>(null);
   const historyRef = useRef<HTMLDetailsElement | null>(null);
   const routeRef = useRef({ projectId, chatId });
+  const actionView = useRef({ projectId, chatId, path: location.pathname, search: location.search, key: location.key });
+  if (actionView.current.projectId !== projectId || actionView.current.chatId !== chatId || actionView.current.path !== location.pathname
+    || actionView.current.search !== location.search || actionView.current.key !== location.key)
+    actionView.current = { projectId, chatId, path: location.pathname, search: location.search, key: location.key };
+  const mounted = useRef(false), sendLock = useRef(false), draftSequence = useRef(0);
+  const sendSequence = useRef(0), saveSequence = useRef(0);
+  const sentNavigation = useRef<{ projectId: string; chatId: string; path: string } | null>(null);
   const turnsRoute = useRef<{ projectId: string; chatId?: string } | null>(null);
   const olderRequest = useRef(0);
   const olderAbort = useRef<AbortController | null>(null);
@@ -199,14 +207,20 @@ export function ChatView({
   const effectiveProjectModel = savedProjectModel !== undefined ? savedProjectModel : projectAnswerModel;
   const inheritedModel = effectiveProjectModel ?? catalogDefaultModel ?? '';
 
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { sendSequence.current++; saveSequence.current++; sendLock.current = false; setBusy(false); }, [projectId, chatId]);
+
   useEffect(() => {
+    const intended = sentNavigation.current;
+    const keepDraft = intended?.projectId === projectId && intended.chatId === chatId && intended.path === location.pathname;
+    if (!keepDraft) sentNavigation.current = null;
     if (routeRef.current.projectId === projectId && routeRef.current.chatId === chatId) return;
     routeRef.current = { projectId, chatId };
-    setQuestion('');
+    if (!keepDraft) setQuestion('');
     setSendError('');
     setSaveNote('');
     setSavingId('');
-  }, [projectId, chatId]);
+  }, [projectId, chatId, location.key, location.pathname, location.search]);
 
   useEffect(() => {
     setRefreshedProjectModel(null);
@@ -283,7 +297,10 @@ export function ChatView({
   useEffect(() => {
     const sequence = historySeq.current + 1;
     historySeq.current = sequence;
-    const requestSelectionSequence = selectionChangeSeq.current;
+    const intended = sentNavigation.current;
+    const keepSelection = intended?.projectId === projectId && intended.chatId === chatId && intended.path === location.pathname;
+    if (keepSelection) sentNavigation.current = null;
+    const requestSelectionSequence = keepSelection ? -1 : selectionChangeSeq.current;
     const requestProject = projectId;
     const requestChat = chatId;
     const requestHead = headSequence.current;
@@ -482,7 +499,14 @@ export function ChatView({
 
   async function send(): Promise<void> {
     const nextQuestion = question.trim();
-    if (nextQuestion === '' || busy || !chatReady || queued !== null || modelSelectionPending) return;
+    if (nextQuestion === '' || sendLock.current || !chatReady || queued !== null || modelSelectionPending) return;
+    const owner = actionView.current, draft = draftSequence.current, request = ++sendSequence.current;
+    const current = () => mounted.current && actionView.current === owner;
+    const body: { turnId: string; question: string; scopeMode: TurnView['scopeMode']; sourceIds?: string[]; model?: string } = {
+      turnId: crypto.randomUUID(), question: nextQuestion, scopeMode: selection.scopeMode,
+      ...(selection.scopeMode === 'explicit' ? { sourceIds: [...selection.sourceIds] } : {}), ...(modelRoute !== '' ? { model: modelRoute } : {}),
+    };
+    sendLock.current = true;
     setBusy(true);
     setSendError('');
     setSaveNote('');
@@ -494,44 +518,44 @@ export function ChatView({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: nextQuestion.slice(0, 80) }),
         });
+        if (!current()) return; // No new turn is admitted from a departed creation view.
         targetChat = created.chat.id;
         setChats((current) => [created.chat, ...(current ?? []).filter((chat) => chat.id !== created.chat.id)]);
       }
-      const body: { turnId: string; question: string; scopeMode: TurnView['scopeMode']; sourceIds?: string[]; model?: string } = {
-        turnId: crypto.randomUUID(),
-        question: nextQuestion,
-        scopeMode: selection.scopeMode,
-      };
-      if (selection.scopeMode === 'explicit') body.sourceIds = [...selection.sourceIds];
-      if (modelRoute !== '') body.model = modelRoute;
       await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/chats/' + encodeURIComponent(targetChat) + '/turns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      setQuestion('');
+      if (!current()) return;
+      if (draftSequence.current === draft) setQuestion('');
       if (chatId === undefined) {
-        navigate('/p/' + encodeURIComponent(projectId) + '/chat/' + encodeURIComponent(targetChat));
+        const path = '/p/' + encodeURIComponent(projectId) + '/chat/' + encodeURIComponent(targetChat);
+        sentNavigation.current = { projectId, chatId: targetChat, path };
+        navigate(path);
       }
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : 'Could not send the question.');
+      if (current()) setSendError(error instanceof Error ? error.message : 'Could not send the question.');
     } finally {
-      setBusy(false);
+      if (mounted.current && sendSequence.current === request) { sendLock.current = false; setBusy(false); }
     }
   }
 
   async function stopTurn(turnId: string): Promise<void> {
     if (chatId === undefined) return;
+    const owner = actionView.current;
     try {
       await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/chats/' + encodeURIComponent(chatId)
         + '/turns/' + encodeURIComponent(turnId) + '/stop', { method: 'POST' });
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : 'Could not stop the turn.');
+      if (mounted.current && actionView.current === owner) setSendError(error instanceof Error ? error.message : 'Could not stop the turn.');
     }
   }
 
   async function saveTurn(turn: TurnView): Promise<void> {
     if (chatId === undefined || savingId !== '') return;
+    const owner = actionView.current, request = ++saveSequence.current;
+    const current = () => mounted.current && actionView.current === owner;
     setSavingId(turn.turnId);
     setSaveNote('');
     try {
@@ -545,12 +569,13 @@ export function ChatView({
           mutationId: crypto.randomUUID(),
         }),
       });
+      if (mounted.current && projectRef.current === projectId) onSavedPage();
+      if (!current()) return;
       setSaveNote('Saved.');
-      onSavedPage();
     } catch (error) {
-      setSaveNote(error instanceof Error ? error.message : 'Could not save the answer.');
+      if (current()) setSaveNote(error instanceof Error ? error.message : 'Could not save the answer.');
     } finally {
-      setSavingId('');
+      if (mounted.current && saveSequence.current === request) setSavingId('');
     }
   }
 
@@ -702,7 +727,7 @@ export function ChatView({
           <textarea
             id='er-chat-q'
             value={question}
-            onChange={(event) => setQuestion(event.currentTarget.value)}
+            onChange={(event) => { draftSequence.current++; setQuestion(event.currentTarget.value); }}
             rows={3}
             maxLength={4000}
             placeholder='Ask in Russian or English…'
