@@ -118,10 +118,11 @@ export function Projects() {
   }
   async function patch(id: string, body: { title?: string; archived?: boolean }) {
     if (busy) return;
+    const submittedEdit = editing;
     setBusy(true); setFailure("");
     try {
       await apiJson("/api/projects/" + encodeURIComponent(id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      setEditing(undefined); await client.resetQueries({ queryKey, exact: true });
+      setEditing(current => current === submittedEdit ? undefined : current); await client.resetQueries({ queryKey, exact: true });
     } catch (err) { setFailure(err instanceof Error ? err.message : "Could not update the project."); }
     finally { setBusy(false); }
   }

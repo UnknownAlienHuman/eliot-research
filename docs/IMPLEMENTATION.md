@@ -1087,6 +1087,7 @@ project picker and MCP default remain unchanged.
 Create waits for Rename to finish or be cancelled. If an update removes the edited row from the loaded pages, its
 existing editor stays available above the list with the unsaved name and original target; Save/Cancel never depend
 on that row remaining visible.
+A successful Save closes only the submitted edit; typing while it is pending remains unsaved until another explicit Save.
 The project header's Switch project opens a native dialog over the existing `/api/projects` pages. Loading, empty,
 initial/page Retry and Refresh stay in that picker; its list reads abort on close or route change. Selecting a project
 opens its chat route without creating a chat or sending a question. Escape/Close returns focus and preserves the

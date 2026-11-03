@@ -190,10 +190,34 @@ try {
     writeMode = '';
     await row(target.title).getByRole('button', { name: 'Rename', exact: true }).click();
     const restoredTitle = 'Recovered ' + prefix + viewport.width;
-    await projects.getByRole('textbox', { name: 'Project title', exact: true }).fill(restoredTitle);
+    const failedName = 'Submitted before failure ' + prefix + viewport.width;
+    const firstSavedName = 'Typed during failed Save ' + prefix + viewport.width;
+    await rename.fill(failedName);
     await expect(filter).toBeDisabled();
-    await row(target.title).getByRole('button', { name: 'Save', exact: true }).click();
+    writeMode = 'hold'; heldPatch = undefined;
+    await projects.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect.poll(() => Boolean(heldPatch)).toBe(true);
+    await rename.fill(firstSavedName);
+    await expect(projects.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    writeMode = '';
+    await heldPatch.fulfill({ status: 503, json: { error: { message: 'Synthetic rename failure' } } });
+    await expect(projects.getByRole('alert')).toContainText('Synthetic rename failure');
+    await expect(rename).toHaveValue(firstSavedName);
+    assert.equal((await api('/api/projects/' + target.id)).project.title, target.title);
+    writeMode = 'hold'; heldPatch = undefined;
+    await projects.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect.poll(() => Boolean(heldPatch)).toBe(true);
+    assert.deepEqual(heldPatch.request().postDataJSON(), { title: firstSavedName });
+    await rename.fill(restoredTitle);
+    writeMode = '';
+    await heldPatch.continue();
+    await expect(rename).toHaveValue(restoredTitle);
+    await expect(projects.getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
+    assert.equal((await api('/api/projects/' + target.id)).project.title, firstSavedName,
+      'The acknowledged Save must commit only its submitted name, not newer unsaved text.');
+    await projects.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(row(restoredTitle)).toHaveCount(1);
+    await expect(rename).toHaveCount(0);
     assert.notEqual((await api('/api/projects/' + target.id)).project.archivedAt, null);
     await page.screenshot({ path: 'eval/out/k1/projects-archived-' + viewport.width + '.png' });
     await row(restoredTitle).getByRole('button', { name: 'Unarchive', exact: true }).click();
@@ -211,12 +235,13 @@ try {
     await expect(page.getByRole('link', { name: chat.title, exact: true })).toBeVisible();
     assert.deepEqual(await api('/api/sources/' + source.id), sourceBefore);
     assert.equal(await fetchEval(origin + '/api/revisions/' + revisionId + '/text', {}, origin, process.env.ELIOT_ORIGIN).then(r => r.text()), canonicalBefore);
-    assert.deepEqual(patches, [{ archived: true }, { archived: false }, { title: restoredTitle }, { archived: false }]);
+    assert.deepEqual(patches, [{ archived: true }, { archived: false }, { title: failedName }, { title: firstSavedName }, { title: restoredTitle }, { archived: false }]);
     assert.equal(createPosts, 1);
     assert.equal(unexpectedWrites, 0); assert.deepEqual(errors, []);
     console.log(JSON.stringify({ scope: 'K1_PROJECTS_BROWSER', viewport, active: expectedActive.length, archived: expectedArchived.length,
       pagedBothViews: true, staleReadIgnored: true, readAndRestoreRetry: true, archiveRenameRestore: true,
       retainedSourceAndHistory: true, pageTwoRename: { createBlockedUntilCancel: true, externalRefetchKeepsDraftAndCancel: true },
+      renameAckPreservesNewerInput: { success: true, error: true, onlyExplicitSaveCommitsNewName: true },
       createPosts, projectPatches: patches.length, unexpectedWrites, modelCalls: 0 }));
     await context.close();
   }
