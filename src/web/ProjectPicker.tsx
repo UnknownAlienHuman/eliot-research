@@ -4,7 +4,9 @@ import { Link, useLocation } from 'react-router';
 import type { Project } from '../shared/api';
 import { apiJson } from './api';
 
-export function ProjectPicker({ projectId }: { readonly projectId: string }) {
+interface ProjectPickerProps { readonly projectId: string; readonly hasDraft: boolean; }
+
+export function ProjectPicker({ projectId, hasDraft }: ProjectPickerProps) {
   const [open, setOpen] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useId();
@@ -19,13 +21,13 @@ export function ProjectPicker({ projectId }: { readonly projectId: string }) {
       <h2 className='er-dialog__title' id={heading}>Switch project</h2>
       <div className='er-dialog__body'>
         <button className='er-button er-button--text' type='button' autoFocus onClick={close}>Close project list</button>
-        {open ? <ProjectList projectId={projectId} onSelect={close} /> : null}
+        {open ? <ProjectList projectId={projectId} hasDraft={hasDraft} onSelect={close} /> : null}
       </div>
     </dialog>
   </>;
 }
 
-function ProjectList({ projectId, onSelect }: { readonly projectId: string; readonly onSelect: () => void }) {
+function ProjectList({ projectId, hasDraft, onSelect }: ProjectPickerProps & { readonly onSelect: () => void }) {
   const client = useQueryClient();
   const queryKey = ['project-picker'];
   const query = useInfiniteQuery({
@@ -48,7 +50,15 @@ function ProjectList({ projectId, onSelect }: { readonly projectId: string; read
       : projects.length === 0 ? <p>No active projects.</p>
       : <ul className='er-lib__list'>{projects.map(project => <li className='er-lib__row' key={project.id}>
         <Link className='er-lib__row-main er-lib__row-title' aria-current={project.id === projectId ? 'true' : undefined}
-          to={'/p/' + encodeURIComponent(project.id) + '/chat'} onClick={onSelect}>{project.title}</Link>
+          to={'/p/' + encodeURIComponent(project.id) + '/chat'} onClick={event => {
+            if (project.id !== projectId && hasDraft && event.button === 0
+              && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+              && !window.confirm('Discard your unsent question and switch project?')) {
+              event.preventDefault();
+              return;
+            }
+            onSelect();
+          }}>{project.title}</Link>
         {project.id === projectId ? <span className='er-chip'>Current project</span> : null}
       </li>)}</ul>}
     {query.hasNextPage ? <button className='er-button er-button--text' type='button' disabled={query.isFetching} onClick={more}>

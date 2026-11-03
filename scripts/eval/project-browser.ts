@@ -37,6 +37,15 @@ try {
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
+    const confirmations = [];
+    let confirmSwitch = false;
+    page.on('dialog', async prompt => {
+      assert.equal(prompt.type(), 'confirm');
+      assert.equal(prompt.message(), 'Discard your unsent question and switch project?');
+      confirmations.push(prompt.message());
+      if (confirmSwitch) await prompt.accept();
+      else await prompt.dismiss();
+    });
     let writes = 0, fault = '', held;
     await page.route('**/api/**', route => {
       if (route.request().method() === 'GET') return route.fallback();
@@ -58,6 +67,15 @@ try {
     const links = list.getByRole('link');
     const question = page.getByRole('textbox', { name: 'Question', exact: true });
     const more = () => dialog.getByRole('button', { name: 'Load more projects', exact: true });
+    const allPages = async () => {
+      await expect(list).toHaveAttribute('aria-busy', 'false');
+      while (await more().count()) {
+        const count = await links.count();
+        await more().click();
+        await expect.poll(() => links.count()).toBeGreaterThan(count);
+        await expect(list).toHaveAttribute('aria-busy', 'false');
+      }
+    };
     await page.goto(origin + '/p/' + first.id + '/chat');
     await expect(page.getByRole('heading', { name: first.title, exact: true })).toBeVisible();
     if (viewport.width <= 600) {
@@ -83,13 +101,7 @@ try {
     fault = '';
     await dialog.getByRole('button', { name: 'Retry projects', exact: true }).click();
     await expect.poll(() => links.count()).toBeGreaterThan(50);
-    await expect(list).toHaveAttribute('aria-busy', 'false');
-    while (await more().count()) {
-      const count = await links.count();
-      await more().click();
-      await expect.poll(() => links.count()).toBeGreaterThan(count);
-      await expect(list).toHaveAttribute('aria-busy', 'false');
-    }
+    await allPages();
     await expect(links).toHaveCount(expected.length);
     const actual = await links.evaluateAll(items => items.map(item => item.getAttribute('href')));
     assert.deepEqual(actual, expected.map(project => '/p/' + project.id + '/chat'));
@@ -101,6 +113,16 @@ try {
     await expect(switcher).toBeFocused();
     await expect(question).toHaveValue('Unsent draft stays while browsing the picker.');
     await expect(scope).not.toBeChecked();
+
+    await switcher.click();
+    await expect(links).toHaveCount(50);
+    await allPages();
+    await list.getByRole('link', { name: first.title, exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(origin + '/p/' + first.id + '/chat');
+    await expect(question).toHaveValue('Unsent draft stays while browsing the picker.');
+    await expect(scope).not.toBeChecked();
+    assert.equal(confirmations.length, 0, 'Choosing the current project must not ask to discard its draft.');
 
     fault = 'empty';
     await switcher.click();
@@ -128,11 +150,35 @@ try {
     await dialog.getByRole('button', { name: 'Refresh projects', exact: true }).click();
     await expect(links).toHaveCount(50);
     await list.getByRole('link', { name: target.title, exact: true }).click();
+    assert.equal(confirmations.length, 1);
+    await expect(page).toHaveURL(origin + '/p/' + first.id + '/chat');
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(question).toHaveValue('Unsent draft stays while browsing the picker.');
+    await expect(scope).not.toBeChecked();
+    confirmSwitch = true;
+    await switcher.click();
+    await expect(links).toHaveCount(50);
+    await list.getByRole('link', { name: target.title, exact: true }).click();
+    assert.equal(confirmations.length, 2);
     await expect(page).toHaveURL(origin + '/p/' + target.id + '/chat');
     await expect(page.getByRole('heading', { name: target.title, exact: true })).toBeVisible();
     await expect(dialog).toHaveCount(0);
     await expect(question).toHaveValue('');
     await expect(page.getByRole('checkbox', { name: /^Project default/, includeHidden: true })).toBeChecked();
+
+    const third = projects.at(-2);
+    await question.fill('  \n  ');
+    await switcher.click();
+    await expect(links).toHaveCount(50);
+    await list.getByRole('link', { name: third.title, exact: true }).click();
+    await expect(page).toHaveURL(origin + '/p/' + third.id + '/chat');
+    await expect(page.getByRole('heading', { name: third.title, exact: true })).toBeVisible();
+    assert.equal(confirmations.length, 2, 'A whitespace-only draft must not ask for confirmation.');
+    await page.goBack();
+    await expect(page.getByRole('heading', { name: target.title, exact: true })).toBeVisible();
+    await expect(question).toHaveValue('');
 
     await page.getByRole('link', { name: 'Settings', exact: true }).click();
     await expect(page).toHaveURL(origin + '/settings');
@@ -156,7 +202,8 @@ try {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ scope: 'K2_PROJECT_PICKER_BROWSER', viewport, projects: expected.length,
       paging: true, initialAndPageRetry: true, escapePreservesDraft: true, delayedCloseAndReopen: true,
-      projectAndSettingsNavigation: true, unexpectedWrites: writes, newModelCalls: 0 }));
+      projectAndSettingsNavigation: true, draftSwitch: { cancelPreservesDraftAndScope: true, confirmNavigates: true,
+        currentAndBlankSkipConfirmation: true, prompts: confirmations.length }, unexpectedWrites: writes, newModelCalls: 0 }));
     await context.close();
   }
 } finally { await browser.close(); }

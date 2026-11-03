@@ -1078,7 +1078,9 @@ refreshes Studio through the existing storage-only page API.
 The project header's Switch project opens a native dialog over the existing `/api/projects` pages. Loading, empty,
 initial/page Retry and Refresh stay in that picker; its list reads abort on close or route change. Selecting a project
 opens its chat route without creating a chat or sending a question. Escape/Close returns focus and preserves the
-originating draft/selection. Project changes keep the workspace's existing reset semantics.
+originating draft/selection. An ordinary same-tab choice of another project requires confirmation before discarding
+a nonblank question; Cancel leaves the picker, draft and source scope intact. Current-project and blank-draft choices
+need no confirmation. Confirmed project changes keep the workspace's existing reset semantics.
 Converting project-default scope to an explicit selection waits until all source pages are loaded; it never drops
 unloaded sources. Already explicit selections retain their full IDs while the visible source list is paginated.
 Choosing a stored suggested question explicitly selects its one source and opens the existing chat composer. Workspace
