@@ -217,7 +217,8 @@ try {
       assert.equal(requests.length, turnCount, 'An unconfirmed create response must not dispatch a turn.');
       if (fault === 'json') await question.fill(text + ' edited before retry');
       createFault = '';
-      await submit('ack');
+      const retriedTurn = await submit('ack');
+      assert.equal(retriedTurn.body.question, fault === 'json' ? text + ' edited before retry' : text);
       assert.deepEqual(creations[before + 1].input, creations[before].input, 'Retry keeps the creation ID and original title, even after draft edits.');
       assert.equal(creations[before + 1].chat.id, creations[before].input.id, 'Retry uses the original conversation identity whether or not its first INSERT committed.');
       if (fault !== 'before') assert.deepEqual(creations[before + 1].chat, creations[before].chat);
