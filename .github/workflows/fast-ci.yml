@@ -53,7 +53,10 @@ jobs:
           pnpm db:local
           pnpm dev > /tmp/eliot-k0.log 2>&1 &
           trap 'kill $!' EXIT
-          pnpm eval k0
+          pnpm eval k0 || {
+            tail -n 80 /tmp/eliot-k0.log
+            exit 1
+          }
           pnpm eval k1 --native-only
           pnpm eval k1 --library-only
           pnpm eval k1 --library-browser
