@@ -117,16 +117,19 @@ async function runPickerOnlyProof() {
     await page.goto(emptyChat);
     const question = page.getByRole('textbox', { name: 'Question', exact: true }), send = page.getByRole('button', { name: 'Send', exact: true });
     const provider = page.getByRole('combobox', { name: 'Model: provider', exact: true }), model = page.getByRole('combobox', { name: 'Model', exact: true });
+    const openControls = async () => { await page.getByRole('button', { name: /^Sources and model:/ }).click(); };
     await expect(page.locator('.er-chat__composer')).toBeVisible();
+    await openControls();
     await expect(question).toBeEnabled(); await expect(provider).toBeEnabled();
     await expect(send).toBeDisabled();
     await question.fill('Picker readiness ' + randomUUID());
     await expect(send).toBeEnabled();
     await question.fill('');
-    await page.reload(); await expect(provider).toBeEnabled();
+    await page.reload(); await openControls(); await expect(provider).toBeEnabled();
     assert.deepEqual(browserPosts, [], 'Empty-chat navigation and reload must not POST.');
     const chatRead = read(chatPath);
     await page.goto(browserOrigin + '/p/' + encodeURIComponent(project.id) + '/chat/' + encodeURIComponent(chatId));
+    await openControls();
     assert.equal((await chatRead).status(), 200);
     assert.deepEqual(browserPosts, [], 'Opening the existing fixture chat must not POST.');
     await expect(provider).toBeEnabled();
@@ -148,6 +151,7 @@ async function runPickerOnlyProof() {
     assert.equal(turnPayloads[0].scopeMode, 'project_default'); await expect(send).toBeEnabled();
     await provider.selectOption(''); await expect(provider).toHaveValue(''); await expect(model).toHaveValue('');
     await expect(provider.locator('option').first()).toHaveText('Project default'); await page.reload();
+    await openControls();
     await expect(provider).toBeEnabled(); await expect(provider).toHaveValue(''); await expect(model).toHaveValue('');
     assert.deepEqual(browserPosts, [{ method: 'POST', path: turnPath }], 'Reload after intercepted Send must not create another POST.');
     await question.fill('Picker default proof ' + randomUUID()); await send.click();

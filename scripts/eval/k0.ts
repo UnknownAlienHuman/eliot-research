@@ -82,7 +82,18 @@ try {
       const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme });
       const page = await context.newPage();
       const errors: string[] = [];
+      const bootstrapFailures: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
+      page.on("requestfailed", (request) => {
+        if (!["document", "script", "stylesheet"].includes(request.resourceType())) return;
+        bootstrapFailures.push((request.resourceType() + " " + new URL(request.url()).pathname + ": " + request.failure()?.errorText).slice(0, 300));
+        if (bootstrapFailures.length > 8) bootstrapFailures.shift();
+      });
+      page.on("response", (response) => {
+        if (response.status() < 400 || !["document", "script", "stylesheet"].includes(response.request().resourceType())) return;
+        bootstrapFailures.push((response.status() + " " + new URL(response.url()).pathname + " " + response.headers()["content-type"]).slice(0, 300));
+        if (bootstrapFailures.length > 8) bootstrapFailures.shift();
+      });
       await page.goto(origin);
       await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
       await page.evaluate(() => document.fonts.ready);
@@ -106,8 +117,21 @@ try {
       await expect(page.getByRole("combobox", { name: "Appearance", exact: true, includeHidden: true })).toHaveCount(1);
       await page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true }).selectOption(theme === "light" ? "dark" : "light");
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "light" ? "dark" : "light");
-      await page.reload();
-      await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "light" ? "dark" : "light");
+      bootstrapFailures.length = 0;
+      try {
+        await page.reload();
+        await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "light" ? "dark" : "light");
+      } catch (error) {
+        const state = await page.evaluate(() => {
+          let appearance: string | null = null;
+          try { appearance = localStorage.getItem("eliot.appearance.v1"); } catch { appearance = "unavailable"; }
+          return { readyState: document.readyState, rootChildren: document.getElementById("root")?.childElementCount ?? null,
+            theme: document.documentElement.getAttribute("data-theme"), appearance, viteOverlay: !!document.querySelector("vite-error-overlay") };
+        }).catch(() => null);
+        console.error("K0 appearance reload failure", JSON.stringify({ width, theme, expected: theme === "light" ? "dark" : "light",
+          path: new URL(page.url()).pathname, state, pageerrors: errors.slice(-8).map(message => message.slice(0, 300)), bootstrapFailures }));
+        throw error;
+      }
       await page.locator('summary[aria-label="Appearance"]').click();
       await expect(page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true })).toHaveValue(theme === "light" ? "dark" : "light");
       await page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true }).selectOption("system");

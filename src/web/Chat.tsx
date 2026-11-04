@@ -1,7 +1,7 @@
 // K2 Ask: project chat and saved-answer Studio views. The parent owns project,
 // source selection, active chat routing, and the three-pane workspace. This file
 // owns only chat/history presentation and the storage-backed K2 interactions.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { apiJson } from './api';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { Markdown, citationHref, citationLabel } from './Markdown';
@@ -116,6 +116,8 @@ export function ChatView({
   const [queued, setQueued] = useState<QueuedTurn | null>(null);
   const [chatReady, setChatReady] = useState(chatId === undefined);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [controlsExpanded, setControlsExpanded] = useState(false);
+  const controlsId = useId();
   const [projectSettingsRefreshError, setProjectSettingsRefreshError] = useState('');
   const [refreshedProjectModel, setRefreshedProjectModel] = useState<{ readonly projectId: string; readonly answerModel: string | null } | null>(null);
   const modelsSeq = useRef(0);
@@ -187,6 +189,10 @@ export function ChatView({
   const savedProjectModel = refreshedProjectModel?.projectId === projectId ? refreshedProjectModel.answerModel : undefined;
   const effectiveProjectModel = savedProjectModel !== undefined ? savedProjectModel : projectAnswerModel;
   const inheritedModel = effectiveProjectModel ?? catalogDefaultModel ?? '';
+  const scopeSummary = selection.scopeMode === 'project_default' ? 'Project sources'
+    : selection.scopeMode === 'empty' ? 'No sources' : selection.sourceIds.length + ' selected';
+  const modelSummary = modelsLoading ? 'Loading model…' : modelSelectionPending ? 'Choose model'
+    : (modelRoute === '' ? 'Default: ' : '') + (storedModelLabel(modelRoute || inheritedModel, models) || 'project default');
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { sendSequence.current++; saveSequence.current++; sendLock.current = false; setBusy(false); }, [projectId, chatId]);
@@ -673,22 +679,32 @@ export function ChatView({
       </div>
 
       <form className='er-chat__composer' onSubmit={(event) => { event.preventDefault(); void send(); }}>
-        <p className='er-chat__hint'>Sources: {selection.scopeMode === 'project_default' ? 'project default' : selection.scopeMode === 'empty' ? 'none' : selection.sourceIds.length + ' selected'}.{' '}
-          <Link to={'/p/' + encodeURIComponent(projectId) + '/sources'}>Change sources</Link></p>
-        <div className='er-chat__model'>
-          <ModelPicker
-            label='Model'
-            choices={models}
-            value={modelRoute}
-            onChange={setModelRoute}
-            defaultRoute={inheritedModel}
-            loading={modelsLoading}
-            error={modelsError}
-            emptyLabel='Project default'
-            compact
-            warnings={modelsWarnings}
-            onRoutePendingChange={setModelSelectionPending}
-          />
+        <div className='er-chat__options' data-expanded={controlsExpanded}>
+          <button className='er-button er-button--text er-chat__options-toggle' type='button'
+            aria-label={'Sources and model: ' + scopeSummary + ' · ' + modelSummary}
+            aria-expanded={controlsExpanded} aria-controls={controlsId} onClick={() => setControlsExpanded(value => !value)}>
+            <span className='er-chat__options-summary'>{scopeSummary} · {modelSummary}</span>
+            <span aria-hidden='true'>{controlsExpanded ? 'Hide' : 'Change'}</span>
+          </button>
+          <div className='er-chat__options-controls' id={controlsId} onFocusCapture={() => setControlsExpanded(true)}>
+            <p className='er-chat__hint er-chat__scope'>Sources: {selection.scopeMode === 'project_default' ? 'project default' : selection.scopeMode === 'empty' ? 'none' : selection.sourceIds.length + ' selected'}.{' '}
+              <Link to={'/p/' + encodeURIComponent(projectId) + '/sources'}>Change sources</Link></p>
+            <div className='er-chat__model'>
+              <ModelPicker
+                label='Model'
+                choices={models}
+                value={modelRoute}
+                onChange={setModelRoute}
+                defaultRoute={inheritedModel}
+                loading={modelsLoading}
+                error={modelsError}
+                emptyLabel='Project default'
+                compact
+                warnings={modelsWarnings}
+                onRoutePendingChange={setModelSelectionPending}
+              />
+            </div>
+          </div>
         </div>
         <label className='er-field er-chat__question-field' htmlFor='er-chat-q'>
           <span className='er-chat__asklabel'>Question</span>
