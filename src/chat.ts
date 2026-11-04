@@ -6,7 +6,7 @@ import { buildContext } from "./context";
 import { answerWarnings, numericCitationLabels, persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn } from "./cost";
-import { modelOutputLimit, requireAvailableModel } from "./models";
+import { modelOutputLimit, modelOutputReserve, requireAvailableModel } from "./models";
 import type { ModelSpec } from "./models";
 import { modelFailure, resolveModelTransport } from "./model-transport";
 import { turnUsageProjection } from "./chat-usage";
@@ -440,14 +440,15 @@ export class ChatAgent extends Agent<Env, ChatState> {
         .map(({ role, content }) => ({ role: role as "user" | "assistant", content }));
       messages.push({ role: "user", content: input.question });
       const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages })).byteLength / 3) + messages.length * 32 + 1024;
-      if (inputTokens + modelOutputLimit(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
+      if (inputTokens + modelOutputReserve(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
+      const maxOutputTokens = modelOutputLimit(model, inputTokens);
       this.writeTurn(turn);
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
         .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
       if (controller.signal.aborted) throw controller.signal.reason;
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
-        maxOutputTokens: modelOutputLimit(model), maxRetries: 0, ...(selectedModel?.supportsTemperature ? { temperature: 0 } : {}), abortSignal: controller.signal,
+        ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0, ...(selectedModel?.supportsTemperature ? { temperature: 0 } : {}), abortSignal: controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
       let lastWrite = 0;

@@ -3,7 +3,7 @@ import { scanBlocks, sliceUtf8 } from "./blocks.js";
 import { buildContext } from "./context.js";
 import { resolveCitations } from "./citations.js";
 import { LibraryError } from "./library.js";
-import { modelOutputLimit } from "./models.js";
+import { modelOutputReserve } from "./models.js";
 import type { Actor } from "./auth";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
@@ -372,7 +372,7 @@ describe("buildContext K2 whole scope", () => {
     const estimateTokens = (value: string) => Math.ceil(new TextEncoder().encode(value).byteLength / 3);
     expect(res.messages.map((message) => message.role)).toEqual(["system", "user"]);
     expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + estimateTokens(message.content), 0));
-    expect(res.estimatedInputTokens + modelOutputLimit(MODEL)).toBeLessThanOrEqual(Math.min(Math.floor(MODEL.contextTokens * 0.6), 400000));
+    expect(res.estimatedInputTokens + modelOutputReserve(MODEL)).toBeLessThanOrEqual(Math.min(Math.floor(MODEL.contextTokens * 0.6), 400000));
   });
 
   it("narrowed scope keeps answers citing only A and drops answers citing B", async () => {
@@ -556,7 +556,7 @@ describe("buildContext K2 whole scope", () => {
       ["s2", largeRevision, compactBlock.id, compactBlock.start, compactBlock.end],
     ]);
     expect(citations.invalidLabels).toBe(0);
-    expect(res.estimatedInputTokens + modelOutputLimit(model)).toBeLessThanOrEqual(Math.min(3000, 400000));
+    expect(res.estimatedInputTokens + modelOutputReserve(model)).toBeLessThanOrEqual(Math.min(3000, 400000));
     expect(requested).toContain("source/" + pageRevision + "/text.md");
     expect(requested).not.toContain("source/" + largeRevision + "/text.md");
     expect(requested.some((key) => key.startsWith("source/" + largeRevision + "/text.md#r"))).toBe(true);
@@ -601,8 +601,8 @@ describe("buildContext K2 whole scope", () => {
 
   it("admits empty and small scopes on a high-output model via outputReserveTokens", async () => {
     const dots = { contextTokens: 512000, maxOutputTokens: 460800, outputReserveTokens: 8192 };
-    expect(modelOutputLimit({ maxOutputTokens: 460800 })).toBe(460800);
-    expect(modelOutputLimit(dots)).toBe(8192);
+    expect(modelOutputReserve({ maxOutputTokens: 460800 })).toBe(460800);
+    expect(modelOutputReserve(dots)).toBe(8192);
     const { env } = twoSourceEnv();
     let err: unknown;
     try {
@@ -700,7 +700,7 @@ describe("buildContext K3 claims fallback", () => {
     expect(fixture.requested).toContain("source/" + fixture.revisionIds[11] + "/text.md");
     expect(fixture.requested).not.toContain("source/" + fixture.revisionIds[1] + "/text.md");
     expect(fixture.requested.some((key) => key.startsWith("source/" + fixture.revisionIds[1] + "/text.md#r"))).toBe(true);
-    expect(res.estimatedInputTokens + modelOutputLimit(model)).toBeLessThanOrEqual(400000);
+    expect(res.estimatedInputTokens + modelOutputReserve(model)).toBeLessThanOrEqual(400000);
   });
 
   it("rejects an over-budget mixed scope after exact projection without dropping sources", async () => {
@@ -770,7 +770,7 @@ describe("buildContext K3 claims fallback", () => {
     const cap = Math.min(Math.floor(model.contextTokens * 0.6), 400000);
     expect(historyTokens).toBeLessThanOrEqual(Math.floor(model.contextTokens * 0.1));
     expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + estimate(message.content), 0));
-    expect(res.estimatedInputTokens + callerTokens + modelOutputLimit(model)).toBeLessThanOrEqual(cap);
+    expect(res.estimatedInputTokens + callerTokens + modelOutputReserve(model)).toBeLessThanOrEqual(cap);
   });
 
   it("filters structural page markers from hydrated claim and guide passages", async () => {
@@ -1553,7 +1553,7 @@ describe("bounded context materialization", () => {
     const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL, history });
     expect(result.messages.at(-1)?.content).toBe("Newest answer");
     expect(result.revisionIds).toEqual(["r0"]);
-    expect(result.estimatedInputTokens + modelOutputLimit(MODEL)).toBeLessThanOrEqual(400000);
+    expect(result.estimatedInputTokens + modelOutputReserve(MODEL)).toBeLessThanOrEqual(400000);
   });
   it("does not jump over an oversized newest exchange to reuse older history", async () => {
     const fixture = scope(1);

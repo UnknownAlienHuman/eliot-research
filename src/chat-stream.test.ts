@@ -1245,6 +1245,31 @@ describe("ChatAgent terminal D1 settlement", () => {
 });
 
 describe("chat-stream K2 wire regression", () => {
+  it.each([
+    { capacity: 32768, context: 1048576 }, { capacity: 4096, context: 1048576 },
+    { capacity: null, context: 1048576 }, { capacity: 32768, context: 20000 },
+  ])("sends published $capacity within context $context without treating the reserve as an output cap", async ({ capacity, context }) => {
+    const h = makeHarness();
+    const base = await requireAvailableModel(h.env, "gateway:command-code/native-beam");
+    vi.mocked(requireAvailableModel).mockResolvedValueOnce({ ...base, contextTokens: context, maxOutputTokens: capacity, outputReserveTokens: 8192 });
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "The source [S1:1]." }, "stop")]);
+      const turn = requireTurn(await h.agent.submitTurn({ projectId, chatId,
+        turnId: "aaaaaaaa-aaaa-4aaa-8aaa-000000000011", question: "Explain the source.",
+        scopeMode: "explicit", sourceIds: ["s1"] }, true));
+      const request = vi.mocked(ai.streamText).mock.calls[0]?.[0];
+      if (!request || !request.messages) throw new Error("Missing application model request.");
+      const input = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions: request.instructions, messages: request.messages })).byteLength / 3)
+        + request.messages.length * 32 + 1024;
+      if (capacity === null) expect(sentBodies[0]).not.toHaveProperty("max_tokens");
+      else expect(sentBodies[0]?.max_tokens).toBe(Math.min(capacity, context - input));
+      expect(fetchCalls).toBe(1);
+      expect(turn).toMatchObject({ state: "completed", inputTokens: null, outputTokens: null });
+      expect(turn.tokenLimit).toBeGreaterThan(0);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+
   it("streams explanatory multi-paragraph Markdown without sending a combined JSON schema", async () => {
     const projectInstructions = "For overview questions, explain the method's motivation and relevant background.";
     const h = makeHarness(

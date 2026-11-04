@@ -1,7 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { generateText } from "ai";
 import { LibraryError } from "../library";
-import { modelOutputLimit, modelTokenLimit, type ModelSpec } from "../models";
+import { modelOutputReserve, modelTokenLimit, type ModelSpec } from "../models";
 import { assertProviderAllowance } from "../model-quota";
 import { modelFailure, resolveModelTransport } from "../model-transport";
 import { OCR_LIMITS } from "../shared/api";
@@ -83,9 +83,10 @@ async function runPage(env: Env, id: string, ordinal: number): Promise<number> {
   if (remaining <= 0) throw fail("OCR reached its admitted deadline before the model call.");
   let generated: Awaited<ReturnType<typeof generateText>>;
   try {
+    // OCR snapshots retain their admitted per-page cap in outputReserveTokens.
     generated = await generateText({ model: transport, instructions: PROMPT,
       messages: [{ role: "user", content: [{ type: "image", image: bytes, mediaType: "image/png" }] }],
-      maxOutputTokens: modelOutputLimit(model), maxRetries: 0,
+      maxOutputTokens: modelOutputReserve(model), maxRetries: 0,
       abortSignal: AbortSignal.timeout(Math.min(OCR_LIMITS.pageTimeoutMs, remaining)) });
   } catch (error) { throw fail(modelFailure(error, model)); }
   const usage = generated.totalUsage, input = count(usage.inputTokens), cached = count(usage.inputTokenDetails?.cacheReadTokens), output = count(usage.outputTokens);

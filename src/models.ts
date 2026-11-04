@@ -101,12 +101,24 @@ export const MODELS: ModelSpec[] = [
   { route: DEFAULT_MODEL, id: "@cf/zai-org/glm-5.3-flash", label: "GLM 5.3 Flash", contextTokens: 1_048_576,
     maxOutputTokens: null, outputReserveTokens: 8192, supportsImages: true, nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true },
 ];
-export const modelOutputLimit = (model: Pick<CatalogModel, "outputReserveTokens" | "maxOutputTokens">) => {
+// Assembly headroom and the recorded accounting bound are not a generation cap.
+export const modelOutputReserve = (model: Pick<CatalogModel, "outputReserveTokens" | "maxOutputTokens">) => {
   const bound = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
   return Math.min(bound, model.maxOutputTokens ?? bound);
 };
+export function modelOutputLimit(model: Pick<CatalogModel, "contextTokens" | "maxOutputTokens">, inputTokens: number): number | undefined {
+  const remaining = (model.contextTokens ?? 0) - inputTokens;
+  if (!Number.isSafeInteger(model.contextTokens) || !Number.isSafeInteger(inputTokens) || inputTokens < 0 ||
+    !Number.isSafeInteger(remaining) || remaining <= 0)
+    throw new LibraryError("unavailable", "This request has no usable output context.", 503);
+  // Unknown provider capacity stays unknown; omission inherits SDK/provider defaults.
+  if (model.maxOutputTokens === null) return undefined;
+  if (!Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens <= 0)
+    throw new LibraryError("unavailable", "The model has no usable output maximum.", 503);
+  return Math.min(model.maxOutputTokens, remaining);
+}
 export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "outputReserveTokens" | "maxOutputTokens">): number {
-  const output = modelOutputLimit(model), total = (model.contextTokens ?? 0) + output;
+  const output = modelOutputReserve(model), total = (model.contextTokens ?? 0) + output;
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
     !Number.isSafeInteger(output) || output <= 0 || !Number.isSafeInteger(total))
     throw new LibraryError("unavailable", "The model has no usable input/output limits.", 503);
@@ -114,7 +126,7 @@ export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "out
 }
 function missingMetadata(model: CatalogModel): string | null {
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
-    !Number.isSafeInteger(modelOutputLimit(model)) || modelOutputLimit(model) <= 0)
+    !Number.isSafeInteger(modelOutputReserve(model)) || modelOutputReserve(model) <= 0)
     return "The provider has not published usable context/output metadata.";
   return null;
 }

@@ -368,17 +368,17 @@ assert.deepEqual(numericsUnsupported('score 41.8 here', '41,8'), [], 'Harness se
 assert.deepEqual(numericsUnsupported('energy 41.8e2 joules', '41.8', 41.8), ['41.8'], 'Harness selftest: full tokens, 41.8 is not supported by 41.8e2.');
 const isTokenObservation = (v) => v === null || (Number.isSafeInteger(v) && v >= 0);
 assert(isTokenObservation(null) && isTokenObservation(0) && isTokenObservation(40978) && !isTokenObservation(undefined) && !isTokenObservation(-1) && !isTokenObservation(1.5) && !isTokenObservation('40978'), 'Harness selftest: token observations accept nonnegative safe integers or null unknown, nothing else.');
-function outputBound(model) {
+function outputReserve(model) {
   const requested = model.outputReserveTokens ?? model.maxOutputTokens;
   const published = model.maxOutputTokens ?? requested;
   if (!Number.isSafeInteger(requested) || requested <= 0 || !Number.isSafeInteger(published) || published <= 0) return null;
   return Math.min(requested, published);
 }
-assert.equal(outputBound({ maxOutputTokens: 131072, outputReserveTokens: 8192 }), 8192, 'Captured Nemo job output reserve wins over larger published capacity.');
-assert.equal(outputBound({ maxOutputTokens: 4096, outputReserveTokens: 8192 }), 4096, 'A smaller published maximum still caps the reserve.');
-assert.equal(outputBound({ maxOutputTokens: null }), null, 'Unknown output metadata stays unknown.');
-assert.equal(outputBound({ maxOutputTokens: -1, outputReserveTokens: 8192 }), null, 'Invalid published output metadata cannot authorize a bound.');
-assert.equal(outputBound({ maxOutputTokens: '131072', outputReserveTokens: 8192 }), null, 'Output metadata is not coerced from strings.');
+assert.equal(outputReserve({ maxOutputTokens: 131072, outputReserveTokens: 8192 }), 8192, 'Assembly reserve stays separate from the larger published generation maximum.');
+assert.equal(outputReserve({ maxOutputTokens: 4096, outputReserveTokens: 8192 }), 4096, 'A smaller published maximum still caps the assembly reserve.');
+assert.equal(outputReserve({ maxOutputTokens: null }), null, 'Missing reserve and output metadata stay unknown.');
+assert.equal(outputReserve({ maxOutputTokens: -1, outputReserveTokens: 8192 }), null, 'Invalid published output metadata cannot authorize a reserve.');
+assert.equal(outputReserve({ maxOutputTokens: '131072', outputReserveTokens: 8192 }), null, 'Output metadata is not coerced from strings.');
 const isCallCount = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 2;
 assert(!isCallCount(-1) && !isCallCount(1.5) && !isCallCount(3) && !isCallCount('2') && !isCallCount(NaN) && !isCallCount(Infinity), 'Call counts reject invalid or out-of-bound observations.');
 function owningCallCount(u, what) {
@@ -751,15 +751,15 @@ assert.equal(modelList.status, 200, 'Read current catalogue before reporting the
 const answerMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_ANSWER_MODEL);
 assert(answerMeta && answerMeta.enabled, 'Selected answerModel must be present and enabled in the current catalogue; no substitution is made here.');
 assert(Number.isSafeInteger(answerMeta.contextTokens) && answerMeta.contextTokens > 0, 'Selected answerModel context must be known.');
-const answerOutputBound = outputBound(answerMeta);
-assert(Number.isSafeInteger(answerOutputBound) && answerOutputBound > 0, 'Selected answerModel output bound must be known.');
+const answerOutputReserve = outputReserve(answerMeta);
+assert(Number.isSafeInteger(answerOutputReserve) && answerOutputReserve > 0, 'Selected answerModel assembly reserve must be known.');
 const distillMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_DISTILL_MODEL);
 assert(distillMeta && distillMeta.enabled, 'Selected distillModel must be present and enabled in the current catalogue; no substitution is made here.');
 assert(Number.isSafeInteger(distillMeta.contextTokens) && distillMeta.contextTokens > 0, 'Selected distillModel context must be known.');
-const distillOutputBound = outputBound(distillMeta);
-assert(Number.isSafeInteger(distillOutputBound) && distillOutputBound > 0, 'Selected distillModel output bound must be known.');
-const answerCallTokenLimit = answerMeta.contextTokens + answerOutputBound;
-const distillCallTokenLimit = distillMeta.contextTokens + distillOutputBound;
+const distillOutputReserve = outputReserve(distillMeta);
+assert(Number.isSafeInteger(distillOutputReserve) && distillOutputReserve > 0, 'Selected distillModel assembly reserve must be known.');
+const answerCallTokenLimit = answerMeta.contextTokens + answerOutputReserve;
+const distillCallTokenLimit = distillMeta.contextTokens + distillOutputReserve;
 const runCallCeiling = nativeOnly ? 0 : scoped.length * 2 + CLAIM_ORDER.length;
 const revisionRecordsBefore = new Map();
 const boundReport = nativeOnly
@@ -1163,7 +1163,7 @@ async function preflightClaimScope() {
   const expected = [...FROZEN_BASELINE, ...FROZEN_OVERFLOW];
   const rows = exactSourceRows(rawRows, expected, 'K3 overflow scope');
   const canonicalBytes = rows.reduce((n, s) => n + s.readableSize, 0);
-  const reserve = outputBound(answerMeta);
+  const reserve = outputReserve(answerMeta);
   assert(Number.isSafeInteger(reserve) && reserve > 0, 'Selected answerModel output reserve must be known before paid work.');
   assert(canonicalBytes / 3 + reserve > Math.min(0.6 * answerMeta.contextTokens, 400000), 'Frozen twelve-source scope must exceed the unchanged whole-reading cap.');
   for (let i = FROZEN_BASELINE.length; i < rows.length; i++) await assertFrozenSourceBytes(rows[i], expected[i], 'K3 overflow ' + expected[i].filename);

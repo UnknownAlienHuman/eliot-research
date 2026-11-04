@@ -7,7 +7,7 @@ import { z } from "zod";
 import { isCitableBlock, type Block } from "../blocks";
 import { admitDistill, failUndispatchedDistill } from "../cost";
 import { LibraryError } from "../library";
-import { modelOutputLimit, modelTokenLimit, requireAvailableModel } from "../models";
+import { modelOutputLimit, modelOutputReserve, modelTokenLimit, requireAvailableModel } from "../models";
 import type { ModelSpec } from "../models";
 import type { DistillInput } from "../shared/api";
 import { modelFailure, resolveModelTransport, safeErrorLogProjection } from "../model-transport";
@@ -115,8 +115,10 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   const transport = await resolveModelTransport(env, model, `distill-${revisionId}`, { structuredOutput: true });
   const fidelityInstructions = instructions + " Preserve source technical literals verbatim. In JSON prose strings encode literal square brackets as \\u005b and \\u005d; keep authority-label strings exactly as supplied by the closed label set. Only those authority labels are citations; all other source literals remain content. Keep every table value with its exact row or method, metric, and column or data-split identity. A blank or dash cell is unreported, never a measurement; omit a fact if these associations are ambiguous.";
   const modelInstructions = model.responseFormat === false ? fidelityInstructions + "\nReturn one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema)) : fidelityInstructions;
-  const inputBound = Math.ceil(new TextEncoder().encode(modelInstructions + content + JSON.stringify(z.toJSONSchema(schema))).byteLength / 3) + 1024;
-  if (inputBound + modelOutputLimit(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
+  const messages = [{ role: "user" as const, content }, { role: "user" as const, content: `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }];
+  const inputBound = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions: modelInstructions, messages, schema: z.toJSONSchema(schema) })).byteLength / 3) + messages.length * 32 + 1024;
+  if (inputBound + modelOutputReserve(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
+  const maxOutputTokens = modelOutputLimit(model, inputBound);
   const dispatch = await env.DB.prepare(`UPDATE source_revision SET distill_calls=distill_calls+1
     WHERE id=? AND distill_state='running' AND distill_calls=? AND distill_started_at>?`)
     .bind(revisionId, ordinal - 1, Date.now() - DISTILL_DEADLINE_MS).run();
@@ -125,8 +127,8 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   let result: Awaited<ReturnType<typeof generateText>> | undefined;
   try {
     result = await generateText({ model: transport,
-      instructions: modelInstructions, messages: [{ role: "user", content }, { role: "user", content: `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }], output: Output.object({ schema }),
-      maxOutputTokens: modelOutputLimit(model), maxRetries: 0, ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
+      instructions: modelInstructions, messages, output: Output.object({ schema }),
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0, ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
     const output = result.output as T;
     const usage = result.totalUsage;
     const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
@@ -159,7 +161,7 @@ async function extract(env: Env, revisionId: string, model: ModelSpec) {
     .bind(revisionId).first<{ readable_size: number; distill_model: string }>();
   if (!row) throw new Error("Source understanding is no longer running.");
   if (row.distill_model !== model.route) throw new LibraryError("conflict", "The admitted model snapshot no longer matches the stored model route.", 409);
-  if (Math.ceil(row.readable_size / 3) + modelOutputLimit(model) + 16384 > Math.min(model.contextTokens * 0.6, 400000))
+  if (Math.ceil(row.readable_size / 3) + modelOutputReserve(model) + 16384 > Math.min(model.contextTokens * 0.6, 400000))
     throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
   const object = await env.BUCKET.get(key(revisionId, "text.md"));
   if (!object) throw new Error("Readable text is missing.");

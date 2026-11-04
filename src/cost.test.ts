@@ -5,6 +5,7 @@ import { LibraryError } from "./library.js";
 import { assertProviderAllowance } from "./model-quota.js";
 import type * as ModelQuota from "./model-quota.js";
 import type { ModelSpec } from "./models.js";
+import { modelOutputLimit, modelOutputReserve, modelTokenLimit } from "./models.js";
 
 // Provider allowance is mocked: the real model-quota module currently holds
 // a closed native placeholder, so admission tests pin allow/deny directly
@@ -87,6 +88,28 @@ function distillRow(db: DatabaseSync, id: string) {
 beforeEach(() => {
   allowance.mockReset();
   allowance.mockResolvedValue(undefined);
+});
+
+describe("published generation maximum", () => {
+  it.each([32768, 4096])("uses published %i independently of the assembly reserve", (capacity) => {
+    const model = { ...flashModel(), maxOutputTokens: capacity, outputReserveTokens: 8192 };
+    expect(modelOutputLimit(model, 1024))
+      .toBe(capacity);
+    expect(modelOutputReserve(model)).toBe(Math.min(8192, capacity));
+  });
+  it("caps a published maximum by the remaining context window", () => {
+    expect(modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, 40000)).toBe(24000);
+  });
+  it("omits an unknown maximum without changing metadata or the recorded accounting bound", () => {
+    const model = Object.freeze(flashModel());
+    expect(modelOutputLimit(model, 1024)).toBeUndefined();
+    expect(model.maxOutputTokens).toBeNull();
+    expect(modelOutputReserve(model)).toBe(8192);
+    expect(modelTokenLimit(model)).toBe(FLASH_BOUND);
+  });
+  it.each([64000, 64001, -1, 1.5])("rejects unusable input allocation %i before generation", (input) => {
+    expect(() => modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, input)).toThrow(LibraryError);
+  });
 });
 
 describe("admitTurn", () => {

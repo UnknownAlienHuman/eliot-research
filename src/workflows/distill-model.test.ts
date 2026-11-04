@@ -150,7 +150,7 @@ beforeEach(() => {
   for (const lookup of forbiddenLookups) vi.mocked(lookup).mockReset().mockRejectedValue(new Error("Unexpected catalogue lookup"));
 });
 
-async function run(f: ReturnType<typeof fixture>, serializeErrors = false) {
+async function run(f: ReturnType<typeof fixture>, serializeErrors = false, model = snapshot) {
   const stepDo = vi.fn(async (_name: string, _options: unknown, callback: () => Promise<unknown>) => {
     try { return await callback(); } catch (error) {
       // eslint-disable-next-line preserve-caught-error -- Simulate Workflow serialization stripping the error class and cause.
@@ -159,7 +159,7 @@ async function run(f: ReturnType<typeof fixture>, serializeErrors = false) {
     }
   });
   await new DistillWorkflow({} as ExecutionContext, f.env).run(
-    { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>,
+    { payload: { revisionId, model } } as WorkflowEvent<DistillInput>,
     { do: stepDo } as unknown as WorkflowStep);
   return stepDo;
 }
@@ -707,6 +707,19 @@ describe("DistillWorkflow admitted model snapshot", () => {
 
     expect(generateText).not.toHaveBeenCalled();
     expect(resolveModelTransport).not.toHaveBeenCalled();
+  });
+
+  it.each([32768, 4096, null])("uses published %s for understanding generation independently of its reserve", async (capacity) => {
+    const model = { ...snapshot, maxOutputTokens: capacity };
+    const f = fixture(model.route);
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    try {
+      await run(f, false, model);
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(generateText).mock.calls[0]?.[0].maxOutputTokens).toBe(capacity ?? undefined);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      expect(f.db.prepare("SELECT distill_calls FROM source_revision WHERE id=?").get(revisionId)).toEqual({ distill_calls: 1 });
+    } finally { f.db.close(); }
   });
 
   it("retains typed structured-output failure telemetry and cause across serialized steps", async () => {

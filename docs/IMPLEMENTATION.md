@@ -653,6 +653,12 @@ compact evidence per source within that same budget, compressing eligible source
 Readable sources without usable knowledge remain whole when they fit; no source is dropped or reordered. Mixed
 requests retain `claims` mode whenever any source is compressed. Recompute history against the final label inventory
 and reject the full request before inference if no representation fits. No source understanding or search is started.
+`outputReserveTokens` is assembly headroom, not the provider's generation maximum. Chat and source understanding
+use a published `maxOutputTokens`, capped by the full context window minus their final input estimate. An unknown
+maximum stays `null` in the catalogue and Eliot omits the SDK option; SDK/provider defaults may then apply,
+not an inferred 8,192-token maximum or an unlimited output promise. Accounting retains the conservative
+`contextTokens + assembly reserve` bound and previously recorded usage/bounds. OCR retains its separate frozen
+per-page output cap described in section 4.
 For compressed sources, include the stored guide with its exact
 quoted source passages. Deduplicate identical (block, quote) pairs within each frozen revision while retaining distinct
 quotes from the same block. Keep derived claim statements and conditions in a separate orientation message marked as
