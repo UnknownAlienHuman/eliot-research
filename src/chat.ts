@@ -303,7 +303,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
     const warningNote = warnings.length > 0
       ? `Note: ${warnings.length} statement(s) lack a verified adjacent citation or numeric support.\n\n`
       : "";
-    return { answer: (turn.state === "partial" ? "Partial answer — the turn ended before completion.\n\n" : "") + warningNote + saved.text,
+    const partialNote = turn.state === "partial"
+      ? `Partial answer — ${(turn.error ?? "This answer needs review.").replace(/[\\`*_{}[\]()<>#+.!|~-]/g, "\\$&")}\n\n` : "";
+    return { answer: partialNote + warningNote + saved.text,
       citations: saved.citations, revisionIds: turn.revisionIds, state: turn.state };
   }
   private startTurn(input: RunTurnInput): Promise<TurnView> {
@@ -490,7 +492,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
     if (resolved.invalidLabelExamples !== undefined && resolved.invalidLabelExamples.length > 0) turn.invalidLabelExamples = resolved.invalidLabelExamples;
     else delete turn.invalidLabelExamples;
     if (turn.state === "completed" && turn.invalidLabels > 0) {
-      turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
+      turn.state = "partial";
+      turn.error = `The model finished, but some source references could not be verified. Rejected references: ${turn.invalidLabelExamples?.join(", ") ?? turn.invalidLabels}. Review the answer against its sources.`;
     }
     if (turn.state === "completed" && turn.citations.length === 0
       && (sourceMode === "whole" || sourceMode === "claims") && turn.answer.trim().length > 0) {

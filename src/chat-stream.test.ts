@@ -1070,6 +1070,47 @@ describe("chat-stream K2 wire regression", () => {
       } finally { h.db.close(); }
     },
   );
+  it("keeps a finished answer with rejected references partial and saves its actual reason", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "A supported fact [S1:1], [S3:83]." }, "stop", { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 })]);
+      const input: RunTurnInput = { projectId, chatId, turnId: "bbbbbbbb-bbbb-4bbb-8bbb-000000000002", question: "Q", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" };
+      const turn = requireTurn(await h.agent.submitTurn(input, true));
+      expect(turn).toMatchObject({ state: "partial", answer: "A supported fact [S1:1], .", invalidLabels: 1,
+        invalidLabelExamples: ["[S3:83]"], inputTokens: 8, outputTokens: 6 });
+      expect(turn.error).toContain("The model finished");
+      expect(turn.error).toContain("[S3:83]");
+      const saved = await h.agent.getStoredTurn(projectId, turn.turnId);
+      expect(saved.answer).toContain("Partial answer — The model finished");
+      expect(saved.answer).toContain("\\[S3:83\\]");
+      expect(saved.answer).not.toContain("ended before completion");
+      expect(saved.citations).toHaveLength(1);
+      expect(saved.citations[0]?.label).toContain("[R");
+      expect((await h.agent.getSnapshot(projectId)).turns[0]).toEqual(turn);
+      expect(requireTurn(await h.agent.submitTurn(input, true))).toEqual(turn);
+      expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); }
+  });
+  it.each([null, "The answer exceeded the 90 s time bound.", "Review [label](https://example.test) <details>."])(
+    "saving a historical partial preserves its reason without Markdown links: %s", async (error) => {
+      const h = makeHarness();
+      try {
+        await h.agent.onStart();
+        const turn: TurnView = { turnId: "legacy-partial", question: "Q", answer: "Original answer.", state: "partial", model: "fixture",
+          scopeMode: "empty", revisionIds: [], sourceIds: [], citations: [], invalidLabels: 0, inputTokens: null, cachedTokens: null,
+          outputTokens: null, tokenLimit: TOKEN_BOUND, firstTokenMs: 10, totalMs: 90_001, error };
+        const payload = JSON.stringify(turn);
+        h.db.prepare("INSERT INTO turns(id,payload,created_at,history_version) VALUES(?,?,?,?)").run(turn.turnId, payload, 1, 1);
+        const saved = await h.agent.getStoredTurn(projectId, turn.turnId);
+        expect(saved.answer).toContain(error === null ? "This answer needs review" : error.startsWith("Review") ? "\\[label\\]\\(https://example\\.test\\) \\<details\\>" : "90 s time bound");
+        expect(saved.answer.endsWith("Original answer.")).toBe(true);
+        expect(saved.answer).not.toContain("ended before completion");
+        expect(h.db.prepare("SELECT payload FROM turns WHERE id=?").get(turn.turnId)?.payload).toBe(payload);
+        expect(fetchCalls).toBe(0);
+      } finally { h.db.close(); }
+    },
+  );
   it("uncited sentence settles completed with a missing-citation warning", async () => {
     const h = makeHarness();
     try {
@@ -1268,6 +1309,38 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.error ?? "").not.toContain("Stopped.");
       expect(turn.tokenLimit).toBe(TOKEN_BOUND);
       expect(turn.inputTokens).toBeNull();
+    } finally { h.db.close(); vi.useRealTimers(); }
+  });
+  it("deadline closes an open response body, preserves partial text and releases the turn without a retry", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      let cancelled = false;
+      (h.env.AI as unknown as { fetch: () => Promise<Response> }).fetch = async () => {
+        fetchCalls += 1;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) { controller.enqueue(new TextEncoder().encode("data: " + chunk({ content: "Retained text [S1:1]." }, null) + "\n\n")); },
+          cancel() { cancelled = true; },
+        }), { headers: { "content-type": "text/event-stream" } });
+      };
+      const input: RunTurnInput = { projectId, chatId, turnId: "dddddddd-dddd-4ddd-8ddd-000000000002", question: "Q", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" };
+      const pending = h.agent.submitTurn(input, true);
+      for (let i = 0; i < 50; i += 1) {
+        await vi.advanceTimersByTimeAsync(10);
+        if ((await h.agent.getTurns(projectId))[0]?.firstTokenMs !== null) break;
+      }
+      expect((await h.agent.getTurns(projectId))[0]?.answer).toBe("Retained text [S1:1].");
+      await vi.advanceTimersByTimeAsync(90_000);
+      const turn = requireTurn(await pending);
+      expect(turn).toMatchObject({ state: "partial", answer: "Retained text [S1:1].", inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: TOKEN_BOUND });
+      expect(turn.firstTokenMs).not.toBeNull();
+      expect(turn.error).toContain("90 s time bound");
+      expect(cancelled).toBe(true);
+      expect((await h.agent.getStoredTurn(projectId, turn.turnId)).answer).toContain("90 s time bound");
+      expect(requireTurn(await h.agent.submitTurn(input, true))).toEqual(turn);
+      expect(fetchCalls).toBe(1);
+      expect(h.agent.state.active).toBeNull();
     } finally { h.db.close(); vi.useRealTimers(); }
   });
   it("truncated answer with an uncited sentence stays partial and keeps warnings", async () => {

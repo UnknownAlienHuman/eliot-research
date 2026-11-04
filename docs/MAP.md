@@ -235,7 +235,8 @@ Groups of fully specified labels may normalize to separate inline references aft
 frozen-scope validation; unknown identities and shorthand remain failures.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
 canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
-never retried automatically.
+never retried automatically. Save preserves a partial answer's recorded reason, distinguishing interrupted generation
+from rejected source references.
 An explicit repeat of an unconfirmed Send in the same composer reuses its ID, unchanged input and known chat target;
 a new question or a repeat after confirmation has a new ID. See IMPLEMENTATION §8 for the volatile-draft boundary.
 New-chat creation also retains its UUID/title for explicit replay. After reload, History opens a committed chat/result
