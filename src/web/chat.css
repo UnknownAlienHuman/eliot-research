@@ -319,6 +319,10 @@
   max-inline-size: var(--eliot-type-reading-measure);
 }
 
+.er-chat__options, .er-chat__options-controls { display: contents; }
+.er-chat__options > .er-chat__options-toggle { display: none; }
+.er-chat__scope { grid-column: 1 / -1; }
+
 .er-chat__asklabel {
   position: absolute;
   inline-size: 1px;
@@ -399,6 +403,18 @@
 }
 
 @media (max-width: 48rem) {
+  .er-chat__options > .er-chat__options-toggle {
+    display: flex;
+    grid-column: 1 / -1;
+    justify-content: space-between;
+    gap: var(--eliot-space-gutter);
+    min-inline-size: 0;
+  }
+  .er-chat__options-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .er-chat__options[data-expanded="false"] :is(.er-chat__scope, .er-models__label, .er-model-picker__compact) { display: none; }
+  .er-chat__options[data-expanded="false"] :is(.er-chat__model, .er-models__row, .er-model-picker) { display: contents; }
+  .er-chat__model :is(.er-status, .er-model-picker__warnings) { grid-column: 1 / -1; }
+
   .er-chat__head {
     align-items: flex-start;
     flex-wrap: wrap;

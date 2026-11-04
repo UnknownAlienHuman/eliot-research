@@ -303,7 +303,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
     const warningNote = warnings.length > 0
       ? `Note: ${warnings.length} statement(s) lack a verified adjacent citation or numeric support.\n\n`
       : "";
-    return { answer: (turn.state === "partial" ? "Partial answer — the turn ended before completion.\n\n" : "") + warningNote + saved.text,
+    const partialNote = turn.state === "partial"
+      ? `Partial answer — ${(turn.error ?? "This answer needs review.").replace(/[\\`*_{}[\]()<>#+.!|~-]/g, "\\$&")}\n\n` : "";
+    return { answer: partialNote + warningNote + saved.text,
       citations: saved.citations, revisionIds: turn.revisionIds, state: turn.state };
   }
   private startTurn(input: RunTurnInput): Promise<TurnView> {
@@ -392,10 +394,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
     this.notify(JSON.stringify({ type: "turn", turn }));
     const controller = new AbortController();
     this.controller = controller;
-    let timedOut = false;
+    let checkpointFailed = false;
+    let checkpointTimer: ReturnType<typeof setTimeout> | undefined;
     if (this.state.stopRequested) controller.abort();
-    // First abort wins: an owner Stop that already aborted must not be overwritten by the deadline.
-    const timer = setTimeout(() => { if (controller.signal.aborted) return; timedOut = true; controller.abort(); }, 90_000);
     let dispatched = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
     let labelSources: LabelSource[] = [], sourceMode = "none", streamError = "";
     try {
@@ -443,54 +444,67 @@ export class ChatAgent extends Agent<Env, ChatState> {
       this.writeTurn(turn);
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
         .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
-      if (controller.signal.aborted) throw new Error(this.state.stopRequested && !timedOut ? "Stopped before dispatch." : "Time bound exceeded before dispatch.");
+      if (controller.signal.aborted) throw controller.signal.reason;
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
         maxOutputTokens: modelOutputLimit(model), maxRetries: 0, ...(selectedModel?.supportsTemperature ? { temperature: 0 } : {}), abortSignal: controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
       let lastWrite = 0;
-      const publish = () => {
-        const firstText = turn.firstTokenMs === null && turn.answer.trim().length > 0;
-        if (firstText) turn.firstTokenMs = Date.now() - started;
-        if (firstText || Date.now() - lastWrite > 100) { this.writeTurn(turn); lastWrite = Date.now(); }
+      const checkpoint = () => {
+        if (checkpointTimer !== undefined) clearTimeout(checkpointTimer);
+        checkpointTimer = undefined;
+        if (controller.signal.aborted) return;
+        try { this.writeTurn(turn); lastWrite = Date.now(); }
+        catch { checkpointFailed = true; controller.abort(); }
       };
       for await (const text of result.textStream) {
+        if (!text) continue;
         turn.answer += text;
-        publish();
+        const firstText = turn.firstTokenMs === null && turn.answer.trim().length > 0;
+        if (firstText) turn.firstTokenMs = Date.now() - started;
+        const delay = 1000 - (Date.now() - lastWrite);
+        if (firstText || delay <= 0) checkpoint();
+        else if (checkpointTimer === undefined) checkpointTimer = setTimeout(checkpoint, delay);
       }
       usage = await result.totalUsage;
       turn.answer = await result.text;
       const finish = await result.finishReason;
+      const rawFinish = finish === "other" ? await result.rawFinishReason : undefined;
+      if (controller.signal.aborted) throw controller.signal.reason;
+      // Preserve a short provider status code, never an arbitrary upstream message.
+      const finishDetail = rawFinish && rawFinish !== finish && /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/.test(rawFinish)
+        ? `${finish}; provider: ${rawFinish}` : finish;
       if (finish === "stop" && !streamError) turn.state = "completed";
       else {
         turn.state = "partial";
-        turn.error = streamError || `The model stopped before a normal completion (${finish}).`;
+        turn.error = streamError || `The model stopped before a normal completion (${finishDetail}).`;
       }
       if (!turn.answer.trim()) {
         turn.state = "failed";
-        turn.error = streamError || `The model returned no answer text (finish: ${finish}).`;
+        turn.error = streamError || `The model returned no answer text (finish: ${finishDetail}).`;
       }
     } catch (error) {
-      const ownerStop = controller.signal.aborted && this.state.stopRequested && !timedOut;
-      const deadline = controller.signal.aborted && timedOut && !ownerStop;
+      const ownerStop = controller.signal.aborted && this.state.stopRequested;
       if (ownerStop) {
         turn.state = turn.answer ? "partial" : "cancelled";
         turn.error = "Stopped. A new Send starts a new turn.";
-      } else if (deadline) {
-        turn.state = turn.answer ? "partial" : "failed";
-        turn.error = "The answer exceeded the 90 s time bound. A new Send starts a new turn; no retry was started.";
       } else {
         turn.state = turn.answer ? "partial" : "failed";
         turn.error = streamError || (error instanceof LibraryError ? error.message : selectedModel ? modelFailure(error, selectedModel) : "The answer could not be completed.");
       }
-    } finally { clearTimeout(timer); }
+    } finally { if (checkpointTimer !== undefined) clearTimeout(checkpointTimer); }
+    if (checkpointFailed) {
+      turn.state = turn.answer ? "partial" : "failed";
+      turn.error = "The answer stopped because its progress could not be saved. A new Send starts a new turn; no retry was started.";
+    }
     const resolved = resolveCitations(turn.answer, labelSources);
     turn.answer = resolved.text; turn.citations = resolved.citations; turn.invalidLabels = resolved.invalidLabels;
     if (resolved.invalidLabelExamples !== undefined && resolved.invalidLabelExamples.length > 0) turn.invalidLabelExamples = resolved.invalidLabelExamples;
     else delete turn.invalidLabelExamples;
     if (turn.state === "completed" && turn.invalidLabels > 0) {
-      turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
+      turn.state = "partial";
+      turn.error = `The model finished, but some source references could not be verified. Rejected references: ${turn.invalidLabelExamples?.join(", ") ?? turn.invalidLabels}. Review the answer against its sources.`;
     }
     if (turn.state === "completed" && turn.citations.length === 0
       && (sourceMode === "whole" || sourceMode === "claims") && turn.answer.trim().length > 0) {
@@ -528,7 +542,6 @@ export class ChatAgent extends Agent<Env, ChatState> {
     }
     Object.assign(turn, turnUsageProjection(dispatched, usage));
     turn.totalMs = Date.now() - started;
-    if (turn.totalMs > 90000 && turn.state === "completed") { turn.state = "partial"; turn.error = "The answer exceeded the time bound."; }
     this.writeTurn(turn);
     const settled = await this.settleTurn(turn);
     await this.env.DB.prepare("UPDATE chat SET updated_at=? WHERE id=?").bind(Date.now(), this.name).run();

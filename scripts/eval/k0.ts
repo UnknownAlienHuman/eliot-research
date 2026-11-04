@@ -26,6 +26,7 @@ for (let attempt = 0; attempt < 60; attempt++) {
 assert(ready, "Eliot did not become available. Start pnpm dev before the eval.");
 
 const latency: number[] = [];
+const authentications = new Set<string>();
 function protectedHeaders(response: Response) {
   const directives = (response.headers.get("cache-control") ?? "").split(",").map((value) => value.trim().toLowerCase()).sort();
   assert.deepEqual(directives, ["no-store", "private"], "Protected HTTP response must have exactly private and no-store cache directives.");
@@ -41,6 +42,7 @@ for (let sample = 0; sample < 12; sample++) {
   const payload = await response.json() as { actor: { type: string; authentication: string } };
   assert.equal(payload.actor.type, "owner");
   assert(["local", "access", "service-token"].includes(payload.actor.authentication));
+  authentications.add(payload.actor.authentication);
   latency.push(performance.now() - started);
 }
 const missing = await fetchEval(`${origin}/api/does-not-exist`, { headers }, origin, process.env.ELIOT_ORIGIN);
@@ -82,7 +84,18 @@ try {
       const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme });
       const page = await context.newPage();
       const errors: string[] = [];
+      const bootstrapFailures: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
+      page.on("requestfailed", (request) => {
+        if (!["document", "script", "stylesheet"].includes(request.resourceType())) return;
+        bootstrapFailures.push((request.resourceType() + " " + new URL(request.url()).pathname + ": " + request.failure()?.errorText).slice(0, 300));
+        if (bootstrapFailures.length > 8) bootstrapFailures.shift();
+      });
+      page.on("response", (response) => {
+        if (response.status() < 400 || !["document", "script", "stylesheet"].includes(response.request().resourceType())) return;
+        bootstrapFailures.push((response.status() + " " + new URL(response.url()).pathname + " " + response.headers()["content-type"]).slice(0, 300));
+        if (bootstrapFailures.length > 8) bootstrapFailures.shift();
+      });
       await page.goto(origin);
       await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
       await page.evaluate(() => document.fonts.ready);
@@ -106,8 +119,21 @@ try {
       await expect(page.getByRole("combobox", { name: "Appearance", exact: true, includeHidden: true })).toHaveCount(1);
       await page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true }).selectOption(theme === "light" ? "dark" : "light");
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "light" ? "dark" : "light");
-      await page.reload();
-      await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "light" ? "dark" : "light");
+      bootstrapFailures.length = 0;
+      try {
+        await page.reload();
+        await expect(page.locator("html")).toHaveAttribute("data-theme", theme === "light" ? "dark" : "light");
+      } catch (error) {
+        const state = await page.evaluate(() => {
+          let appearance: string | null = null;
+          try { appearance = localStorage.getItem("eliot.appearance.v1"); } catch { appearance = "unavailable"; }
+          return { readyState: document.readyState, rootChildren: document.getElementById("root")?.childElementCount ?? null,
+            theme: document.documentElement.getAttribute("data-theme"), appearance, viteOverlay: !!document.querySelector("vite-error-overlay") };
+        }).catch(() => null);
+        console.error("K0 appearance reload failure", JSON.stringify({ width, theme, expected: theme === "light" ? "dark" : "light",
+          path: new URL(page.url()).pathname, state, pageerrors: errors.slice(-8).map(message => message.slice(0, 300)), bootstrapFailures }));
+        throw error;
+      }
       await page.locator('summary[aria-label="Appearance"]').click();
       await expect(page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true })).toHaveValue(theme === "light" ? "dark" : "light");
       await page.locator(".er-shell-preferences").getByRole("combobox", { name: "Appearance", exact: true }).selectOption("system");
@@ -124,6 +150,6 @@ try {
 latency.sort((a, b) => a - b);
 const p50 = latency[Math.floor(latency.length * 0.5)]?.toFixed(1);
 const p95 = latency[Math.ceil(latency.length * 0.95) - 1]?.toFixed(1);
-const report = `K0 actual Worker eval: PASS\nOrigin: ${origin}\nAPI p50/p95: ${p50}/${p95} ms (12 local samples)\nMaterial viewports/themes: 1440/768/390, light/dark\nScreenshots: ${screenshots.join(", ")}\nModel/search calls: 0; model/search tokens: 0 (no paid calls; no USD gate)\nCloudflare browser login and deployed owner token: ${headers["CF-Access-Client-Id"] ? "owner-token route exercised; browser login NOT_RUN" : "NOT_RUN (local bypass only)"}\n`;
+const report = `K0 actual Worker eval: PASS\nOrigin: ${origin}\nAPI p50/p95: ${p50}/${p95} ms (12 local samples)\nAPI authentication observed: ${[...authentications].sort().join(", ")} (12 /api/me samples)\nMaterial viewports/themes: 1440/768/390, light/dark\nScreenshots: ${screenshots.join(", ")}\nModel/search calls: 0; model/search tokens: 0 (no paid calls; no USD gate)\nDeployed Access owner-token: NOT_RUN (K0 browser eval is loopback-only)\nCloudflare browser login: NOT_RUN (K0 browser eval is loopback-only)\n`;
 await writeFile(new URL("result.txt", output), report);
 process.stdout.write(report);

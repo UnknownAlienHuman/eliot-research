@@ -1,7 +1,7 @@
 // K2 Ask: project chat and saved-answer Studio views. The parent owns project,
 // source selection, active chat routing, and the three-pane workspace. This file
 // owns only chat/history presentation and the storage-backed K2 interactions.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { apiJson } from './api';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { Markdown, citationHref, citationLabel } from './Markdown';
@@ -80,6 +80,49 @@ function Cites({ projectId, cites }: { readonly projectId: string; readonly cite
     </ul>
   );
 }
+const TurnContent = memo(function TurnContent({ projectId, turn, models, visible }: {
+  readonly projectId: string;
+  readonly turn: TurnView;
+  readonly models: readonly ModelRoute[];
+  readonly visible: boolean;
+}) {
+  if (!visible) return null;
+  function stateLabel(state: TurnView['state']): string {
+    if (state === 'started') return 'Answering';
+    if (state === 'completed') return 'Answered';
+    if (state === 'partial') return 'Partial answer';
+    if (state === 'cancelled') return 'Stopped';
+    return 'Failed';
+  }
+  function scopeLabel(scopeMode: TurnView['scopeMode']): string {
+    if (scopeMode === 'project_default') return 'Project default';
+    if (scopeMode === 'empty') return 'No sources';
+    return 'Selected sources';
+  }
+  return <>
+    <p className='er-chat__question'>{turn.question}</p>
+    <div className='er-chat__answer'>
+      {turn.answer === ''
+        ? (turn.state === 'started'
+          ? <p className='er-chat__hint' role='status'>Preparing your answer…</p>
+          : <p className='er-chat__hint'>No answer available.</p>)
+        : <Markdown text={turn.answer} references={collectRefs(projectId, turn.citations)} />}
+    </div>
+    {turn.error ? <p className='er-chat__hint' role='status'>{turn.error}</p> : null}
+    {turn.settlementError ? <p className='er-chat__hint' role='status'>{turn.settlementError}</p> : null}
+    <p className='er-chat__meta'>
+      <span>{stateLabel(turn.state)}</span>
+      <span>{scopeLabel(turn.scopeMode)}</span>
+      {turnModelSpan(turn, models)}
+    </p>
+    <details className='er-chat__turn-details'>
+      <summary>Sources</summary>
+      <Cites projectId={projectId} cites={turn.citations} />
+    </details>
+  </>;
+}, (previous, next) => !next.visible || (previous.visible && previous.projectId === next.projectId
+  && previous.turn === next.turn && previous.models === next.models));
+
 export function ChatView({
   projectId,
   chatId,
@@ -116,6 +159,8 @@ export function ChatView({
   const [queued, setQueued] = useState<QueuedTurn | null>(null);
   const [chatReady, setChatReady] = useState(chatId === undefined);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [controlsExpanded, setControlsExpanded] = useState(false);
+  const controlsId = useId();
   const [projectSettingsRefreshError, setProjectSettingsRefreshError] = useState('');
   const [refreshedProjectModel, setRefreshedProjectModel] = useState<{ readonly projectId: string; readonly answerModel: string | null } | null>(null);
   const modelsSeq = useRef(0);
@@ -146,6 +191,7 @@ export function ChatView({
   const headWindow = useRef<HistoryHead | null>(null);
   const stateVersion = useRef(0);
   const conversationRef = useRef<HTMLDivElement | null>(null);
+  const [conversationVisible, setConversationVisible] = useState(false);
   const prependScroll = useRef<{ element: HTMLElement | null; offset: number; top: number } | null>(null);
 
   function mergeTurns(incoming: readonly TurnView[]): void {
@@ -187,8 +233,23 @@ export function ChatView({
   const savedProjectModel = refreshedProjectModel?.projectId === projectId ? refreshedProjectModel.answerModel : undefined;
   const effectiveProjectModel = savedProjectModel !== undefined ? savedProjectModel : projectAnswerModel;
   const inheritedModel = effectiveProjectModel ?? catalogDefaultModel ?? '';
+  const scopeSummary = selection.scopeMode === 'project_default' ? 'Project sources'
+    : selection.scopeMode === 'empty' ? 'No sources' : selection.sourceIds.length + ' selected';
+  const modelSummary = modelsLoading ? 'Loading model…' : modelSelectionPending ? 'Choose model'
+    : (modelRoute === '' ? 'Default: ' : '') + (storedModelLabel(modelRoute || inheritedModel, models) || 'project default');
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    const conversation = conversationRef.current;
+    if (!conversation) return;
+    // CSS hides different panes on desktop and phone. Retain their DOM and owning
+    // state, then render the latest turn when the conversation has a box again.
+    const observer = new window.ResizeObserver(([entry]) => {
+      setConversationVisible(entry !== undefined && entry.contentRect.width > 0 && entry.contentRect.height > 0);
+    });
+    observer.observe(conversation);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => { sendSequence.current++; saveSequence.current++; sendLock.current = false; setBusy(false); }, [projectId, chatId]);
 
   useEffect(() => {
@@ -419,20 +480,6 @@ export function ChatView({
     }
   }
 
-  function stateLabel(state: TurnView['state']): string {
-    if (state === 'started') return 'Answering';
-    if (state === 'completed') return 'Answered';
-    if (state === 'partial') return 'Partial answer';
-    if (state === 'cancelled') return 'Stopped';
-    return 'Failed';
-  }
-
-  function scopeLabel(scopeMode: TurnView['scopeMode']): string {
-    if (scopeMode === 'project_default') return 'Project default';
-    if (scopeMode === 'empty') return 'No sources';
-    return 'Selected sources';
-  }
-
   function startNewChat(): void {
     if (chatId !== undefined && question.trim() !== '' && !window.confirm('Discard your question draft and start a new chat?')) return;
     onNewChat();
@@ -636,25 +683,7 @@ export function ChatView({
         <ol className='er-chat__turns'>
           {turns.map((turn) => (
             <li key={turn.turnId} className='er-chat__turn' data-state={turn.state} data-turn-id={turn.turnId}>
-              <p className='er-chat__question'>{turn.question}</p>
-              <div className='er-chat__answer'>
-                {turn.answer === ''
-                  ? (turn.state === 'started'
-                    ? <p className='er-chat__hint' role='status'>Preparing your answer…</p>
-                    : <p className='er-chat__hint'>No answer available.</p>)
-                  : <Markdown text={turn.answer} references={collectRefs(projectId, turn.citations)} />}
-              </div>
-              {turn.error ? <p className='er-chat__hint' role='status'>{turn.error}</p> : null}
-              {turn.settlementError ? <p className='er-chat__hint' role='status'>{turn.settlementError}</p> : null}
-              <p className='er-chat__meta'>
-                <span>{stateLabel(turn.state)}</span>
-                <span>{scopeLabel(turn.scopeMode)}</span>
-                {turnModelSpan(turn, models)}
-              </p>
-              <details className='er-chat__turn-details'>
-                <summary>Sources</summary>
-                <Cites projectId={projectId} cites={turn.citations} />
-              </details>
+              <TurnContent projectId={projectId} turn={turn} models={models} visible={conversationVisible} />
               <span className='er-chat__actions'>
                 {turn.state === 'started'
                   ? <button className='er-button er-button--tonal' type='button' onClick={() => void stopTurn(turn.turnId)}>Stop</button>
@@ -673,22 +702,32 @@ export function ChatView({
       </div>
 
       <form className='er-chat__composer' onSubmit={(event) => { event.preventDefault(); void send(); }}>
-        <p className='er-chat__hint'>Sources: {selection.scopeMode === 'project_default' ? 'project default' : selection.scopeMode === 'empty' ? 'none' : selection.sourceIds.length + ' selected'}.{' '}
-          <Link to={'/p/' + encodeURIComponent(projectId) + '/sources'}>Change sources</Link></p>
-        <div className='er-chat__model'>
-          <ModelPicker
-            label='Model'
-            choices={models}
-            value={modelRoute}
-            onChange={setModelRoute}
-            defaultRoute={inheritedModel}
-            loading={modelsLoading}
-            error={modelsError}
-            emptyLabel='Project default'
-            compact
-            warnings={modelsWarnings}
-            onRoutePendingChange={setModelSelectionPending}
-          />
+        <div className='er-chat__options' data-expanded={controlsExpanded}>
+          <button className='er-button er-button--text er-chat__options-toggle' type='button'
+            aria-label={'Sources and model: ' + scopeSummary + ' · ' + modelSummary}
+            aria-expanded={controlsExpanded} aria-controls={controlsId} onClick={() => setControlsExpanded(value => !value)}>
+            <span className='er-chat__options-summary'>{scopeSummary} · {modelSummary}</span>
+            <span aria-hidden='true'>{controlsExpanded ? 'Hide' : 'Change'}</span>
+          </button>
+          <div className='er-chat__options-controls' id={controlsId} onFocusCapture={() => setControlsExpanded(true)}>
+            <p className='er-chat__hint er-chat__scope'>Sources: {selection.scopeMode === 'project_default' ? 'project default' : selection.scopeMode === 'empty' ? 'none' : selection.sourceIds.length + ' selected'}.{' '}
+              <Link to={'/p/' + encodeURIComponent(projectId) + '/sources'}>Change sources</Link></p>
+            <div className='er-chat__model'>
+              <ModelPicker
+                label='Model'
+                choices={models}
+                value={modelRoute}
+                onChange={setModelRoute}
+                defaultRoute={inheritedModel}
+                loading={modelsLoading}
+                error={modelsError}
+                emptyLabel='Project default'
+                compact
+                warnings={modelsWarnings}
+                onRoutePendingChange={setModelSelectionPending}
+              />
+            </div>
+          </div>
         </div>
         <label className='er-field er-chat__question-field' htmlFor='er-chat-q'>
           <span className='er-chat__asklabel'>Question</span>
