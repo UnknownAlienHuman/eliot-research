@@ -5,10 +5,16 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { Link, useParams } from 'react-router';
 import { Markdown } from './Markdown';
 import { ModelPicker, type ModelRoute } from './ModelPicker';
-import type { DistillState, Overview, Understanding } from '../understanding';
+import type { DistillState, Overview, Understanding, UnderstandingHistory } from '../understanding';
 import './understanding.css';
 // Wire types above come from src/understanding.ts; no local duplicates.
 type ModelOption = ModelRoute;
+interface PendingRetry { revisionId: string; model?: string; retry: { attemptId: string; previousAttemptId: string } }
+function storedRetry(key: string): PendingRetry | null {
+  try { const value = JSON.parse(sessionStorage.getItem(key) ?? "null") as PendingRetry | null;
+    return value && typeof value.revisionId === 'string' && typeof value.retry?.attemptId === 'string' && typeof value.retry.previousAttemptId === 'string' ? value : null;
+  } catch { return null; }
+}
 export interface SuggestedQuestion { readonly sourceId: string; readonly sourceTitle: string; readonly question: string }
 function usableModel(m: ModelOption): boolean {
   return Number.isSafeInteger(m.contextTokens) && m.contextTokens !== null && m.contextTokens > 0;
@@ -36,10 +42,14 @@ function Questions({ questions, onUse, showHint = true }: { readonly questions: 
 }
 export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTitle, onUseQuestion }: { readonly projectId: string; readonly sourceId: string; readonly revisionId: string; readonly sourceTitle: string; readonly onUseQuestion?: ((question: string) => void) | undefined }) {
   const queryClient = useQueryClient();
+  const pendingKey = 'understanding-retry:' + sourceId + ':' + revisionId;
+  const [pendingRetry, setPendingRetry] = useState<PendingRetry | null>(() => storedRetry(pendingKey));
+  const [historyAttempt, setHistoryAttempt] = useState('');
+  const [showHistory, setShowHistory] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [awaitingStatus, setAwaitingStatus] = useState<null | 'unknown' | 'accepted'>(null);
-  const statusKey = sourceId + ':' + revisionId;
+  const statusKey = sourceId + ':' + revisionId + ':' + historyAttempt;
   const [statusReadKey, setStatusReadKey] = useState('');
   const mounted = useRef(false);
   const [models, setModels] = useState<readonly ModelOption[]>([]);
@@ -50,9 +60,16 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const [catalogWarnings, setCatalogWarnings] = useState<readonly string[]>([]);
   const [modelRoutePending, setModelRoutePending] = useState(false);
   const base = '/api/sources/' + encodeURIComponent(sourceId) + '/understanding';
-  const url = base + '?revisionId=' + encodeURIComponent(revisionId);
+  const url = base + '?revisionId=' + encodeURIComponent(revisionId)
+    + (historyAttempt ? '&attemptId=' + encodeURIComponent(historyAttempt) : '')
+    + (pendingRetry ? '&requestId=' + encodeURIComponent(pendingRetry.retry.attemptId) : '');
+  const history = useInfiniteQuery({
+    queryKey: ['understanding-history', sourceId, revisionId], initialPageParam: null as string | null,
+    queryFn: ({ pageParam, signal }) => apiJson<UnderstandingHistory>(base + '/history?revisionId=' + encodeURIComponent(revisionId) + (pageParam ? '&cursor=' + encodeURIComponent(pageParam) : ''), { signal }),
+    getNextPageParam: page => page.nextCursor ?? undefined, enabled: showHistory, staleTime: Infinity,
+  });
   const understanding = useQuery({
-    queryKey: ['understanding', sourceId, revisionId],
+    queryKey: ['understanding', sourceId, revisionId, historyAttempt],
     queryFn: ({ signal }) => apiJson<Understanding>(url, { signal }),
     enabled: sourceId !== '' && revisionId !== '' && statusReadKey === statusKey,
     staleTime: Infinity,
@@ -61,6 +78,17 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     refetchInterval: query => !query.state.error && (query.state.data?.state === 'queued' || query.state.data?.state === 'running') ? 3000 : false,
   });
   const view = understanding.data;
+  useEffect(() => {
+    if (pendingRetry && view?.knownRequestId === pendingRetry.retry.attemptId) {
+      sessionStorage.removeItem(pendingKey); setPendingRetry(null);
+      if (view.requestRejection) setNote(view.requestRejection);
+      else {
+        const filter = { queryKey: ['understanding-history', sourceId, revisionId], exact: true };
+        // A first fetch has no cached data, so invalidation alone may reuse its pre-accept response.
+        void queryClient.cancelQueries(filter).then(() => queryClient.invalidateQueries(filter, { cancelRefetch: false }));
+      }
+    }
+  }, [view, pendingRetry, pendingKey, queryClient, sourceId, revisionId]);
   const failure = understanding.error?.message ?? '';
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setModelChoice(''); }, [sourceId, revisionId]);
@@ -86,22 +114,39 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     const result = await understanding.refetch();
     if (mounted.current && !result.error) { setStatusReadKey(statusKey); setAwaitingStatus(null); setNote(''); }
   }
-  async function request(saveAvailable = false): Promise<void> {
+  function toggleHistory(): void {
+    if (!showHistory && history.data) void history.refetch({ cancelRefetch: false });
+    setShowHistory(value => !value);
+  }
+  async function request(saveAvailable = false, retryFailed = false): Promise<void> {
     if (sourceId === '' || revisionId === '' || busy || awaitingStatus || statusReadKey !== statusKey || failure !== '' || understanding.isFetching || (!saveAvailable && modelRoutePending)) return;
-    if (!saveAvailable) {
+    if (!saveAvailable && !(retryFailed && pendingRetry)) {
       const chosen = models.find((m) => m.route === modelChoice);
       if (modelChoice !== '' && (!chosen || !chosen.enabled)) { setNote(chosen && chosen.unavailableReason ? 'Selected model is unavailable: ' + chosen.unavailableReason : 'Selected model is unavailable.'); return; }
       if (modelChoice === '' && !configuredUsable) { setNote('The default model is currently unavailable, so Understand cannot start yet.'); return; }
       if (modelChoice !== '' && chosen !== undefined && chosen.enabled && !usableModel(chosen)) { setNote('The selected model is currently unavailable, so Understand cannot start yet.'); return; }
     }
+    let retryInput = pendingRetry;
+    if (retryFailed && !retryInput) {
+      if (!view || !['failed', 'partial'].includes(view.state) || !view.attemptId) return;
+      retryInput = { revisionId, ...(modelChoice ? { model: modelChoice } : {}), retry: { attemptId: crypto.randomUUID(), previousAttemptId: view.attemptId } };
+      try { sessionStorage.setItem(pendingKey, JSON.stringify(retryInput)); }
+      catch { setNote('This browser cannot keep the pending request. Allow site storage before retrying.'); return; }
+      setPendingRetry(retryInput);
+    }
     setBusy(true);
     setAwaitingStatus('unknown');
     setNote('');
     try {
-      const input = saveAvailable ? { revisionId, saveAvailable: true } : modelChoice === '' ? { revisionId } : { revisionId, model: modelChoice };
-      await apiJson(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+      const input = retryFailed && retryInput ? retryInput : saveAvailable ? { revisionId, saveAvailable: true } : modelChoice === '' ? { revisionId } : { revisionId, model: modelChoice };
+      const accepted = await apiJson<{ revisionId: string; attemptId?: string; rejected?: string }>(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+      if (accepted?.revisionId !== revisionId || (retryFailed && accepted.attemptId !== retryInput?.retry.attemptId)) throw new Error('Could not confirm the request. Reload understanding to check its status.');
       void queryClient.invalidateQueries({ queryKey: ['sources', projectId], exact: true });
       if (!mounted.current) return;
+      if (accepted.rejected) {
+        sessionStorage.removeItem(pendingKey); setPendingRetry(null);
+        await reload(); if (mounted.current) setNote(accepted.rejected); return;
+      }
       setAwaitingStatus('accepted');
       await reload();
     } catch (err) { if (mounted.current) setNote(err instanceof Error ? err.message : 'Could not confirm the request. Reload understanding to check its status.'); }
@@ -114,6 +159,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
         <h2 className='er-und__title'>Understanding</h2>
         {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : <p className='er-und__hint' role='status'>Loading understanding…</p>}
         {note !== '' ? <p className='er-und__error' role='alert'>{note}</p> : null}
+        {historyAttempt ? <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={() => setHistoryAttempt('')}>Current attempt</button> : null}
         {failure !== '' ? <div className='er-und__actions'>
           <button className='er-button er-button--tonal' type='button' disabled={understanding.isFetching} onClick={() => void reload()}>Reload understanding</button>
         </div> : null}
@@ -124,8 +170,11 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const understandingError = view.error;
   const active = view.state === 'queued' || view.state === 'running';
   const statusReady = statusReadKey === statusKey && failure === '' && !understanding.isFetching;
-  const canStart = !awaitingStatus && statusReady && !active && (view.state === 'none' || view.state === 'paused');
-  const canSaveAvailable = !awaitingStatus && statusReady && !active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial');
+  const historical = historyAttempt !== '';
+  const canRetry = !historical && !pendingRetry && !awaitingStatus && statusReady && (view.state === 'failed' || view.state === 'partial') && typeof view.attemptId === 'string';
+  const canConfirm = !historical && !!pendingRetry && !awaitingStatus && statusReady;
+  const canStart = !historical && !pendingRetry && !awaitingStatus && statusReady && !active && (view.state === 'none' || view.state === 'paused');
+  const canSaveAvailable = !historical && !pendingRetry && !awaitingStatus && statusReady && !active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial');
   const references = view.citations.map((c, index) => ({
     text: '[R' + view.revisionId + ':' + c.block + ']',
     label: 'Open quote · ' + sourceTitle + ' · ' + (index + 1),
@@ -157,7 +206,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
       {view.authors || view.published ? <p className='er-und__meta'>{[view.authors, view.published].filter(Boolean).join(' · ')}</p> : null}
       {understandingError !== null && understandingError !== '' ? <p className='er-und__error' role='alert'>{understandingError}</p> : null}
       {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : null}
-      {canStart ? <div className='er-field er-und__model-details'>
+      {canStart || canRetry ? <div className='er-field er-und__model-details'>
         <ModelPicker label='Understanding model' choices={models} value={modelChoice} onChange={setModelChoice}
           emptyLabel={pickerEmptyLabel} loading={!catalogueLoaded} error={catalogError} compact
           onRoutePendingChange={setModelRoutePending} />
@@ -165,16 +214,31 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
         {catalogWarnings.length > 0 ? <p className='er-und__hint' role='status'>Model catalog: {catalogWarnings.join(' ')}</p> : null}
         {modelChoice === '' ? (!configuredUsable ? (<p className='er-und__error' role='alert'>The default model is currently unavailable, so Understand cannot start yet.</p>) : null) : chosen !== undefined && chosen.enabled && chosenUsable ? null : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'The selected model is currently unavailable, so Understand cannot start yet.'}</p>)}
       </div> : null}
-      {canStart || failure !== '' || note !== '' || awaitingStatus || canSaveAvailable ? <div className='er-und__actions'>
+      {canStart || canRetry || canConfirm || failure !== '' || note !== '' || awaitingStatus || canSaveAvailable ? <div className='er-und__actions'>
         {canStart ? <button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void request()}>Understand source</button> : null}
-        {failure !== '' || note !== '' || awaitingStatus ? <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={() => void reload()}>Reload understanding</button> : null}
+        {canRetry ? <button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void request(false, true)}>Retry understanding</button> : null}
+        {canConfirm ? <button className='er-button er-button--tonal' type='button' disabled={busy || understanding.isFetching} onClick={() => void request(false, true)}>Send same request</button> : null}
+        {failure !== '' || note !== '' || awaitingStatus || pendingRetry ? <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={() => void reload()}>Reload understanding</button> : null}
         {canSaveAvailable ? <button className='er-button er-button--tonal' type='button' disabled={busy || understanding.isFetching} onClick={() => void request(true)}>{view.state === 'failed' ? 'Save available output' : 'Recheck saved output'}</button> : null}
       </div> : null}
       {note !== '' ? <p className='er-und__error' role='alert'>{note}</p> : null}
-      {(view.state === 'done' || view.state === 'partial') ? (<>
+      {canRetry ? <p className='er-und__hint'>Starts a new model run on this same source text and uses provider allowance. Previous output stays in history.</p> : null}
+      {pendingRetry ? <p className='er-und__hint'>The last request has not been confirmed. Reload checks its status. Send same request may start that run if it was never accepted.</p> : null}
+      <div className='er-und__actions'>
+        <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={toggleHistory}>Previous attempts</button>
+        {historical ? <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={() => setHistoryAttempt('')}>Current attempt</button> : null}
+      </div>
+      {historical ? <p className='er-und__hint'>Viewing a previous attempt. Its saved failure, usage and output are preserved.</p> : null}
+      {showHistory ? <div className='er-und__guide'>
+        {history.error ? <p role='alert'>{history.error.message}</p> : null}
+        {history.data?.pages.flatMap(page => page.attempts).map((attempt, index) => <button className='er-button er-button--text' type='button' key={attempt.attemptId} disabled={busy || understanding.isFetching} onClick={() => setHistoryAttempt(attempt.attemptId)}>View previous attempt {index + 1}</button>)}
+        {history.data?.pages[0]?.attempts.length === 0 ? <p>No previous attempts.</p> : null}
+        {history.hasNextPage ? <button className='er-button er-button--text' type='button' disabled={history.isFetching} onClick={() => void history.fetchNextPage()}>Load more attempts</button> : null}
+      </div> : null}
+      {(historical || view.state === 'done' || view.state === 'partial') ? (<>
         {view.state === 'partial' ? <p className='er-und__hint'>Partial understanding — some material could not be verified.</p> : view.report && (view.report.dropped.length > 0 || view.report.clearedNumbers > 0) ? <p className='er-und__hint'>Some claims or numeric details could not be verified.</p> : null}
         {view.guide !== null && view.guide !== '' ? (<div className='er-und__guide'><h3>Guide</h3><div className='er-und__answer'><Markdown text={view.guide} references={references} /></div></div>) : null}
-        <Questions questions={view.report?.questions ?? []} onUse={onUseQuestion} />
+        <Questions questions={view.report?.questions ?? []} onUse={historical ? undefined : onUseQuestion} />
         {view.digest !== null && view.digest !== '' ? (<div className='er-und__guide'><h3>Digest</h3><div className='er-und__answer'><Markdown text={view.digest} references={references} /></div></div>) : null}
         {view.glossary.length > 0 ? (<div className='er-und__guide'><h3>Glossary</h3><dl className='er-card er-und__glossary'>{view.glossary.map((g, i) => (<div key={g.en + ':' + g.ru + ':' + i}><dt>{g.en} — {g.ru}</dt><dd><Markdown text={g.definition + '\n\n' + g.labels.join(' ')} references={references} /></dd></div>))}</dl></div>) : null}
         <div className='er-und__guide'><h3>Verified claims</h3>{view.claims.length === 0 ? <p className='er-und__hint'>No verified claims stored for this revision.</p> : (<ul className='er-und__claims'>{view.claims.map((c) => (

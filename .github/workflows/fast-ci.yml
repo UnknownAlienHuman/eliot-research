@@ -76,6 +76,7 @@ jobs:
           pnpm eval k2 --models-only
           pnpm eval k3 --native-only
           pnpm eval k3 --metadata-only
+          pnpm eval k3 --retry-only
           pnpm eval k3 --overview-only
           pnpm eval k3 --overview-browser
           pnpm eval k3 --question-browser

@@ -6,6 +6,7 @@ import { resolveCitations } from "./citations.js";
 import type { Citation, LabelSource } from "./citations.js";
 import { modelInputLimit, modelOutputReserve } from "./models";
 import { estimateHistoryMessage, estimateModelInput } from "./model-input";
+import { understandingKey } from "./understanding-attempts";
 
 export interface ContextModel {
   contextTokens: number;
@@ -191,23 +192,25 @@ interface Frozen {
   distillState: string | null;
   guideSummary: string | null;
   reportKey: string | null;
+  attemptId: string | null; claimCount: number;
 }
 // SQL clips oversized fields before transfer; the flag rejects rather than truncates
 // evidence. Row limits prevent an unbounded D1 response before JS can count it.
-const SOURCE_METADATA = "CASE WHEN length(CAST(s.id AS BLOB))<=128 THEN s.id ELSE '' END AS id, " +
+const SOURCE_METADATA = "CASE WHEN length(CAST(r.distill_attempt_id AS BLOB))<=128 THEN r.distill_attempt_id ELSE NULL END AS attemptId,r.claim_count AS claimCount," +
+  "CASE WHEN length(CAST(s.id AS BLOB))<=128 THEN s.id ELSE '' END AS id, " +
   "CASE WHEN length(CAST(s.current_revision_id AS BLOB))<=128 THEN s.current_revision_id ELSE '' END AS revisionId, " +
   "CASE WHEN length(CAST(s.title AS BLOB))<=4096 THEN s.title ELSE '' END AS title, " +
   "CASE WHEN length(CAST(r.guide_summary AS BLOB))<=32768 THEN r.guide_summary ELSE NULL END AS guideSummary, " +
   "CASE WHEN length(CAST(r.distill_report_key AS BLOB))<=4096 THEN r.distill_report_key ELSE NULL END AS reportKey, " +
-  "(length(CAST(s.id AS BLOB))>128 OR coalesce(length(CAST(s.current_revision_id AS BLOB)),0)>128 OR " +
+  "(coalesce(length(CAST(r.distill_attempt_id AS BLOB)),0)>128 OR length(CAST(s.id AS BLOB))>128 OR coalesce(length(CAST(s.current_revision_id AS BLOB)),0)>128 OR " +
   "length(CAST(s.title AS BLOB))>4096 OR coalesce(length(CAST(r.guide_summary AS BLOB)),0)>32768 OR coalesce(length(CAST(r.distill_report_key AS BLOB)),0)>4096) AS metadataTooLarge, ";
 const SOURCE_METADATA_COST = "256 + 4 * (length(CAST(id AS BLOB)) + length(CAST(revisionId AS BLOB)) + length(CAST(title AS BLOB)) + " +
-  "coalesce(length(CAST(guideSummary AS BLOB)),0) + coalesce(length(CAST(reportKey AS BLOB)),0))";
+  "coalesce(length(CAST(guideSummary AS BLOB)),0) + coalesce(length(CAST(reportKey AS BLOB)),0) + coalesce(length(CAST(attemptId AS BLOB)),0))";
 function retainFrozen(assembly: Materialization, rows: Array<Frozen & { metadataTooLarge?: number }>): Frozen[] {
   if (rows.length > MAX_SOURCES) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   for (const row of rows) {
     if (row.metadataTooLarge) throw new LibraryError("invalid", NARROW_SCOPE, 400);
-    reserve(assembly, 256 + 4 * (row.sourceId.length + row.revisionId.length + row.title.length + (row.guideSummary?.length ?? 0) + (row.reportKey?.length ?? 0)));
+    reserve(assembly, 256 + 4 * (row.sourceId.length + row.revisionId.length + row.title.length + (row.guideSummary?.length ?? 0) + (row.reportKey?.length ?? 0) + (row.attemptId?.length ?? 0)));
   }
   return rows;
 }
@@ -247,16 +250,16 @@ async function freezeExplicit(env: Env, projectId: string, ids: string[], assemb
     "LEFT JOIN source s ON s.id=ps.source_id AND s.state='active' LEFT JOIN source_revision r ON r.id=s.current_revision_id " +
     "ORDER BY ordinal LIMIT " + (MAX_SOURCES + 1) + "), bounded AS (SELECT *, " +
     "sum(" + SOURCE_METADATA_COST + ") OVER (ORDER BY ordinal) <= ? AS fits FROM selected) " +
-    "SELECT id,revisionId,readableState,readableSize,distillState,CASE WHEN fits THEN title ELSE '' END AS title, " +
+    "SELECT attemptId,claimCount,id,revisionId,readableState,readableSize,distillState,CASE WHEN fits THEN title ELSE '' END AS title, " +
     "CASE WHEN fits THEN guideSummary END AS guideSummary,CASE WHEN fits THEN reportKey END AS reportKey, " +
     "(metadataTooLarge OR NOT fits) AS metadataTooLarge FROM bounded ORDER BY ordinal")
     .bind(requested, projectId, MATERIALIZATION_BYTES - assembly.used)
-    .all<{ id: string; title: string; revisionId: string | null; readableState: string | null; readableSize: number | null; distillState: string | null; guideSummary: string | null; reportKey: string | null; metadataTooLarge?: number }>();
+    .all<{ id: string; title: string; revisionId: string | null; readableState: string | null; readableSize: number | null; distillState: string | null; guideSummary: string | null; reportKey: string | null; attemptId: string | null; claimCount: number; metadataTooLarge?: number }>();
   for (const row of result.results) {
     if (!row?.revisionId || !READABLE.has(row.readableState ?? "")) {
       throw new LibraryError("invalid", "Narrow the source selection to readable sources in this project.", 400);
     }
-    out.push(...retainFrozen(assembly, [{ sourceId: row.id, title: row.title, revisionId: row.revisionId, readableSize: row.readableSize, distillState: row.distillState, guideSummary: row.guideSummary, reportKey: row.reportKey ?? null, ...(row.metadataTooLarge ? { metadataTooLarge: row.metadataTooLarge } : {}) }]));
+    out.push(...retainFrozen(assembly, [{ sourceId: row.id, title: row.title, revisionId: row.revisionId, readableSize: row.readableSize, distillState: row.distillState, guideSummary: row.guideSummary, reportKey: row.reportKey ?? null, attemptId: row.attemptId ?? null, claimCount: row.claimCount, ...(row.metadataTooLarge ? { metadataTooLarge: row.metadataTooLarge } : {}) }]));
   }
   if (oversizedId) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   return out;
@@ -272,12 +275,12 @@ async function freezeProjectDefault(env: Env, projectId: string, assembly: Mater
       "ORDER BY s.created_at ASC, s.id ASC LIMIT " + (MAX_SOURCES + 1);
   const result = await env.DB.prepare("WITH selected AS (" + selection + "), bounded AS (SELECT *, " +
     "sum(" + SOURCE_METADATA_COST + ") OVER () <= ? AS fits FROM selected) " +
-    "SELECT CASE WHEN fits THEN id ELSE '' END AS id,CASE WHEN fits THEN revisionId ELSE '' END AS revisionId,readableSize,distillState,CASE WHEN fits THEN title ELSE '' END AS title, " +
+    "SELECT attemptId,claimCount,CASE WHEN fits THEN id ELSE '' END AS id,CASE WHEN fits THEN revisionId ELSE '' END AS revisionId,readableSize,distillState,CASE WHEN fits THEN title ELSE '' END AS title, " +
     "CASE WHEN fits THEN guideSummary END AS guideSummary,CASE WHEN fits THEN reportKey END AS reportKey, " +
     "(metadataTooLarge OR NOT fits) AS metadataTooLarge FROM bounded ORDER BY createdAt ASC,id ASC")
     .bind(projectId, MATERIALIZATION_BYTES - assembly.used)
-    .all<{ id: string; title: string; revisionId: string; readableSize: number | null; distillState: string | null; guideSummary: string | null; reportKey: string | null; metadataTooLarge?: number }>();
-  return retainFrozen(assembly, result.results.map((row) => ({ ...row, sourceId: row.id, reportKey: row.reportKey ?? null })));
+    .all<{ id: string; title: string; revisionId: string; readableSize: number | null; distillState: string | null; guideSummary: string | null; reportKey: string | null; attemptId: string | null; claimCount: number; metadataTooLarge?: number }>();
+  return retainFrozen(assembly, result.results.map((row) => ({ ...row, sourceId: row.id, reportKey: row.reportKey ?? null, attemptId: row.attemptId ?? null })));
 }
 
 function selectHistory(
@@ -373,20 +376,21 @@ async function loadSourceText(env: Env, frozen: Frozen, index: number, assembly:
   return { section: joinContext(assembly, lines, "\n"), source };
 }
 
-async function loadClaims(env: Env, revisionId: string, assembly: Materialization): Promise<ClaimRow[]> {
+async function loadClaims(env: Env, entry: Frozen, assembly: Materialization): Promise<ClaimRow[]> {
   reserve(assembly, 128);
   const result = await env.DB.prepare(
-    "WITH selected AS (SELECT c.ordinal AS ordinal, c.statement AS statement, c.quote AS quote, c.conditions AS conditions, " +
+    "WITH owner AS (SELECT distill_report_key IS ? AND guide_summary IS ? AND distill_state IS ? AND distill_attempt_id IS ? AND claim_count IS ? AS matches FROM source_revision WHERE id=?), selected AS (SELECT c.ordinal AS ordinal, c.statement AS statement, c.quote AS quote, c.conditions AS conditions, " +
       "c.block_index AS blockIndex FROM claim c JOIN source_revision r ON r.id = c.source_revision_id " +
-      "WHERE c.source_revision_id = ? AND c.ambiguous = 0 AND c.ordinal < r.claim_count ORDER BY c.ordinal ASC LIMIT " + (MAX_CLAIMS + 1) +
+      "WHERE c.source_revision_id = ? AND (SELECT matches FROM owner) AND c.ambiguous = 0 AND c.ordinal < r.claim_count ORDER BY c.ordinal ASC LIMIT " + (MAX_CLAIMS + 1) +
       "), bounded AS (SELECT *,sum(256 + 4 * (length(CAST(statement AS BLOB)) + length(CAST(quote AS BLOB)) + coalesce(length(CAST(conditions AS BLOB)),0))) OVER () <= ? AS fits FROM selected) " +
       "SELECT ordinal,blockIndex,CASE WHEN fits THEN statement ELSE '' END AS statement,CASE WHEN fits THEN quote ELSE '' END AS quote, " +
-      "CASE WHEN fits THEN conditions END AS conditions,NOT fits AS metadataTooLarge FROM bounded ORDER BY ordinal ASC",
+      "CASE WHEN fits THEN conditions END AS conditions,NOT fits AS metadataTooLarge,0 AS changed FROM bounded UNION ALL SELECT 0,0,'','',NULL,0,1 WHERE NOT coalesce((SELECT matches FROM owner),0) ORDER BY ordinal ASC",
   )
-    .bind(revisionId, MATERIALIZATION_BYTES - assembly.used)
-    .all<ClaimRow & { metadataTooLarge?: number }>();
+    .bind(entry.reportKey, entry.guideSummary, entry.distillState, entry.attemptId, entry.claimCount, entry.revisionId, entry.revisionId, MATERIALIZATION_BYTES - assembly.used)
+    .all<ClaimRow & { metadataTooLarge?: number; changed?: number }>();
   if (result.results.length > MAX_CLAIMS) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   for (const row of result.results) {
+    if (row.changed) throw new LibraryError("conflict", "Source understanding changed while preparing this answer. Send again explicitly.", 409);
     if (row.metadataTooLarge) throw new LibraryError("invalid", NARROW_SCOPE, 400);
     reserve(assembly, 256 + 4 * (row.statement.length + row.quote.length + (row.conditions?.length ?? 0)));
   }
@@ -394,11 +398,11 @@ async function loadClaims(env: Env, revisionId: string, assembly: Materializatio
 }
 
 async function resolveGuideKey(env: Env, entry: Frozen, assembly: Materialization): Promise<string> {
-  const legacy = "source/" + entry.revisionId + "/guide.md";
+  const legacy = understandingKey(entry.revisionId, "guide.md", entry.attemptId);
   const raw = typeof entry.reportKey === "string" ? entry.reportKey.trim() : "";
   if (!raw) return legacy;
-  const prefix = "source/" + entry.revisionId + "/";
-  if (!raw.startsWith(prefix)) throw new LibraryError("unavailable", GUIDE_MISSING, 503);
+  const checkedReport = understandingKey(entry.revisionId, "checked/distill.json", entry.attemptId);
+  if (raw !== checkedReport && raw !== understandingKey(entry.revisionId, "distill.json", entry.attemptId)) throw new LibraryError("unavailable", GUIDE_MISSING, 503);
   let report: unknown;
   try {
     report = await readContextJson<unknown>(env, assembly, raw);
@@ -409,7 +413,8 @@ async function resolveGuideKey(env: Env, entry: Frozen, assembly: Materializatio
   const artifacts = (report as { artifacts?: unknown } | null)?.artifacts;
   if (!artifacts || typeof artifacts !== "object") return legacy;
   const guideKey = (artifacts as { guide?: unknown }).guide;
-  if (guideKey !== "source/" + entry.revisionId + "/checked/guide.md") throw new LibraryError("unavailable", GUIDE_MISSING, 503);
+  const expectedGuide = understandingKey(entry.revisionId, raw === checkedReport ? "checked/guide.md" : "guide.md", entry.attemptId);
+  if (guideKey !== expectedGuide) throw new LibraryError("unavailable", GUIDE_MISSING, 503);
   return guideKey;
 }
 
@@ -449,7 +454,7 @@ async function loadGuideBlocks(env: Env, entry: Frozen, byId: Map<number, Block>
 async function loadClaimContextPart(env: Env, entry: Frozen, index: number, assembly: Materialization): Promise<ClaimContextPart | undefined> {
   if (!DISTILLED.has(entry.distillState ?? "")) return undefined;
   const alias = "S" + (index + 1);
-  const claims = await loadClaims(env, entry.revisionId, assembly);
+  const claims = await loadClaims(env, entry, assembly);
   const blocks = await loadBlocks(env, entry.revisionId, assembly);
   reserve(assembly, blocks.length * 64);
   const byId = new Map<number, Block>();

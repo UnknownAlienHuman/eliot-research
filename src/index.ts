@@ -11,7 +11,7 @@ import { captureUrl, UrlGuardError } from "./url-guard";
 import { getModelConnection, getModelProviders, modelProvidersSchema, readModelCatalog, refreshModelCatalog, requireCatalogModel, saveModelProviders, validGatewayId } from "./models";
 import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
-import { getOverview, getUnderstanding } from "./understanding";
+import { getOverview, getUnderstanding, getUnderstandingHistory } from "./understanding";
 import { safeErrorLogProjection } from "./model-transport";
 import { handleMcp } from "./mcp";
 import { decideProposal, getProposal, listProposals } from "./proposals";
@@ -263,10 +263,14 @@ app.post(ocrBase + "/:jobId/apply", async (c) => {
     projectId: uuid.parse(c.req.param("id")), sourceId: uuid.parse(c.req.param("sourceId")), jobId: uuid.parse(c.req.param("jobId")), ...input,
   }));
 });
-app.get("/api/sources/:id/understanding", async (c) => c.json(await getUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), revisionId: uuid.optional().parse(c.req.query("revisionId")) })));
+app.get("/api/sources/:id/understanding", async (c) => c.json(await getUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), revisionId: uuid.optional().parse(c.req.query("revisionId")), attemptId: uuid.optional().parse(c.req.query("attemptId")), requestId: uuid.optional().parse(c.req.query("requestId")) })));
+app.get("/api/sources/:id/understanding/history", async (c) => c.json(await getUnderstandingHistory(c.env, {
+  sourceId: uuid.parse(c.req.param("id")), revisionId: uuid.parse(c.req.query("revisionId")), cursor: z.string().max(512).optional().parse(c.req.query("cursor")),
+})));
 app.post("/api/sources/:id/understanding", async (c) => {
-  const input = z.object({ revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional() }).strict().parse(await c.req.json());
-  return c.json(await requestUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), ...input }), 202);
+  const input = z.object({ revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional(), retry: z.object({ attemptId: uuid, previousAttemptId: uuid }).strict().optional() }).strict().parse(await c.req.json());
+  const result = await requestUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), ...input });
+  return c.json(result, "rejected" in result ? 200 : 202);
 });
 app.get("/api/projects/:id/overview", async (c) => c.json(await getOverview(c.env, c.get("actor"), {
   projectId: uuid.parse(c.req.param("id")), cursor: z.string().max(512).optional().parse(c.req.query("cursor")),
