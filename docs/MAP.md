@@ -127,12 +127,14 @@ its text preview, and Apply a new readable revision while retaining the original
 
 1. Bind D1, R2, Workers AI and `IngestWorkflow`; apply `migrations/0001_library.sql`.
 2. Implement projects, shared Library sources, project memberships and immutable revisions.
+   Project creation preserves edits made while waiting and safely repeats an unconfirmed request with the same UUID.
    Projects defaults to active rows; Show archived projects pages through archived rows and exposes the existing
    Unarchive action. Archive/restore keeps sources, history and saved evidence intact.
    Add sources exposes the existing Library in bounded pages and attaches a saved source without another upload,
    conversion or understanding call. Already attached sources are excluded; Refresh rescans Library changes.
 3. Browser batch UX sends **one file per request**, with at most two uploads in flight. The API accepts one file up to
    25 MiB, never a 100 MiB buffered multipart batch. Text and URL have separate JSON routes/shapes. IMPLEMENTATION §4.
+   Text/URL forms allow one pending request each and retain edits made while waiting for its response.
 4. Hash, store original under an immutable R2 key, create pending rows and start deterministic
    `ingest-<revisionId>`. Exact duplicates are reported with Attach; never silently merged. Concurrent uploads or
    replacements cannot admit the same bytes for different live sources; deliberate reconversion within one source remains available.
@@ -235,7 +237,9 @@ Groups of fully specified labels may normalize to separate inline references aft
 frozen-scope validation; unknown identities and shorthand remain failures.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
 canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
-never retried automatically.
+never retried automatically. Save preserves a partial answer's recorded reason, distinguishing interrupted generation
+from rejected source references.
+For a nonstandard provider finish normalized to `other`, the stored failure includes a bounded safe provider code.
 An explicit repeat of an unconfirmed Send in the same composer reuses its ID, unchanged input and known chat target;
 a new question or a repeat after confirmation has a new ID. See IMPLEMENTATION §8 for the volatile-draft boundary.
 New-chat creation also retains its UUID/title for explicit replay. After reload, History opens a committed chat/result

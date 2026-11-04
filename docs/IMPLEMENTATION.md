@@ -61,7 +61,7 @@ JSON lives under `/api/`, validated with zod. Error shape:
 ```
 
 Use cursor pagination. Chat inventory uses immutable `(created_at,id)` descending so activity between pages cannot
-move an unseen chat above the cursor. Add idempotency only where a natural key exists: chat/turn ID, source-revision ID, page-revision mutation ID and
+move an unseen chat above the cursor. Add idempotency only where a natural key exists: project/chat/turn ID, source-revision ID, page-revision mutation ID and
 deterministic Workflow ID. The MCP endpoint transports the shared toolset; it is not a second business API.
 
 ## 2. Access and actors
@@ -90,6 +90,8 @@ its entry asset as well as JSON, and K1 checks text/range/original response head
 For local use, copy `.dev.vars.example` to `.dev.vars`, then `pnpm dev`. `pnpm cf:types` generates the checked-in Env;
 the example keeps variable order aligned with Wrangler configuration so generation is stable locally and in CI.
 `pnpm eval k0` exercises the actual running Worker and writes viewport screenshots to ignored `eval/out/k0/`.
+It reports authentication observed in twelve parsed `/api/me` responses; deployed Access owner-token and browser-login
+checks always remain `NOT_RUN` because the browser eval accepts loopback origins only, even with synthetic CI Access headers.
 On 2026-10-25 the owner retained the existing legacy `eliotr-core.kleymor-metal.workers.dev` hostname Access application;
 no replacement deployment or new-domain setup has been performed. Live browser and deployed owner-token acceptance
 remain separate from local/signed-fixture checks.
@@ -133,6 +135,9 @@ stays readable with a visible conflict warning and never replaces the newer head
 mutation UUID returns its already committed winner. Old revisions remain readable for old citations. Use UUIDs and Unix milliseconds. Do not add
 a generic effects ledger; each operation stores its own model route, usage and estimate.
 
+`POST /api/projects` accepts an optional caller UUID. Repeating it with the same trimmed title and effective description
+returns the active project without updating it; changed inputs or an archived/renamed collision return 409. New and
+replayed acceptance responses retain 201. Omitting the UUID still creates a new project.
 Project lists default to active rows; `/api/projects?archived=true` returns only archived projects with the same
 50-row cursor pagination. Archive/restore uses the existing project PATCH and changes no memberships, evidence,
 history or pages. Omitted title/archive fields are preserved by the UPDATE itself so concurrent Rename and Unarchive
@@ -661,6 +666,8 @@ Resolve one `ModelSpec` for each turn and freeze it across admission, context li
 The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, record the token bound after
 provider admission, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
 citation, token, timing, invalid-label and terminal-state fields. Historical currency columns remain unchanged.
+First nonblank text and terminal/Stop results persist immediately; arriving text checkpoints and broadcasts the full
+turn at most once per second. Restart retains the last checkpoint; newer text can be lost without automatic continuation.
 WebSocket frames and reconnect expose state snapshots and never enqueue or dispatch paid work. An authorised history
 read/reconnect may finish the idempotent local save of an already accepted, proven-undispatched self-handoff or settle
 an already stored answer's D1 projection, as specified below; it does not admit work or change terminal D1 accounting.
@@ -683,13 +690,18 @@ is resumed automatically. If only creation committed, the full question is not r
 unaccepted draft text is not persisted in the URL, localStorage or another client cache.
 The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
 cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
+When the SDK normalizes a provider finish to `other`, the stored error retains its distinct raw code only if it
+matches `[A-Za-z][A-Za-z0-9_.:-]{0,63}`. Arbitrary upstream messages are omitted.
 Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the recorded
 token bound and is never treated as zero usage.
 Missing-citation and unsupported-number diagnostics are advisory UTF-16 answer ranges stored in the existing
 ChatAgent turn JSON and exposed by snapshots/history for API and eval readers. The owner Markdown view renders the
 answer without diagnostic frames or rewriting it. These diagnostics do not change a normally finished stream to
 partial. Truncation, stream/protocol failure and invalid resolved labels
-remain real failures. Saved output carries a concise review note when warnings exist. D1 schema and usage are unchanged.
+remain real failures. A normally finished answer with rejected references stays partial; its error names the bounded
+rejected-marker samples. Saving a partial answer preserves its recorded failure reason as escaped Markdown text;
+it does not claim generation was interrupted when only references failed. Historical partials without a reason receive
+a neutral review note. Saved output also carries a concise review note when warnings exist. D1 schema and usage are unchanged.
 An answer over a nonempty whole/claim source scope with no resolved citation is incomplete; this hard citation-presence
 gate is separate from advisory spans. General answers in explicitly empty scope do not require Library citations.
 
@@ -1101,6 +1113,10 @@ sources. Sources start with readable-source checkboxes and current understanding
 the existing file/text/URL forms in a native dialog. History is a menu and project settings a dialog. Opening a source
 passage temporarily replaces the center reader without dropping the selected chat or source scope. Saved output
 refreshes Studio through the existing storage-only page API.
+Add sources keeps text and URL drafts independent. Each form allows one pending submission while its fields remain
+editable. Success clears only the unchanged submitted draft; later edits, failures and duplicate responses keep it.
+Closing and reopening the dialog does not cancel the write or discard newer input. Drafts stay local to the mounted
+project workspace; no automatic retry or browser persistence is added.
 Projects exposes Show archived projects and Unarchive. Each list view owns its query/cursor; switching views aborts
 old reads and starts its first page. Failed reads keep loaded rows and offer Retry. A pending write or Rename edit
 disables view switching; failed writes preserve the row/edit, while success refreshes that view. The active-only
@@ -1109,6 +1125,9 @@ Create waits for Rename to finish or be cancelled. If an update removes the edit
 existing editor stays available above the list with the unsaved name and original target; Save/Cancel never depend
 on that row remaining visible.
 A successful Save closes only the submitted edit; typing while it is pending remains unsaved until another explicit Save.
+Create also preserves text edited while its request is pending. An explicit repeat of an unconfirmed, unchanged
+payload reuses its UUID; confirmation or a changed payload starts a new attempt. The draft and UUID are local to the
+mounted Projects form and are discarded on remount/reload.
 The project header's Switch project opens a native dialog over the existing `/api/projects` pages. Loading, empty,
 initial/page Retry and Refresh stay in that picker; its list reads abort on close or route change. Selecting a project
 opens its chat route without creating a chat or sending a question. Escape/Close returns focus and preserves the
@@ -1127,6 +1146,10 @@ Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
 Every screen has loading, empty and actionable error states plus stale/paused where relevant. Use one Markdown renderer
 with raw HTML disabled and resolved citation chips. Do not cache private text in localStorage or a service worker.
+The web renderer uses `remark-math` and `rehype-katex` for `\(...\)`, `\[...\]` and `$$...$$` as native MathML, without
+KaTeX styles or font assets. Only the TeX compatibility path adds a standard GFM Markdown AST pass to preserve code, links
+and other literal nodes. Single `$` stays literal for currency; unfinished expressions stay readable and display formulas
+scroll locally. This targets modern Chromium with native MathML, with no legacy HTML fallback or stored-evidence changes.
 
 The shared model picker reuses the approved legacy Material interaction and provider/native-ID identity. Settings
 provider, search and free-name filters only filter the displayed catalogue; they do not change saved routes or admission.
@@ -1135,6 +1158,9 @@ unambiguous catalogue choices is visibly unavailable. Model changes affect the n
 model's name. New chats may Send with no sources, while existing chats wait for their history to load. Changing chats
 clears the previous queue view and ignores messages from the closed connection. The inherited model name is displayed
 without sending an explicit override.
+On phone, one Sources and model disclosure shows the current scope and model summary while the existing controls
+stay mounted. Opening it exposes scope navigation and the same picker; collapsing keeps draft/selection/provider
+state and leaves model errors, pending status and data-use warnings visible. Desktop controls remain expanded.
 History and New chat confirm before discarding a nonblank question draft. Cancel preserves the open menu, chat, draft
 and source scope. Choosing the current chat, remaining in a new chat or using a modified link leaves its draft intact
 without confirmation; blank drafts follow the existing navigation. This applies to these controls, not browser Back/Forward.
@@ -1156,6 +1182,9 @@ quota or justification for a hook hierarchy, generic lifecycle framework, new pr
 so a delayed first page cannot erase a newly created chat. Failure retains loaded rows/cursor; initial failure offers
 Retry. Cleanup aborts the current read. Conversation HTTP/socket/version/cursor/scroll and Send/Stop/Save remain in
 `ChatView`.
+Its memoized turn content retains unchanged answers across streamed frames. The existing conversation box's resize
+observer pauses content rendering while CSS hides that pane on desktop or phone, retaining its DOM/details and the
+owning socket/history/action state; revealing it renders the latest received turn without replaying hidden frames.
 
 **Post-stream usage.** `chat-usage.ts:turnUsageProjection` owns the pure
 post-stream projection of AI SDK reported token/provider usage and the known-zero undispatched case. `runTurn` applies
@@ -1198,7 +1227,9 @@ request generations prevent an old completion from unlocking a newer Send.
 
 Reader is keyed by project/source, resetting metadata, text and both React/native replacement-file state on source
 change. Revision and passage navigation reuse that source reader. Metadata reads carry source/revision generation
-and abort signals; pending polls do not overlap. Text/outline reads abort on revision change/unmount. A replacement
+and abort signals; pending polls do not overlap. A metadata read error retains the last source view, stops polling
+and offers Retry source status. Successful explicit Retry restores pending polling until conversion settles;
+metadata errors remain separate from text and replacement errors. Text/outline reads abort on revision change/unmount. A replacement
 POST remains bound to its original source/file, while only its initiating location may change URL, error or file
 selection. A narrow `(projectId,sourceId)` lock in the existing App outlives keyed Reader/workspace remounts, pane changes
 and same-tab project/Settings navigation. A→B→A and same-source query changes cannot dispatch another A upload before

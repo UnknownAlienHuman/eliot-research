@@ -303,7 +303,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
     const warningNote = warnings.length > 0
       ? `Note: ${warnings.length} statement(s) lack a verified adjacent citation or numeric support.\n\n`
       : "";
-    return { answer: (turn.state === "partial" ? "Partial answer — the turn ended before completion.\n\n" : "") + warningNote + saved.text,
+    const partialNote = turn.state === "partial"
+      ? `Partial answer — ${(turn.error ?? "This answer needs review.").replace(/[\\`*_{}[\]()<>#+.!|~-]/g, "\\$&")}\n\n` : "";
+    return { answer: partialNote + warningNote + saved.text,
       citations: saved.citations, revisionIds: turn.revisionIds, state: turn.state };
   }
   private startTurn(input: RunTurnInput): Promise<TurnView> {
@@ -453,7 +455,10 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const publish = () => {
         const firstText = turn.firstTokenMs === null && turn.answer.trim().length > 0;
         if (firstText) turn.firstTokenMs = Date.now() - started;
-        if (firstText || Date.now() - lastWrite > 100) { this.writeTurn(turn); lastWrite = Date.now(); }
+        // First text and terminal results persist immediately. Intermediate
+        // snapshots are bounded to once a second; a process crash can lose
+        // only the newer, uncheckpointed tail (no automatic continuation).
+        if (firstText || Date.now() - lastWrite >= 1000) { this.writeTurn(turn); lastWrite = Date.now(); }
       };
       for await (const text of result.textStream) {
         turn.answer += text;
@@ -462,14 +467,18 @@ export class ChatAgent extends Agent<Env, ChatState> {
       usage = await result.totalUsage;
       turn.answer = await result.text;
       const finish = await result.finishReason;
+      const rawFinish = finish === "other" ? await result.rawFinishReason : undefined;
+      // Preserve a short provider status code, never an arbitrary upstream message.
+      const finishDetail = rawFinish && rawFinish !== finish && /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/.test(rawFinish)
+        ? `${finish}; provider: ${rawFinish}` : finish;
       if (finish === "stop" && !streamError) turn.state = "completed";
       else {
         turn.state = "partial";
-        turn.error = streamError || `The model stopped before a normal completion (${finish}).`;
+        turn.error = streamError || `The model stopped before a normal completion (${finishDetail}).`;
       }
       if (!turn.answer.trim()) {
         turn.state = "failed";
-        turn.error = streamError || `The model returned no answer text (finish: ${finish}).`;
+        turn.error = streamError || `The model returned no answer text (finish: ${finishDetail}).`;
       }
     } catch (error) {
       const ownerStop = controller.signal.aborted && this.state.stopRequested && !timedOut;
@@ -490,7 +499,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
     if (resolved.invalidLabelExamples !== undefined && resolved.invalidLabelExamples.length > 0) turn.invalidLabelExamples = resolved.invalidLabelExamples;
     else delete turn.invalidLabelExamples;
     if (turn.state === "completed" && turn.invalidLabels > 0) {
-      turn.state = "partial"; turn.error = "Some source references could not be verified. This answer is incomplete.";
+      turn.state = "partial";
+      turn.error = `The model finished, but some source references could not be verified. Rejected references: ${turn.invalidLabelExamples?.join(", ") ?? turn.invalidLabels}. Review the answer against its sources.`;
     }
     if (turn.state === "completed" && turn.citations.length === 0
       && (sourceMode === "whole" || sourceMode === "claims") && turn.answer.trim().length > 0) {
