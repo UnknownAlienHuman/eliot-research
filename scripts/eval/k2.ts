@@ -1538,7 +1538,7 @@ if (journeyOnly) {
     assert.equal(citeHref, expectedHref, 'Studio must link the saved citation to its exact reader range.');
     await studioCite.locator('a.er-chip').click({ timeout: 30000 });
     await expect(jpage.locator('div.er-lib__excerpt')).toBeVisible({ timeout: 30000 });
-    const excerptText = await jpage.locator('div.er-lib__excerpt pre').innerText();
+    const excerptText = await jpage.locator('.er-lib__text mark').textContent();
     assert.equal(excerptText, savedQuote, 'The reader must open the exact saved passage range.');
     await jpage.screenshot({ path: outDir + '/k2-journey-studio-390.png' });
     jreport.save.studioVerified = true;

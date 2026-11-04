@@ -13,6 +13,7 @@ import { SourceUnderstanding } from "./Understanding";
 import type { SuggestedQuestion } from "./Understanding";
 import { SourceOcr } from "./Ocr";
 import { LibraryPicker } from "./LibraryPicker";
+import { splitReaderRange } from "./reader-range";
 export interface OutlineItem { label: string; start: number; end: number; }
 const FILE_LIMIT = 25 * 1024 * 1024;
 const POLL_MS = 3000;
@@ -537,8 +538,8 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   const [params, setParams] = useSearchParams();
   const revisionId = params.get("revisionId") ?? "";
   const sp = params.get("start"), ep = params.get("end");
-  const rangeStart = sp === null ? NaN : Number(sp);
-  const rangeEnd = ep === null ? NaN : Number(ep);
+  const rangeStart = sp?.trim() ? Number(sp) : NaN;
+  const rangeEnd = ep?.trim() ? Number(ep) : NaN;
   const [source, setSource] = useState<Source | undefined>(undefined);
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [metaFailure, setMetaFailure] = useState("");
@@ -561,6 +562,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
     actionView.current = { key: location.key, path: location.pathname, search: location.search };
   const view = actionView.current;
   const preRef = useRef<HTMLPreElement | null>(null);
+  const passageRef = useRef<HTMLElement | null>(null);
   const rev = revisions.find((r) => r.id === (revisionId || source?.currentRevisionId || source?.revisionId || revisions[0]?.id || ""));
   const activeRevision = rev?.id ?? "";
   const currentId = source?.currentRevisionId ?? source?.revisionId ?? revisions[0]?.id ?? "";
@@ -568,7 +570,8 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   const conversionError = rev ? rev.error : source?.error;
   const textReady = loadedRev !== "" && loadedRev === activeRevision;
   const readableWarning = useMemo(() => rev?.warningSummary ?? (textReady ? readableTextWarning(text) : null), [rev?.warningSummary, textReady, text]);
-  const hasRange = textReady && Number.isSafeInteger(rangeStart) && Number.isSafeInteger(rangeEnd) && rangeStart >= 0 && rangeEnd > rangeStart;
+  const hasRange = sp !== null || ep !== null;
+  const openingPassage = !textReady && !!activeRevision && ["pending", "readable", "readable_with_warnings"].includes(activeState) && !failure && !metaFailure;
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; metaSequence.current++; metaAbort.current?.abort(); };
@@ -609,11 +612,16 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
     })();
     return () => abort.abort();
   }, [activeRevision, activeState]);
-  const excerpt = useMemo(() => {
-    if (!hasRange || !text) return "";
-    try { return decodeSlice(new TextEncoder().encode(text), rangeStart, rangeEnd); }
-    catch { return ""; }
-  }, [hasRange, text, rangeStart, rangeEnd]);
+  const passage = useMemo(() => {
+    if (!textReady || !hasRange) return undefined;
+    try { return splitReaderRange(text, rangeStart, rangeEnd); }
+    catch { return undefined; }
+  }, [textReady, hasRange, text, rangeStart, rangeEnd]);
+  useEffect(() => {
+    if (!passage) return;
+    passageRef.current?.focus({ preventScroll: true });
+    passageRef.current?.scrollIntoView({ block: "start", inline: "nearest" });
+  }, [passage, activeRevision, location.key]);
   function copySelectionLink() {
     const pre = preRef.current;
     if (!pre || !activeRevision || !textReady) { setFailure("Open a readable revision before copying a passage link."); return; }
@@ -666,7 +674,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
         {rev ? <p>{revisionLabel(rev, currentId)}.</p> : null}
         {revisions.length > 1 ? <div className="er-field"><label className="er-field__label" htmlFor="er-lib-revision">Revision</label><select id="er-lib-revision" value={activeRevision} onChange={(e) => { const id = e.currentTarget.value; if (id) setParams({ revisionId: id }); }}>{revisions.map((r) => <option key={r.id} value={r.id}>{revisionLabel(r, currentId)}</option>)}</select></div> : null}
       </div></details>
-      {hasRange ? (<div className="er-card er-field er-lib__excerpt" role="note"><p>Selected passage from {source.title}.</p>{excerpt ? <pre>{excerpt}</pre> : <p className="er-lib__error">This passage could not be opened in the loaded text. Clear it and choose another passage.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(activeRevision)}>Clear passage</Link></div>) : null}
+      {hasRange ? (<div className="er-card er-field er-lib__excerpt" role="note">{openingPassage ? <p>Opening the selected passage.</p> : passage ? <p>The selected passage is highlighted in the full source text below.</p> : <p className="er-lib__error" role="alert">This passage could not be opened in the loaded text. Clear it and choose another passage.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(activeRevision)} onClick={() => preRef.current?.focus({ preventScroll: true })}>Clear passage</Link></div>) : null}
       <div className="er-lib__reader">
         <nav className="er-lib__outline" aria-label="Outline"><h2>Outline</h2>
           {!textReady || outline.length === 0 ? <p className="er-lib__hint">No outline available.</p> : (<ul className="er-lib__outline-list">{outline.map((b, i) => (<li key={b.start + ":" + b.end + ":" + i}><Link to={"?revisionId=" + encodeURIComponent(activeRevision) + "&start=" + b.start + "&end=" + b.end}>{b.label}</Link></li>))}</ul>)}
@@ -687,7 +695,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
           {activeState === "pending" ? <p className="er-lib__hint" role="status">Converting…</p> : null}
           {activeState === "needs_conversion" ? <p className="er-lib__hint" role="note">The original is saved. Upload a readable Markdown file to read this source.</p> : null}
           {activeState === "failed" ? <p className="er-lib__error" role="alert">{rev?.error ?? source.error ?? "Conversion failed."}</p> : null}
-          <pre className="er-card er-lib__text" ref={preRef}>{textReady ? text : ""}</pre>
+          <pre className="er-card er-lib__text" ref={preRef} tabIndex={-1}>{passage ? <>{passage.before}<mark ref={passageRef} tabIndex={-1}>{passage.selected}</mark>{passage.after}</> : textReady ? text : ""}</pre>
         </div>
       </div>
       {(activeState === "readable" || activeState === "readable_with_warnings") && activeRevision ? <SourceUnderstanding key={(sourceId ?? "") + activeRevision} projectId={projectId ?? ""} sourceId={sourceId ?? ""} revisionId={activeRevision} sourceTitle={source.title}

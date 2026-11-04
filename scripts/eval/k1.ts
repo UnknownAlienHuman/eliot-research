@@ -579,7 +579,7 @@ try {
   let activeUploads = 0, peakUploads = 0;
   page.on('request', (request) => { if (request.method() === 'POST' && request.url().endsWith('/sources/file')) peakUploads = Math.max(peakUploads, ++activeUploads); });
   page.on('response', (response) => { if (response.request().method() === 'POST' && response.url().endsWith('/sources/file')) activeUploads--; });
-  const text = '# Источник\n\nТочный русский текст и emoji 🙂.\n\n## Второй раздел\n\nВторой абзац.\n\n## Третий раздел\n\nТретий абзац.\n';
+  const text = "﻿﻿# Исследование\r\n\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\nEarlier context remains available in the full document.\r\n\r\nBefore context sentence.\r\n\r\nТочный русский текст с emoji 🧪.\r\nWrapped canonical line.\r\n\r\nAfter context sentence.\r\n\r\nA longer paragraph keeps the complete source readable around a selected citation. It includes the original wording, qualifications and adjacent evidence instead of replacing them with a detached quotation. Reading can continue naturally before and after the highlight, and the same immutable bytes remain available when a newer revision is uploaded. This ordinary paragraph is intentionally long enough to wrap over many lines on a narrow phone, so navigation must still give the reader a useful starting position without creating a second text view.\r\n\r\n## Первый раздел\r\n\r\nПервый блок.\r\n\r\n## Второй раздел\r\n\r\nВторой блок.\r\n";
   const tableCaption = 'Table 1: Browser reader table fixture.';
   const tableRows = '| Field | Value |\n|---|---|\n| caption-grouped | browser-visible-value |\n';
   const tableFixture = tableCaption + '\n\n' + tableRows;
@@ -606,15 +606,15 @@ try {
     const link = new URL(reader);
     link.searchParams.set('start', block.start); link.searchParams.set('end', block.end);
     await page.goto(link.href);
-    await expect(page.locator('.er-lib__excerpt pre')).toHaveText(new TextDecoder('utf-8', { ignoreBOM: true }).decode(whole.bytes.subarray(block.start, block.end)));
+    await expect.poll(() => page.locator('.er-lib__text mark').textContent()).toBe(new TextDecoder('utf-8', { ignoreBOM: true }).decode(whole.bytes.subarray(block.start, block.end)));
   }
   await page.goto(reader.href);
   const tableLink = new URL(reader);
   tableLink.searchParams.set('start', String(tableBlock.start));
   tableLink.searchParams.set('end', String(tableBlock.end));
   await page.goto(tableLink.href);
-  await expect(page.locator('.er-lib__excerpt pre')).toContainText(tableCaption);
-  await expect(page.locator('.er-lib__excerpt pre')).toContainText('caption-grouped');
+  await expect(page.locator('.er-lib__text mark')).toContainText(tableCaption);
+  await expect(page.locator('.er-lib__text mark')).toContainText('caption-grouped');
   await expect(page.locator('.er-lib__text')).toContainText(tableCaption);
   await expect(page.locator('.er-lib__text')).toContainText('caption-grouped');
   await expect(page.locator('.er-lib__text')).toContainText('browser-visible-value');
@@ -641,7 +641,97 @@ try {
   await expect(page).toHaveURL(/start=.*end=/);
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   const reopened = await context.newPage(); await reopened.goto(copied);
-  await expect(reopened.locator('.er-lib__excerpt pre')).toHaveText('Точный русский текст');
+  await expect(reopened.locator('.er-lib__text mark')).toHaveText('Точный русский текст');
+  const canonical = new TextDecoder('utf-8', { ignoreBOM: true }).decode(whole.bytes);
+  const passageBlock = outline.body.blocks.find((b: any) => whole.bytes.subarray(b.start, b.end).toString('utf8').includes('Точный русский текст'));
+  const longBlock = outline.body.blocks.find((b: any) => whole.bytes.subarray(b.start, b.end).toString('utf8').includes('A longer paragraph keeps'));
+  assert(passageBlock && longBlock, 'Native Reader fixture must include short and long paragraphs.');
+  const readerProject = reader.pathname.split('/')[2], readerSource = reader.pathname.split('/')[4];
+  const fixtureChat = (await apiJson('/api/projects/' + readerProject + '/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Reader citation fixture' }) })).body.chat.id;
+  const fixtureApi = '/api/projects/' + readerProject + '/chats/' + fixtureChat;
+  const emptyChat = (await apiJson(fixtureApi)).body;
+  const citationBlocks = [passageBlock, longBlock];
+  // Control only the history GET; citation rendering and all Reader byte APIs remain real. No Send.
+  await page.route(origin + fixtureApi, route => route.request().method() !== 'GET' ? route.continue() : route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...emptyChat, turns: [{
+    turnId: crypto.randomUUID(), question: 'Read the cited passages.', answer: citationBlocks.map((b: any) => '[S1:' + b.id + ']').join('\n\n'), state: 'completed', error: null, model: 'workers-ai:@cf/zai-org/glm-5.3-flash', createdAt: Date.now(),
+    scopeMode: 'explicit', sourceIds: [readerSource], revisionIds: [revisionId], contextMode: 'whole', firstTokenMs: 0, totalMs: 0, inputTokens: null, outputTokens: null, cachedTokens: null, invalidLabels: 0, settlementPending: false,
+    citations: citationBlocks.map((b: any) => ({ sourceId: readerSource, revisionId, block: b.id, start: b.start, end: b.end, label: '[S1:' + b.id + ']', sourceTitle: name + '-0.md', deleted: false })),
+  }] }) }));
+  const openCitation = async (index: number) => {
+    await page.goto(origin + '/p/' + readerProject + '/chat/' + fixtureChat);
+    await page.locator('a.er-citation').nth(index).click();
+    const block = citationBlocks[index];
+    await expect.poll(() => page.locator('.er-lib__text mark').textContent()).toBe(whole.bytes.subarray(block.start, block.end).toString('utf8'));
+    await expect.poll(() => page.locator('.er-lib__text').textContent()).toBe(canonical);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  };
+  const selectCanonical = async (start: number, end: number) => page.locator('.er-lib__text').evaluate((pre, offsets) => {
+    const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT), nodes: Text[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node as Text);
+    const point = (offset: number) => {
+      for (const node of nodes) { if (offset <= node.length) return { node, offset }; offset -= node.length; }
+      throw new Error('Canonical selection is outside the DOM text.');
+    };
+    const start = point(offsets[0]), end = point(offsets[1]), range = document.createRange();
+    range.setStart(start.node, start.offset); range.setEnd(end.node, end.offset);
+    const selected = window.getSelection(); selected?.removeAllRanges(); selected?.addRange(range);
+  }, [start, end]);
+  const unavailableForm = new FormData();
+  unavailableForm.set('file', new File([Buffer.from([255]), Buffer.from(name)], 'reader-unavailable.md', { type: 'text/markdown' }));
+  const unavailable = (await apiJson('/api/projects/' + readerProject + '/sources/file', { method: 'POST', body: unavailableForm })).body;
+  await expect.poll(async () => (await apiJson('/api/sources/' + unavailable.sourceId)).body.source.readableState).toBe('failed');
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport); await openCitation(0);
+    const mark = page.locator('.er-lib__text mark');
+    assert(await mark.evaluate(el => document.activeElement === el), 'Citation navigation must focus the actual mark.');
+    assert(await mark.evaluate(el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }), 'Short passage must be inside the viewport.');
+    assert(await mark.evaluate(el => {
+      const before = el.previousSibling, after = el.nextSibling;
+      if (!before?.textContent || !after?.textContent) return false;
+      const range = document.createRange(), a = before.textContent.lastIndexOf('Before context sentence.'), b = after.textContent.indexOf('After context sentence.');
+      if (a < 0 || b < 0) return false;
+      range.setStart(before, a); range.setEnd(before, a + 'Before context sentence.'.length); const first = range.getBoundingClientRect();
+      range.setStart(after, b); range.setEnd(after, b + 'After context sentence.'.length); const last = range.getBoundingClientRect();
+      return first.top >= 0 && last.bottom <= innerHeight;
+    }), 'Short passage must retain visible neighboring sentences.');
+    for (const media of [{ colorScheme: 'light' as const, forcedColors: 'none' as const }, { colorScheme: 'dark' as const, forcedColors: 'none' as const }, { colorScheme: 'dark' as const, forcedColors: 'active' as const }]) {
+      await page.emulateMedia(media);
+      assert(await mark.evaluate(el => getComputedStyle(el).backgroundColor !== getComputedStyle(el.parentElement!).backgroundColor), 'Mark must remain distinct in light/dark/forced colors.');
+    }
+    await page.emulateMedia({ colorScheme: 'dark', forcedColors: 'none' });
+    if (viewport.width === 1440) await page.screenshot({ path: outDir + '/desktop-reader.png' });
+    const inside = 'русский текст с emoji 🧪', insideStart = canonical.indexOf(inside);
+    const selections = [[insideStart, insideStart + inside.length], [canonical.indexOf('Before context sentence.'), canonical.indexOf('After context sentence.') + 'After context sentence.'.length]];
+    for (const [start, end] of selections) {
+      await selectCanonical(start, end); await page.getByRole('button', { name: 'Copy link to selection', exact: true }).click();
+      const selected = canonical.slice(start, end), startByte = Buffer.byteLength(canonical.slice(0, start)), endByte = Buffer.byteLength(canonical.slice(0, end));
+      await expect.poll(() => mark.textContent()).toBe(selected);
+      const link = new URL(page.url()); assert.equal(link.searchParams.get('start'), String(startByte)); assert.equal(link.searchParams.get('end'), String(endByte));
+      assert((await apiBytes('/api/revisions/' + revisionId + '/range?start=' + startByte + '&end=' + endByte)).bytes.equals(Buffer.from(selected)), 'Copy link must preserve exact bytes within/across mark.');
+      assert.equal(await page.locator('.er-lib__text').textContent(), canonical);
+    }
+    await page.goBack(); await expect.poll(() => mark.textContent()).toBe(inside);
+    await page.goBack(); await expect.poll(() => mark.textContent()).toBe(whole.bytes.subarray(passageBlock.start, passageBlock.end).toString('utf8'));
+    await page.getByRole('link', { name: 'Clear passage', exact: true }).click(); await expect(mark).toHaveCount(0);
+    assert.equal(await page.locator('.er-lib__text').textContent(), canonical);
+    assert(await page.locator('.er-lib__text').evaluate(el => document.activeElement === el), 'Clear must keep keyboard focus in the full text.');
+    const invalid = new URL(reader), emojiByte = Buffer.byteLength(canonical.slice(0, canonical.indexOf('🧪')));
+    invalid.searchParams.set('start', String(emojiByte + 1)); invalid.searchParams.set('end', String(emojiByte + 2));
+    await page.goto(invalid.href); await expect(page.locator('.er-lib__excerpt [role="alert"]')).toBeVisible(); await expect(mark).toHaveCount(0);
+    assert.equal(await page.locator('.er-lib__text').textContent(), canonical); await page.getByRole('link', { name: 'Clear passage', exact: true }).click();
+    const textApi = origin + '/api/revisions/' + revisionId + '/text';
+    await page.route(textApi, route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Reader text unavailable' } }) }));
+    await page.goto(invalid.href); await expect(page.locator('.er-lib__excerpt [role="alert"]')).toBeVisible();
+    await expect(page.getByText('Opening the selected passage.', { exact: true })).toHaveCount(0); await page.unroute(textApi);
+    await page.goto(origin + '/p/' + readerProject + '/source/' + unavailable.sourceId + '?revisionId=' + unavailable.revisionId + '&start=bad&end=2');
+    await expect(page.locator('.er-lib__excerpt [role="alert"]')).toBeVisible(); await expect(page.getByText('Opening the selected passage.', { exact: true })).toHaveCount(0);
+    await page.getByRole('link', { name: 'Clear passage', exact: true }).click();
+    await openCitation(1);
+    assert(await mark.evaluate(el => { const first = document.createRange(); first.setStart(el.firstChild!, 0); first.setEnd(el.firstChild!, 1); const r = first.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }), 'Citation navigation must show the beginning of a long passage.');
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Reader must not overflow horizontally.');
+    if (viewport.width === 390) await page.screenshot({ path: outDir + '/phone-reader.png' });
+  }
+  await page.setViewportSize({ width: 390, height: 844 }); await page.goto(copied);
   const replacement = '# Новая версия\n\nНовая ревизия без старого текста.\n' + name;
   await page.locator('#er-lib-replace').setInputFiles({ name: 'replacement.md', mimeType: 'text/markdown', buffer: Buffer.from(replacement) });
   await page.getByRole('button', { name: 'Upload new revision', exact: true }).click();
@@ -677,7 +767,10 @@ try {
   await expect(page.locator('.er-lib__text')).not.toContainText('Новая ревизия');
   await expect(page.locator('.er-lib__text')).toContainText('Точный русский текст');
   await reopened.reload();
-  await expect(reopened.locator('.er-lib__excerpt pre')).toHaveText('Точный русский текст');
+  await expect(reopened.locator('.er-lib__text mark')).toHaveText('Точный русский текст');
+  assert.equal(await reopened.locator('.er-lib__text').textContent(), canonical, 'Saved old revision must retain full original bytes after replacement.');
+  await openCitation(0);
+  assert.equal(new URL(page.url()).searchParams.get('revisionId'), revisionId, 'The actual old citation must retain its original revision.');
   const revLoc = new URL(page.url());
   const revPid = revLoc.pathname.split('/')[2] as string;
   const revSid = revLoc.pathname.split('/')[4] as string;
@@ -713,7 +806,7 @@ try {
   await context.setOffline(false);
   await addDialog.getByRole('button', { name: 'Close', exact: true }).click();
   await page.goto(copied);
-  await expect(page.locator('.er-lib__excerpt pre')).toHaveText('Точный русский текст');
+  await expect(page.locator('.er-lib__text mark')).toHaveText('Точный русский текст');
   const mainPid = new URL(copied).pathname.split('/')[2] as string;
   const dupeTextTitle = name + ' dupe text';
   const dupeTextBody = '# Дубликат\n\nТот же текст дважды ' + name + '.\n';
@@ -797,7 +890,6 @@ try {
   }
   assert.equal(peakUploads, 2, 'Browser file upload concurrency must be two.');
   assert.deepEqual(pageErrors, [], 'Browser runtime errors');
-  await page.screenshot({ path: outDir + '/phone-reader.png', fullPage: true });
 } finally { await browser.close(); }
 let limitResult = '25 MiB case: NOT_RUN this pass; opt in with ELIOT_EVAL_LIMIT=1.';
 if (process.env.ELIOT_EVAL_LIMIT === '1') {
