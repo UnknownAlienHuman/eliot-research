@@ -134,7 +134,8 @@ its text preview, and Apply a new readable revision while retaining the original
 3. Browser batch UX sends **one file per request**, with at most two uploads in flight. The API accepts one file up to
    25 MiB, never a 100 MiB buffered multipart batch. Text and URL have separate JSON routes/shapes. IMPLEMENTATION §4.
 4. Hash, store original under an immutable R2 key, create pending rows and start deterministic
-   `ingest-<revisionId>`. Exact duplicates are reported with Attach; never silently merged.
+   `ingest-<revisionId>`. Exact duplicates are reported with Attach; never silently merged. Concurrent uploads or
+   replacements cannot admit the same bytes for different live sources; deliberate reconversion within one source remains available.
 5. Convert native UTF-8 text locally. Use cached `env.AI.toMarkdown().supported()` only for document formats that
    require it. Ordinary ingest never invokes OCR; scans retain the original and show
    `needs_conversion`. Write canonical `text.md`, exact `blocks.json`, state/warnings and current readable revision.

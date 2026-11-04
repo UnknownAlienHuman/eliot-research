@@ -18,7 +18,12 @@ const runtime = await mkdtemp(path.join(os.tmpdir(), 'eliot-k1-library-'));
 const origin = 'http://127.0.0.1';
 const entry = `
 import app from ${JSON.stringify(path.join(root, 'src/index.ts'))};
-import {updateProject} from ${JSON.stringify(path.join(root, 'src/library.ts'))};
+import {addSource,updateProject} from ${JSON.stringify(path.join(root, 'src/library.ts'))};
+import {WorkflowEntrypoint} from 'cloudflare:workers';
+export class FixtureIngest extends WorkflowEntrypoint {
+  run(event,step){return step.do('count storage-only dispatch',()=>this.env.DB.prepare(
+    'UPDATE fixture_ingest_dispatch SET completed=completed+1 WHERE id=?').bind(event.instanceId).run());}
+}
 const metrics={r2Gets:[],r2Writes:0,d1Writes:0};
 const writeSql=/^\\s*(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|VACUUM|ATTACH|DETACH|PRAGMA)\\b/i;
 function instrumentStatement(statement,write,fault){return new Proxy(statement,{get(target,key){
@@ -44,6 +49,36 @@ function instrumentBucket(bucket){return new Proxy(bucket,{get(target,key){
 }});}
 export default {async fetch(request,env,ctx){
   const url=new URL(request.url);
+  if(url.pathname==='/__source-pair'){
+    const {projectId,inputs,first=0,fault}=await request.json();
+    let arrivals=0,releaseReady,rejectReady,releaseFirst;
+    const ready=new Promise((resolve,reject)=>{releaseReady=resolve;rejectReady=reject;}),firstDone=new Promise(resolve=>releaseFirst=resolve),keys=[];
+    const timer=setTimeout(()=>rejectReady(new Error('Source preflights did not overlap')),3000);
+    let outcomes;
+    try{outcomes=await Promise.all(inputs.map(async(input,index)=>{
+      const DB=new Proxy(env.DB,{get(target,key){
+        if(key==='batch')return async statements=>{
+          if(index!==first)await firstDone;
+          if(fault==='before')throw new Error('Synthetic revision batch unavailable');
+          const saved=await target.batch(statements);
+          if(fault==='after')throw new Error('Synthetic revision batch committed, reply lost');
+          return saved;
+        };
+        const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
+      }});
+      const BUCKET={async put(key,...args){keys[index]=key;const stored=await env.BUCKET.put(key,...args);
+        if(++arrivals===inputs.length)releaseReady();await ready;return stored;},delete:key=>env.BUCKET.delete(key)};
+      const INGEST={async create(options){await env.DB.prepare('INSERT INTO fixture_ingest_dispatch(id,revision_id,starts,completed) VALUES(?,?,1,0) '+
+        'ON CONFLICT(id) DO UPDATE SET starts=starts+1').bind(options.id,options.params.revisionId).run();return env.INGEST.create(options);},
+        get:id=>env.INGEST.get(id)};
+      try{return {ok:true,value:await addSource({...env,DB,BUCKET,INGEST},{type:'owner'},projectId,
+        {title:'Duplicate boundary',kind:'text',bytes:new TextEncoder().encode(input.text).buffer,filename:'fixture.md',mimeType:'text/markdown',
+          ...(input.sourceId?{sourceId:input.sourceId}:{})})};}
+      catch(error){return {ok:false,status:error.status,code:error.code,duplicate:error.duplicate,message:error.message};}
+      finally{if(index===first)releaseFirst();}
+    }));}finally{clearTimeout(timer);}
+    return Response.json({outcomes,arrivals,keys});
+  }
   if(url.pathname==='/__project-pair'){
     const {id,title}=await request.json();
     let reads=0,release,reject;
@@ -95,6 +130,7 @@ const mf = new Miniflare(convertV4MiniflareOptions({
     name: 'library', rootPath: runtime, scriptPath: output, modules: true,
     compatibilityDate: '2026-10-24', compatibilityFlags: ['nodejs_compat'],
     d1Databases: { DB: 'library-db' }, r2Buckets: { BUCKET: 'library-r2' },
+    workflows: { INGEST: { name: 'library-storage-counter', className: 'FixtureIngest' } },
     outboundService: { name: 'no-network' },
     bindings: {
       ELIOT_LOCAL_DEV: '1', ELIOT_ORIGIN: origin, ELIOT_ACCESS_TEAM_DOMAIN: '', ELIOT_ACCESS_AUD: '',
@@ -234,6 +270,88 @@ async function seedReaderArtifacts(db, bucket, sourceId, revisions, title, reade
   return { oldRevision, current, rows, title };
 }
 
+async function replacementDuplicateChecks(db, bucket) {
+  await db.exec('CREATE TABLE fixture_ingest_dispatch(id TEXT PRIMARY KEY,revision_id TEXT NOT NULL,starts INTEGER NOT NULL,completed INTEGER NOT NULL)');
+  const projectId = uuid(99_999_001), retained = [], dispatched = [];
+  await createProject(db, projectId, 'Concurrent replacements');
+  async function target() {
+    const source = await seedSource(db, bucket, { projectId });
+    const key = `source/${source.revisionId}/original`, text = 'Retained original ' + source.id;
+    await bucket.put(key, text); retained.push({ source, key, text });
+    return source.id;
+  }
+  async function submit(inputs, first = 0, fault?) {
+    const result = await requestJson('/__source-pair', 'POST', { projectId, inputs, first, ...(fault ? { fault } : {}) });
+    for (const [index, outcome] of result.outcomes.entries()) {
+      const key = result.keys[index];
+      if (!key) { assert.equal(outcome.ok, false); continue; } // Rejected during preflight, before R2.
+      const revisionId = key.split('/')[1];
+      const row = await db.prepare('SELECT id,source_id FROM source_revision WHERE id=?').bind(revisionId).first();
+      const dispatch = await db.prepare('SELECT starts FROM fixture_ingest_dispatch WHERE revision_id=?').bind(revisionId).first();
+      if (outcome.ok) {
+        assert.equal(row?.source_id, outcome.value.sourceId); assert.equal(dispatch?.starts, 1);
+        assert.equal(await (await bucket.get(key)).text(), inputs[index].text); dispatched.push(revisionId);
+      } else {
+        assert.equal(row, null); assert.equal(dispatch, null); assert.equal(await bucket.get(key), null);
+      }
+    }
+    return result;
+  }
+  // Both requests pass the hash lookup and replacement membership read before
+  // either actual D1 transaction. Control both commit orders without paid work.
+  for (const mixed of [false, true]) for (const first of [0, 1]) {
+    const a = await target(), b = mixed ? undefined : await target(), text = `race-${mixed}-${first}`;
+    const beforeSources = (await db.prepare('SELECT count(*) AS n FROM source').first()).n;
+    const result = await submit([{ sourceId: a, text }, { ...(b ? { sourceId: b } : {}), text }], first);
+    assert.equal(result.arrivals, 2);
+    assert.equal(result.outcomes[first].ok, true); assert.equal(result.outcomes[1 - first].status, 409);
+    assert.equal(result.outcomes[1 - first].duplicate.sourceId, result.outcomes[first].value.sourceId);
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))), b => b.toString(16).padStart(2, '0')).join('');
+    assert.equal((await db.prepare('SELECT count(*) AS n FROM source_revision WHERE original_sha256=?').bind(hash).first()).n, 1);
+    assert.equal((await db.prepare('SELECT count(*) AS n FROM source').first()).n, beforeSources + (mixed && first === 1 ? 1 : 0));
+  }
+  const same = await target(), sameText = 'Deliberate same-source reconversion';
+  for (let n = 0; n < 2; n++) assert.equal((await submit([{ sourceId: same, text: sameText }])).outcomes[0].ok, true);
+  assert.deepEqual((await db.prepare('SELECT revision_no FROM source_revision WHERE source_id=? ORDER BY revision_no').bind(same).all()).results.map(r => r.revision_no), [1, 2, 3]);
+  const cas = await target();
+  const casPair = await submit([{ sourceId: cas, text: 'same-source CAS' }, { sourceId: cas, text: 'same-source CAS' }]);
+  assert.equal(casPair.outcomes.filter(o => o.ok).length, 1); assert.equal(casPair.outcomes[1].status, 409);
+  const newPair = await submit([{ text: 'ordinary new duplicate' }, { text: 'ordinary new duplicate' }]);
+  assert.equal(newPair.outcomes[0].ok, true); assert.equal(newPair.outcomes[1].status, 409);
+  for (const fault of ['before', 'after']) {
+    const sourceId = await target(), result = await submit([{ sourceId, text: 'ambiguous batch ' + fault }], 0, fault);
+    assert.equal(result.outcomes[0].ok, fault === 'after');
+    if (fault === 'before') assert.equal(result.outcomes[0].status, 409);
+  }
+  for (const state of ['active', 'archived', 'deleted', 'revision-deleted']) {
+    const a = await target(), b = await target(), text = 'duplicate policy ' + state;
+    const first = (await submit([{ sourceId: a, text }])).outcomes[0].value;
+    if (state === 'revision-deleted') await db.prepare('UPDATE source_revision SET deleted_at=2 WHERE id=?').bind(first.revisionId).run();
+    else await db.prepare('UPDATE source SET state=? WHERE id=?').bind(state, a).run();
+    const next = (await submit([{ sourceId: b, text }])).outcomes[0];
+    assert.equal(next.ok, state === 'deleted' || state === 'revision-deleted');
+    if (!next.ok) { assert.equal(next.status, 409); assert.equal(next.duplicate.sourceId, a); }
+  }
+  const detached = await target();
+  await db.prepare('DELETE FROM project_source WHERE project_id=? AND source_id=?').bind(projectId, detached).run();
+  assert.equal((await submit([{ sourceId: detached, text: 'Must attach before replacing' }])).outcomes[0].status, 404);
+  for (const { source, key, text } of retained) {
+    assert.equal((await db.prepare('SELECT current_revision_id AS id FROM source WHERE id=?').bind(source.id).first()).id, source.revisionId);
+    assert.equal(await (await bucket.get(key)).text(), text);
+  }
+  // The native Workflow is only a durable dispatch counter. It performs no conversion.
+  const deadline = Date.now() + 5000;
+  while ((await db.prepare('SELECT count(*) AS n FROM fixture_ingest_dispatch WHERE completed!=1').first()).n && Date.now() < deadline)
+    await new Promise(resolve => setTimeout(resolve, 25));
+  const rows = (await db.prepare('SELECT revision_id,starts,completed FROM fixture_ingest_dispatch').all()).results;
+  assert.equal(rows.length, dispatched.length); assert(rows.every(row => row.starts === 1 && row.completed === 1));
+  console.log(JSON.stringify({ scope: 'K1_REPLACEMENT_DUPLICATES', runtime: 'pinned Workerd/D1/R2',
+    postPreflightRaces: 4, bothCommitOrders: true, oneOwningRevisionAndOriginal: true, loserNoDispatchAndOwnKeyRemoved: true,
+    sameSourceReconversionAndUniqueRevisionCas: true, ordinaryNewDuplicateRollback: true, beforeAndLostBatchReplies: true,
+    liveArchivedDeletedRevisionPolicy: true, missingMembershipRejected: true, oldHeadsAndOriginalsRetained: true,
+    workflowBinding: 'SYNTHETIC_DURABLE_DISPATCH_COUNTER', workflowStarts: rows.length, conversionAndModelCalls: 0 }));
+}
+
 try {
   await mf.ready;
   const db = await mf.getD1Database('DB', 'library');
@@ -303,7 +421,7 @@ try {
   assert.deepEqual(await requestJson(chatPath, 'POST', { id: competingId, title: accepted.chat.title }), accepted);
   console.log(JSON.stringify({ scope: 'K2_CHAT_CREATE_STORAGE', runtime: 'pinned Workerd/D1', concurrentReplayOneWinner: true,
     mismatchForeignArchivedAndInvalidRejected: true, originalRowsUnchanged: true, beforeAndAfterCommitFaults: true,
-    legacyCreate: true, modelCalls: 0, workflowBinding: 'ABSENT', externalNetwork: 'FORBIDDEN' }));
+    legacyCreate: true, modelCalls: 0, workflowBinding: 'SYNTHETIC_DURABLE_DISPATCH_COUNTER', externalNetwork: 'FORBIDDEN' }));
 
   const singleProject = await nextProject('One source target');
   const single = await seedSource(db, bucket, { title: 'One shared source', createdAt: 20 });
@@ -568,8 +686,9 @@ try {
     attachmentDuringPaging: true, newUploadRequiresRefresh: true,
     attachPostIdempotent: true, retainedOldAndCurrentCanonicalBytes: true, existingUnderstandingAndUsageReused: true,
     availableListR2Gets: 0, attachmentR2Gets: 0, attachmentR2Writes: 0,
-    modelCalls: 0, workflowBinding: 'ABSENT', externalNetwork: 'FORBIDDEN',
+    modelCalls: 0, workflowBinding: 'SYNTHETIC_DURABLE_DISPATCH_COUNTER', externalNetwork: 'FORBIDDEN',
   }));
+  await replacementDuplicateChecks(db, bucket);
 } finally {
   await mf.dispose();
 }
