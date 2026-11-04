@@ -692,8 +692,10 @@ server-generated creation. Titles must be valid Unicode; the composer uses up to
 After reload, History can open a committed chat and any accepted turn through existing storage-only reads. No request
 is resumed automatically. If only creation committed, the full question is not recoverable from its truncated title;
 unaccepted draft text is not persisted in the URL, localStorage or another client cache.
-Ordinary chat has no application wall-clock or idle-abort timer. Stop aborts its active SDK call and preserves received
-text; provider/platform failures remain failed without text or partial with text. Only explicit owner Stop can produce
+Ordinary chat has no application wall-clock or idle-abort timer. Stop signals abort and preserves received text;
+its response acknowledges that signal, not upstream completion. The pinned SDK can close its consumer and release
+the local queue even if transport cancellation stalls; missing provider usage stays unknown. Provider/platform failures
+remain failed without text or partial with text. Only explicit owner Stop can produce
 cancelled. After the SDK iterator closes, read any resolved usage and check the signal before accepting a normal finish:
 abort can close the iterator normally. The eval's model POST wait has no 90-second client cutoff; a failed wait is
 reconciled by bounded reads of that same submitted turn ID, never another Send.

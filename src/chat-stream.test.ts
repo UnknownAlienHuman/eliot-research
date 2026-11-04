@@ -393,7 +393,7 @@ describe("ChatAgent stream lifetime", () => {
       expect(turn.error).toContain("Stopped."); expect(fetchCalls).toBe(1); expect(vi.getTimerCount()).toBe(0);
     } finally { intercepted.mockImplementation(original); h.db.close(); h.d1.close(); vi.useRealTimers(); }
   });
-  it("counts nonempty reasoning as progress without storing it as answer text", async () => {
+  it("allows long reasoning without storing it in the public answer", async () => {
     vi.useFakeTimers(); const h = makeHarness();
     try {
       const run = await startStream(h, "aaaaaaaa-aaaa-4aaa-8aaa-123456789013");
@@ -406,6 +406,54 @@ describe("ChatAgent stream lifetime", () => {
       expect(turn).toMatchObject({ state: "completed", answer: "Public answer [S1:1].", inputTokens: 8, outputTokens: 42 });
       expect(turn.firstTokenMs).toBeGreaterThan(90_000); expect(fetchCalls).toBe(1); expect(vi.getTimerCount()).toBe(0);
     } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
+  });
+  it.each(["headers", "body"])("Stop releases the local queue when an unresponsive transport stalls its %s", async (phase) => {
+    vi.useFakeTimers(); const h = makeHarness();
+    let releaseHeaders: ((response: Response) => void) | undefined, releaseCancel: (() => void) | undefined;
+    let firstSignal: AbortSignal | null | undefined, firstTransportReturned = false, cancelCalls = 0;
+    const completed = () => new Response(sse([chunk({ content: "Next answer [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 42 })]), { headers: { "content-type": "text/event-stream" } });
+    (h.env.AI as unknown as { fetch: (url: unknown, init?: RequestInit) => Promise<Response> }).fetch = async (_url, init) => {
+      fetchCalls++;
+      if (fetchCalls > 1) return completed();
+      firstSignal = init?.signal;
+      if (phase === "headers") {
+        // Deliberately ignores AbortSignal: SDK cancellation is not proof that this transport ended.
+        const response = await new Promise<Response>((resolve) => { releaseHeaders = resolve; });
+        firstTransportReturned = true; return response;
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new TextEncoder().encode("data: " + chunk({ content: "Retained [S1:1]." }, null) + "\n\n")); },
+        cancel() { cancelCalls++; return new Promise<void>((resolve) => { releaseCancel = resolve; }); },
+      }), { headers: { "content-type": "text/event-stream" } });
+    };
+    try {
+      await h.agent.onStart();
+      const input: RunTurnInput = { projectId, chatId, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-123456789016", question: "Stalled first question", scopeMode: "explicit", sourceIds: ["s1"] };
+      const pending = h.agent.submitTurn(input, true);
+      for (let i = 0; i < 50 && fetchCalls === 0; i++) await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(0);
+      const next = { ...input, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-123456789017", question: "Accepted next question" };
+      expect(await h.agent.submitTurn(next)).toEqual({ turnId: next.turnId, queued: true });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fetchCalls).toBe(1); expect(h.agent.state.queued?.turnId).toBe(next.turnId);
+      expect(await h.agent.stopTurn(projectId, input.turnId)).toEqual({ turnId: input.turnId });
+      expect(firstSignal?.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(0);
+      const stopped = requireTurn(await pending);
+      expect(stopped).toMatchObject({ state: phase === "body" ? "partial" : "cancelled", answer: phase === "body" ? "Retained [S1:1]." : "",
+        inputTokens: null, outputTokens: null, tokenLimit: TOKEN_BOUND });
+      expect(stopped.error).toContain("Stopped.");
+      expect(requireTurn(await h.agent.submitTurn(next, true)).state).toBe("completed");
+      expect(fetchCalls).toBe(2); expect(h.agent.state.active).toBeNull(); expect(h.agent.state.queued).toBeNull();
+      expect(requireTurn(await h.agent.submitTurn(input, true))).toEqual(stopped); expect(fetchCalls).toBe(2);
+      const third = { ...input, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-123456789018", question: "New explicit Send" };
+      expect(requireTurn(await h.agent.submitTurn(third, true)).state).toBe("completed"); expect(fetchCalls).toBe(3);
+      if (phase === "headers") { expect(firstTransportReturned).toBe(false); releaseHeaders?.(completed()); }
+      else { expect(cancelCalls).toBe(1); releaseCancel?.(); }
+      await vi.advanceTimersByTimeAsync(0);
+      expect((await h.agent.getTurns(projectId)).find(turn => turn.turnId === input.turnId)).toEqual(stopped);
+      expect(h.agent.state.active).toBeNull(); expect(fetchCalls).toBe(3); expect(vi.getTimerCount()).toBe(0);
+    } finally { releaseHeaders?.(completed()); releaseCancel?.(); h.db.close(); h.d1.close(); vi.useRealTimers(); }
   });
 });
 
