@@ -100,42 +100,52 @@ try {
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } }), page = await context.newPage(), posts: any[] = [], errors: string[] = [];
     let known = false, acceptedId = revision, malformed = false, uiState = 'partial', rejectedRequest: string | null = null;
+    let releaseFirstPost: (() => void) | null = null, historyReads = 0;
+    let historyAttempts: { attemptId: string; archivedAt: number }[] = [];
     const alternate = { ...model, route: 'workers-ai:alternate-fixture', id: 'alternate-fixture', label: 'Alternate fixture' };
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/*', route => new URL(route.request().url()).origin === browserOrigin ? route.fallback() : route.abort());
     await context.route('**/api/**', async route => {
       const u = new URL(route.request().url());
-      if (u.pathname.endsWith('/history')) return route.fulfill({ json: { attempts: [{ attemptId: revision, archivedAt: 1 }], nextCursor: null } });
+      if (u.pathname.endsWith('/history')) { historyReads++; return route.fulfill({ json: { attempts: historyAttempts, nextCursor: null } }); }
       if (u.pathname === '/api/models') return route.fulfill({ json: { models: [model, alternate] } });
       if (route.request().method() === 'POST') { const input = route.request().postDataJSON(); posts.push(input);
+        if (posts.length === 1) await new Promise<void>(resolve => { releaseFirstPost = resolve; });
         return malformed ? route.fulfill({ status: 202, contentType: 'application/json', body: '{}' }) : route.abort('connectionclosed'); }
       return route.fulfill({ json: { ...current, state: u.searchParams.has('attemptId') ? 'partial' : uiState, attemptId: u.searchParams.get('attemptId') ?? acceptedId, currentAttemptId: acceptedId, canRecover: !u.searchParams.has('attemptId'), error: u.searchParams.has('attemptId') ? 'Archived failure' : 'Stored failure', knownRequestId: rejectedRequest ?? (known ? acceptedId : null), requestRejection: rejectedRequest ? 'The selected model became unavailable. No retry was started.' : null, progress: { ...current.progress, configuredModel: model.route } } });
     });
     await page.goto(browserOrigin); const region = page.getByRole('region', { name: 'Understanding', exact: true });
-    await region.getByRole('button', { name: 'Retry understanding', exact: true }).click(); await expect(region).toContainText('Request outcome is unknown.');
+    await region.getByRole('button', { name: 'Previous attempts', exact: true }).click(); await expect(region).toContainText('No previous attempts.');
+    await region.getByRole('button', { name: 'Retry understanding', exact: true }).click(); await expect.poll(() => posts.length).toBe(1);
+    await expect(region).toContainText('No previous attempts.'); assert(releaseFirstPost); releaseFirstPost();
+    await expect(region).toContainText('Request outcome is unknown.');
     const pending = posts[0]; assert(pending.retry.attemptId && pending.retry.previousAttemptId === revision);
     await region.getByRole('button', { name: 'Reload understanding', exact: true }).click();
     await expect(region.getByRole('button', { name: 'Send same request', exact: true })).toBeVisible();
     await expect(region.getByRole('button', { name: 'Retry understanding', exact: true })).toHaveCount(0);
     await expect(region.getByRole('button', { name: 'Save available output', exact: true })).toHaveCount(0);
-    await page.reload(); await expect(region.getByRole('button', { name: 'Send same request', exact: true })).toBeVisible(); assert.equal(posts.length, 1);
+    assert.equal(posts.length, 1);
     malformed = true; await region.getByRole('button', { name: 'Send same request', exact: true }).click(); await expect(region).toContainText('Request outcome is unknown.'); assert.deepEqual(posts[1], pending);
     // Delayed original acceptance can finish after a GET of its old predecessor.
-    known = true; acceptedId = pending.retry.attemptId; uiState = 'failed';
+    known = true; acceptedId = pending.retry.attemptId; uiState = 'failed'; historyAttempts = [{ attemptId: revision, archivedAt: 1 }];
+    const readsBeforeReceipt = historyReads;
     await region.getByRole('button', { name: 'Reload understanding', exact: true }).click();
     await expect(region.getByRole('button', { name: 'Retry understanding', exact: true })).toBeVisible(); assert.equal(posts.length, 2);
-    await region.getByRole('button', { name: 'Previous attempts', exact: true }).click();
+    await expect(region.getByRole('button', { name: 'View previous attempt 1', exact: true })).toBeVisible();
+    assert.equal(historyReads, readsBeforeReceipt + 1, 'Accepted GET receipt refreshes already open cached history exactly once.');
     await region.getByRole('button', { name: 'View previous attempt 1', exact: true }).click();
     await expect(region).toContainText('Archived failure');
     await expect(region.getByRole('button', { name: 'Retry understanding', exact: true })).toHaveCount(0);
     await expect(region.getByRole('button', { name: 'Save available output', exact: true })).toHaveCount(0);
     await region.getByRole('button', { name: 'Current attempt', exact: true }).click();
     await expect(region.getByRole('button', { name: 'Retry understanding', exact: true })).toBeVisible();
+    malformed = false;
     await region.getByRole('button', { name: 'Retry understanding', exact: true }).click(); await expect.poll(() => posts.length).toBe(3);
     assert.notEqual(posts[2].retry.attemptId, pending.retry.attemptId); assert.equal(posts[2].retry.previousAttemptId, pending.retry.attemptId);
     await expect(region).toContainText('Request outcome is unknown.');
     const pendingB = posts[2];
     // A's cached acknowledgement must never clear a newly pending B.
+    malformed = true;
     await page.reload(); await expect(region.getByRole('button', { name: 'Send same request', exact: true })).toBeVisible();
     await region.getByRole('button', { name: 'Send same request', exact: true }).click(); await expect.poll(() => posts.length).toBe(4);
     assert.deepEqual(posts[3], pendingB);
@@ -151,5 +161,5 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
-  console.log(JSON.stringify({ scope: 'K3_EXPLICIT_RETRY', nativeWorkflow: true, strictMigrations: true, archivedReceiptExact: true, oldBytesEtagsPreserved: true, attemptScopedSaveGet: true, browserWidths: [1440, 390], lostMalformedReplyRemountReplay: true, delayedAcceptance: true, partialRetry: true, durableRejectionAndNewModel: true, modelCalls: 0, paidProducerCallbacks: 'SKIPPED_WITH_RETAINED_SYNTHETIC_OUTPUT' }));
+  console.log(JSON.stringify({ scope: 'K3_EXPLICIT_RETRY', nativeWorkflow: true, strictMigrations: true, archivedReceiptExact: true, oldBytesEtagsPreserved: true, attemptScopedSaveGet: true, browserWidths: [1440, 390], lostMalformedReplyRemountReplay: true, delayedAcceptance: true, openHistoryReceiptRefresh: true, partialRetry: true, durableRejectionAndNewModel: true, modelCalls: 0, paidProducerCallbacks: 'SKIPPED_WITH_RETAINED_SYNTHETIC_OUTPUT' }));
 } finally { await browser?.close(); if (server) await new Promise<void>(resolve => server.close(() => resolve())); await mf.dispose(); }

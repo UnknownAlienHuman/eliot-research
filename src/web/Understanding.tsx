@@ -79,8 +79,12 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   });
   const view = understanding.data;
   useEffect(() => {
-    if (pendingRetry && view?.knownRequestId === pendingRetry.retry.attemptId) { sessionStorage.removeItem(pendingKey); setPendingRetry(null); if (view.requestRejection) setNote(view.requestRejection); }
-  }, [view, pendingRetry, pendingKey]);
+    if (pendingRetry && view?.knownRequestId === pendingRetry.retry.attemptId) {
+      sessionStorage.removeItem(pendingKey); setPendingRetry(null);
+      if (view.requestRejection) setNote(view.requestRejection);
+      else void queryClient.invalidateQueries({ queryKey: ['understanding-history', sourceId, revisionId], exact: true });
+    }
+  }, [view, pendingRetry, pendingKey, queryClient, sourceId, revisionId]);
   const failure = understanding.error?.message ?? '';
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setModelChoice(''); }, [sourceId, revisionId]);
@@ -129,7 +133,6 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
       const input = retryFailed && retryInput ? retryInput : saveAvailable ? { revisionId, saveAvailable: true } : modelChoice === '' ? { revisionId } : { revisionId, model: modelChoice };
       const accepted = await apiJson<{ revisionId: string; attemptId?: string; rejected?: string }>(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
       if (accepted?.revisionId !== revisionId || (retryFailed && accepted.attemptId !== retryInput?.retry.attemptId)) throw new Error('Could not confirm the request. Reload understanding to check its status.');
-      void queryClient.invalidateQueries({ queryKey: ['understanding-history', sourceId, revisionId], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['sources', projectId], exact: true });
       if (!mounted.current) return;
       if (accepted.rejected) {

@@ -674,6 +674,8 @@ switching, so that result remains readable in history. Terminal pre-admission re
 The rejection insert refuses an accepted current identity, while acceptance refuses any rejected identity, so the
 D1 winner is definitive even when a duplicate preflight fails while the original request is still in flight.
 POST returns a matching `rejected` outcome and GET returns `requestRejection` beside its exact `knownRequestId`.
+The matching accepted GET receipt owns history invalidation, including recovery after a lost or malformed POST reply;
+an already open history refreshes once without remounting. Rejected receipts do not invalidate run history.
 Only this durable outcome clears a rejected pending request and permits a fresh explicit model/ID choice; an ordinary
 HTTP error leaves the request unknown. Replays adopt either accepted or rejected winners before model work.
 `pnpm eval k3 --retry-only` applies strict migrations and exercises pinned Workerd/Workflows/D1/R2 and the production
