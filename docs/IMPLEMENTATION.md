@@ -1127,6 +1127,10 @@ Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
 Every screen has loading, empty and actionable error states plus stale/paused where relevant. Use one Markdown renderer
 with raw HTML disabled and resolved citation chips. Do not cache private text in localStorage or a service worker.
+The web renderer uses `remark-math` and `rehype-katex` for `\(...\)`, `\[...\]` and `$$...$$` as native MathML, without
+KaTeX styles or font assets. Only the TeX compatibility path adds a standard GFM Markdown AST pass to preserve code, links
+and other literal nodes. Single `$` stays literal for currency; unfinished expressions stay readable and display formulas
+scroll locally. This targets modern Chromium with native MathML, with no legacy HTML fallback or stored-evidence changes.
 
 The shared model picker reuses the approved legacy Material interaction and provider/native-ID identity. Settings
 provider, search and free-name filters only filter the displayed catalogue; they do not change saved routes or admission.

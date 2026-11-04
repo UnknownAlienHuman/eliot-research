@@ -1,6 +1,11 @@
 import { Link } from 'react-router';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfmFromMarkdown } from 'mdast-util-gfm';
+import { gfm } from 'micromark-extension-gfm';
 import type { Citation } from '../citations';
 import './markdown.css';
 
@@ -20,6 +25,32 @@ interface MarkdownNode {
   value?: string;
   properties?: object;
   children?: MarkdownNode[];
+}
+interface SourceNode {
+  type: string;
+  children?: SourceNode[] | undefined;
+  position?: ReturnType<typeof fromMarkdown>['position'];
+}
+
+// Adapt complete TeX delimiters to remark-math syntax; KaTeX owns math parsing.
+// Unfinished streaming expressions and code stay literal.
+function mathDelimiters(text: string): string {
+  if (!text.includes('\\(') && !text.includes('\\[')) return text;
+  const literalRanges: Array<{ start: number; end: number }> = [];
+  function protect(node: SourceNode): void {
+    if (['code', 'inlineCode', 'link', 'linkReference', 'definition', 'image', 'imageReference', 'html'].includes(node.type)) {
+      const start = node.position?.start.offset, end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined) literalRanges.push({ start, end });
+      return;
+    }
+    node.children?.forEach(protect);
+  }
+  protect(fromMarkdown(text, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] }));
+  return text.replace(/(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)|(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]/g,
+    (match: string, inline: string | undefined, display: string | undefined, at: number) => {
+      if (literalRanges.some((range) => at < range.end && at + match.length > range.start)) return match;
+      return display === undefined ? '$$' + inline + '$$' : '\n$$\n' + display.trim() + '\n$$\n';
+    });
 }
 
 export function Markdown({ text, references = [] }: { readonly text: string; readonly references?: readonly MarkdownReference[] }) {
@@ -56,9 +87,9 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
     }
     return visit;
   }
-  return <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} rehypePlugins={[citationLinks]} components={{ img: () => null,
+  return <ReactMarkdown skipHtml remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[citationLinks, [rehypeKatex, { output: 'mathml', trust: false, errorColor: 'currentColor' }]]} components={{ img: () => null,
     a: ({ href, children, title }) => references.some((ref) => ref.href === href)
       ? <Link className='er-citation' to={href ?? ''} title={title}>{children}</Link>
       : <a href={href} title={title}>{children}</a>,
-  }}>{text}</ReactMarkdown>;
+  }}>{mathDelimiters(text)}</ReactMarkdown>;
 }
