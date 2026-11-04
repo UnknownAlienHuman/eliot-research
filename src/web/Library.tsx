@@ -217,10 +217,12 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
   const [rows, setRows] = useState<UploadRow[]>([]);
   const [uploading, setUploading] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [textTitle, setTextTitle] = useState("");
-  const [textBody, setTextBody] = useState("");
-  const [url, setUrl] = useState("");
-  const [urlTitle, setUrlTitle] = useState("");
+  const [textDraft, setTextDraft] = useState({ title: "", body: "" });
+  const [urlDraft, setUrlDraft] = useState({ url: "", title: "" });
+  const [textPending, setTextPending] = useState(false);
+  const [urlPending, setUrlPending] = useState(false);
+  const textSubmitting = useRef(false);
+  const urlSubmitting = useRef(false);
   const sourceQuery = useInfiniteQuery({
     queryKey: ["sources", projectId],
     initialPageParam: null as string | null,
@@ -372,20 +374,26 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
     return true;
   }
   async function submitText() {
-    if (!textTitle.trim() || !textBody.trim()) return;
-    const label = textTitle.trim();
-    if (!await submitDuplicate("/sources/text", label, { title: label, text: textBody })) return;
-    setTextTitle("");
-    setTextBody("");
-    await load();
+    const submittedDraft = textDraft;
+    if (textSubmitting.current || !submittedDraft.title.trim() || !submittedDraft.body.trim()) return;
+    textSubmitting.current = true; setTextPending(true);
+    try {
+      const label = submittedDraft.title.trim();
+      if (!await submitDuplicate("/sources/text", label, { title: label, text: submittedDraft.body })) return;
+      setTextDraft(current => current === submittedDraft ? { title: "", body: "" } : current);
+      await load();
+    } finally { textSubmitting.current = false; setTextPending(false); }
   }
   async function submitUrl() {
-    if (!url.trim()) return;
-    const label = urlTitle.trim() || url.trim();
-    if (!await submitDuplicate("/sources/url", label, { url: url.trim(), title: urlTitle.trim() || undefined })) return;
-    setUrl("");
-    setUrlTitle("");
-    await load();
+    const submittedDraft = urlDraft;
+    if (urlSubmitting.current || !submittedDraft.url.trim()) return;
+    urlSubmitting.current = true; setUrlPending(true);
+    try {
+      const label = submittedDraft.title.trim() || submittedDraft.url.trim();
+      if (!await submitDuplicate("/sources/url", label, { url: submittedDraft.url.trim(), title: submittedDraft.title.trim() || undefined })) return;
+      setUrlDraft(current => current === submittedDraft ? { url: "", title: "" } : current);
+      await load();
+    } finally { urlSubmitting.current = false; setUrlPending(false); }
   }
   function sourceStatus(source: Source): { label: string; tone: string; latest?: string } {
     if (!isReadableSource(source)) return { label: stateLabel(source.readableState), tone: tone(source.readableState) };
@@ -479,17 +487,17 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
           </div>
           <form className="er-field er-lib__form" onSubmit={(event) => { event.preventDefault(); void submitText(); }}>
             <label className="er-field__label" htmlFor={textTitleId}>Pasted text title</label>
-            <input id={textTitleId} value={textTitle} maxLength={200} onChange={(event) => setTextTitle(event.currentTarget.value)} placeholder="Meeting notes" />
+            <input id={textTitleId} value={textDraft.title} maxLength={200} onChange={(event) => { const title = event.currentTarget.value; setTextDraft(current => ({ ...current, title })); }} placeholder="Meeting notes" />
             <label className="er-field__label" htmlFor={textBodyId}>Text</label>
-            <textarea id={textBodyId} value={textBody} onChange={(event) => setTextBody(event.currentTarget.value)} placeholder="Paste source text here" />
-            <button className="er-button er-button--tonal" type="submit" disabled={!textTitle.trim() || !textBody.trim()}>Add text</button>
+            <textarea id={textBodyId} value={textDraft.body} onChange={(event) => { const body = event.currentTarget.value; setTextDraft(current => ({ ...current, body })); }} placeholder="Paste source text here" />
+            <button className="er-button er-button--tonal" type="submit" disabled={textPending || !textDraft.title.trim() || !textDraft.body.trim()}>Add text</button>
           </form>
           <form className="er-field er-lib__form" onSubmit={(event) => { event.preventDefault(); void submitUrl(); }}>
             <label className="er-field__label" htmlFor={urlId}>Page URL (https only)</label>
-            <input id={urlId} inputMode="url" value={url} onChange={(event) => setUrl(event.currentTarget.value)} placeholder="https://example.com/report" />
+            <input id={urlId} inputMode="url" value={urlDraft.url} onChange={(event) => { const url = event.currentTarget.value; setUrlDraft(current => ({ ...current, url })); }} placeholder="https://example.com/report" />
             <label className="er-field__label" htmlFor={urlTitleId}>Title (optional)</label>
-            <input id={urlTitleId} value={urlTitle} maxLength={200} onChange={(event) => setUrlTitle(event.currentTarget.value)} />
-            <button className="er-button er-button--tonal" type="submit" disabled={!url.trim()}>Add URL</button>
+            <input id={urlTitleId} value={urlDraft.title} maxLength={200} onChange={(event) => { const title = event.currentTarget.value; setUrlDraft(current => ({ ...current, title })); }} />
+            <button className="er-button er-button--tonal" type="submit" disabled={urlPending || !urlDraft.url.trim()}>Add URL</button>
           </form>
           {rows.length > 0 ? (
             <ul className="er-card er-lib__progress" aria-live="polite">

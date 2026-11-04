@@ -56,6 +56,7 @@ jobs:
           pnpm eval k0
           pnpm eval k1 --native-only
           pnpm eval k1 --library-only
+          pnpm eval k1 --library-only --source-add-browser
           pnpm eval k1 --library-browser
           pnpm eval k1 --projects-browser
           pnpm eval k2 --native-only
