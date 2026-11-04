@@ -66,7 +66,8 @@ app.use("/api/*", bodyLimit({ maxSize: MAX_SOURCE_BYTES + 65_536,
 }));
 const uuid = z.uuid();
 const title = z.string().trim().min(1).max(200);
-const projectInput = z.object({ title, description: z.string().max(2000).optional() }).strict();
+const projectInput = z.object({ id: uuid.optional(), title: title.refine(value => !/[\uD800-\uDFFF]/u.test(value), "Use a valid Unicode title."),
+  description: z.string().max(2000).refine(value => !/[\uD800-\uDFFF]/u.test(value), "Use a valid Unicode description.").optional() }).strict();
 const projectPatch = z.object({ title: title.optional(), archived: z.boolean().optional() }).strict();
 async function chatRecord(env: Env, projectId: string, chatId: string) {
   const chat = await env.DB.prepare("SELECT id,project_id AS projectId,title,updated_at AS updatedAt FROM chat WHERE id=? AND project_id=? AND archived_at IS NULL")
@@ -174,7 +175,8 @@ app.get("/api/projects", async (c) => c.json(await listProjects(c.env, c.get("ac
   z.enum(["false", "true"]).default("false").parse(c.req.query("archived")) === "true")));
 app.post("/api/projects", async (c) => {
   const input = projectInput.parse(await c.req.json());
-  return c.json({ project: await createProject(c.env, c.get("actor"), { title: input.title, ...(input.description === undefined ? {} : { description: input.description }) }) }, 201);
+  return c.json({ project: await createProject(c.env, c.get("actor"), { title: input.title,
+    ...(input.id === undefined ? {} : { id: input.id }), ...(input.description === undefined ? {} : { description: input.description }) }) }, 201);
 });
 app.get("/api/projects/:id", async (c) => c.json({ project: await getProject(c.env, c.get("actor"), uuid.parse(c.req.param("id"))) }));
 app.patch("/api/projects/:id", async (c) => {

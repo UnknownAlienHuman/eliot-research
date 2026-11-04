@@ -127,6 +127,7 @@ its text preview, and Apply a new readable revision while retaining the original
 
 1. Bind D1, R2, Workers AI and `IngestWorkflow`; apply `migrations/0001_library.sql`.
 2. Implement projects, shared Library sources, project memberships and immutable revisions.
+   Project creation preserves edits made while waiting and safely repeats an unconfirmed request with the same UUID.
    Projects defaults to active rows; Show archived projects pages through archived rows and exposes the existing
    Unarchive action. Archive/restore keeps sources, history and saved evidence intact.
    Add sources exposes the existing Library in bounded pages and attaches a saved source without another upload,
