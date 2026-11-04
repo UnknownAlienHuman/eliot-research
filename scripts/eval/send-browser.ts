@@ -29,14 +29,27 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     await page.route(origin + '/api/models', route => route.fulfill({ json: { models, warnings: [], defaultModel: missingModel } }));
     const requests = [];
-    let outcome = '', held, heldCreate, holdCreate = false, creates = 0, nativePosts = 0, unexpectedWrites = 0;
+    let outcome = '', createFault = '', held, heldCreate, holdCreate = false, creates = 0, nativePosts = 0, unexpectedWrites = 0;
+    const creations = [];
     await page.route('**/api/**', async route => {
       const request = route.request(), path = new URL(request.url()).pathname;
       if (request.method() === 'GET') return route.fallback();
       if (request.method() === 'POST' && path === '/api/projects/' + project + '/chats') {
         creates++;
-        if (holdCreate) { heldCreate = { route, response: await route.fetch() }; return; }
-        return route.continue();
+        if (createFault === 'before') {
+          creations.push({ input: request.postDataJSON(), chat: null, status: 0 });
+          return route.abort('failed');
+        }
+        const response = await route.fetch();
+        assert(response.ok());
+        const data = await response.json();
+        creations.push({ input: request.postDataJSON(), chat: data.chat, status: response.status() });
+        if (holdCreate) { heldCreate = { route, response }; return; }
+        if (createFault === 'lost') return route.abort('failed');
+        if (createFault === 'json') return route.fulfill({ status: 201, contentType: 'application/json', body: '{' });
+        if (createFault === 'missing-id') return route.fulfill({ status: 201, json: { chat: { title: 'Missing identity' } } });
+        if (createFault === 'wrong-id') return route.fulfill({ status: 201, json: { chat: { ...data.chat, id: crypto.randomUUID() } } });
+        return route.fulfill({ response });
       }
       if (request.method() !== 'POST' || !path.endsWith('/turns') || !outcome) {
         unexpectedWrites++; return route.abort('blockedbyclient');
@@ -190,10 +203,75 @@ try {
     await expect(page.locator('.er-chat__turn').getByText(firstNative.body.question, { exact: true })).toBeVisible();
     assert.deepEqual((await api('/api/projects/' + project + '/chats/' + nativeChat)).turns, stored);
     assert.equal(requests.length, count, 'Reload reads the stored turn without another Send.');
-    assert.equal(nativePosts, 2); assert.equal(unexpectedWrites, 0); assert.deepEqual(errors, []);
+
+    for (const fault of ['before', 'lost', 'json', 'missing-id', 'wrong-id']) {
+      await page.goto(origin + chatPath());
+      const text = (fault === 'json' ? 'A' + '😀'.repeat(40) : '') + 'Unconfirmed creation ' + fault + ' ' + viewport.width;
+      await question.fill(text);
+      const before = creations.length, turnCount = requests.length;
+      createFault = fault; outcome = 'ack';
+      await send.click();
+      await expect.poll(() => creations.length).toBe(before + 1);
+      await expect(send).toBeEnabled();
+      await expect(page.getByRole('alert')).toBeVisible();
+      assert.equal(requests.length, turnCount, 'An unconfirmed create response must not dispatch a turn.');
+      if (fault === 'json') await question.fill(text + ' edited before retry');
+      createFault = '';
+      const retriedTurn = await submit('ack');
+      assert.equal(retriedTurn.body.question, fault === 'json' ? text + ' edited before retry' : text);
+      assert.deepEqual(creations[before + 1].input, creations[before].input, 'Retry keeps the creation ID and original title, even after draft edits.');
+      assert.equal(creations[before + 1].chat.id, creations[before].input.id, 'Retry uses the original conversation identity whether or not its first INSERT committed.');
+      if (fault !== 'before') assert.deepEqual(creations[before + 1].chat, creations[before].chat);
+      assert.equal(creations[before + 1].chat.title, Array.from(text).slice(0, 80).join(''));
+      assert.deepEqual([creations[before].status, creations[before + 1].status], fault === 'before' ? [0, 201] : [201, 200]);
+      await expect(page).toHaveURL(origin + chatPath(creations[before + 1].chat.id));
+    }
+
+    // Reload recovers committed inventory/result by reading History; it does not
+    // persist private draft text or repeat an unconfirmed operation automatically.
+    await page.goto(origin + chatPath());
+    const createRecoveryText = 'Read an empty committed chat after reload ' + viewport.width;
+    await question.fill(createRecoveryText);
+    createFault = 'lost'; outcome = 'ack';
+    const beforeReloadCreate = creations.length;
+    await send.click();
+    await expect.poll(() => creations.length).toBe(beforeReloadCreate + 1);
+    await expect(send).toBeEnabled();
+    const recoveredEmpty = creations.at(-1).chat.id;
+    createFault = ''; outcome = '';
+    const writesBeforeReload = { creates, turns: requests.length };
+    await page.reload();
+    await expect(question).toHaveValue('');
+    await page.getByRole('region', { name: 'Chat', exact: true }).getByText('History', { exact: true }).click();
+    await page.locator('.er-chat__history-link[href="' + chatPath(recoveredEmpty) + '"]').click();
+    await expect(currentLink).toHaveAttribute('href', chatPath(recoveredEmpty));
+    assert.deepEqual((await api('/api/projects/' + project + '/chats/' + recoveredEmpty)).turns, []);
+    assert.deepEqual({ creates, turns: requests.length }, writesBeforeReload);
+
+    await page.goto(origin + chatPath());
+    await page.getByRole('combobox', { name: 'Model: provider', exact: true }).selectOption('send-replay-synthetic');
+    await page.getByRole('combobox', { name: 'Model', exact: true }).selectOption(missingModel);
+    await question.fill('Read a committed result after lost reply and reload ' + viewport.width);
+    const reloadTurn = await submit('native-lost');
+    const reloadChat = reloadTurn.path.split('/').at(-2);
+    let resultBeforeReload;
+    await expect.poll(async () => {
+      resultBeforeReload = (await api('/api/projects/' + project + '/chats/' + reloadChat)).turns;
+      return resultBeforeReload[0]?.state;
+    }).toBe('failed');
+    const resultWrites = { creates, turns: requests.length };
+    await page.reload();
+    await page.getByRole('region', { name: 'Chat', exact: true }).getByText('History', { exact: true }).click();
+    await page.locator('.er-chat__history-link[href="' + chatPath(reloadChat) + '"]').click();
+    await expect(currentLink).toHaveAttribute('href', chatPath(reloadChat));
+    await expect(page.locator('.er-chat__turn').getByText(reloadTurn.body.question, { exact: true })).toBeVisible();
+    assert.deepEqual((await api('/api/projects/' + project + '/chats/' + reloadChat)).turns, resultBeforeReload);
+    assert.deepEqual({ creates, turns: requests.length }, resultWrites);
+    assert.equal(nativePosts, 3); assert.equal(unexpectedWrites, 0); assert.deepEqual(errors, []);
     console.log(JSON.stringify({ scope: 'K2_SEND_REPLAY_BROWSER', viewport, failedResponses: 5, sameInputSameRequest: true,
       newInputAndModelNewRequest: true, sourceNavigationPreservesRequest: true, acknowledgedNewSendHasNewId: true,
       lateCreateRetainsHistoryAndTarget: true,
+      lostCreateReusesIdentity: true, reloadAfterUnconfirmedCreateAndTurnIsReadOnly: true,
       nativeStoredRejectionReplayed: true, nativePosts, chatCreates: creates, reloadPosts: 0, modelCalls: 0, fullK2Accepted: false }));
     await context.close();
   }

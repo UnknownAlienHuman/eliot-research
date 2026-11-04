@@ -135,25 +135,26 @@ try {
     await page.goto(origin + chatPath()); await question.fill('Create then leave');
     const creates = origin + '/api/projects/' + project + '/chats';
     pending = await hold(creates); await send.click(); await pending.waiting;
-    await navigate(sourcePath(1)); await pending.release({ chat: { id: chats[0], title: 'Late created' } }); await expect(page).toHaveURL(origin + sourcePath(1));
+    await navigate(sourcePath(1)); await pending.release(await api('/api/projects/' + project + '/chats', pending.body())); await expect(page).toHaveURL(origin + sourcePath(1));
     await page.goto(origin + chatPath()); await question.fill('Created Send then leave');
     const departedCreate = await hold(creates); await send.click(); await departedCreate.waiting;
-    pending = await hold(turnsUrl(chats[0])); await departedCreate.release({ chat: { id: chats[0], title: 'Created before departure' } }); await pending.waiting; interceptedTurns++;
+    pending = await hold(turnsUrl(departedCreate.body().id)); await departedCreate.release(await api('/api/projects/' + project + '/chats', departedCreate.body())); await pending.waiting; interceptedTurns++;
     await navigate(sourcePath(1)); await pending.release(); await expect(page).toHaveURL(origin + sourcePath(1));
     await page.goto(origin + chatPath()); await question.fill('First question');
     const create = await hold(creates); await send.click(); await create.waiting;
-    pending = await hold(turnsUrl(chats[0])); await create.release({ chat: { id: chats[0], title: 'Created fixture' } }); await pending.waiting; interceptedTurns++;
+    const acknowledgedChatId = create.body().id;
+    pending = await hold(turnsUrl(acknowledgedChatId)); await create.release(await api('/api/projects/' + project + '/chats', create.body())); await pending.waiting; interceptedTurns++;
     await question.fill('Next draft');
     const includeA = page.getByRole('checkbox', { name: 'Include Source A in the current source selection', exact: true });
     if (viewport.width > 1000) await includeA.uncheck();
     // A persisted last-turn scope would ordinarily be restored by history hydration.
-    const chatUrl = origin + '/api/projects/' + project + '/chats/' + chats[0];
+    const chatUrl = origin + '/api/projects/' + project + '/chats/' + acknowledgedChatId;
     const turn = { turnId: crypto.randomUUID(), question: 'Synthetic saved answer', answer: 'Synthetic answer', state: 'completed',
       createdAt: 1, historyVersion: 1, model: 'fixture', scopeMode: 'project_default', revisionIds: [], sourceIds: [], citations: [], invalidLabels: 0,
       inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0, firstTokenMs: null, totalMs: 0, error: null };
-    const storedChat = await api('/api/projects/' + project + '/chats/' + chats[0]);
+    const storedChat = await api('/api/projects/' + project + '/chats/' + acknowledgedChatId);
     await page.route(chatUrl, route => route.fulfill({ json: { ...storedChat, turns: [turn] } }));
-    await pending.release(); await expect(page).toHaveURL(origin + chatPath(chats[0])); await expect(question).toHaveValue('Next draft');
+    await pending.release(); await expect(page).toHaveURL(origin + chatPath(acknowledgedChatId)); await expect(question).toHaveValue('Next draft');
     await expect(page.getByRole('button', { name: 'Save as page', exact: true })).toBeVisible();
     if (viewport.width > 1000) await expect(includeA).not.toBeChecked();
     await page.unroute(chatUrl);

@@ -135,7 +135,8 @@ export function ChatView({
     || actionView.current.search !== location.search || actionView.current.key !== location.key)
     actionView.current = { projectId, chatId, path: location.pathname, search: location.search, key: location.key };
   const mounted = useRef(false), sendLock = useRef(false), draftSequence = useRef(0);
-  const sendAttempt = useRef<{ projectId: string; chatId: string | undefined; input: string; turnId: string; createdChat: ChatRow | undefined } | null>(null);
+  const sendAttempt = useRef<{ projectId: string; chatId: string | undefined; input: string; turnId: string; createdChat: ChatRow | undefined;
+    creation: { id: string; title: string } | undefined } | null>(null);
   const sendSequence = useRef(0), saveSequence = useRef(0);
   const sentNavigation = useRef<{ projectId: string; chatId: string; path: string } | null>(null);
   const turnsRoute = useRef<{ projectId: string; chatId?: string } | null>(null);
@@ -450,8 +451,9 @@ export function ChatView({
     };
     const serialized = JSON.stringify(input), previous = sendAttempt.current;
     const createdChat = previous?.projectId === projectId && previous.chatId === chatId ? previous.createdChat : undefined;
+    const creation = previous?.projectId === projectId && previous.chatId === chatId ? previous.creation : undefined;
     const attempt = previous?.projectId === projectId && previous.chatId === chatId && previous.input === serialized ? previous
-      : { projectId, chatId, input: serialized, turnId: crypto.randomUUID(), createdChat };
+      : { projectId, chatId, input: serialized, turnId: crypto.randomUUID(), createdChat, creation };
     sendAttempt.current = attempt;
     const body = { turnId: attempt.turnId, ...input };
     sendLock.current = true;
@@ -461,12 +463,13 @@ export function ChatView({
     try {
       let targetChat = chatId ?? attempt.createdChat?.id;
       if (targetChat === undefined) {
+        const creation = attempt.creation ??= { id: crypto.randomUUID(), title: Array.from(nextQuestion).slice(0, 80).join('') };
         const created = await apiJson<{ chat: ChatRow }>('/api/projects/' + encodeURIComponent(projectId) + '/chats', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: nextQuestion.slice(0, 80) }),
+          body: JSON.stringify(creation),
         });
-        if (typeof created?.chat?.id !== 'string' || !created.chat.id) throw new Error('Could not confirm the new conversation. Try Send again.');
+        if (created?.chat?.id !== creation.id) throw new Error('Could not confirm the new conversation. Try Send again.');
         targetChat = created.chat.id;
         attempt.createdChat = created.chat;
         if (!current()) return; // No new turn is admitted from a departed creation view.

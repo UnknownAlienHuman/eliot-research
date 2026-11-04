@@ -21,13 +21,19 @@ import app from ${JSON.stringify(path.join(root, 'src/index.ts'))};
 import {updateProject} from ${JSON.stringify(path.join(root, 'src/library.ts'))};
 const metrics={r2Gets:[],r2Writes:0,d1Writes:0};
 const writeSql=/^\\s*(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|VACUUM|ATTACH|DETACH|PRAGMA)\\b/i;
-function instrumentStatement(statement,write){return new Proxy(statement,{get(target,key){
-  if(key==='bind')return(...args)=>instrumentStatement(target.bind(...args),write);
-  if(['first','all','run','raw'].includes(key))return(...args)=>{if(write)metrics.d1Writes++;return target[key](...args);};
+function instrumentStatement(statement,write,fault){return new Proxy(statement,{get(target,key){
+  if(key==='bind')return(...args)=>instrumentStatement(target.bind(...args),write,fault);
+  if(['first','all','run','raw'].includes(key))return async(...args)=>{
+    if(write)metrics.d1Writes++;
+    if(fault==='before')throw new Error('Synthetic chat INSERT before commit');
+    const result=await target[key](...args);
+    if(fault==='after')throw new Error('Synthetic chat INSERT lost commit acknowledgement');
+    return result;
+  };
   const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
 }});}
-function instrumentDb(db){return new Proxy(db,{get(target,key){
-  if(key==='prepare')return(sql)=>instrumentStatement(target.prepare(sql),writeSql.test(sql));
+function instrumentDb(db,fault){return new Proxy(db,{get(target,key){
+  if(key==='prepare')return(sql)=>instrumentStatement(target.prepare(sql),writeSql.test(sql),sql.startsWith('INSERT INTO chat(')?fault:null);
   if(key==='batch'||key==='exec')return(...args)=>{metrics.d1Writes++;return target[key](...args);};
   const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
 }});}
@@ -63,7 +69,7 @@ export default {async fetch(request,env,ctx){
   if(url.pathname==='/__library-metrics')return Response.json(metrics);
   const wrapped=new Proxy(env,{get(target,key){
     if(key==='BUCKET')return instrumentBucket(Reflect.get(target,key,target));
-    if(key==='DB')return instrumentDb(Reflect.get(target,key,target));
+    if(key==='DB')return instrumentDb(Reflect.get(target,key,target),request.headers.get('x-test-chat-create-fault'));
     return Reflect.get(target,key,target);
   }});
   return app.fetch(request,wrapped,ctx);
@@ -101,9 +107,9 @@ const mf = new Miniflare(convertV4MiniflareOptions({
   resourcePersistencePath: path.join(runtime, 'state'),
 }));
 
-async function rawRequest(pathname, method = 'GET', body?) {
+async function rawRequest(pathname, method = 'GET', body?, headers = {}) {
   return mf.dispatchFetch(origin + pathname, { method, headers: {
-    Origin: origin, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    Origin: origin, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers,
   }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }
 async function requestJson(pathname, method = 'GET', body?) {
@@ -247,6 +253,57 @@ try {
   const emptyProject = await nextProject('Empty target');
   const empty = await availablePage(emptyProject);
   assert.deepEqual(empty.data, { sources: [], nextCursor: null });
+
+  // Chat inventory uses the same strict migrated D1/HTTP fixture without a model binding.
+  const chatPath = '/api/projects/' + emptyProject + '/chats';
+  const chatInput = { id: uuid(95_000), title: 'Чат 😀 e\u0301' };
+  const simultaneous = await Promise.all([rawRequest(chatPath, 'POST', chatInput), rawRequest(chatPath, 'POST', chatInput)]);
+  assert.deepEqual(simultaneous.map(response => response.status).sort(), [200, 201]);
+  const winner = await simultaneous[0].json();
+  assert.deepEqual(await simultaneous[1].json(), winner);
+  const snapshot = () => db.prepare('SELECT * FROM chat WHERE id=?').bind(chatInput.id).first();
+  const originalChat = await snapshot();
+  assert.equal(originalChat.title, chatInput.title);
+  assert.equal(originalChat.project_id, emptyProject);
+  assert.deepEqual(await requestJson(chatPath, 'POST', chatInput), winner);
+  assert.deepEqual(await snapshot(), originalChat);
+  assert.equal((await rawRequest(chatPath, 'POST', { ...chatInput, title: 'Different title' })).status, 409);
+  const foreignProject = await nextProject('Chat collision target');
+  assert.equal((await rawRequest('/api/projects/' + foreignProject + '/chats', 'POST', chatInput)).status, 409);
+  assert.deepEqual(await snapshot(), originalChat);
+  assert.equal((await rawRequest(chatPath, 'POST', { id: 'invalid', title: 'No row' })).status, 400);
+  assert.equal((await rawRequest(chatPath, 'POST', { id: uuid(95_001), title: '\uD800' })).status, 400);
+  assert.equal(await db.prepare('SELECT COUNT(*) AS n FROM chat WHERE project_id=?').bind(emptyProject).first('n'), 1);
+  await db.prepare('UPDATE chat SET archived_at=123 WHERE id=?').bind(chatInput.id).run();
+  const archivedChat = await snapshot();
+  assert.equal((await rawRequest(chatPath, 'POST', chatInput)).status, 409);
+  assert.deepEqual(await snapshot(), archivedChat);
+  for (const fault of ['before', 'after']) {
+    const input = { id: uuid(fault === 'before' ? 95_002 : 95_003), title: 'Recover ' + fault };
+    assert.equal((await rawRequest(chatPath, 'POST', input, { 'x-test-chat-create-fault': fault })).status, 503);
+    const committed = await db.prepare('SELECT * FROM chat WHERE id=?').bind(input.id).first();
+    assert.equal(committed !== null, fault === 'after');
+    const retry = await rawRequest(chatPath, 'POST', input);
+    assert.equal(retry.status, fault === 'before' ? 201 : 200);
+    assert.equal((await retry.json()).chat.id, input.id);
+    if (committed) assert.deepEqual(await db.prepare('SELECT * FROM chat WHERE id=?').bind(input.id).first(), committed);
+    assert.equal(await db.prepare('SELECT COUNT(*) AS n FROM chat WHERE id=?').bind(input.id).first('n'), 1);
+  }
+  const legacy = await rawRequest(chatPath, 'POST', {});
+  assert.equal(legacy.status, 201);
+  assert.equal((await legacy.json()).chat.title, 'New chat');
+  const competingId = uuid(95_004);
+  const competing = await Promise.all(['First title', 'Second title'].map(title => rawRequest(chatPath, 'POST', { id: competingId, title })));
+  assert.deepEqual(competing.map(response => response.status).sort(), [201, 409]);
+  const accepted = await competing.find(response => response.status === 201).json();
+  const competingRow = await db.prepare('SELECT * FROM chat WHERE id=?').bind(competingId).first();
+  assert.equal(competingRow.project_id, emptyProject);
+  assert.equal(competingRow.title, accepted.chat.title);
+  assert.equal(competingRow.created_at, competingRow.updated_at);
+  assert.deepEqual(await requestJson(chatPath, 'POST', { id: competingId, title: accepted.chat.title }), accepted);
+  console.log(JSON.stringify({ scope: 'K2_CHAT_CREATE_STORAGE', runtime: 'pinned Workerd/D1', concurrentReplayOneWinner: true,
+    mismatchForeignArchivedAndInvalidRejected: true, originalRowsUnchanged: true, beforeAndAfterCommitFaults: true,
+    legacyCreate: true, modelCalls: 0, workflowBinding: 'ABSENT', externalNetwork: 'FORBIDDEN' }));
 
   const singleProject = await nextProject('One source target');
   const single = await seedSource(db, bucket, { title: 'One shared source', createdAt: 20 });
