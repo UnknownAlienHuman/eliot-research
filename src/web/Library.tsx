@@ -528,6 +528,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   const rangeEnd = ep === null ? NaN : Number(ep);
   const [source, setSource] = useState<Source | undefined>(undefined);
   const [revisions, setRevisions] = useState<Revision[]>([]);
+  const [metaFailure, setMetaFailure] = useState("");
   const [text, setText] = useState("");
   const [loadedRev, setLoadedRev] = useState("");
   const [outline, setOutline] = useState<OutlineItem[]>([]);
@@ -559,7 +560,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
     mounted.current = true;
     return () => { mounted.current = false; metaSequence.current++; metaAbort.current?.abort(); };
   }, []);
-  async function refreshMeta(reportFailure = true) {
+  async function refreshMeta() {
     const owner = metaOwner.current, sequence = ++metaSequence.current, abort = new AbortController();
     metaAbort.current?.abort(); metaAbort.current = abort;
     const q = revisionId ? "?revisionId=" + encodeURIComponent(revisionId) : "";
@@ -567,16 +568,16 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
     try {
       const d = await apiJson<{ source: Source; revisions: Revision[] }>("/api/sources/" + encodeURIComponent(sourceId ?? "") + q, { signal: abort.signal });
       if (!current()) return;
-      setSource(d.source); setRevisions(d.revisions); if (reportFailure) setFailure("");
-    } catch (err) { if (current() && reportFailure) setFailure(err instanceof Error ? err.message : "Could not open the source."); }
+      setSource(d.source); setRevisions(d.revisions); setMetaFailure("");
+    } catch (err) { if (current()) setMetaFailure(err instanceof Error ? err.message : "Could not open the source."); }
   }
-  useEffect(() => { setFailure(""); void refreshMeta(); return () => { metaSequence.current++; metaAbort.current?.abort(); }; }, [projectId, sourceId, revisionId]);
+  useEffect(() => { setFailure(""); setMetaFailure(""); void refreshMeta(); return () => { metaSequence.current++; metaAbort.current?.abort(); }; }, [projectId, sourceId, revisionId]);
   useEffect(() => {
-    if (!sourceId || activeState !== "pending") return;
+    if (!sourceId || activeState !== "pending" || metaFailure) return;
     let pending = false;
-    const timer = window.setInterval(async () => { if (pending) return; pending = true; try { await refreshMeta(false); } finally { pending = false; } }, POLL_MS);
+    const timer = window.setInterval(async () => { if (pending) return; pending = true; try { await refreshMeta(); } finally { pending = false; } }, POLL_MS);
     return () => { window.clearInterval(timer); metaAbort.current?.abort(); };
-  }, [sourceId, revisionId, activeState]);
+  }, [sourceId, revisionId, activeState, metaFailure]);
   useEffect(() => {
     if (!activeRevision || activeState === "pending" || activeState === "failed" || activeState === "needs_conversion" || activeState === "") return;
     const abort = new AbortController();
@@ -636,11 +637,12 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
     } catch (err) { if (current()) setFailure(err instanceof Error ? err.message : "Replace failed before a response arrived."); }
     finally { endReplacement(projectId, targetSource); }
   }
-  if (!source) return <LoadGate text="Opening the source…" failure={failure} onRetry={() => void refreshMeta()} />;
+  if (!source) return <LoadGate text="Opening the source…" failure={metaFailure || failure} onRetry={() => void refreshMeta()} />;
   return (
     <section className="er-lib" aria-labelledby="er-lib-reader">
       <header className="er-lib__head"><Link className="er-button er-button--text" to={"/p/" + encodeURIComponent(projectId ?? "") + "/sources"}>Sources</Link><h1 className="er-lib__title" id="er-lib-reader">{source.title}</h1><p className="er-lib__hint"><span className="er-chip er-lib__badge" data-tone={tone(activeState)}>{stateLabel(activeState)}</span></p></header>
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
+      {metaFailure ? <p className="er-lib__error" role="alert">{metaFailure}{" "}<button className="er-button er-button--text" type="button" onClick={() => void refreshMeta()}>Retry source status</button></p> : null}
       {revisionId && !rev ? <p className="er-lib__error" role="alert">This revision is not available for this source. Open its current revision from the Library.</p> : null}
       {readableWarning ? <p className="er-lib__row-meta">{readableWarning}</p> : null}
       {activeState !== "failed" && conversionError ? <p className="er-lib__hint" role="status">{conversionError}</p> : null}
