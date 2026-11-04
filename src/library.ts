@@ -140,11 +140,12 @@ export async function addSource(env: Env, actor: Actor, projectId: string, input
   }
   const digest = await crypto.subtle.digest("SHA-256", input.bytes);
   const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const sourceId = input.sourceId ?? crypto.randomUUID();
   const duplicate = await env.DB.prepare(`SELECT s.id AS sourceId,s.title,r.id AS revisionId FROM source_revision r
-    JOIN source s ON s.id=r.source_id WHERE r.original_sha256=? AND r.deleted_at IS NULL AND s.state!='deleted' LIMIT 1`)
-    .bind(hash).first<Duplicate>();
-  if (duplicate && duplicate.sourceId !== input.sourceId) throw new LibraryError("conflict", "This exact source is already in the Library. Attach it to this project.", 409, duplicate);
-  const sourceId = input.sourceId ?? crypto.randomUUID(), revisionId = crypto.randomUUID(), now = Date.now();
+    JOIN source s ON s.id=r.source_id WHERE r.original_sha256=? AND r.deleted_at IS NULL AND s.state!='deleted' AND s.id!=? LIMIT 1`)
+    .bind(hash, sourceId).first<Duplicate>();
+  if (duplicate) throw new LibraryError("conflict", "This exact source is already in the Library. Attach it to this project.", 409, duplicate);
+  const revisionId = crypto.randomUUID(), now = Date.now();
   let revisionNo = 1;
   if (input.sourceId) {
     const existing = await env.DB.prepare(`SELECT MAX(r.revision_no) AS revisionNo FROM project_source ps
@@ -161,19 +162,24 @@ export async function addSource(env: Env, actor: Actor, projectId: string, input
     WHERE r.original_sha256=? AND r.deleted_at IS NULL AND s.state!='deleted')`)
     .bind(sourceId, input.title, input.kind, input.url ?? null, actor.type, now, now, hash));
   statements.push(env.DB.prepare(`INSERT INTO source_revision(id,source_id,revision_no,original_key,original_sha256,original_size,
-    original_filename,original_mime,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`)
-    .bind(revisionId, sourceId, revisionNo, originalKey, hash, input.bytes.byteLength, input.filename, input.mimeType, actor.type, now));
+    original_filename,original_mime,created_by,created_at) SELECT ?,?,?,?,?,?,?,?,?,?
+    WHERE NOT EXISTS(SELECT 1 FROM source_revision r JOIN source s ON s.id=r.source_id
+      WHERE r.original_sha256=? AND r.deleted_at IS NULL AND s.state!='deleted' AND s.id!=?)`)
+    .bind(revisionId, sourceId, revisionNo, originalKey, hash, input.bytes.byteLength, input.filename, input.mimeType, actor.type, now, hash, sourceId));
   if (!input.sourceId) statements.push(env.DB.prepare("INSERT INTO project_source(project_id,source_id,added_by,added_at) VALUES(?,?,?,?)")
     .bind(projectId, sourceId, actor.type, now));
-  try { await env.DB.batch(statements); }
+  try {
+    const saved = await env.DB.batch(statements);
+    if (!saved[input.sourceId ? 0 : 1]?.meta.changes) throw new Error("Source revision was not inserted.");
+  }
   catch (error) {
     const inserted = await env.DB.prepare("SELECT id FROM source_revision WHERE id=?").bind(revisionId).first();
     if (!inserted) {
       // This request owns the immutable key and no D1 revision points to it.
       await env.BUCKET.delete(originalKey).catch(() => undefined);
       const raced = await env.DB.prepare(`SELECT s.id AS sourceId,s.title,r.id AS revisionId FROM source_revision r
-        JOIN source s ON s.id=r.source_id WHERE r.original_sha256=? AND r.deleted_at IS NULL LIMIT 1`).bind(hash).first<Duplicate>();
-      if (raced && raced.sourceId !== input.sourceId) throw new LibraryError("conflict", "This exact source was just added to the Library. Attach it.", 409, raced);
+        JOIN source s ON s.id=r.source_id WHERE r.original_sha256=? AND r.deleted_at IS NULL AND s.state!='deleted' AND s.id!=? LIMIT 1`).bind(hash, sourceId).first<Duplicate>();
+      if (raced) throw new LibraryError("conflict", "This exact source was just added to the Library. Attach it.", 409, raced);
       if (input.sourceId) throw new LibraryError("conflict", "The source changed while replacing it. Reload and try again.", 409);
       throw error;
     }

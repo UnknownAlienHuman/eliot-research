@@ -164,7 +164,8 @@ The HTTP surface is `/api/projects`, `/api/projects/:id/sources/{file,text,url,a
 `/api/revisions/:id/{text,range,outline,original}`. The file route accepts one multipart `file`; text/URL use separate,
 strict JSON shapes. An explicit `sourceId` replacement creates a new revision of that attached source, including a
 deliberate reconversion of identical bytes. Ordinary duplicate uploads return 409 plus the existing identity; a
-conditional insert in the D1 batch guards concurrent duplicates without a second identity store.
+conditional insert in the D1 batch guards concurrent uploads and replacements against the same bytes belonging to
+another live source. Only a stored revision starts ingest; a losing request retains the existing source and revisions.
 
 Add sources → Browse Library lists active shared sources not already attached to that project, including saved sources
 not yet readable. `GET /api/projects/:id/sources/available` reads metadata only: 50 rows plus one lookahead, ordered by
