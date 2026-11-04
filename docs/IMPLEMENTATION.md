@@ -347,6 +347,10 @@ This is one reviewed full-PDF case, not full-corpus OCR quality or K2/K3 accepta
 `[start,end)` in `text.md`. Compute byte offsets, not JavaScript character indexes. Split prose near sentence boundaries;
 keep tables/code intact up to a bounded size.
 
+On new scans, an ordered marker interrupts a paragraph only with numeric start 1, including `01.`.
+An existing list keeps unindented continuation lines until a blank line or another recognized block.
+Only new readable representations use this rule; stored block maps and citation ranges remain unchanged.
+
 New scans join an explicit adjacent `Table <number>:` or `Table <number>.` caption with its sole neighboring
 whole table when the complete original span, including intervening whitespace, fits 4,096 bytes. A caption between
 two tables, a table with two candidate captions, or a caption/table split by the size bound stays separate. The
