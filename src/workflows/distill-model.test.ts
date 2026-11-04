@@ -35,7 +35,7 @@ vi.mock("../models", async () => ({
 
 import { NoObjectGeneratedError, generateText, Output } from "ai";
 import { modelFailure, resolveModelTransport } from "../model-transport";
-import { availableModels, requireAvailableModel, requireCatalogModel } from "../models";
+import { availableModels, modelTokenLimit, requireAvailableModel, requireCatalogModel } from "../models";
 import { discoverGatewayModels } from "../model-catalog";
 import { discoverNativeModels } from "../native-model-catalog";
 import { DistillWorkflow, hasAvailableUnderstanding, requestUnderstanding, scheduleDistillation } from "./distill";
@@ -54,7 +54,7 @@ const snapshot: ModelSpec = Object.freeze({
 
 function fixture(storedRoute: string, document?: { text: string; blocks: Block[] }) {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql", "0012_model_admission.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
   const text = document?.text ?? "The method uses normalization. Its source passage is retained.";
   const blocks = document?.blocks ?? [{ id: 1, type: "paragraph", start: 0, end: new TextEncoder().encode(text).byteLength, heading: null }];
@@ -101,7 +101,7 @@ const otherQueuedSourceId = "c3fd7da4-b662-4aa5-a6fc-9c84b6299940";
 
 function callerFixture() {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql", "0012_model_admission.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
 
   const insertSource = (id: string, title: string, revision: string, state: "none" | "queued", createdAt: number) => {
@@ -193,7 +193,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
         task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null })),
     }, usage: { inputTokens: 17, cachedTokens: 0, outputTokens: 8, tokenLimit: 100 } });
     f.bodies.set(prefix + "distill-call1.json", raw);
-    f.db.prepare("UPDATE source_revision SET distill_calls=1 WHERE id=?").run(revisionId);
+    f.db.prepare("UPDATE source_revision SET distill_calls=1,distill_token_limit=123456 WHERE id=?").run(revisionId);
     try {
       const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) => {
         if (name === "extract source") return;
@@ -214,6 +214,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       ]));
       expect(verified.claims.every((claim: { quote: string }) => claim.quote === document.text)).toBe(true);
       expect(f.bodies.get(prefix + "distill-call1.json")).toBe(raw);
+      expect(f.db.prepare("SELECT distill_token_limit FROM source_revision WHERE id=?").get(revisionId)).toEqual({ distill_token_limit: 123456 });
       expect(generateText).not.toHaveBeenCalled(); expect(resolveModelTransport).not.toHaveBeenCalled(); expect(f.dispatchCAS).not.toHaveBeenCalled();
     } finally { f.db.close(); }
   });
@@ -713,12 +714,34 @@ describe("DistillWorkflow admitted model snapshot", () => {
     const model = { ...snapshot, maxOutputTokens: capacity };
     const f = fixture(model.route);
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    const bound = modelTokenLimit(model);
+    f.db.prepare("UPDATE source_revision SET distill_token_limit=?,distill_token_limit_kind=? WHERE id=?")
+      .run(bound === null ? null : 2 * bound, bound === null ? "unknown" : "published", revisionId);
     try {
       await run(f, false, model);
       expect(generateText).toHaveBeenCalledTimes(1);
       expect(vi.mocked(generateText).mock.calls[0]?.[0].maxOutputTokens).toBe(capacity ?? undefined);
       expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
       expect(f.db.prepare("SELECT distill_calls FROM source_revision WHERE id=?").get(revisionId)).toEqual({ distill_calls: 1 });
+    } finally { f.db.close(); }
+  });
+
+  it("retains a legacy admitted bound and per-call cap during replay with a larger published output capacity", async () => {
+    const model = { ...snapshot, maxOutputTokens: 32768 };
+    const f = fixture(model.route);
+    const oldBound = 2 * (snapshot.contextTokens + 8192);
+    f.db.prepare("UPDATE source_revision SET distill_token_limit=? WHERE id=?").run(oldBound, revisionId);
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    try {
+      await run(f, false, model);
+      expect(vi.mocked(generateText).mock.calls[0]?.[0].maxOutputTokens).toBe(8192);
+      expect(f.db.prepare("SELECT distill_token_limit,distill_token_limit_kind FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ distill_token_limit: oldBound, distill_token_limit_kind: null });
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null") as DistillReport;
+      expect(report.usage.tokenLimit).toBe(oldBound);
+      expect(report.usage.tokenLimitKind).toBe("legacy");
+      await run(f, false, model);
+      expect(generateText).toHaveBeenCalledTimes(1);
     } finally { f.db.close(); }
   });
 

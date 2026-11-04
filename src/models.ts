@@ -75,7 +75,8 @@ export interface CatalogModel {
   route: string;
   id: string;
   label: string;
-  contextTokens: number | null;
+  contextTokens: number | null; // Existing prompt/assembly ceiling; may be input-only.
+  contextWindowTokens?: number;
   maxOutputTokens: number | null;
   outputReserveTokens?: number;
   responseFormat?: boolean;
@@ -99,15 +100,15 @@ export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
 // Owner-selected native default metadata is a fallback, not a provider allowlist.
 export const MODELS: ModelSpec[] = [
   { route: DEFAULT_MODEL, id: "@cf/zai-org/glm-5.3-flash", label: "GLM 5.3 Flash", contextTokens: 1_048_576,
-    maxOutputTokens: null, outputReserveTokens: 8192, supportsImages: true, nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true },
+    contextWindowTokens: 1_048_576, maxOutputTokens: null, outputReserveTokens: 8192, supportsImages: true, nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true },
 ];
-// Assembly headroom and the recorded accounting bound are not a generation cap.
+// Assembly headroom and legacy/OCR reservations are not a provider generation cap.
 export const modelOutputReserve = (model: Pick<CatalogModel, "outputReserveTokens" | "maxOutputTokens">) => {
   const bound = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
   return Math.min(bound, model.maxOutputTokens ?? bound);
 };
-export function modelOutputLimit(model: Pick<CatalogModel, "contextTokens" | "maxOutputTokens">, inputTokens: number): number | undefined {
-  const remaining = (model.contextTokens ?? 0) - inputTokens;
+export function modelOutputLimit(model: Pick<CatalogModel, "contextTokens" | "contextWindowTokens" | "maxOutputTokens">, inputTokens: number): number | undefined {
+  const remaining = (model.contextWindowTokens ?? model.contextTokens ?? 0) - inputTokens;
   if (!Number.isSafeInteger(model.contextTokens) || !Number.isSafeInteger(inputTokens) || inputTokens < 0 ||
     !Number.isSafeInteger(remaining) || remaining <= 0)
     throw new LibraryError("unavailable", "This request has no usable output context.", 503);
@@ -117,12 +118,21 @@ export function modelOutputLimit(model: Pick<CatalogModel, "contextTokens" | "ma
     throw new LibraryError("unavailable", "The model has no usable output maximum.", 503);
   return Math.min(model.maxOutputTokens, remaining);
 }
-export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "outputReserveTokens" | "maxOutputTokens">): number {
+export function modelTokenReservation(model: Pick<CatalogModel, "contextTokens" | "outputReserveTokens" | "maxOutputTokens">): number {
   const output = modelOutputReserve(model), total = (model.contextTokens ?? 0) + output;
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
     !Number.isSafeInteger(output) || output <= 0 || !Number.isSafeInteger(total))
     throw new LibraryError("unavailable", "The model has no usable input/output limits.", 503);
   return total;
+}
+export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "maxOutputTokens">): number | null {
+  // Declared capacities, independent of byte/token planning estimates. Not a
+  // guarantee of upstream acceptance or a substitute for reported usage.
+  const input = model.contextTokens ?? 0, output = model.maxOutputTokens;
+  if (!Number.isSafeInteger(input) || input <= 0 ||
+    (output !== null && (!Number.isSafeInteger(output) || output <= 0 || !Number.isSafeInteger(input + output))))
+    throw new LibraryError("unavailable", "The model has no usable input/output limits.", 503);
+  return output === null ? null : input + output;
 }
 function missingMetadata(model: CatalogModel): string | null {
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
@@ -179,6 +189,7 @@ function isCatalogModel(value: unknown): value is CatalogModel {
     typeof value.label !== "string" || typeof value.checkedOn !== "string" || typeof value.enabled !== "boolean" ||
     !nullableFinite(value.contextTokens) || !nullableFinite(value.maxOutputTokens)) return false;
   if (value.outputReserveTokens !== undefined && (!Number.isSafeInteger(value.outputReserveTokens) || (value.outputReserveTokens as number) <= 0)) return false;
+  if (value.contextWindowTokens !== undefined && (!Number.isSafeInteger(value.contextWindowTokens) || (value.contextWindowTokens as number) <= 0)) return false;
   if (value.responseFormat !== undefined && typeof value.responseFormat !== "boolean") return false;
   if (value.structuredOutputs !== undefined && typeof value.structuredOutputs !== "boolean") return false;
   if (value.supportsTemperature !== undefined && typeof value.supportsTemperature !== "boolean") return false;
@@ -235,7 +246,7 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     const fallback = models.get(model.route);
     const visible: CatalogModel = { route: model.route, id: model.id, label: model.label, contextTokens: model.contextTokens,
       maxOutputTokens: model.maxOutputTokens, checkedOn: model.checkedOn, enabled: model.enabled };
-    for (const field of ["outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning",
+    for (const field of ["contextWindowTokens", "outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning",
       "nativeReasoningEffort", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
       if (model[field] !== undefined) Object.assign(visible, { [field]: model[field] });
     }

@@ -5,7 +5,7 @@ import { LibraryError } from "./library.js";
 import { assertProviderAllowance } from "./model-quota.js";
 import type * as ModelQuota from "./model-quota.js";
 import type { ModelSpec } from "./models.js";
-import { modelOutputLimit, modelOutputReserve, modelTokenLimit } from "./models.js";
+import { modelOutputLimit, modelOutputReserve, modelTokenLimit, modelTokenReservation } from "./models.js";
 
 // Provider allowance is mocked: the real model-quota module currently holds
 // a closed native placeholder, so admission tests pin allow/deny directly
@@ -23,7 +23,7 @@ function flashModel(): ModelSpec {
     id: "@cf/zai-org/glm-5.3-flash",
     label: "GLM 5.3 Flash",
     contextTokens: 1048576,
-    maxOutputTokens: null,
+    maxOutputTokens: 8192,
     outputReserveTokens: 8192,
     checkedOn: "2026-10-27",
     enabled: true,
@@ -36,6 +36,7 @@ const CHAT_DDL = "CREATE TABLE chat_turn (" +
   "chat_id TEXT NOT NULL, turn_id TEXT NOT NULL," +
   " state TEXT NOT NULL DEFAULT 'started' CHECK (state IN ('started','completed','partial','failed','cancelled'))," +
   " token_limit INTEGER CHECK (token_limit IS NULL OR token_limit >= 0)," +
+  " token_limit_kind TEXT," +
   " input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER," +
   " created_at INTEGER NOT NULL, PRIMARY KEY (chat_id, turn_id))";
 const DISTILL_DDL = "CREATE TABLE source_revision (" +
@@ -43,6 +44,7 @@ const DISTILL_DDL = "CREATE TABLE source_revision (" +
   " distill_state TEXT NOT NULL DEFAULT 'none' CHECK (distill_state IN ('none','queued','running','paused','done','partial','failed'))," +
   " distill_model TEXT, distill_started_at INTEGER," +
   " distill_token_limit INTEGER CHECK (distill_token_limit IS NULL OR distill_token_limit >= 0)," +
+  " distill_token_limit_kind TEXT," +
   " distill_error TEXT," +
   " distill_calls INTEGER NOT NULL DEFAULT 0 CHECK (distill_calls BETWEEN 0 AND 2)," +
   " distill_input_tokens INTEGER, distill_cached_tokens INTEGER, distill_output_tokens INTEGER," +
@@ -101,11 +103,12 @@ describe("published generation maximum", () => {
     expect(modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, 40000)).toBe(24000);
   });
   it("omits an unknown maximum without changing metadata or the recorded accounting bound", () => {
-    const model = Object.freeze(flashModel());
+    const model = Object.freeze({ ...flashModel(), maxOutputTokens: null });
     expect(modelOutputLimit(model, 1024)).toBeUndefined();
     expect(model.maxOutputTokens).toBeNull();
     expect(modelOutputReserve(model)).toBe(8192);
-    expect(modelTokenLimit(model)).toBe(FLASH_BOUND);
+    expect(modelTokenLimit(model)).toBeNull();
+    expect(modelTokenReservation(model)).toBe(FLASH_BOUND);
   });
   it.each([64000, 64001, -1, 1.5])("rejects unusable input allocation %i before generation", (input) => {
     expect(() => modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, input)).toThrow(LibraryError);

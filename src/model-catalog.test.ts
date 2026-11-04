@@ -443,7 +443,7 @@ describe("go provider metadata catalogue", () => {
     const models = await discoverGatewayModels(goProviders(), (pid, message) => { warnings.push(message); void pid; });
     expect(models).toHaveLength(4);
     const byId = new Map(models.map((model) => [model.id, model]));
-    expect(byId.get("hy3")).toMatchObject({ contextTokens: 192000, maxOutputTokens: 128000, apiProtocol: "openai-chat", apiBaseUrl: "https://opencode.ai/inference/go/openai/v1", supportsTemperature: true, responseFormat: true, structuredOutputs: true, enabled: true });
+    expect(byId.get("hy3")).toMatchObject({ contextTokens: 192000, contextWindowTokens: 256000, maxOutputTokens: 128000, apiProtocol: "openai-chat", apiBaseUrl: "https://opencode.ai/inference/go/openai/v1", supportsTemperature: true, responseFormat: true, structuredOutputs: true, enabled: true });
     expect(byId.get("muse-spark-1.3-contributor")).toMatchObject({ contextTokens: 1048576, maxOutputTokens: 65536, apiProtocol: "openai-responses", apiBaseUrl: "https://opencode.ai/inference/go/openai/v1", enabled: true });
     expect(byId.get("claude-haiku-5-5")).toMatchObject({ contextTokens: 1000000, maxOutputTokens: 128000, apiProtocol: "anthropic", apiBaseUrl: "https://opencode.ai/inference/go/anthropic/v1", enabled: true });
     expect(byId.get("claude-haiku-5-5")).not.toHaveProperty("supportsTemperature");

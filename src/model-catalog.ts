@@ -1,5 +1,6 @@
 import type { CatalogModel, ModelProvider } from "./models";
 import { validateSourceUrl } from "./url-guard";
+import { isOpenRouterApiBase } from "./shared/api";
 
 type RecordValue = Record<string, unknown>;
 // Narrow discovery mechanism from OpenCodex 2.92.0 (MIT), pin
@@ -134,6 +135,7 @@ async function readProviderMetadata(feedUrl: string, providerId: string, liveMod
 function joinMetadata(model: CatalogModel, entry: ProviderMetadataEntry | undefined, defaults: ProviderMetadata): CatalogModel {
   if (!entry) return model;
   const out: CatalogModel = { ...model };
+  if (entry.context !== null) out.contextWindowTokens = entry.context;
   let context = entry.context;
   if (context !== null && entry.input !== null) context = Math.min(context, entry.input);
   if (context !== null) out.contextTokens = context;
@@ -238,7 +240,7 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
   const model: CatalogModel = {
     route: "gateway:" + provider.id + "/" + id, id,
     label: typeof row.name === "string" && row.name.trim() ? row.name.trim() : id,
-    contextTokens, maxOutputTokens, outputReserveTokens: 8192,
+    contextTokens, ...(isOpenRouterApiBase(provider.baseUrl) && contextTokens !== null ? { contextWindowTokens: contextTokens } : {}), maxOutputTokens, outputReserveTokens: 8192,
     responseFormat: parameters.includes("response_format"),
     structuredOutputs: parameters.includes("response_format") && parameters.includes("structured_outputs"),
     ...(supportsTemperature ? { supportsTemperature: true } : {}),

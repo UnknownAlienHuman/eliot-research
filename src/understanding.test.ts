@@ -31,9 +31,9 @@ const entry = (route: string, id: string, contextTokens: number, outputReserveTo
 });
 
 function makeEnv(configured: string, models: unknown[], options: {
-  state?: DistillState; attempts?: number; model?: string | null; tokenLimit?: number | null; report?: typeof storedReport | null;
+  state?: DistillState; attempts?: number; model?: string | null; tokenLimit?: number | null; tokenLimitKind?: "published" | "unknown" | "legacy" | null; report?: typeof storedReport | null;
 } = {}) {
-  const { state = "done", attempts = 1, model = HIST, tokenLimit = null, report = storedReport } = options;
+  const { state = "done", attempts = 1, model = HIST, tokenLimit = null, tokenLimitKind = null, report = storedReport } = options;
   let writes = 0;
   const snapshot = { updatedAt: "2026-10-28T00:00:00.000Z", warnings: [], models, providers };
   const DB = {
@@ -41,7 +41,7 @@ function makeEnv(configured: string, models: unknown[], options: {
       bind: () => ({
         first: async () => {
           if (sql.includes("FROM source WHERE")) return { id: SRC, authors: "Synth Author", published: "2026", currentRevisionId: REV };
-          if (sql.includes("FROM source_revision")) return { id: REV, state, error: null, attempts, reportKey: null, model, tokenLimit };
+          if (sql.includes("FROM source_revision")) return { id: REV, state, error: null, attempts, reportKey: null, model, tokenLimit, tokenLimitKind };
           if (sql.includes("distill_model AS model")) return { model: configured };
           return null;
         },
@@ -80,6 +80,18 @@ function makeEnv(configured: string, models: unknown[], options: {
 const owner = { type: "owner" } as Actor;
 
 describe("getUnderstanding stored-catalogue regression", () => {
+  it.each([
+    { kind: "published" as const, value: 96000, maximum: 96000 },
+    { kind: "unknown" as const, value: null, maximum: null },
+    { kind: "legacy" as const, value: 72192, maximum: null },
+    { kind: "published" as const, value: 0, maximum: null },
+  ])("keeps $kind accounting value $value separate from a declared maximum", async ({ kind, value, maximum }) => {
+    const f = makeEnv(FUT, [], { state: "running", tokenLimit: value, tokenLimitKind: kind, report: null });
+    const r = await getUnderstanding(f.env, owner, { sourceId: SRC, revisionId: REV });
+    expect(r.progress).toMatchObject({ tokenLimitKind: kind, recordedTokenLimit: value, maximumTokens: maximum });
+    expect(f.writes()).toBe(0);
+  });
+
   it("keeps recorded row/report bounds and legacy history despite a larger future default", async () => {
     const fetchSpy = vi.fn(async () => { throw new Error("no discovery"); });
     vi.stubGlobal("fetch", fetchSpy);
@@ -88,9 +100,11 @@ describe("getUnderstanding stored-catalogue regression", () => {
       const r = await getUnderstanding(f.env, owner, { sourceId: SRC, revisionId: REV });
       expect(r.progress.model).toBe(HIST);
       expect(r.progress.configuredModel).toBe(FUT);
-      expect(r.progress.maximumTokens).toBe(expected);
+      expect(r.progress.maximumTokens).toBeNull();
+      expect(r.progress.recordedTokenLimit).toBe(expected);
+      expect(r.progress.tokenLimitKind).toBe("legacy");
       expect(r.guide).toBe("synth guide");
-      expect(r.report).toEqual(storedReport);
+      expect(r.report).toEqual({ ...storedReport, usage: { ...storedReport.usage, tokenLimitKind: "legacy" } });
       expect((r.report?.usage as unknown as { estimatedCostMicrousd: number }).estimatedCostMicrousd).toBe(322766);
       expect(f.writes()).toBe(0);
     }
@@ -105,12 +119,14 @@ describe("getUnderstanding stored-catalogue regression", () => {
     const off = makeEnv(FUT, [hist, entry(FUT, "synth-future-v1", 32000, 8000, false)]);
     const rm = await getUnderstanding(absent.env, owner, { sourceId: SRC, revisionId: REV });
     const rd = await getUnderstanding(off.env, owner, { sourceId: SRC, revisionId: REV });
-    expect(rm.progress.maximumTokens).toBe(44000);
-    expect(rd.progress.maximumTokens).toBe(44000);
+    expect(rm.progress.maximumTokens).toBeNull();
+    expect(rd.progress.maximumTokens).toBeNull();
+    expect(rm.progress.recordedTokenLimit).toBe(44000);
+    expect(rd.progress.recordedTokenLimit).toBe(44000);
     expect(rm.progress.model).toBe(HIST);
     expect(rd.progress.model).toBe(HIST);
-    expect(rm.report).toEqual(storedReport);
-    expect(rd.report).toEqual(storedReport);
+    expect(rm.report).toEqual({ ...storedReport, usage: { ...storedReport.usage, tokenLimitKind: "legacy" } });
+    expect(rd.report).toEqual({ ...storedReport, usage: { ...storedReport.usage, tokenLimitKind: "legacy" } });
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(absent.writes()).toBe(0);
     expect(off.writes()).toBe(0);
@@ -119,8 +135,8 @@ describe("getUnderstanding stored-catalogue regression", () => {
   it("forecasts only unstarted revisions from their selected route or default, retaining unknown as null", async () => {
     const fetchSpy = vi.fn(async () => { throw new Error("no discovery"); });
     vi.stubGlobal("fetch", fetchSpy);
-    const hist = entry(HIST, "synth-historic-v1", 16000, 4000);
-    const future = entry(FUT, "synth-future-v1", 32000, 8000);
+    const hist = { ...entry(HIST, "synth-historic-v1", 16000, 4000), maxOutputTokens: 4000 };
+    const future = { ...entry(FUT, "synth-future-v1", 32000, 8000), maxOutputTokens: 8000 };
     const none = makeEnv(FUT, [hist, future], { state: "none", attempts: 0, model: null, report: null });
     const queued = makeEnv(FUT, [hist, future], { state: "queued", attempts: 0, report: null });
     const missing = makeEnv(FUT, [future], { state: "queued", attempts: 0, report: null });

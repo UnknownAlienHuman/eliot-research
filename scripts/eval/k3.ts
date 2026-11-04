@@ -414,7 +414,7 @@ function snapOf(t) {
   if (!t || (t.state !== 'done' && t.state !== 'partial')) return null;
   const rep = t.report && typeof t.report === 'object' ? t.report : null;
   const usage = (rep && rep.usage) || {};
-  if (typeof usage.calls !== 'number' || typeof usage.tokenLimit !== 'number' || !Array.isArray(t.claims)) return null;
+  if (typeof usage.calls !== 'number' || !isTokenObservation(usage.tokenLimit) || !Array.isArray(t.claims)) return null;
   return { state: t.state, revisionId: t.revisionId, report: rep, claims: t.claims, claimRows: t.claims.length,
     calls: usage.calls, tokenLimit: usage.tokenLimit };
 }
@@ -513,9 +513,12 @@ function assertUnderstanding(u, what) {
   assert(Array.isArray(u.glossary), 'Understanding.glossary must be an array (' + what + ').');
   assert(Array.isArray(u.claims), 'Understanding.claims must be an array (' + what + ').');
   assert(u.report === null || typeof u.report === 'object', 'Understanding.report must be null|object (' + what + ').');
-  if (Number.isSafeInteger(u.report?.usage?.tokenLimit) && u.report.usage.tokenLimit >= 0)
-    assert.equal(u.progress?.maximumTokens, u.report.usage.tokenLimit,
-      'Understanding progress.maximumTokens must equal the retained report tokenLimit (' + what + ').');
+  const recorded = u.progress?.recordedTokenLimit ?? u.report?.usage?.tokenLimit ?? null;
+  const basis = u.progress?.tokenLimitKind ?? u.report?.usage?.tokenLimitKind ?? 'legacy';
+  assert(isTokenObservation(recorded), 'Recorded capacity/reservation must be numeric or null unknown (' + what + ').');
+  assert(['published', 'unknown', 'legacy'].includes(basis), 'Unknown admission basis (' + what + ').');
+  assert.equal(u.progress?.maximumTokens, basis === 'published' && recorded > 0 ? recorded : null,
+    'Only a positive declared-capacity value is a maximum; legacy reservations and released zero stay separate (' + what + ').');
 }
 function assertUnderstandingIdentity(u, sourceId, revisionId, what) {
   assert.equal(u.sourceId, sourceId, 'Understanding sourceId must match request (' + what + ').');
@@ -624,7 +627,7 @@ function storedRevisionSnapshot(u, what) {
   const calls = owningCallCount(u, what);
   if (u.state === 'done' || u.state === 'partial') {
     assert(usage && isCallCount(usage.calls), what + ' must carry owning-revision call count.');
-    assert(Number.isSafeInteger(usage.tokenLimit) && usage.tokenLimit >= 0, what + ' must carry owning-revision tokenLimit.');
+    assert(isTokenObservation(usage.tokenLimit), what + ' must carry owning-revision tokenLimit or null unknown.');
   }
   return { body: u, claimRows: u.claims.length, calls, tokenLimit: usage ? usage.tokenLimit : null };
 }
@@ -672,7 +675,7 @@ if (unchangedOnly) {
     if (r.body.state !== 'done' && r.body.state !== 'partial') { preflightViolations.push(s.originalFilename + ': state=' + r.body.state + ' (need terminal done/partial, no POST)'); continue; }
     const rep = r.body.report;
     if (!rep || !rep.usage || !Number.isSafeInteger(rep.usage.calls) || rep.usage.calls < 0 || rep.usage.calls > 2 ||
-      !Number.isSafeInteger(rep.usage.tokenLimit) || rep.usage.tokenLimit < 0) { preflightViolations.push(s.originalFilename + ': invalid owning-revision usage'); continue; }
+      !isTokenObservation(rep.usage.tokenLimit)) { preflightViolations.push(s.originalFilename + ': invalid owning-revision usage'); continue; }
     const record = storedRevisionSnapshot(r.body, 'unchanged preflight ' + s.originalFilename);
     callsBefore += record.calls;
     claimRowsBefore += record.claimRows;
@@ -758,13 +761,15 @@ assert(distillMeta && distillMeta.enabled, 'Selected distillModel must be presen
 assert(Number.isSafeInteger(distillMeta.contextTokens) && distillMeta.contextTokens > 0, 'Selected distillModel context must be known.');
 const distillOutputReserve = outputReserve(distillMeta);
 assert(Number.isSafeInteger(distillOutputReserve) && distillOutputReserve > 0, 'Selected distillModel assembly reserve must be known.');
-const answerCallTokenLimit = answerMeta.contextTokens + answerOutputReserve;
-const distillCallTokenLimit = distillMeta.contextTokens + distillOutputReserve;
+const answerCallTokenLimit = answerMeta.maxOutputTokens == null ? null : answerMeta.contextTokens + answerMeta.maxOutputTokens;
+const distillCallTokenLimit = distillMeta.maxOutputTokens == null ? null : distillMeta.contextTokens + distillMeta.maxOutputTokens;
+assert(answerCallTokenLimit === null || Number.isSafeInteger(answerCallTokenLimit), 'Declared answer capacity must be usable or unknown.');
+assert(distillCallTokenLimit === null || Number.isSafeInteger(distillCallTokenLimit), 'Declared understanding capacity must be usable or unknown.');
 const runCallCeiling = nativeOnly ? 0 : scoped.length * 2 + CLAIM_ORDER.length;
 const revisionRecordsBefore = new Map();
 const boundReport = nativeOnly
   ? 'K3 native-only: zero model calls.'
-  : 'K3 eval command call ceiling: baseline ' + scoped.length + '*2 + C1-C4 ' + CLAIM_ORDER.length + ' = ' + runCallCeiling + ' calls; overflow papers are separately prepared. Distill per-call limit ' + distillCallTokenLimit + ' (ctx+output, ' + SELECTED_DISTILL_MODEL + '), answer per-call limit ' + answerCallTokenLimit + ' (ctx+output, ' + SELECTED_ANSWER_MODEL + '). Historical calls are not counted as fresh; models are frozen from stored settings.';
+  : 'K3 eval command call ceiling: baseline ' + scoped.length + '*2 + C1-C4 ' + CLAIM_ORDER.length + ' = ' + runCallCeiling + ' calls; overflow papers are separately prepared. Declared understanding capacity ' + (distillCallTokenLimit ?? 'unknown') + ' (' + SELECTED_DISTILL_MODEL + '), declared answer capacity ' + (answerCallTokenLimit ?? 'unknown') + ' (' + SELECTED_ANSWER_MODEL + '). Historical calls are not counted as fresh; models are frozen from stored settings.';
 console.log(boundReport);
 if (nativeOnly) {
   assert(understandingWired && overviewWired, 'K3 native smoke requires the actual understanding and overview routes.');
@@ -803,7 +808,7 @@ if (nativeOnly) {
       }
       assert(u0.state === 'failed' || u0.state === 'done' || u0.state === 'partial', 'Recovery fixture must be terminal (failed/done/partial), got ' + u0.state + ' (no model distill here).');
       assert(u0.report && typeof u0.report === 'object', 'Terminal fixture must carry its terminal report (raw compat).');
-      assert(u0.report.usage && Number.isSafeInteger(u0.report.usage.calls) && Number.isSafeInteger(u0.report.usage.tokenLimit), 'Terminal fixture must carry owning-revision calls and tokenLimit.');
+      assert(u0.report.usage && Number.isSafeInteger(u0.report.usage.calls) && isTokenObservation(u0.report.usage.tokenLimit), 'Terminal fixture must carry owning-revision calls and nullable tokenLimit.');
       assert(u0.report.raw && typeof u0.report.raw === 'object', 'Terminal fixture must carry current raw excerpts (raw compat).');
       const recStartState = u0.state;
       const alreadyChecked = !!(u0.report.artifacts && u0.report.artifacts.guide === 'source/' + rev + '/checked/guide.md');
@@ -871,7 +876,8 @@ if (nativeOnly) {
       assert(crep && typeof crep === 'object', 'Check report must be present.');
       const cusage = crep.usage || {};
       owningCallCount(cu, 'native check source');
-      for (const kk of ['calls', 'tokenLimit', 'wallMs']) assert(typeof cusage[kk] === 'number', 'Check report.usage.' + kk + ' must be numeric owning-revision usage.');
+      for (const kk of ['calls', 'wallMs']) assert(typeof cusage[kk] === 'number', 'Check report.usage.' + kk + ' must be numeric owning-revision usage.');
+      assert(isTokenObservation(cusage.tokenLimit), 'Check report.usage.tokenLimit must remain known or null unknown.');
       for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) assert(isTokenObservation(cusage[kk]), 'Check report.usage.' + kk + ' must be a nonnegative safe integer or null unknown.');
       assert(cusage.calls <= 2, 'Check calls bounded at most 2, got ' + cusage.calls + '.');
       const cclaims = Array.isArray(cu.claims) ? cu.claims : [];
@@ -1119,8 +1125,8 @@ if (nativeOnly) {
       if (recoveryUpdatedRevisions.has(rev)) {
         const beforeUsage = beforeRecord.body.report && beforeRecord.body.report.usage;
         const afterUsage = afterBody.report && afterBody.report.usage;
-        assert(beforeUsage && typeof beforeUsage.calls === 'number' && typeof beforeUsage.tokenLimit === 'number', 'Recovery before snapshot must carry owning revision calls/tokenLimit.');
-        assert(afterUsage && typeof afterUsage.calls === 'number' && typeof afterUsage.tokenLimit === 'number', 'Recovery after snapshot must carry owning revision calls/tokenLimit.');
+        assert(beforeUsage && typeof beforeUsage.calls === 'number' && isTokenObservation(beforeUsage.tokenLimit), 'Recovery before snapshot must carry owning revision calls/nullable tokenLimit.');
+        assert(afterUsage && typeof afterUsage.calls === 'number' && isTokenObservation(afterUsage.tokenLimit), 'Recovery after snapshot must carry owning revision calls/nullable tokenLimit.');
         assert.deepEqual(afterUsage, beforeUsage, 'Storage-only recovery must preserve the owning revision usage record.');
       } else {
         assert.deepEqual(afterBody, beforeRecord.body, 'Native-only probes must preserve the exact owning revision record (' + source.originalFilename + ').');
@@ -1266,7 +1272,8 @@ if (!runModel) {
     if (!rep || typeof rep !== 'object') {
       violations.push(s.originalFilename + ': terminal state without direct report');
     } else {
-      for (const kk of ['calls', 'tokenLimit', 'wallMs']) if (typeof rep.usage?.[kk] !== 'number') violations.push(s.originalFilename + ': owning revision usage.' + kk + ' not numeric');
+      for (const kk of ['calls', 'wallMs']) if (typeof rep.usage?.[kk] !== 'number') violations.push(s.originalFilename + ': owning revision usage.' + kk + ' not numeric');
+      if (!isTokenObservation(rep.usage?.tokenLimit)) violations.push(s.originalFilename + ': invalid owning revision tokenLimit');
       for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) if (!isTokenObservation(rep.usage?.[kk])) violations.push(s.originalFilename + ': owning revision usage.' + kk + ' not a nonnegative safe integer or null unknown');
       if (typeof rep.kept !== 'number') violations.push(s.originalFilename + ': kept not a number');
       if (!Array.isArray(rep.dropped)) violations.push(s.originalFilename + ': dropped not an array');
@@ -1424,7 +1431,8 @@ async function distillOne(s) {
     tokenLimit: storedUsage.tokenLimit,
     wallMs: storedUsage.wallMs,
   };
-  for (const kk of ['calls', 'tokenLimit', 'wallMs']) assert(typeof usage[kk] === 'number', 'report.usage.' + kk + ' must be numeric owning-revision usage (' + s.originalFilename + ').');
+  for (const kk of ['calls', 'wallMs']) assert(typeof usage[kk] === 'number', 'report.usage.' + kk + ' must be numeric owning-revision usage (' + s.originalFilename + ').');
+  assert(isTokenObservation(usage.tokenLimit), 'report.usage.tokenLimit must remain known or null unknown (' + s.originalFilename + ').');
   for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) assert(isTokenObservation(usage[kk]), 'report.usage.' + kk + ' must be a nonnegative safe integer or null unknown (' + s.originalFilename + ').');
   assert(usage.calls >= 0 && usage.calls <= 2, 'report.usage.calls bounded 0-2 (' + s.originalFilename + ').');
   assert(Array.isArray(rep.questions) && rep.questions.length >= 3, 'report.questions (3-5 guide questions) required (' + s.originalFilename + ').');

@@ -22,7 +22,7 @@ export function nativeModel(row: NativeRow, checkedOn: string): CatalogModel | n
   const lowEffort = effort !== null && typeof effort === "object" && "supported_efforts" in effort &&
     Array.isArray(effort.supported_efforts) && effort.supported_efforts.includes("low");
   return { route: "workers-ai:" + row.name, id: row.name, label: row.name, enabled: true,
-    contextTokens, maxOutputTokens: null, outputReserveTokens: 8192,
+    contextTokens, ...(contextTokens === null ? {} : { contextWindowTokens: contextTokens }), maxOutputTokens: null, outputReserveTokens: 8192,
     ...(lowEffort ? { nativeReasoningEffort: "low" as const } : {}),
     checkedOn };
 }

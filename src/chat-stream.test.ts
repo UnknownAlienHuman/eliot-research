@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 import type { SQLInputValue } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as ai from "ai";
@@ -70,10 +71,7 @@ vi.mock("./cost", async (importOriginal) => {
   const actual = await importOriginal<typeof CostModule>();
   return {
     ...actual,
-    admitTurn: vi.fn(async (_env: unknown, _chatId: string, _turnId: string, model: { contextTokens: number; maxOutputTokens: number | null; outputReserveTokens?: number }) => {
-      const output = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
-      return (model.contextTokens ?? 0) + output;
-    }),
+    admitTurn: vi.fn(actual.admitTurn),
   };
 });
 
@@ -139,10 +137,10 @@ function makeHarness(quote = "A source", instructions = "") {
   db.exec("CREATE TABLE chat(id TEXT PRIMARY KEY,project_id TEXT NOT NULL)");
   db.prepare("INSERT INTO chat VALUES ('wire-chat',?)").run(projectId);
   const d1 = new DatabaseSync(":memory:");
-  d1.exec("CREATE TABLE chat(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,updated_at INTEGER)");
-  d1.prepare("INSERT INTO chat(id,project_id) VALUES ('wire-chat',?)").run(projectId);
-  d1.exec("CREATE TABLE chat_turn(chat_id TEXT, turn_id TEXT, model TEXT, scope_mode TEXT, scope_json TEXT, context_mode TEXT, state TEXT, input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER, token_limit INTEGER CHECK (token_limit IS NULL OR token_limit >= 0), estimated_cost_microusd INTEGER, citations INTEGER, invalid_labels INTEGER, first_token_ms INTEGER, total_ms INTEGER, error TEXT, created_at INTEGER, PRIMARY KEY(chat_id, turn_id))");
-  d1.exec("CREATE TRIGGER chat_turn_terminal_immutable BEFORE UPDATE ON chat_turn WHEN OLD.state IN ('completed','partial','failed','cancelled') BEGIN SELECT RAISE(ABORT,'terminal_chat_turn_is_immutable'); END");
+  for (const name of ["0001_library", "0002_ask", "0003_distill", "0005_model_gateway", "0006_integrity", "0007_manual_understanding", "0008_model_providers", "0012_model_admission"])
+    d1.exec(readFileSync(new URL(`../migrations/${name}.sql`, import.meta.url), "utf8"));
+  d1.prepare("INSERT INTO project(id,title,created_at,updated_at) VALUES (?,'Wire fixture',0,0)").run(projectId);
+  d1.prepare("INSERT INTO chat(id,project_id,created_by,created_at,updated_at) VALUES ('wire-chat',?,'owner',0,0)").run(projectId);
   const env = {
     DB: {
       prepare(sql: string) {
@@ -1039,15 +1037,20 @@ describe("ChatAgent interrupted queue recovery", () => {
 describe("ChatAgent terminal D1 settlement", () => {
   const id = "aaaaaaaa-aaaa-4aaa-8aaa-000000000040";
   const input: RunTurnInput = { projectId, chatId, turnId: id, question: "Preserve this completed answer.", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" };
-  async function seeded(state: TurnView["state"] = "completed", active: string | null = id) {
+  async function seeded(state: TurnView["state"] = "completed", active: string | null = id, unknown = false) {
     const h = makeHarness();
     await h.agent.onStart();
     const turn: TurnView = { turnId: id, question: input.question, model: "gateway:command-code/native-beam", answer: "Saved answer [S1:1].", state,
       scopeMode: "explicit", sourceIds: ["s1"], revisionIds: ["r1"], contextMode: "whole", citations: [{ revisionId: "r1", sourceId: "s1", block: 1, start: 0, end: 8, sourceTitle: "Paper", deleted: false, label: "[S1:1]" }],
-      invalidLabels: 0, inputTokens: null, cachedTokens: null, outputTokens: 5, tokenLimit: TOKEN_BOUND, firstTokenMs: 12, totalMs: 45, error: null, settlementPending: true };
+      invalidLabels: 0, inputTokens: null, cachedTokens: null, outputTokens: unknown ? null : 5, tokenLimit: unknown ? null : TOKEN_BOUND, firstTokenMs: 12, totalMs: 45, error: null, settlementPending: true };
     h.db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,100)").run(id, JSON.stringify(turn));
     h.d1.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,input_tokens,cached_tokens,output_tokens,token_limit,citations,invalid_labels,first_token_ms,total_ms,error,created_at,estimated_cost_microusd)
-      VALUES(?,?,?,?,?,?,'started',NULL,NULL,NULL,?,0,0,NULL,NULL,NULL,100,12345)`).run(chatId, id, turn.model, turn.scopeMode, JSON.stringify(turn.revisionIds), turn.contextMode ?? "none", TOKEN_BOUND);
+      VALUES(?,?,?,?,?,?,'started',NULL,NULL,NULL,?,0,0,NULL,NULL,NULL,100,12345)`).run(chatId, id, turn.model, turn.scopeMode, JSON.stringify(turn.revisionIds), turn.contextMode ?? "none", unknown ? null : TOKEN_BOUND);
+    if (unknown) {
+      const base = await requireAvailableModel(h.env, turn.model);
+      await admitTurn(h.env, chatId, id, { ...base, maxOutputTokens: null, outputReserveTokens: 8192 });
+      vi.clearAllMocks();
+    }
     h.agent.setState({ active, queued: null, stopRequested: false });
     return { ...h, turn };
   }
@@ -1063,6 +1066,69 @@ describe("ChatAgent terminal D1 settlement", () => {
     agent.setState(structuredClone(state));
     return agent;
   }
+  it("recovers an unknown admission claim across restart and terminal write failure without dispatch or invented zero usage", async () => {
+    const h = await seeded("started", id, true);
+    try {
+      terminalFault(h);
+      const first = replay(h, h.agent.state); await first.onStart();
+      expect((await first.getTurns(projectId)).find((turn) => turn.turnId === id)).toMatchObject({
+        state: "partial", answer: h.turn.answer, tokenLimit: null, tokenLimitKind: "unknown", inputTokens: null, outputTokens: null, settlementPending: true });
+      h.d1.exec("DROP TRIGGER fail_settlement");
+      const second = replay(h, first.state); await second.onStart();
+      const result = (await second.getTurns(projectId)).find((turn) => turn.turnId === id);
+      expect(result).toMatchObject({ state: "partial", tokenLimit: null, tokenLimitKind: "unknown", inputTokens: null, outputTokens: null });
+      expect(result?.settlementPending).toBeUndefined();
+      const stored = h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id);
+      expect(stored).toMatchObject({ state: "partial", token_limit: null, token_limit_kind: "unknown", input_tokens: null, output_tokens: null });
+      expect(await second.submitTurn(input, true)).toEqual(result);
+      expect(await second.submitTurn(input, false)).toEqual(result);
+      await second.onStart();
+      expect(h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id)).toEqual(stored);
+      noDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
+
+  it("adopts a committed unknown admission after its acknowledgement is lost, without a second call", async () => {
+    const h = makeHarness();
+    const base = await requireAvailableModel(h.env, "gateway:command-code/native-beam");
+    vi.mocked(requireAvailableModel).mockResolvedValueOnce({ ...base, maxOutputTokens: null, outputReserveTokens: 8192 });
+    const prepare = h.env.DB.prepare.bind(h.env.DB);
+    h.env.DB.prepare = ((sql: string) => {
+      const statement = prepare(sql);
+      if (!sql.includes("token_limit_kind = ?")) return statement;
+      return { bind(...args: SQLInputValue[]) {
+        const bound = statement.bind(...args);
+        return { ...bound, async run() { await bound.run(); throw new Error("Admission acknowledgement lost"); } };
+      } } as unknown as D1PreparedStatement;
+    }) as D1Database["prepare"];
+    try {
+      await h.agent.onStart();
+      const result = requireTurn(await h.agent.submitTurn(input, true));
+      expect(result).toMatchObject({ state: "failed", tokenLimit: 0, tokenLimitKind: "unknown", inputTokens: 0, outputTokens: 0 });
+      expect(result.settlementPending).toBeUndefined();
+      expect(h.d1.prepare("SELECT token_limit_kind,token_limit,state FROM chat_turn WHERE turn_id=?").get(id))
+        .toEqual({ token_limit_kind: "unknown", token_limit: 0, state: "failed" });
+      expect(await h.agent.submitTurn(input, true)).toEqual(result);
+      expect(admitTurn).toHaveBeenCalledTimes(1);
+      expect(fetchCalls).toBe(0);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+
+  it("projects legacy basis consistently without rewriting a terminal row or its payload", async () => {
+    const h = await seeded();
+    try {
+      await h.agent.onStart();
+      const row = h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id);
+      const payload = h.db.prepare("SELECT payload FROM turns WHERE id=?").get(id);
+      const result = (await h.agent.getTurns(projectId)).find((turn) => turn.turnId === id);
+      expect(result?.tokenLimitKind).toBe("legacy");
+      expect(await h.agent.submitTurn(input, true)).toEqual(result);
+      expect(await h.agent.submitTurn(input, false)).toEqual(result);
+      expect(h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id)).toEqual(row);
+      expect(h.db.prepare("SELECT payload FROM turns WHERE id=?").get(id)).toEqual(payload);
+      noDispatch();
+    } finally { h.db.close(); h.d1.close(); }
+  });
   it("preserves a pending completed A and queued B in the same object, then settles without dispatching either again", async () => {
     const h = makeHarness();
     try {
@@ -1094,7 +1160,7 @@ describe("ChatAgent terminal D1 settlement", () => {
       expect(h.agent.state.active).toBeNull();
       expect(h.d1.prepare("SELECT state,input_tokens,output_tokens FROM chat_turn WHERE turn_id=?").get(id)).toEqual({ state: "completed", input_tokens: 8, output_tokens: 5 });
       const ordering = h.db.prepare("SELECT created_at,history_version FROM turns WHERE id=?").get(bInput.turnId);
-      expect(await h.agent.submitTurn(bInput, true)).toEqual({ ...b, input: bInput,
+      expect(await h.agent.submitTurn(bInput, true)).toEqual({ ...b, input: bInput, tokenLimitKind: "legacy",
         createdAt: ordering?.created_at, historyVersion: ordering?.history_version });
       const before = h.d1.prepare("SELECT * FROM chat_turn WHERE turn_id=?").get(id);
       await h.agent.getSnapshot(projectId); await h.agent.submitTurn(input, true);
@@ -1209,7 +1275,7 @@ describe("ChatAgent terminal D1 settlement", () => {
       for (let n = 1; n <= 8; n++) {
         const next = "pending-" + n;
         h.db.prepare("INSERT INTO turns(id,payload,created_at) VALUES(?,?,?)").run(next, JSON.stringify({ ...h.turn, turnId: next }), 100 + n);
-        h.d1.prepare("INSERT INTO chat_turn SELECT chat_id,?,model,scope_mode,scope_json,context_mode,state,input_tokens,cached_tokens,output_tokens,token_limit,estimated_cost_microusd,citations,invalid_labels,first_token_ms,total_ms,error,created_at FROM chat_turn WHERE turn_id=?").run(next, id);
+        h.d1.prepare("INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,input_tokens,cached_tokens,output_tokens,token_limit,estimated_cost_microusd,citations,invalid_labels,first_token_ms,total_ms,error,created_at,token_limit_kind) SELECT chat_id,?,model,scope_mode,scope_json,context_mode,state,input_tokens,cached_tokens,output_tokens,token_limit,estimated_cost_microusd,citations,invalid_labels,first_token_ms,total_ms,error,created_at,token_limit_kind FROM chat_turn WHERE turn_id=?").run(next, id);
       }
       expect(h.db.prepare("EXPLAIN QUERY PLAN SELECT id FROM turns WHERE json_extract(payload,'$.settlementPending')=1 ORDER BY created_at,id LIMIT 8").all())
         .toContainEqual(expect.objectContaining({ detail: expect.stringContaining("turns_pending_settlement") }));
@@ -1245,6 +1311,19 @@ describe("ChatAgent terminal D1 settlement", () => {
 });
 
 describe("chat-stream K2 wire regression", () => {
+  it("retains reported usage that exceeds declared metadata without clamping it to the admission value", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "The source [S1:1]." }, "stop", { prompt_tokens: 10, completion_tokens: 2000000, total_tokens: 2000010 })]);
+      const result = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: "contradictory-capacity", question: "Explain.", scopeMode: "explicit", sourceIds: ["s1"] }, true));
+      expect(result).toMatchObject({ tokenLimit: TOKEN_BOUND, tokenLimitKind: "published", inputTokens: 10, outputTokens: 2000000 });
+      expect(h.d1.prepare("SELECT input_tokens,output_tokens,token_limit FROM chat_turn WHERE turn_id='contradictory-capacity'").get())
+        .toEqual({ input_tokens: 10, output_tokens: 2000000, token_limit: TOKEN_BOUND });
+      expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+
   it.each([
     { capacity: 32768, context: 1048576 }, { capacity: 4096, context: 1048576 },
     { capacity: null, context: 1048576 }, { capacity: 32768, context: 20000 },
@@ -1266,7 +1345,9 @@ describe("chat-stream K2 wire regression", () => {
       else expect(sentBodies[0]?.max_tokens).toBe(Math.min(capacity, context - input));
       expect(fetchCalls).toBe(1);
       expect(turn).toMatchObject({ state: "completed", inputTokens: null, outputTokens: null });
-      expect(turn.tokenLimit).toBeGreaterThan(0);
+      expect(turn.tokenLimitKind).toBe(capacity === null ? "unknown" : "published");
+      if (capacity === null) expect(turn.tokenLimit).toBeNull();
+      else expect(turn.tokenLimit).toBe(context + capacity);
     } finally { h.db.close(); h.d1.close(); }
   });
 
@@ -1296,7 +1377,7 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.tokenLimit).toBe(TOKEN_BOUND);
       expect(turn.inputTokens).toBe(20);
       expect(turn.outputTokens).toBe(18);
-      expect(vi.mocked(assertProviderAllowance)).not.toHaveBeenCalled();
+      expect(vi.mocked(assertProviderAllowance)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(admitTurn)).toHaveBeenCalledTimes(1);
       expect(executedSql.some((s) => s.includes("token_limit"))).toBe(true);
       expect(executedSql.some((s) => s.includes("estimated_cost_microusd"))).toBe(false);

@@ -10,25 +10,8 @@ import './understanding.css';
 // Wire types above come from src/understanding.ts; no local duplicates.
 type ModelOption = ModelRoute;
 export interface SuggestedQuestion { readonly sourceId: string; readonly sourceTitle: string; readonly question: string }
-function outputCapOf(m: Pick<ModelOption, 'outputReserveTokens' | 'maxOutputTokens'>): number | null {
-  const reserve = m.outputReserveTokens ?? null;
-  const max = m.maxOutputTokens ?? null;
-  const bound = reserve ?? max;
-  if (bound === null) return null;
-  if (max === null) return bound;
-  return Math.min(bound, max);
-}
-function twoCallBound(m: ModelOption): number | null {
-  const context = m.contextTokens;
-  const cap = outputCapOf(m);
-  if (context === null || cap === null) return null;
-  if (!Number.isSafeInteger(context) || context <= 0) return null;
-  if (!Number.isSafeInteger(cap) || cap <= 0) return null;
-  const perCall = context + cap;
-  if (!Number.isSafeInteger(perCall)) return null;
-  const bound = 2 * perCall;
-  if (!Number.isSafeInteger(bound)) return null;
-  return bound;
+function usableModel(m: ModelOption): boolean {
+  return Number.isSafeInteger(m.contextTokens) && m.contextTokens !== null && m.contextTokens > 0;
 }
 function stateLabel(s: DistillState): string {
   if (s === 'done') return 'Understood';
@@ -108,8 +91,8 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     if (!saveAvailable) {
       const chosen = models.find((m) => m.route === modelChoice);
       if (modelChoice !== '' && (!chosen || !chosen.enabled)) { setNote(chosen && chosen.unavailableReason ? 'Selected model is unavailable: ' + chosen.unavailableReason : 'Selected model is unavailable.'); return; }
-      if (modelChoice === '' && configuredBound === null) { setNote('The default model is currently unavailable, so Understand cannot start yet.'); return; }
-      if (modelChoice !== '' && chosen !== undefined && chosen.enabled && twoCallBound(chosen) === null) { setNote('The selected model is currently unavailable, so Understand cannot start yet.'); return; }
+      if (modelChoice === '' && !configuredUsable) { setNote('The default model is currently unavailable, so Understand cannot start yet.'); return; }
+      if (modelChoice !== '' && chosen !== undefined && chosen.enabled && !usableModel(chosen)) { setNote('The selected model is currently unavailable, so Understand cannot start yet.'); return; }
     }
     setBusy(true);
     setAwaitingStatus('unknown');
@@ -154,14 +137,13 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const referenceByBlock = new Map(references.map((reference) => [reference.block, reference] as const));
   const chosen = models.find((m) => m.route === modelChoice);
   const chosenDisabled = modelChoice !== '' && (!chosen || !chosen.enabled);
-  const chosenBound = chosen !== undefined && chosen.enabled ? twoCallBound(chosen) : null;
+  const chosenUsable = chosen !== undefined && chosen.enabled && usableModel(chosen);
   const configuredRoute: string | null | undefined = view.progress.configuredModel;
   const configuredSpec = typeof configuredRoute === "string" ? models.find((m) => m.route === configuredRoute) : undefined;
   const configuredLabel = configuredSpec?.label ?? null;
-  const progressTokens = view.progress.maximumTokens ?? null;
-  const configuredBound = configuredSpec !== undefined ? (configuredSpec.enabled ? twoCallBound(configuredSpec) : null) : progressTokens;
+  const configuredUsable = configuredSpec !== undefined && configuredSpec.enabled && usableModel(configuredSpec);
   const pickerEmptyLabel = 'Use configured default' + (configuredLabel !== null ? ' (' + configuredLabel + ')' : '');
-  const understandDisabled = busy || failure !== '' || understanding.isFetching || modelRoutePending || (modelChoice === '' ? configuredBound === null : chosenDisabled || chosenBound === null);
+  const understandDisabled = busy || failure !== '' || understanding.isFetching || modelRoutePending || (modelChoice === '' ? !configuredUsable : chosenDisabled || !chosenUsable);
   const requestStatus = awaitingStatus === null
     ? statusReady ? stateLabel(view.state) : 'Checking understanding status.'
     : busy ? 'Sending request.'
@@ -181,7 +163,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
           onRoutePendingChange={setModelRoutePending} />
         <button className='er-button er-button--text' type='button' disabled={!catalogueLoaded} onClick={reloadSnapshot}>Reload model list</button>
         {catalogWarnings.length > 0 ? <p className='er-und__hint' role='status'>Model catalog: {catalogWarnings.join(' ')}</p> : null}
-        {modelChoice === '' ? (configuredBound === null ? (<p className='er-und__error' role='alert'>The default model is currently unavailable, so Understand cannot start yet.</p>) : null) : chosen !== undefined && chosen.enabled && chosenBound !== null ? null : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'The selected model is currently unavailable, so Understand cannot start yet.'}</p>)}
+        {modelChoice === '' ? (!configuredUsable ? (<p className='er-und__error' role='alert'>The default model is currently unavailable, so Understand cannot start yet.</p>) : null) : chosen !== undefined && chosen.enabled && chosenUsable ? null : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'The selected model is currently unavailable, so Understand cannot start yet.'}</p>)}
       </div> : null}
       {canStart || failure !== '' || note !== '' || awaitingStatus || canSaveAvailable ? <div className='er-und__actions'>
         {canStart ? <button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void request()}>Understand source</button> : null}

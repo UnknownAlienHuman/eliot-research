@@ -17,7 +17,7 @@ export interface UnderstandingClaim { id: string; kind: ClaimKind; statement: st
   dataset: string | null; valueText: string | null; valueNumber: number | null; unit: string | null; conditions: string | null }
 
 export interface DistillUsage { calls: number; inputTokens: number | null; cachedTokens: number | null;
-  outputTokens: number | null; tokenLimit?: number | null; wallMs: number; providerUsage?: (JSONObject | null)[] }
+  outputTokens: number | null; tokenLimit?: number | null; tokenLimitKind?: "published" | "unknown" | "legacy"; wallMs: number; providerUsage?: (JSONObject | null)[] }
 
 export interface DistillReport { questions: string[]; usage: DistillUsage; kept: number;
   dropped: { index: number; reason: string }[]; clearedNumbers: number;
@@ -27,7 +27,7 @@ export interface DistillReport { questions: string[]; usage: DistillUsage; kept:
 export interface Understanding { sourceId: string; revisionId: string; state: DistillState; error: string | null;
   canRecover: boolean;
   authors: string; published: string | null;
-  progress: { attempts: number; limit: number; maximumTokens: number | null; model: string | null; configuredModel: string | null };
+  progress: { attempts: number; limit: number; maximumTokens: number | null; recordedTokenLimit?: number | null; tokenLimitKind?: "published" | "unknown" | "legacy"; model: string | null; configuredModel: string | null };
   guide: string | null; digest: string | null; glossary: GlossaryEntry[]; claims: UnderstandingClaim[];
   report: DistillReport | null; citations: { block: number; start: number; end: number }[] }
 
@@ -66,24 +66,29 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
   if (!source) throw new LibraryError("not_found", "Source not found.", 404);
   const revisionId = input.revisionId ?? source.currentRevisionId;
   if (!revisionId) throw new LibraryError("not_found", "This source has no revision yet.", 404);
-  const row = await env.DB.prepare("SELECT r.id AS id, r.distill_state AS state, r.distill_error AS error,r.distill_calls AS attempts,r.distill_report_key AS reportKey,r.distill_model AS model,r.distill_token_limit AS tokenLimit"
+  const row = await env.DB.prepare("SELECT r.id AS id, r.distill_state AS state, r.distill_error AS error,r.distill_calls AS attempts,r.distill_report_key AS reportKey,r.distill_model AS model,r.distill_token_limit AS tokenLimit,r.distill_token_limit_kind AS tokenLimitKind"
     + " FROM source_revision r JOIN source s ON s.id=r.source_id"
     + " WHERE r.id=? AND r.source_id=? AND r.deleted_at IS NULL AND s.state!='deleted'")
-    .bind(revisionId, input.sourceId).first<{ id: string; state: DistillState; error: string | null; attempts: number; reportKey: string | null; model: string | null; tokenLimit: number | null }>();
+    .bind(revisionId, input.sourceId).first<{ id: string; state: DistillState; error: string | null; attempts: number; reportKey: string | null; model: string | null; tokenLimit: number | null; tokenLimitKind: "published" | "unknown" | "legacy" | null }>();
   if (!row) throw new LibraryError("not_found", "Source revision not found.", 404);
   const settings = await env.DB.prepare("SELECT distill_model AS model FROM settings WHERE id=1").first<{ model: string }>();
   const configuredModel = settings?.model ?? null;
-  const report = await r2Json<DistillReport>(env, row.reportKey ?? `source/${revisionId}/distill.json`);
+  const storedReport = await r2Json<DistillReport>(env, row.reportKey ?? `source/${revisionId}/distill.json`);
+  const report = storedReport ? { ...storedReport, usage: { ...storedReport.usage, tokenLimit: storedReport.usage.tokenLimit ?? null,
+    tokenLimitKind: storedReport.usage.tokenLimitKind ?? "legacy" as const } } : null;
   if (row.reportKey && !report) throw new LibraryError("unavailable", "The current saved report is missing. Restore storage and reload understanding.", 503);
-  let maximumTokens = row.tokenLimit ?? report?.usage?.tokenLimit ?? null;
+  const recordedTokenLimit = row.tokenLimit ?? report?.usage?.tokenLimit ?? null;
+  let tokenLimitKind = row.tokenLimitKind ?? report?.usage?.tokenLimitKind ?? "legacy";
+  let maximumTokens = tokenLimitKind === "published" && recordedTokenLimit !== 0 ? recordedTokenLimit : null;
   const forecastModel = row.model ?? configuredModel;
-  if (maximumTokens === null && row.attempts === 0 && ["none", "queued", "paused"].includes(row.state) && forecastModel) {
+  if (recordedTokenLimit === null && row.tokenLimitKind == null && row.attempts === 0 && ["none", "queued", "paused"].includes(row.state) && forecastModel) {
     try {
       const catalog = await readModelCatalog(env);
       const entry = catalog.models.find((m) => m.route === forecastModel);
       if (entry && entry.enabled) {
-        const bound = 2 * modelTokenLimit(entry);
-        if (Number.isSafeInteger(bound)) maximumTokens = bound;
+        const callBound = modelTokenLimit(entry), bound = callBound === null ? null : 2 * callBound;
+        if (bound !== null && Number.isSafeInteger(bound)) maximumTokens = bound;
+        tokenLimitKind = bound === null ? "unknown" : "published";
       }
     } catch { maximumTokens = null; }
   }
@@ -114,7 +119,7 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
     canRecover: ["done", "partial", "failed"].includes(row.state) && row.reportKey !== `source/${revisionId}/checked/distill.json` && await hasAvailableUnderstanding(env, revisionId),
     authors: source.authors,
     published: source.published,
-    progress: { attempts: row.attempts, limit: 2, maximumTokens,
+    progress: { attempts: row.attempts, limit: 2, maximumTokens, recordedTokenLimit, tokenLimitKind,
       model: row.model, configuredModel },
     guide,
     digest,
