@@ -39,8 +39,9 @@ const CHAT_DDL = "CREATE TABLE chat_turn (" +
   " created_at INTEGER NOT NULL, PRIMARY KEY (chat_id, turn_id))";
 const DISTILL_DDL = "CREATE TABLE source_revision (" +
   "id TEXT PRIMARY KEY," +
+  " source_id TEXT NOT NULL DEFAULT 'fixture-source', deleted_at INTEGER, readable_state TEXT NOT NULL DEFAULT 'readable'," +
   " distill_state TEXT NOT NULL DEFAULT 'none' CHECK (distill_state IN ('none','queued','running','paused','done','partial','failed'))," +
-  " distill_model TEXT, distill_started_at INTEGER," +
+  " distill_model TEXT DEFAULT '" + FLASH_ROUTE + "', distill_started_at INTEGER," +
   " distill_token_limit INTEGER CHECK (distill_token_limit IS NULL OR distill_token_limit >= 0)," +
   " distill_error TEXT," +
   " distill_calls INTEGER NOT NULL DEFAULT 0 CHECK (distill_calls BETWEEN 0 AND 2)," +
@@ -54,6 +55,7 @@ const DISTILL_DDL = "CREATE TABLE source_revision (" +
 function testEnv() {
   const db = new DatabaseSync(":memory:");
   db.exec(CHAT_DDL);
+  db.exec("CREATE TABLE source (id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'active'); INSERT INTO source(id) VALUES ('fixture-source')");
   db.exec(DISTILL_DDL);
   const shim = {
     prepare(sql: string) {

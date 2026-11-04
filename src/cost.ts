@@ -35,27 +35,29 @@ export async function admitDistill(env: Env, revisionId: string, model: ModelSpe
     bound = 2 * modelTokenLimit(model);
     if (!Number.isSafeInteger(bound)) throw new LibraryError("unavailable", "This model has no usable input/output limits.", 503);
   } catch (err) {
-    await pauseDistill(env, revisionId, err instanceof Error ? err.message : "This model has no usable input/output limits.");
+    await pauseDistill(env, revisionId, model.route, err instanceof Error ? err.message : "This model has no usable input/output limits.");
     return false;
   }
   try {
     await assertProviderAllowance(env, model);
   } catch (err) {
-    await pauseDistill(env, revisionId, err instanceof Error ? err.message : "Provider allowance is unavailable. No model call was started.");
+    await pauseDistill(env, revisionId, model.route, err instanceof Error ? err.message : "Provider allowance is unavailable. No model call was started.");
     return false;
   }
   const admitted = await env.DB.prepare(
     "UPDATE source_revision SET distill_state = 'running', distill_model = ?, distill_started_at = ?, distill_token_limit = ?, distill_error = NULL" +
     " WHERE id = ? AND distill_state = 'queued' AND distill_calls = 0" +
+    " AND distill_model = ? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings')" +
+    " AND EXISTS (SELECT 1 FROM source WHERE source.id = source_revision.source_id AND source.state != 'deleted')" +
     " AND (SELECT COUNT(*) FROM source_revision WHERE distill_state = 'running') < 2"
-  ).bind(model.route, Date.now(), bound, revisionId).run();
+  ).bind(model.route, Date.now(), bound, revisionId, model.route).run();
   return admitted.meta.changes === 1;
 }
 
-async function pauseDistill(env: Env, revisionId: string, error: string): Promise<void> {
+async function pauseDistill(env: Env, revisionId: string, model: string, error: string): Promise<void> {
   await env.DB.prepare(
-    "UPDATE source_revision SET distill_state = 'paused', distill_error = ? WHERE id = ? AND distill_state = 'queued'"
-  ).bind(error, revisionId).run();
+    "UPDATE source_revision SET distill_state = 'paused', distill_error = ? WHERE id = ? AND distill_state = 'queued' AND distill_calls = 0 AND distill_model = ?"
+  ).bind(error, revisionId, model).run();
 }
 
 // Release a stuck distill slot only when no paid call was dispatched: one

@@ -39,7 +39,7 @@ This table names current owners. AI Search (`src/search.ts`, K5), project-knowle
 are planned only; their files and bindings are not part of the current replacement. Add them only at their MAP gate.
 
 Bindings arrive only with their contour: K0 `ASSETS`; K1 `DB`, `BUCKET`, `AI`, `INGEST`, plus `OCR` for explicit PDF jobs; K2 `CHAT`; K3 `DISTILL`
-and reconciliation-only cron; K5 direct `SEARCH`; K6 `PROJECT_KNOWLEDGE`; K7 `RESEARCH` and optional `BROWSER`. Generate `Env` with
+and cron for reconciliation and the explicitly requested queue; K5 direct `SEARCH`; K6 `PROJECT_KNOWLEDGE`; K7 `RESEARCH` and optional `BROWSER`. Generate `Env` with
 Wrangler; never hand-write it.
 
 A paid effect is a model call, rendered Browser capture, billable AI Search use, or a Workflow that invokes one. Page
@@ -426,9 +426,11 @@ label strings. JSON decoding preserves the original value; canonical bytes and s
 Extraction and synthesis preserve table row, metric and column/split identity; blank cells are unreported results.
 
 States: `none|queued|running|paused|done|partial|failed`. Ingest leaves readable revisions at `none`. Only an explicit
-Understand request queues and admits its requested revision, subject to concurrency and provider allowance;
-unavailable allowance becomes visible `paused` until another explicit request. Cron only reconciles stale `running` rows
-against Workflow ID `distill-<revisionId>`; it never admits queued work. Migration `0007_manual_understanding.sql`
+Understand request queues its requested revision and attempts admission, subject to concurrency and provider allowance.
+A full concurrency window leaves work `queued`; Workflow completion and cron admit already requested `queued` rows
+with zero calls, in creation order, using their stored model route. Unavailable models or allowance become visible
+`paused` until another explicit request. Cron also reconciles stale `running` rows against Workflow ID
+`distill-<revisionId>` without restarting uncertain work. Migration `0007_manual_understanding.sql`
 removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
 resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
 
@@ -591,8 +593,11 @@ Queued work retains its selected route. Repeating the request without an overrid
 different route conflicts before scheduling. Only a successful `none`/`paused` transition may establish a new selection.
 Old terminal reports and cached Save retain their recorded usage and shape. Each
 Workflow paid step has zero retries; an atomic per-revision dispatch count prevents step replay from buying a duplicate
-call. Explicit Understand schedules only its requested revision. Ingest and cron never start source understanding;
-completed or unchanged work is not automatically re-distilled, and failed paid work is not retried. The
+call. Explicit Understand schedules only its requested revision. Ingest never queues understanding. Completion and cron
+may admit only already requested, undispatched queued work; admission atomically rechecks revision/source liveness,
+readability, the frozen model route and the two-slot limit after asynchronous model/provider checks. Missing stored
+routes pause rather than adopting a new default. A failure draining the queue cannot retry the finalized Workflow.
+Completed or unchanged work is not automatically re-distilled, and failed paid work is not retried. The
 pipeline uses at most two bounded model calls with zero paid-step retries. Completed/partial revisions return existing
 artifacts on repeat. Budget-paused work resumes
 only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
