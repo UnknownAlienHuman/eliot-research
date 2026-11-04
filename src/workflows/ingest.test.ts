@@ -6,6 +6,7 @@ vi.mock("cloudflare:workers", () => ({ WorkflowEntrypoint: class { constructor(_
 import { IngestWorkflow } from "./ingest";
 import { commitRevision, loadRevision, recoverIngest, STATUS_UNAVAILABLE, STORAGE_FAILURE } from "../ingest-completion";
 import { addSource, attachSource, getSource } from "../library";
+import { readOutline } from "../read";
 import type { Actor } from "../auth";
 
 const owner: Actor = { type: "owner", id: "owner", authentication: "access" };
@@ -38,7 +39,8 @@ function fixture(native = false) {
     if (options?.onlyIf && objects.has(key)) return null;
     return put(key, value);
   });
-  const get = vi.fn(async (key: string) => { const object = objects.get(key); return object ? { ...object, arrayBuffer: async () => object.bytes.slice().buffer } : null; });
+  const get = vi.fn(async (key: string) => { const object = objects.get(key); return object ? { ...object, arrayBuffer: async () => object.bytes.slice().buffer,
+    json: async () => JSON.parse(new TextDecoder().decode(object.bytes)) } : null; });
   const head = vi.fn(async (key: string) => objects.get(key) ?? null);
   const create = vi.fn(() => { throw new Error("Recovery must not create a Workflow"); });
   const status = vi.fn(async () => ({ status: "complete", output }));
@@ -68,6 +70,40 @@ function fixture(native = false) {
   return { db, env, run, row, current, control, objects, bucketPut, get, head, transform, create, status, cache, attempts, configs, put, batches: () => batches };
 }
 describe("Ingest storage completion", () => {
+  it("scans a new revision without changing a stored legacy block map or its IDs", async () => {
+    const h = fixture(true);
+    const text = "We use WordPiece embeddings (Wu et al.,\n2016) with a 30,000 token vocabulary. The first\ntoken of every sequence is always a special token.\n";
+    const size = new TextEncoder().encode(text).length;
+    const starts = [0, text.indexOf("2016)"), text.indexOf("token of every"), size];
+    // Retained pre-fix numbering; never derive legacy IDs with the current scanner.
+    const legacy = ["paragraph", "list", "paragraph"].map((type, index) => ({
+      id: index + 1, type, start: starts[index], end: starts[index + 1], heading: null,
+    }));
+    try {
+      h.db.prepare("INSERT INTO source_revision(id,source_id,revision_no,original_key,readable_state,readable_size,block_count,created_by,created_at) VALUES('old','source',0,'old/original','readable',?,3,'owner',0)").run(size);
+      h.db.exec("UPDATE source SET current_revision_id='old' WHERE id='source'");
+      h.put("source/old/text.md", text);
+      h.put("source/old/blocks.json", JSON.stringify(legacy));
+      h.put("source/revision/original", text);
+      const oldText = structuredClone(h.objects.get("source/old/text.md"));
+      const oldMap = structuredClone(h.objects.get("source/old/blocks.json"));
+      expect((await readOutline(h.env, owner, "old")).blocks).toEqual(legacy);
+
+      await h.run();
+      expect(h.current()).toEqual({ current_revision_id: "revision" });
+      expect((await readOutline(h.env, owner, "revision")).blocks).toEqual([
+        { id: 1, type: "paragraph", start: 0, end: size, heading: null },
+      ]);
+      h.cache.delete("commit revision");
+      await h.run();
+      expect((await readOutline(h.env, owner, "old")).blocks).toEqual(legacy);
+      expect(h.objects.get("source/old/text.md")).toEqual(oldText);
+      expect(h.objects.get("source/old/blocks.json")).toEqual(oldMap);
+      expect(h.bucketPut.mock.calls.map(([key]) => key)).toEqual(["source/revision/text.md", "source/revision/blocks.json"]);
+      expect(h.row()).toMatchObject({ conversion_calls: 0, conversion_tokens: 0 });
+      expect(h.transform).not.toHaveBeenCalled();
+    } finally { h.db.close(); }
+  });
   it("retries only load/commit and preserves one converted result across cached Workflow replay", async () => {
     const h = fixture();
     try {

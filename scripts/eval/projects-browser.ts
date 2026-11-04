@@ -237,11 +237,78 @@ try {
     assert.equal(await fetchEval(origin + '/api/revisions/' + revisionId + '/text', {}, origin, process.env.ELIOT_ORIGIN).then(r => r.text()), canonicalBefore);
     assert.deepEqual(patches, [{ archived: true }, { archived: false }, { title: failedName }, { title: firstSavedName }, { title: restoredTitle }, { archived: false }]);
     assert.equal(createPosts, 1);
+    await page.goto(origin); await expect(newName).toBeVisible();
+    const matching = async title => (await allProjects(false)).filter(project => project.title === title.trim());
+    let nativeCreatePosts = 0;
+    for (const outcome of ['before', 'lost', 'malformed', 'wrong-id']) {
+      const rawTitle = '  Create replay ' + outcome + ' ' + prefix + viewport.width + '  ', submitted = [];
+      const handler = async route => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        submitted.push(route.request().postDataJSON());
+        if (submitted.length === 1 && outcome === 'before') return route.fulfill({ status: 503, json: { error: { message: 'Rejected before creation' } } });
+        const response = await route.fetch(); assert.equal(response.status(), 201); nativeCreatePosts++;
+        const accepted = await response.json();
+        if (submitted.length === 1) {
+          if (outcome === 'lost') return route.abort('failed');
+          if (outcome === 'malformed') return route.fulfill({ status: 201, contentType: 'application/json', body: '{malformed accepted project' });
+          return route.fulfill({ status: 201, json: { project: { ...accepted.project, id: crypto.randomUUID() } } });
+        }
+        return route.fulfill({ response });
+      };
+      await page.route(origin + '/api/projects', handler); await newName.fill(rawTitle); await create.click();
+      await expect(projects.getByRole('alert')).toBeVisible(); await expect(create).toBeEnabled(); await expect(newName).toHaveValue(rawTitle);
+      assert.equal(submitted.length, 1); assert.equal((await matching(rawTitle)).length, outcome === 'before' ? 0 : 1);
+      await create.click(); await expect(newName).toHaveValue(''); await expect(create).toBeDisabled();
+      assert.equal(submitted.length, 2); assert.deepEqual(submitted[1], submitted[0]);
+      assert.equal(submitted[0].title, rawTitle.trim());
+      assert.deepEqual((await matching(rawTitle)).map(project => project.id), [submitted[0].id]);
+      if (outcome === 'malformed') {
+        await newName.fill(rawTitle); await create.click(); await expect(newName).toHaveValue('');
+        assert.notEqual(submitted[2].id, submitted[0].id); assert.equal((await matching(rawTitle)).length, 2);
+      }
+      await page.unroute(origin + '/api/projects', handler);
+    }
+    const changedInputs = [], firstTitle = 'Accepted before changed draft ' + prefix + viewport.width, changedTitle = 'Changed creation ' + prefix + viewport.width;
+    const changedHandler = async route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      changedInputs.push(route.request().postDataJSON()); const response = await route.fetch();
+      assert.equal(response.status(), 201); nativeCreatePosts++;
+      return changedInputs.length === 1 ? route.abort('failed') : route.fulfill({ response });
+    };
+    await page.route(origin + '/api/projects', changedHandler); await newName.fill(firstTitle); await create.click();
+    await expect(projects.getByRole('alert')).toBeVisible(); await expect(create).toBeEnabled();
+    const retained = (await matching(firstTitle))[0];
+    await newName.fill(changedTitle); await create.click(); await expect(newName).toHaveValue('');
+    assert.notEqual(changedInputs[0].id, changedInputs[1].id); assert.deepEqual((await matching(firstTitle))[0], retained);
+    assert.equal((await matching(changedTitle)).length, 1); await page.unroute(origin + '/api/projects', changedHandler);
+    for (const edit of ['changed', 'whitespace', 'aba']) {
+      const submittedTitle = 'Held creation ' + edit + ' ' + prefix + viewport.width, inputs = [];
+      let release, accepted = false; const gate = new Promise(resolve => { release = resolve; });
+      const handler = async route => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        inputs.push(route.request().postDataJSON()); const response = await route.fetch(); assert.equal(response.status(), 201); nativeCreatePosts++;
+        if (inputs.length === 1) { accepted = true; await gate; }
+        return route.fulfill({ response });
+      };
+      await page.route(origin + '/api/projects', handler); await newName.fill(submittedTitle); await create.click();
+      await expect.poll(() => accepted).toBe(true); await expect(create).toBeDisabled(); await expect(newName).toBeEnabled(); await expect(filter).toBeDisabled();
+      const newerDraft = edit === 'changed' ? 'Next unsaved ' + submittedTitle : edit === 'whitespace' ? submittedTitle + ' ' : submittedTitle;
+      if (edit === 'aba') await newName.fill('Intervening unsaved title');
+      await newName.fill(newerDraft); release(); await expect(filter).toBeEnabled(); await expect(newName).toHaveValue(newerDraft);
+      assert.equal(inputs.length, 1); assert.equal((await matching(submittedTitle)).length, 1);
+      if (edit === 'changed') assert.equal((await matching(newerDraft)).length, 0);
+      await page.screenshot({ path: 'eval/out/k1/projects-create-draft-' + edit + '-' + viewport.width + '.png' });
+      await create.click(); await expect(newName).toHaveValue(''); assert.notEqual(inputs[0].id, inputs[1].id);
+      assert.equal((await matching(newerDraft)).length, edit === 'changed' ? 1 : 2);
+      await page.unroute(origin + '/api/projects', handler);
+    }
     assert.equal(unexpectedWrites, 0); assert.deepEqual(errors, []);
     console.log(JSON.stringify({ scope: 'K1_PROJECTS_BROWSER', viewport, active: expectedActive.length, archived: expectedArchived.length,
       pagedBothViews: true, staleReadIgnored: true, readAndRestoreRetry: true, archiveRenameRestore: true,
       retainedSourceAndHistory: true, pageTwoRename: { createBlockedUntilCancel: true, externalRefetchKeepsDraftAndCancel: true },
       renameAckPreservesNewerInput: { success: true, error: true, onlyExplicitSaveCommitsNewName: true },
+      createExplicitReplay: { beforeDispatch: true, actualAcceptedLostMalformedAndWrongId: true, oneStoredProject: true,
+        samePayloadSameId: true, confirmedAndChangedPayloadNewId: true, held201PreservesChangedWhitespaceAndAbaDrafts: true, nativeCreatePosts },
       createPosts, projectPatches: patches.length, unexpectedWrites, modelCalls: 0 }));
     await context.close();
   }

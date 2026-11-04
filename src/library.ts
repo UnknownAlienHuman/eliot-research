@@ -31,11 +31,14 @@ export async function listProjects(env: Env, _actor: Actor, cursor: string | und
     ORDER BY created_at DESC,id DESC LIMIT 51`).bind(cursor ?? null, cursor ?? null).all<Project>();
   return { projects: result.results.slice(0, 50), nextCursor: result.results.length > 50 ? result.results[49]?.id : null };
 }
-export async function createProject(env: Env, actor: Actor, input: { title: string; description?: string }) {
-  const id = crypto.randomUUID(), now = Date.now();
-  await env.DB.prepare("INSERT INTO project(id,title,description,created_at,updated_at) VALUES(?,?,?,?,?)")
+export async function createProject(env: Env, actor: Actor, input: { id?: string; title: string; description?: string }) {
+  const id = input.id ?? crypto.randomUUID(), now = Date.now();
+  await env.DB.prepare("INSERT INTO project(id,title,description,created_at,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING")
     .bind(id, input.title, input.description ?? "", now, now).run();
-  return getProject(env, actor, id);
+  const stored = await getProject(env, actor, id);
+  if (stored.title !== input.title || stored.description !== (input.description ?? "") || stored.archivedAt !== null)
+    throw new LibraryError("conflict", "This project ID cannot be reused with these inputs.", 409);
+  return stored;
 }
 export async function updateProject(env: Env, actor: Actor, id: string, input: { title?: string; archived?: boolean }) {
   await getProject(env, actor, id);

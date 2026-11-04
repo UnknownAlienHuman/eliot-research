@@ -18,6 +18,80 @@ function checkInvariants(text: string, blocks: Block[]): void {
   });
 }
 describe("scanBlocks", () => {
+  describe("paragraph/list boundaries", () => {
+    it.each(["\n", "\r\n"])("keeps a wrapped BERT citation in its paragraph with %j endings", (newline) => {
+      const text = [
+        "We use WordPiece embeddings (Wu et al.,",
+        "2016) with a 30,000 token vocabulary. The first",
+        "token of every sequence is always a special clas-",
+        "sification token ([CLS]). The final hidden state",
+        "",
+      ].join(newline);
+      const blocks = scanBlocks(text);
+      checkInvariants(text, blocks);
+      expect(blocks.map((block) => block.type)).toEqual(["paragraph"]);
+      expect(sliceUtf8(text, blocks[0]?.start ?? 0, blocks[0]?.end ?? 0)).toBe(text);
+    });
+    it.each(["2.", "42)", "0002."])("keeps %s and following prose inside an existing paragraph", (marker) => {
+      const text = "An ordinary wrapped paragraph\n" + marker + " continues here\nand on the next line.\n";
+      const blocks = scanBlocks(text);
+      checkInvariants(text, blocks);
+      expect(blocks.map((block) => block.type)).toEqual(["paragraph"]);
+      expect(sliceUtf8(text, blocks[0]?.start ?? 0, blocks[0]?.end ?? 0)).toBe(text);
+    });
+    it.each(["1.", "01.", "0001)", "-"])("allows %s to interrupt a paragraph", (marker) => {
+      const text = "Introductory prose.\n" + marker + " First item\n";
+      const blocks = scanBlocks(text);
+      checkInvariants(text, blocks);
+      expect(blocks.map((block) => block.type)).toEqual(["paragraph", "list"]);
+      expect(sliceUtf8(text, blocks[1]?.start ?? 0, blocks[1]?.end ?? 0)).toBe(marker + " First item\n");
+    });
+    it.each(["1.", "01.", "-"])("keeps lazy continuation and the next item in a %s list", (marker) => {
+      const next = marker === "-" ? "-" : "2.";
+      const text = marker + " First item\nwrapped continuation\n" + next + " Second item\n";
+      const blocks = scanBlocks(text);
+      checkInvariants(text, blocks);
+      expect(blocks.map((block) => block.type)).toEqual(["list"]);
+      expect(sliceUtf8(text, blocks[0]?.start ?? 0, blocks[0]?.end ?? 0)).toBe(text);
+    });
+    it.each(["  ", "\t"])("preserves %j indented table-like continuation inside a list", (indent) => {
+      const text = "1. First item\n" + indent + "| nested | table |\n" + indent + "|---|---|\n"
+        + indent + "| one | two |\n2. Second item\n";
+      const blocks = scanBlocks(text);
+      checkInvariants(text, blocks);
+      expect(blocks.map((block) => block.type)).toEqual(["list"]);
+      expect(sliceUtf8(text, blocks[0]?.start ?? 0, blocks[0]?.end ?? 0)).toBe(text);
+    });
+    it("preserves non-one list starts at the document start and after a blank line", () => {
+      const text = "42. First item\n43. Second item\n\nOrdinary prose\ncontinued here.\n\n2) Resumed item\n3) Next item\n";
+      const blocks = scanBlocks(text);
+      checkInvariants(text, blocks);
+      expect(blocks.map((block) => block.type)).toEqual(["list", "paragraph", "list"]);
+      expect(sliceUtf8(text, blocks[0]?.start ?? 0, blocks[0]?.end ?? 0)).toBe("42. First item\n43. Second item\n");
+      expect(sliceUtf8(text, blocks[2]?.start ?? 0, blocks[2]?.end ?? 0)).toBe("2) Resumed item\n3) Next item\n");
+    });
+    it.each([
+      ["heading", "# Heading\n"],
+      ["quote", "> Quoted text\n"],
+      ["table", "| a | b |\n|---|---|\n| 1 | 2 |\n"],
+      ["code", "```text\ncode\n```\n"],
+    ])("ends lazy list continuation before a %s block", (type, following) => {
+      const list = "1. First item\nwrapped continuation\n";
+      const text = list + following + "\nTail paragraph.\n";
+      const blocks = scanBlocks(text);
+      checkInvariants(text, blocks);
+      expect(blocks.map((block) => block.type)).toEqual(["list", type, "paragraph"]);
+      expect(sliceUtf8(text, blocks[0]?.start ?? 0, blocks[0]?.end ?? 0)).toBe(list);
+    });
+    it("preserves Unicode, CRLF and the byte limit across oversized lazy list content", () => {
+      const text = "- Начало 👋\r\n" + "Продолжение 🧪 ".repeat(400) + "\r\n- Следующий пункт\r\n";
+      const blocks = scanBlocks(text);
+      checkInvariants(text, blocks);
+      expect(blocks.length).toBeGreaterThan(1);
+      expect(blocks.every((block) => block.type === "list" && block.end - block.start <= MAX_BLOCK_BYTES)).toBe(true);
+      expect(blocks.map((block) => sliceUtf8(text, block.start, block.end)).join("")).toBe(text);
+    });
+  });
   it("keeps a GFM table without outer pipes intact", () => {
     const text = "# Results\n\nMetric | Value\n--- | ---\nAccuracy | 95\n";
     const blocks = scanBlocks(text);

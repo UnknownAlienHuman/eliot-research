@@ -53,9 +53,17 @@ jobs:
           pnpm db:local
           pnpm dev > /tmp/eliot-k0.log 2>&1 &
           trap 'kill $!' EXIT
-          pnpm eval k0
+          CF_ACCESS_CLIENT_ID=synthetic-k0-client-id CF_ACCESS_CLIENT_SECRET=synthetic-k0-client-secret pnpm eval k0 || {
+            tail -n 80 /tmp/eliot-k0.log
+            exit 1
+          }
+          grep -Fx 'API authentication observed: local (12 /api/me samples)' eval/out/k0/result.txt
+          grep -Fx 'Deployed Access owner-token: NOT_RUN (K0 browser eval is loopback-only)' eval/out/k0/result.txt
+          grep -Fx 'Cloudflare browser login: NOT_RUN (K0 browser eval is loopback-only)' eval/out/k0/result.txt
+          if grep -Fq 'owner-token route exercised' eval/out/k0/result.txt; then exit 1; fi
           pnpm eval k1 --native-only
           pnpm eval k1 --library-only
+          pnpm eval k1 --library-only --source-add-browser
           pnpm eval k1 --library-browser
           pnpm eval k1 --projects-browser
           pnpm eval k2 --native-only

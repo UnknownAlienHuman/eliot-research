@@ -280,7 +280,7 @@ export async function runK1OcrEval() {
       const range = await bytes('/api/revisions/' + revisionId + '/range?start=' + oldBlock.start + '&end=' + oldBlock.end);
       assert(oldRange && range.equals(oldRange));
       await page.goto(origin + '/p/' + projectId + '/source/' + sourceId + '?revisionId=' + revisionId + '&start=' + oldBlock.start + '&end=' + oldBlock.end);
-      await expect(page.locator('.er-lib__excerpt pre')).toHaveText(new TextDecoder('utf-8', { ignoreBOM: true }).decode(range));
+      await expect.poll(() => page.locator('.er-lib__text mark').textContent()).toBe(new TextDecoder('utf-8', { ignoreBOM: true }).decode(range));
       await pass('old_evidence', { label: '[R' + revisionId + ':' + oldBlock.id + ']', start: oldBlock.start, end: oldBlock.end, textSha256: sha(oldText) });
     } else actions.old_evidence = { status: 'NOT_RUN', detail: 'Original PDF/revision preserved; this scan has no prior readable text/citable paragraph. A readable PDF fixture is needed for the old-text/citation gate.' };
     if (paid && cancelSource && cancelRevision) {

@@ -117,6 +117,17 @@ try {
     await olderRead.release({ error: { message: 'Abandoned history page' } }, 503);
     await expect(historyLinks).toHaveCount(50); await expect(page.getByText('Abandoned history page')).toHaveCount(0);
     await page.goto(origin + chatPath(chats[0]));
+    const controls = page.getByRole('button', { name: /^Sources and model:/ });
+    if (viewport.width < 768) {
+      await expect(controls).toHaveAttribute('aria-expanded', 'false');
+      await expect(page.getByRole('combobox', { name: 'Model: provider', exact: true })).toBeHidden();
+      await controls.focus(); await page.keyboard.press('Enter');
+      await expect(controls).toHaveAttribute('aria-expanded', 'true');
+      await expect(page.getByRole('combobox', { name: 'Model: provider', exact: true })).toBeVisible();
+      await question.fill('Draft before collapsing controls'); await controls.click();
+      await expect(controls).toHaveAttribute('aria-expanded', 'false');
+      await expect(question).toHaveValue('Draft before collapsing controls');
+    } else await expect(controls).toBeHidden();
     await question.fill('A original'); await expect(send).toBeEnabled();
     let pending = await hold(turnsUrl(chats[0])); await send.click(); await pending.waiting; interceptedTurns++;
     assert.equal(pending.body().question, 'A original');
@@ -184,6 +195,29 @@ try {
     await navigate(sourcePath(0));
     await expect(page.getByRole('heading', { name: 'Source A', exact: true })).toBeVisible();
     await pending.release({ ...sources[0], source: { ...sources[0].source, title: 'Old metadata' } }); await expect(page.getByRole('heading', { name: 'Source A', exact: true })).toBeVisible();
+    // A failed pending metadata read is actionable and stops automatic GETs.
+    // Explicit Retry resumes a pending read, then normal polling discovers its text.
+    let statusReads = 0, statusMode = 'pending';
+    await page.route(metaUrl, route => {
+      statusReads++;
+      if (statusMode === 'error') return route.fulfill({ status: 503, json: { error: { message: 'Source status unavailable' } } });
+      const data = statusMode === 'readable' ? sources[0] : { ...sources[0],
+        source: { ...sources[0].source, readableState: 'pending' },
+        revisions: sources[0].revisions.map(r => ({ ...r, readableState: 'pending' })) };
+      if (statusMode === 'retry') statusMode = 'readable';
+      return route.fulfill({ json: data });
+    });
+    await navigate(sourcePath(1)); await navigate(sourcePath(0));
+    await expect(page.locator('.er-lib__text')).toBeVisible(); statusMode = 'error';
+    await expect(page.getByRole('alert')).toContainText('Source status unavailable', { timeout: 10000 });
+    const failedStatusReads = statusReads;
+    await page.waitForTimeout(6600); assert.equal(statusReads, failedStatusReads, 'A metadata error must stop automatic polling.');
+    statusMode = 'retry';
+    await page.getByRole('button', { name: 'Retry source status', exact: true }).click();
+    await expect(page.getByText('Source status unavailable', { exact: false })).toHaveCount(0);
+    await expect(page.locator('.er-lib__text')).toContainText('Immutable native text', { timeout: 10000 });
+    assert.equal(statusReads, failedStatusReads + 2, 'Retry must restore pending polling until readable.');
+    await page.unroute(metaUrl);
     // A pending poll is serialized: extra interval ticks cannot start another read. Revision navigation
     // starts a new read, which wins even when the old poll is delivered last.
     let reads = 0, releasePoll;

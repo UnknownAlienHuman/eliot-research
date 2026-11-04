@@ -13,6 +13,7 @@ import { SourceUnderstanding } from "./Understanding";
 import type { SuggestedQuestion } from "./Understanding";
 import { SourceOcr } from "./Ocr";
 import { LibraryPicker } from "./LibraryPicker";
+import { splitReaderRange } from "./reader-range";
 export interface OutlineItem { label: string; start: number; end: number; }
 const FILE_LIMIT = 25 * 1024 * 1024;
 const POLL_MS = 3000;
@@ -102,17 +103,22 @@ export function Projects() {
   });
   const projects = listing.data?.pages.flatMap(page => page.projects);
   const [failure, setFailure] = useState("");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState({ value: "" });
+  const createAttempt = useRef<{ id: string; title: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<{ id: string; title: string } | undefined>(undefined);
   const loadMore = () => { if (!listing.isFetching) void listing.fetchNextPage({ cancelRefetch: false }); };
   async function create() {
-    const next = title.trim();
+    const submittedDraft = title, next = title.value.trim();
     if (!next || busy || editing !== undefined) return;
+    const attempt = createAttempt.current?.title === next ? createAttempt.current : { id: crypto.randomUUID(), title: next };
+    createAttempt.current = attempt;
     setBusy(true); setFailure("");
     try {
-      await apiJson("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: next }) });
-      setTitle(""); await client.resetQueries({ queryKey, exact: true });
+      const result = await apiJson<{ project?: Project } | null>("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(attempt) });
+      if (result?.project?.id !== attempt.id) throw new Error("Could not confirm that this project was created. Create again to check the same project.");
+      if (createAttempt.current === attempt) createAttempt.current = null;
+      setTitle(current => current === submittedDraft ? { value: "" } : current); await client.resetQueries({ queryKey, exact: true });
     } catch (err) { setFailure(err instanceof Error ? err.message : "Could not create the project."); }
     finally { setBusy(false); }
   }
@@ -142,8 +148,8 @@ export function Projects() {
         <button className="er-button er-button--text" type="button" disabled={listing.isFetching}
           onClick={() => listing.isFetchNextPageError ? loadMore() : void listing.refetch()}>Retry projects</button></p> : null}
       {!archived ? <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void create(); }}>
-        <label className="er-field__label" htmlFor="er-lib-new-title">New project</label><input id="er-lib-new-title" value={title} onChange={(e) => setTitle(e.currentTarget.value)} placeholder="Paper trail" maxLength={200} />
-        <button className="er-button er-button--primary" type="submit" disabled={busy || editing !== undefined || !title.trim()}>Create</button>
+        <label className="er-field__label" htmlFor="er-lib-new-title">New project</label><input id="er-lib-new-title" value={title.value} onChange={(e) => setTitle({ value: e.currentTarget.value })} placeholder="Paper trail" maxLength={200} />
+        <button className="er-button er-button--primary" type="submit" disabled={busy || editing !== undefined || !title.value.trim()}>Create</button>
       </form> : null}
       {editing && !editVisible ? <div className="er-card er-field" role="group" aria-label="Rename project">
         <p role="status">This project is not shown here. Finish or cancel its rename.</p>
@@ -217,10 +223,12 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
   const [rows, setRows] = useState<UploadRow[]>([]);
   const [uploading, setUploading] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [textTitle, setTextTitle] = useState("");
-  const [textBody, setTextBody] = useState("");
-  const [url, setUrl] = useState("");
-  const [urlTitle, setUrlTitle] = useState("");
+  const [textDraft, setTextDraft] = useState({ title: "", body: "" });
+  const [urlDraft, setUrlDraft] = useState({ url: "", title: "" });
+  const [textPending, setTextPending] = useState(false);
+  const [urlPending, setUrlPending] = useState(false);
+  const textSubmitting = useRef(false);
+  const urlSubmitting = useRef(false);
   const sourceQuery = useInfiniteQuery({
     queryKey: ["sources", projectId],
     initialPageParam: null as string | null,
@@ -372,20 +380,26 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
     return true;
   }
   async function submitText() {
-    if (!textTitle.trim() || !textBody.trim()) return;
-    const label = textTitle.trim();
-    if (!await submitDuplicate("/sources/text", label, { title: label, text: textBody })) return;
-    setTextTitle("");
-    setTextBody("");
-    await load();
+    const submittedDraft = textDraft;
+    if (textSubmitting.current || !submittedDraft.title.trim() || !submittedDraft.body.trim()) return;
+    textSubmitting.current = true; setTextPending(true);
+    try {
+      const label = submittedDraft.title.trim();
+      if (!await submitDuplicate("/sources/text", label, { title: label, text: submittedDraft.body })) return;
+      setTextDraft(current => current === submittedDraft ? { title: "", body: "" } : current);
+      await load();
+    } finally { textSubmitting.current = false; setTextPending(false); }
   }
   async function submitUrl() {
-    if (!url.trim()) return;
-    const label = urlTitle.trim() || url.trim();
-    if (!await submitDuplicate("/sources/url", label, { url: url.trim(), title: urlTitle.trim() || undefined })) return;
-    setUrl("");
-    setUrlTitle("");
-    await load();
+    const submittedDraft = urlDraft;
+    if (urlSubmitting.current || !submittedDraft.url.trim()) return;
+    urlSubmitting.current = true; setUrlPending(true);
+    try {
+      const label = submittedDraft.title.trim() || submittedDraft.url.trim();
+      if (!await submitDuplicate("/sources/url", label, { url: submittedDraft.url.trim(), title: submittedDraft.title.trim() || undefined })) return;
+      setUrlDraft(current => current === submittedDraft ? { url: "", title: "" } : current);
+      await load();
+    } finally { urlSubmitting.current = false; setUrlPending(false); }
   }
   function sourceStatus(source: Source): { label: string; tone: string; latest?: string } {
     if (!isReadableSource(source)) return { label: stateLabel(source.readableState), tone: tone(source.readableState) };
@@ -479,17 +493,17 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
           </div>
           <form className="er-field er-lib__form" onSubmit={(event) => { event.preventDefault(); void submitText(); }}>
             <label className="er-field__label" htmlFor={textTitleId}>Pasted text title</label>
-            <input id={textTitleId} value={textTitle} maxLength={200} onChange={(event) => setTextTitle(event.currentTarget.value)} placeholder="Meeting notes" />
+            <input id={textTitleId} value={textDraft.title} maxLength={200} onChange={(event) => { const title = event.currentTarget.value; setTextDraft(current => ({ ...current, title })); }} placeholder="Meeting notes" />
             <label className="er-field__label" htmlFor={textBodyId}>Text</label>
-            <textarea id={textBodyId} value={textBody} onChange={(event) => setTextBody(event.currentTarget.value)} placeholder="Paste source text here" />
-            <button className="er-button er-button--tonal" type="submit" disabled={!textTitle.trim() || !textBody.trim()}>Add text</button>
+            <textarea id={textBodyId} value={textDraft.body} onChange={(event) => { const body = event.currentTarget.value; setTextDraft(current => ({ ...current, body })); }} placeholder="Paste source text here" />
+            <button className="er-button er-button--tonal" type="submit" disabled={textPending || !textDraft.title.trim() || !textDraft.body.trim()}>Add text</button>
           </form>
           <form className="er-field er-lib__form" onSubmit={(event) => { event.preventDefault(); void submitUrl(); }}>
             <label className="er-field__label" htmlFor={urlId}>Page URL (https only)</label>
-            <input id={urlId} inputMode="url" value={url} onChange={(event) => setUrl(event.currentTarget.value)} placeholder="https://example.com/report" />
+            <input id={urlId} inputMode="url" value={urlDraft.url} onChange={(event) => { const url = event.currentTarget.value; setUrlDraft(current => ({ ...current, url })); }} placeholder="https://example.com/report" />
             <label className="er-field__label" htmlFor={urlTitleId}>Title (optional)</label>
-            <input id={urlTitleId} value={urlTitle} maxLength={200} onChange={(event) => setUrlTitle(event.currentTarget.value)} />
-            <button className="er-button er-button--tonal" type="submit" disabled={!url.trim()}>Add URL</button>
+            <input id={urlTitleId} value={urlDraft.title} maxLength={200} onChange={(event) => { const title = event.currentTarget.value; setUrlDraft(current => ({ ...current, title })); }} />
+            <button className="er-button er-button--tonal" type="submit" disabled={urlPending || !urlDraft.url.trim()}>Add URL</button>
           </form>
           {rows.length > 0 ? (
             <ul className="er-card er-lib__progress" aria-live="polite">
@@ -524,10 +538,11 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   const [params, setParams] = useSearchParams();
   const revisionId = params.get("revisionId") ?? "";
   const sp = params.get("start"), ep = params.get("end");
-  const rangeStart = sp === null ? NaN : Number(sp);
-  const rangeEnd = ep === null ? NaN : Number(ep);
+  const rangeStart = sp?.trim() ? Number(sp) : NaN;
+  const rangeEnd = ep?.trim() ? Number(ep) : NaN;
   const [source, setSource] = useState<Source | undefined>(undefined);
   const [revisions, setRevisions] = useState<Revision[]>([]);
+  const [metaFailure, setMetaFailure] = useState("");
   const [text, setText] = useState("");
   const [loadedRev, setLoadedRev] = useState("");
   const [outline, setOutline] = useState<OutlineItem[]>([]);
@@ -547,6 +562,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
     actionView.current = { key: location.key, path: location.pathname, search: location.search };
   const view = actionView.current;
   const preRef = useRef<HTMLPreElement | null>(null);
+  const passageRef = useRef<HTMLElement | null>(null);
   const rev = revisions.find((r) => r.id === (revisionId || source?.currentRevisionId || source?.revisionId || revisions[0]?.id || ""));
   const activeRevision = rev?.id ?? "";
   const currentId = source?.currentRevisionId ?? source?.revisionId ?? revisions[0]?.id ?? "";
@@ -554,12 +570,13 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   const conversionError = rev ? rev.error : source?.error;
   const textReady = loadedRev !== "" && loadedRev === activeRevision;
   const readableWarning = useMemo(() => rev?.warningSummary ?? (textReady ? readableTextWarning(text) : null), [rev?.warningSummary, textReady, text]);
-  const hasRange = textReady && Number.isSafeInteger(rangeStart) && Number.isSafeInteger(rangeEnd) && rangeStart >= 0 && rangeEnd > rangeStart;
+  const hasRange = sp !== null || ep !== null;
+  const openingPassage = !textReady && !!activeRevision && ["pending", "readable", "readable_with_warnings"].includes(activeState) && !failure && !metaFailure;
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; metaSequence.current++; metaAbort.current?.abort(); };
   }, []);
-  async function refreshMeta(reportFailure = true) {
+  async function refreshMeta() {
     const owner = metaOwner.current, sequence = ++metaSequence.current, abort = new AbortController();
     metaAbort.current?.abort(); metaAbort.current = abort;
     const q = revisionId ? "?revisionId=" + encodeURIComponent(revisionId) : "";
@@ -567,16 +584,16 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
     try {
       const d = await apiJson<{ source: Source; revisions: Revision[] }>("/api/sources/" + encodeURIComponent(sourceId ?? "") + q, { signal: abort.signal });
       if (!current()) return;
-      setSource(d.source); setRevisions(d.revisions); if (reportFailure) setFailure("");
-    } catch (err) { if (current() && reportFailure) setFailure(err instanceof Error ? err.message : "Could not open the source."); }
+      setSource(d.source); setRevisions(d.revisions); setMetaFailure("");
+    } catch (err) { if (current()) setMetaFailure(err instanceof Error ? err.message : "Could not open the source."); }
   }
-  useEffect(() => { setFailure(""); void refreshMeta(); return () => { metaSequence.current++; metaAbort.current?.abort(); }; }, [projectId, sourceId, revisionId]);
+  useEffect(() => { setFailure(""); setMetaFailure(""); void refreshMeta(); return () => { metaSequence.current++; metaAbort.current?.abort(); }; }, [projectId, sourceId, revisionId]);
   useEffect(() => {
-    if (!sourceId || activeState !== "pending") return;
+    if (!sourceId || activeState !== "pending" || metaFailure) return;
     let pending = false;
-    const timer = window.setInterval(async () => { if (pending) return; pending = true; try { await refreshMeta(false); } finally { pending = false; } }, POLL_MS);
+    const timer = window.setInterval(async () => { if (pending) return; pending = true; try { await refreshMeta(); } finally { pending = false; } }, POLL_MS);
     return () => { window.clearInterval(timer); metaAbort.current?.abort(); };
-  }, [sourceId, revisionId, activeState]);
+  }, [sourceId, revisionId, activeState, metaFailure]);
   useEffect(() => {
     if (!activeRevision || activeState === "pending" || activeState === "failed" || activeState === "needs_conversion" || activeState === "") return;
     const abort = new AbortController();
@@ -595,11 +612,16 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
     })();
     return () => abort.abort();
   }, [activeRevision, activeState]);
-  const excerpt = useMemo(() => {
-    if (!hasRange || !text) return "";
-    try { return decodeSlice(new TextEncoder().encode(text), rangeStart, rangeEnd); }
-    catch { return ""; }
-  }, [hasRange, text, rangeStart, rangeEnd]);
+  const passage = useMemo(() => {
+    if (!textReady || !hasRange) return undefined;
+    try { return splitReaderRange(text, rangeStart, rangeEnd); }
+    catch { return undefined; }
+  }, [textReady, hasRange, text, rangeStart, rangeEnd]);
+  useEffect(() => {
+    if (!passage) return;
+    passageRef.current?.focus({ preventScroll: true });
+    passageRef.current?.scrollIntoView({ block: "start", inline: "nearest" });
+  }, [passage, activeRevision, location.key]);
   function copySelectionLink() {
     const pre = preRef.current;
     if (!pre || !activeRevision || !textReady) { setFailure("Open a readable revision before copying a passage link."); return; }
@@ -636,11 +658,12 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
     } catch (err) { if (current()) setFailure(err instanceof Error ? err.message : "Replace failed before a response arrived."); }
     finally { endReplacement(projectId, targetSource); }
   }
-  if (!source) return <LoadGate text="Opening the source…" failure={failure} onRetry={() => void refreshMeta()} />;
+  if (!source) return <LoadGate text="Opening the source…" failure={metaFailure || failure} onRetry={() => void refreshMeta()} />;
   return (
     <section className="er-lib" aria-labelledby="er-lib-reader">
       <header className="er-lib__head"><Link className="er-button er-button--text" to={"/p/" + encodeURIComponent(projectId ?? "") + "/sources"}>Sources</Link><h1 className="er-lib__title" id="er-lib-reader">{source.title}</h1><p className="er-lib__hint"><span className="er-chip er-lib__badge" data-tone={tone(activeState)}>{stateLabel(activeState)}</span></p></header>
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
+      {metaFailure ? <p className="er-lib__error" role="alert">{metaFailure}{" "}<button className="er-button er-button--text" type="button" onClick={() => void refreshMeta()}>Retry source status</button></p> : null}
       {revisionId && !rev ? <p className="er-lib__error" role="alert">This revision is not available for this source. Open its current revision from the Library.</p> : null}
       {readableWarning ? <p className="er-lib__row-meta">{readableWarning}</p> : null}
       {activeState !== "failed" && conversionError ? <p className="er-lib__hint" role="status">{conversionError}</p> : null}
@@ -651,7 +674,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
         {rev ? <p>{revisionLabel(rev, currentId)}.</p> : null}
         {revisions.length > 1 ? <div className="er-field"><label className="er-field__label" htmlFor="er-lib-revision">Revision</label><select id="er-lib-revision" value={activeRevision} onChange={(e) => { const id = e.currentTarget.value; if (id) setParams({ revisionId: id }); }}>{revisions.map((r) => <option key={r.id} value={r.id}>{revisionLabel(r, currentId)}</option>)}</select></div> : null}
       </div></details>
-      {hasRange ? (<div className="er-card er-field er-lib__excerpt" role="note"><p>Selected passage from {source.title}.</p>{excerpt ? <pre>{excerpt}</pre> : <p className="er-lib__error">This passage could not be opened in the loaded text. Clear it and choose another passage.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(activeRevision)}>Clear passage</Link></div>) : null}
+      {hasRange ? (<div className="er-card er-field er-lib__excerpt" role="note">{openingPassage ? <p>Opening the selected passage.</p> : passage ? <p>The selected passage is highlighted in the full source text below.</p> : <p className="er-lib__error" role="alert">This passage could not be opened in the loaded text. Clear it and choose another passage.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(activeRevision)} onClick={() => preRef.current?.focus({ preventScroll: true })}>Clear passage</Link></div>) : null}
       <div className="er-lib__reader">
         <nav className="er-lib__outline" aria-label="Outline"><h2>Outline</h2>
           {!textReady || outline.length === 0 ? <p className="er-lib__hint">No outline available.</p> : (<ul className="er-lib__outline-list">{outline.map((b, i) => (<li key={b.start + ":" + b.end + ":" + i}><Link to={"?revisionId=" + encodeURIComponent(activeRevision) + "&start=" + b.start + "&end=" + b.end}>{b.label}</Link></li>))}</ul>)}
@@ -672,7 +695,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
           {activeState === "pending" ? <p className="er-lib__hint" role="status">Converting…</p> : null}
           {activeState === "needs_conversion" ? <p className="er-lib__hint" role="note">The original is saved. Upload a readable Markdown file to read this source.</p> : null}
           {activeState === "failed" ? <p className="er-lib__error" role="alert">{rev?.error ?? source.error ?? "Conversion failed."}</p> : null}
-          <pre className="er-card er-lib__text" ref={preRef}>{textReady ? text : ""}</pre>
+          <pre className="er-card er-lib__text" ref={preRef} tabIndex={-1}>{passage ? <>{passage.before}<mark ref={passageRef} tabIndex={-1}>{passage.selected}</mark>{passage.after}</> : textReady ? text : ""}</pre>
         </div>
       </div>
       {(activeState === "readable" || activeState === "readable_with_warnings") && activeRevision ? <SourceUnderstanding key={(sourceId ?? "") + activeRevision} projectId={projectId ?? ""} sourceId={sourceId ?? ""} revisionId={activeRevision} sourceTitle={source.title}

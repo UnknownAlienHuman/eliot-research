@@ -53,8 +53,8 @@ const notebookAnswersPath = staticSelftest || modelsOnly || pickerOnly ? '' : (p
 const order = ['C1', 'C2', 'C3', 'C4', 'O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8'];
 if (!staticSelftest && !pickerOnly) await mkdir(outDir, { recursive: true });
 async function apiJson(path, init) {
-  // Finite READ default (30s observer bound); explicit caller signal (e.g. 90s POST) is preserved verbatim.
-  const readSignal = init && init.signal ? init.signal : AbortSignal.timeout(30000);
+  // Finite READ default; an explicit signal (including null for model waits) is preserved.
+  const readSignal = init?.signal === undefined ? AbortSignal.timeout(30000) : init.signal;
   const r = await fetchEval(origin + path, { ...init, signal: readSignal, headers: { Accept: 'application/json', ...H, ...((init && init.headers) || {}) } }, origin, configuredOrigin);
   const t = await r.text();
   let b = null;
@@ -63,7 +63,7 @@ async function apiJson(path, init) {
 }
 async function apiBytes(path, init) {
   // Same finite READ default for range/text GETs; explicit caller signal preserved verbatim.
-  const readSignal = init && init.signal ? init.signal : AbortSignal.timeout(30000);
+  const readSignal = init?.signal === undefined ? AbortSignal.timeout(30000) : init.signal;
   const r = await fetchEval(origin + path, { ...init, signal: readSignal, headers: { ...H, ...((init && init.headers) || {}) } }, origin, configuredOrigin);
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
 }
@@ -117,16 +117,19 @@ async function runPickerOnlyProof() {
     await page.goto(emptyChat);
     const question = page.getByRole('textbox', { name: 'Question', exact: true }), send = page.getByRole('button', { name: 'Send', exact: true });
     const provider = page.getByRole('combobox', { name: 'Model: provider', exact: true }), model = page.getByRole('combobox', { name: 'Model', exact: true });
+    const openControls = async () => { await page.getByRole('button', { name: /^Sources and model:/ }).click(); };
     await expect(page.locator('.er-chat__composer')).toBeVisible();
+    await openControls();
     await expect(question).toBeEnabled(); await expect(provider).toBeEnabled();
     await expect(send).toBeDisabled();
     await question.fill('Picker readiness ' + randomUUID());
     await expect(send).toBeEnabled();
     await question.fill('');
-    await page.reload(); await expect(provider).toBeEnabled();
+    await page.reload(); await openControls(); await expect(provider).toBeEnabled();
     assert.deepEqual(browserPosts, [], 'Empty-chat navigation and reload must not POST.');
     const chatRead = read(chatPath);
     await page.goto(browserOrigin + '/p/' + encodeURIComponent(project.id) + '/chat/' + encodeURIComponent(chatId));
+    await openControls();
     assert.equal((await chatRead).status(), 200);
     assert.deepEqual(browserPosts, [], 'Opening the existing fixture chat must not POST.');
     await expect(provider).toBeEnabled();
@@ -148,6 +151,7 @@ async function runPickerOnlyProof() {
     assert.equal(turnPayloads[0].scopeMode, 'project_default'); await expect(send).toBeEnabled();
     await provider.selectOption(''); await expect(provider).toHaveValue(''); await expect(model).toHaveValue('');
     await expect(provider.locator('option').first()).toHaveText('Project default'); await page.reload();
+    await openControls();
     await expect(provider).toBeEnabled(); await expect(provider).toHaveValue(''); await expect(model).toHaveValue('');
     assert.deepEqual(browserPosts, [{ method: 'POST', path: turnPath }], 'Reload after intercepted Send must not create another POST.');
     await question.fill('Picker default proof ' + randomUUID()); await send.click();
@@ -1443,7 +1447,6 @@ if (journeyOnly) {
       }
     }
     const stopOutcome = classifyStopOutcome(stopRow);
-    if (stopRow.totalMs !== null && stopRow.totalMs !== undefined) assert(stopRow.totalMs <= 90000, 'The stopped turn must respect the existing 90 s ceiling.');
     if (stopRow.state === 'partial') {
       assert.equal(stopRow.tokenLimit, jreport.expectedCallTokenLimit, 'The reserved bound must equal the SDK admission bound for the frozen catalogue entry (context + job reserve).');
     } else {
@@ -1535,7 +1538,7 @@ if (journeyOnly) {
     assert.equal(citeHref, expectedHref, 'Studio must link the saved citation to its exact reader range.');
     await studioCite.locator('a.er-chip').click({ timeout: 30000 });
     await expect(jpage.locator('div.er-lib__excerpt')).toBeVisible({ timeout: 30000 });
-    const excerptText = await jpage.locator('div.er-lib__excerpt pre').innerText();
+    const excerptText = await jpage.locator('.er-lib__text mark').textContent();
     assert.equal(excerptText, savedQuote, 'The reader must open the exact saved passage range.');
     await jpage.screenshot({ path: outDir + '/k2-journey-studio-390.png' });
     jreport.save.studioVerified = true;
@@ -1807,7 +1810,7 @@ function dispatchUnavailable(status, body, turn) {
   if ([401, 402, 403, 404, 408, 429, 500, 502, 503, 504].includes(status)) return true;
   if (['auth', 'unauthorized', 'forbidden', 'budget', 'unavailable', 'busy', 'rate_limited'].includes(code)) return true;
   if (/credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|\bprovider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|\bgateway.{0,24}(?:unavailable|error|failed)/i.test(message)) return true;
-  // Own 90 s deadline stays continuable: the next distinct question may dispatch.
+  // Historical app-deadline rows stay continuable; never treat them as provider unavailability.
   if (/exceeded the 90 s time bound|Time bound exceeded before dispatch/i.test(message)) return false;
   // Exact-turn timeout reconciliation stores provider failures as HTTP 200 with
   // the failure embedded in turn.error (model-transport.ts modelFailure shapes).
@@ -1817,7 +1820,7 @@ function dispatchUnavailable(status, body, turn) {
   if (/\bHTTP\s+\d{3}\b/i.test(message)) return false;
   // Per-question validation stays continuable in either existing failure
   // format: predispatch AI_Invalid* and in-band invalid_request_error.
-  // Still stops 5xx/auth/rate/budget above and continues the own 90s deadline.
+  // Still stops 5xx/auth/rate/budget above; historical app deadlines stay per-question.
   if (/AI_InvalidPromptError|AI_InvalidArgumentError/i.test(message)) return false;
   if (/AI_StreamProviderError:invalid_request_error/i.test(message)) return false;
   // Validation-shaped stream failures stay per-question and do not stop the batch.
@@ -1968,17 +1971,16 @@ for (const qid of order) {
     let response = null, requestError = null;
     try {
       response = await apiJson(chatPath + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(90000), body: JSON.stringify({ turnId: requestTurnId, question: Q.get(qid),
+        signal: null, body: JSON.stringify({ turnId: requestTurnId, question: Q.get(qid),
           scopeMode: 'explicit', sourceIds, model: benchmarkModel }) });
     } catch (error) { requestError = error instanceof Error ? error.message : String(error); }
     wall = Date.now() - started;
     if (requestError) {
-      // The POST wait timed out, but the turn may already be stored server-side
+      // The POST wait failed, but the turn may already be stored server-side
       // under requestTurnId. Reconcile that exact id with bounded storage-only
       // GET observation (each GET has a finite AbortSignal deadline): never
       // another POST, never the same question again. A matching terminal turn
-      // (completed/partial/failed/cancelled, including its own 90s deadline or
-      // cancel) is recorded and the explicit 12-question batch continues with
+      // (completed/partial/failed/cancelled) is recorded and the explicit 12-question batch continues with
       // the next distinct question. Only an unknown outcome or provider/auth/
       // budget unavailability stops the rest. Partial/quality warnings never
       // stop the batch.
