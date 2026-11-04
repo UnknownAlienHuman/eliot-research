@@ -15,7 +15,7 @@ if (mode === '--plan' || mode === '--help') {
   console.log('Set CLOUDFLARE_API_TOKEN only for --apply (Access: Apps and Policies Write; Workers Scripts Write).');
   console.log('1. --check validates the target and Worker protection offline.');
   console.log('2. --apply creates a self_hosted hostname Access app with owner-email and Service Auth policies, then binds the hostname to ' + config.name + '.');
-  console.log('3. Copy the printed public vars into wrangler.jsonc, deploy the checked Worker, then exercise browser login and pnpm eval k0 with an owner service token.');
+  console.log('3. Copy the printed public vars into wrangler.jsonc, deploy the checked Worker, then separately verify deployed /api/me with an approved owner service token and verify owner browser login; pnpm eval k0 remains loopback-only.');
   console.log('Existing resources must match; no takeover, policy widening, service-token creation or secret printing.');
   process.exit(0);
 }
