@@ -90,6 +90,8 @@ its entry asset as well as JSON, and K1 checks text/range/original response head
 For local use, copy `.dev.vars.example` to `.dev.vars`, then `pnpm dev`. `pnpm cf:types` generates the checked-in Env;
 the example keeps variable order aligned with Wrangler configuration so generation is stable locally and in CI.
 `pnpm eval k0` exercises the actual running Worker and writes viewport screenshots to ignored `eval/out/k0/`.
+It reports authentication observed in twelve parsed `/api/me` responses; deployed Access owner-token and browser-login
+checks always remain `NOT_RUN` because the browser eval accepts loopback origins only, even with synthetic CI Access headers.
 On 2026-10-25 the owner retained the existing legacy `eliotr-core.kleymor-metal.workers.dev` hostname Access application;
 no replacement deployment or new-domain setup has been performed. Live browser and deployed owner-token acceptance
 remain separate from local/signed-fixture checks.

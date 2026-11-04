@@ -26,6 +26,7 @@ for (let attempt = 0; attempt < 60; attempt++) {
 assert(ready, "Eliot did not become available. Start pnpm dev before the eval.");
 
 const latency: number[] = [];
+const authentications = new Set<string>();
 function protectedHeaders(response: Response) {
   const directives = (response.headers.get("cache-control") ?? "").split(",").map((value) => value.trim().toLowerCase()).sort();
   assert.deepEqual(directives, ["no-store", "private"], "Protected HTTP response must have exactly private and no-store cache directives.");
@@ -41,6 +42,7 @@ for (let sample = 0; sample < 12; sample++) {
   const payload = await response.json() as { actor: { type: string; authentication: string } };
   assert.equal(payload.actor.type, "owner");
   assert(["local", "access", "service-token"].includes(payload.actor.authentication));
+  authentications.add(payload.actor.authentication);
   latency.push(performance.now() - started);
 }
 const missing = await fetchEval(`${origin}/api/does-not-exist`, { headers }, origin, process.env.ELIOT_ORIGIN);
@@ -124,6 +126,6 @@ try {
 latency.sort((a, b) => a - b);
 const p50 = latency[Math.floor(latency.length * 0.5)]?.toFixed(1);
 const p95 = latency[Math.ceil(latency.length * 0.95) - 1]?.toFixed(1);
-const report = `K0 actual Worker eval: PASS\nOrigin: ${origin}\nAPI p50/p95: ${p50}/${p95} ms (12 local samples)\nMaterial viewports/themes: 1440/768/390, light/dark\nScreenshots: ${screenshots.join(", ")}\nModel/search calls: 0; model/search tokens: 0 (no paid calls; no USD gate)\nCloudflare browser login and deployed owner token: ${headers["CF-Access-Client-Id"] ? "owner-token route exercised; browser login NOT_RUN" : "NOT_RUN (local bypass only)"}\n`;
+const report = `K0 actual Worker eval: PASS\nOrigin: ${origin}\nAPI p50/p95: ${p50}/${p95} ms (12 local samples)\nAPI authentication observed: ${[...authentications].sort().join(", ")} (12 /api/me samples)\nMaterial viewports/themes: 1440/768/390, light/dark\nScreenshots: ${screenshots.join(", ")}\nModel/search calls: 0; model/search tokens: 0 (no paid calls; no USD gate)\nDeployed Access owner-token: NOT_RUN (K0 browser eval is loopback-only)\nCloudflare browser login: NOT_RUN (K0 browser eval is loopback-only)\n`;
 await writeFile(new URL("result.txt", output), report);
 process.stdout.write(report);
