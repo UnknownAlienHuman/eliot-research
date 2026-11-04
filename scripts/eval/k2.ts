@@ -409,6 +409,16 @@ assertJourneyStaticSelftests();
 assertInvalidEvidenceStaticSelftests();
 assertK2OutcomeStaticSelftests();
 if (staticSelftest) {
+  const wrappedCitation = { label: '[S1:1]', revisionId: '123e4567-e89b-12d3-a456-426614174000',
+    sourceId: '223e4567-e89b-12d3-a456-426614174000', block: 1, start: 0, end: 10,
+    sourceTitle: 'Static fixture', deleted: false };
+  const wrapped = '- Размер 🌍 равен 512\n  измерениям [S1:1].';
+  assert.equal(uncitedStatements(wrapped, [wrappedCitation]), 0);
+  assert.equal(unsupportedNumericStatements(wrapped, [wrappedCitation], new Map([['[S1:1]', '512 dimensions']])), 0);
+  assert.equal(unsupportedNumericStatements(wrapped, [wrappedCitation], new Map([['[S1:1]', '8 heads']])), 1);
+  assert.equal(uncitedStatements('- Uncited fact.\n  Cited fact [S1:1].', [wrappedCitation]), 1);
+  assert.equal(uncitedStatements('- Uncited fact.\n  cited fact [S1:1].', [wrappedCitation]), 1);
+  assert.equal(uncitedStatements('- Факт без ссылки.\n  факт со ссылкой [S1:1].', [wrappedCitation]), 1);
   console.log('K2 evaluator static selftests passed.');
   process.exit(0);
 }

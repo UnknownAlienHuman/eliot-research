@@ -371,12 +371,26 @@ function statementBlocks(text: string, analyzed: string, fences: TextRange[]): S
     }
 
     const kind = blockKind(line.replace(/\r$/, ""));
+    // Keep an explicitly indented continuation in its list item before sentence
+    // segmentation. A new item/quote is a boundary, not evidence for its parent.
+    if (current?.kind === "list" && kind === undefined
+      && /^(?: {2,}|\t)\S/.test(line)
+      && !/^\s*(?:(?:[-+*]|\d+[.)]|#{1,6})\s+|>|`{3,}|~{3,})/.test(line)) {
+      current.end = lineEnd;
+      continue;
+    }
     if (kind !== undefined) {
       flush();
-      blocks.push({ start: lineStart, end: lineEnd, kind });
+      if (kind === "list") current = { start: lineStart, end: lineEnd, kind };
+      else blocks.push({ start: lineStart, end: lineEnd, kind });
     } else if (current === undefined) {
       current = { start: lineStart, end: lineEnd, kind: "prose" };
     } else {
+      if (current.kind === "list") {
+        flush();
+        current = { start: lineStart, end: lineEnd, kind: "prose" };
+        continue;
+      }
       current.end = lineEnd;
     }
   }
@@ -389,7 +403,15 @@ function sentenceRanges(block: StatementBlock, analyzed: string): TextRange[] {
   if (block.kind === "table") {
     sentences = [{ start: block.start, end: block.end }];
   } else {
-    const text = analyzed.slice(block.start, block.end);
+    const raw = analyzed.slice(block.start, block.end);
+    // ICU treats soft wraps as boundaries, but may miss a period followed by a
+    // lowercase sentence. Keep existing boundaries on lines containing sentence
+    // punctuation or ending in markup/citations; normalize only plain soft wraps.
+    // The analysis view keeps one code unit per original code unit.
+    const text = block.kind === "list" ? raw
+      .replace(/^ {0,3}(?:[-+*]|\d+[.)])[ \t]+/, (marker) => " ".repeat(marker.length))
+      .replace(/([^\r\n]*)(\r\n|\r|\n)/g, (_match, line: string, newline: string) =>
+        line + (/[.!?…]/.test(line) || /["'”’»)\]*_~`>][ \t]*$/.test(line) ? newline : " ".repeat(newline.length))) : raw;
     const labels = [...text.matchAll(LABEL_RE)];
     // ICU may split "fact.[S1:1]" after the opening bracket. A citation
     // token must remain atomic without changing the answer or its offsets.
