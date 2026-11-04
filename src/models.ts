@@ -107,6 +107,13 @@ export const modelOutputReserve = (model: Pick<CatalogModel, "outputReserveToken
   const bound = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
   return Math.min(bound, model.maxOutputTokens ?? bound);
 };
+export function modelInputLimit(model: Pick<CatalogModel, "contextTokens" | "contextWindowTokens" | "maxOutputTokens" | "outputReserveTokens">): number {
+  const input = model.contextTokens ?? 0, window = model.contextWindowTokens, reserve = modelOutputReserve(model);
+  if (!Number.isSafeInteger(input) || input <= 0 || !Number.isSafeInteger(reserve) || reserve <= 0 ||
+    (window !== undefined && (!Number.isSafeInteger(window) || window <= reserve)))
+    throw new LibraryError("unavailable", "The model has no usable input capacity.", 503);
+  return window === undefined ? input : Math.min(input, window - reserve);
+}
 export function modelOutputLimit(model: Pick<CatalogModel, "contextTokens" | "contextWindowTokens" | "maxOutputTokens">, inputEstimate: number): number | undefined {
   const inputCeiling = model.contextTokens ?? 0, window = model.contextWindowTokens;
   if (!Number.isSafeInteger(inputCeiling) || inputCeiling <= 0 || !Number.isSafeInteger(inputEstimate) ||

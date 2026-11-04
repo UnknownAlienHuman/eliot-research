@@ -49,7 +49,7 @@ function fixture(calls = 1) {
     try { const results = statements.map((s, index) => { if (failBatch && index === 1) { failBatch = false; throw new Error("Batch rolled back"); } return { meta: { changes: Number(db.prepare(s.sql).run(...s.args).changes) } }; }); db.exec("COMMIT");
       if (ambiguousBatch) { ambiguousBatch = false; throw new Error("Lost committed batch reply"); } return results;
     } catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
-  } }, BUCKET: { get: async (key: string) => { const body = bodies.get(key); return body === undefined ? null : { text: async () => body, json: async () => JSON.parse(body), arrayBuffer: async () => new TextEncoder().encode(body).buffer }; },
+  } }, BUCKET: { get: async (key: string) => { const body = bodies.get(key); return body === undefined ? null : { text: async () => body, json: async () => JSON.parse(body), arrayBuffer: async () => new TextEncoder().encode(body).buffer, size: new TextEncoder().encode(body).byteLength, body: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(body)); controller.close(); } }) }; },
     put: async (key: string, body: string) => { if (failPut) throw new Error("Storage unavailable"); if (bodies.has(key)) return null; bodies.set(key, body); return {}; } },
     DISTILL: { get: async () => ({ status }), create } } as unknown as Env;
   return { db, env, bodies, original, status, create, failStorage: () => { failPut = true; }, loseBatchReply: () => { ambiguousBatch = true; }, rollbackBatch: () => { failBatch = true; } };

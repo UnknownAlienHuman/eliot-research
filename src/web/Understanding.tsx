@@ -82,7 +82,11 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     if (pendingRetry && view?.knownRequestId === pendingRetry.retry.attemptId) {
       sessionStorage.removeItem(pendingKey); setPendingRetry(null);
       if (view.requestRejection) setNote(view.requestRejection);
-      else void queryClient.invalidateQueries({ queryKey: ['understanding-history', sourceId, revisionId], exact: true });
+      else {
+        const filter = { queryKey: ['understanding-history', sourceId, revisionId], exact: true };
+        // A first fetch has no cached data, so invalidation alone may reuse its pre-accept response.
+        void queryClient.cancelQueries(filter).then(() => queryClient.invalidateQueries(filter, { cancelRefetch: false }));
+      }
     }
   }, [view, pendingRetry, pendingKey, queryClient, sourceId, revisionId]);
   const failure = understanding.error?.message ?? '';
@@ -109,6 +113,10 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   async function reload(): Promise<void> {
     const result = await understanding.refetch();
     if (mounted.current && !result.error) { setStatusReadKey(statusKey); setAwaitingStatus(null); setNote(''); }
+  }
+  function toggleHistory(): void {
+    if (!showHistory && history.data) void history.refetch({ cancelRefetch: false });
+    setShowHistory(value => !value);
   }
   async function request(saveAvailable = false, retryFailed = false): Promise<void> {
     if (sourceId === '' || revisionId === '' || busy || awaitingStatus || statusReadKey !== statusKey || failure !== '' || understanding.isFetching || (!saveAvailable && modelRoutePending)) return;
@@ -217,7 +225,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
       {canRetry ? <p className='er-und__hint'>Starts a new model run on this same source text and uses provider allowance. Previous output stays in history.</p> : null}
       {pendingRetry ? <p className='er-und__hint'>The last request has not been confirmed. Reload checks its status. Send same request may start that run if it was never accepted.</p> : null}
       <div className='er-und__actions'>
-        <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={() => setShowHistory(value => !value)}>Previous attempts</button>
+        <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={toggleHistory}>Previous attempts</button>
         {historical ? <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={() => setHistoryAttempt('')}>Current attempt</button> : null}
       </div>
       {historical ? <p className='er-und__hint'>Viewing a previous attempt. Its saved failure, usage and output are preserved.</p> : null}

@@ -379,6 +379,15 @@ assert.equal(outputReserve({ maxOutputTokens: 4096, outputReserveTokens: 8192 })
 assert.equal(outputReserve({ maxOutputTokens: null }), null, 'Missing reserve and output metadata stay unknown.');
 assert.equal(outputReserve({ maxOutputTokens: -1, outputReserveTokens: 8192 }), null, 'Invalid published output metadata cannot authorize a reserve.');
 assert.equal(outputReserve({ maxOutputTokens: '131072', outputReserveTokens: 8192 }), null, 'Output metadata is not coerced from strings.');
+function inputBudget(model) {
+  const reserve = outputReserve(model), input = model.contextTokens, window = model.contextWindowTokens;
+  assert(Number.isSafeInteger(input) && input > 0 && reserve !== null, 'Model input capacity and output headroom must be usable before paid work.');
+  assert(window === undefined || (Number.isSafeInteger(window) && window > reserve), 'A declared combined window must leave output headroom.');
+  return window === undefined ? input : Math.min(input, window - reserve);
+}
+assert.equal(inputBudget({ contextTokens: 1000000, maxOutputTokens: 131072, outputReserveTokens: 8192 }), 1000000, 'An input-only ceiling loses no invented percentage or output allowance.');
+assert.equal(inputBudget({ contextTokens: 1000000, contextWindowTokens: 1000000, maxOutputTokens: null, outputReserveTokens: 8192 }), 991808, 'Known combined window reserves output headroom even when output maximum is unknown.');
+assert.equal(inputBudget({ contextTokens: 192000, contextWindowTokens: 256000, maxOutputTokens: 128000, outputReserveTokens: 8192 }), 192000, 'The separate input ceiling still limits input.');
 const isCallCount = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 2;
 assert(!isCallCount(-1) && !isCallCount(1.5) && !isCallCount(3) && !isCallCount('2') && !isCallCount(NaN) && !isCallCount(Infinity), 'Call counts reject invalid or out-of-bound observations.');
 function owningCallCount(u, what) {
@@ -1169,9 +1178,10 @@ async function preflightClaimScope() {
   const expected = [...FROZEN_BASELINE, ...FROZEN_OVERFLOW];
   const rows = exactSourceRows(rawRows, expected, 'K3 overflow scope');
   const canonicalBytes = rows.reduce((n, s) => n + s.readableSize, 0);
-  const reserve = outputReserve(answerMeta);
-  assert(Number.isSafeInteger(reserve) && reserve > 0, 'Selected answerModel output reserve must be known before paid work.');
-  assert(canonicalBytes / 3 + reserve > Math.min(0.6 * answerMeta.contextTokens, 400000), 'Frozen twelve-source scope must exceed the unchanged whole-reading cap.');
+  const capacity = inputBudget(answerMeta);
+  // Same byte/token heuristic as product planning, not a provider-tokenization guarantee.
+  // If the frozen scope now fits, stop; never change model/corpus to force claims mode.
+  assert(canonicalBytes / 3 > capacity, 'Frozen twelve-source canonical-size estimate must exceed the selected provider input budget before paid claim-mode work. No model or corpus substitution is allowed.');
   for (let i = FROZEN_BASELINE.length; i < rows.length; i++) await assertFrozenSourceBytes(rows[i], expected[i], 'K3 overflow ' + expected[i].filename);
   let priorExtraCalls = 0;
   for (const source of rows.slice(FROZEN_BASELINE.length)) {
