@@ -798,8 +798,13 @@ token bound and is never treated as zero usage.
 Missing-citation and unsupported-number diagnostics are advisory UTF-16 answer ranges stored in the existing
 ChatAgent turn JSON and exposed by snapshots/history for API and eval readers. The owner Markdown view renders the
 answer without diagnostic frames or rewriting it. These diagnostics do not change a normally finished stream to
-partial. Truncation, stream/protocol failure and invalid resolved labels
-remain real failures. A normally finished answer with rejected references stays partial; its error names the bounded
+partial. Explicitly indented plain-text continuations belong to their Markdown list item for sentence analysis;
+plain soft wraps and the item marker are masked with equal-length spaces only in the analysis view. Lines containing
+sentence punctuation or ending in closing markup/citations retain their newline boundary, including before lowercase
+text. This conservatively leaves wraps near abbreviations/decimals unchanged. Separate sentences,
+new items, quotes, headings, blank lines and fenced code retain their boundaries. Unindented continuations keep the
+conservative existing behavior. Answer bytes, source blocks and saved revision ranges are never rewritten.
+Truncation, stream/protocol failure and invalid resolved labels remain real failures. A normally finished answer with rejected references stays partial; its error names the bounded
 rejected-marker samples. Saving a partial answer preserves its recorded failure reason as escaped Markdown text;
 it does not claim generation was interrupted when only references failed. Historical partials without a reason receive
 a neutral review note. Saved output also carries a concise review note when warnings exist. D1 schema and usage are unchanged.

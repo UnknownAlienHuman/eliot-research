@@ -670,6 +670,70 @@ describe("inline code literals", () => {
 });
 
 describe("answerWarnings", () => {
+  it.each(["- ", "* ", "+ ", "1. ", "2) "])("keeps wrapped sentences in %s list items", (marker) => {
+    for (const newline of ["\n", "\r\n"]) {
+      const raw = `${marker}Размер 🌍 равен 512${newline}  измерениям [S1:1].`;
+      const resolved = resolveCitations(raw, makeSources());
+      expect(answerWarnings(resolved.text, resolved.citations, new Map([["[S1:1]", "512 dimensions"]]))).toEqual([]);
+      expect(numericCitationLabels(resolved.text, resolved.citations)).toEqual(["[S1:1]"]);
+      expect(answerWarnings(resolved.text, resolved.citations, new Map([["[S1:1]", "8 heads"]])))
+        .toEqual([{ start: 0, end: raw.length, kind: "unsupported-number" }]);
+    }
+  });
+
+  it.each([
+    "- Uncited fact.\n  Supported fact [S1:1].",
+    "- Uncited fact.\n  supported fact [S1:1].",
+    "- Факт без ссылки.\n  подтверждённый факт [S1:1].",
+    "- **Uncited fact.**\n  supported fact [S1:1].",
+    "- Uncited fact.\r\n  supported fact [S1:1].",
+    "- Uncited fact. another\n  supported fact [S1:1].",
+    "- **Uncited lead.**\n  Supported fact [S1:1].",
+    "- Uncited fact\n- Supported fact [S1:1].",
+    "- Uncited fact\n    - Supported fact [S1:1].",
+    "- Uncited fact\n  > Supported fact [S1:1].",
+    "- Uncited fact\n  >Supported fact [S1:1].",
+    "- Uncited fact\n\n  Supported fact [S1:1].",
+    "- Uncited fact\n  # Supported heading [S1:1]",
+    "- Uncited fact\n    # Supported heading [S1:1]",
+    "- Uncited fact\nSupported fact [S1:1].",
+  ])("does not lend a continuation citation to a different unit: %s", (raw) => {
+    const resolved = resolveCitations(raw, makeSources());
+    const warnings = answerWarnings(resolved.text, resolved.citations, new Map());
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.kind).toBe("missing-citation");
+    expect(raw.slice(warnings[0]?.start, warnings[0]?.end)).not.toContain("Supported");
+  });
+
+  it("keeps tab continuations and preserved revision ranges without rewriting answer bytes", () => {
+    const raw = "- Факт 🌍\n\tподтверждён [S1:2].";
+    const sources = makeSources(), before = JSON.stringify(sources);
+    const resolved = resolveCitations(raw, sources);
+    const saved = persistentResolvedAnswer(resolved.text, resolved.citations);
+    expect(resolved.text).toBe(raw);
+    expect(answerWarnings(resolved.text, resolved.citations, new Map())).toEqual([]);
+    expect(answerWarnings(saved.text, saved.citations, new Map())).toEqual([]);
+    expect(saved.citations[0]).toMatchObject({ revisionId: REV_A, block: 2, start: 10, end: 20 });
+    expect(JSON.stringify(sources)).toBe(before);
+  });
+
+  it("keeps long Unicode continuations in bounds without weakening abbreviation checks", () => {
+    const raw = `- ${"Слово 🌍 ".repeat(1024)}\n  подтверждено [S1:1].`;
+    const resolved = resolveCitations(raw, makeSources());
+    expect(answerWarnings(raw, resolved.citations, new Map())).toEqual([]);
+    expect(resolved.text).toBe(raw);
+    const withDoctor = resolveCitations("- Dr.\n  Smith agrees [S1:1].", makeSources());
+    // Do not pretend to solve ICU's existing ambiguity around abbreviations.
+    expect(uncitedStatements(withDoctor.text, withDoctor.citations)).toBe(1);
+  });
+
+  it("does not borrow numeric evidence across a preserved newline after a citation", () => {
+    const raw = "- Value is 512 [S1:1]\n  another value is 8 [S1:2].";
+    const resolved = resolveCitations(raw, makeSources());
+    const quotes = new Map([["[S1:1]", "No measurement"], ["[S1:2]", "512 and 8"]]);
+    expect(unsupportedNumericStatements(raw, resolved.citations, quotes)).toBe(1);
+  });
+
   function resolvedWarnings(raw: string, quotes: ReadonlyMap<string, string> = new Map()) {
     const resolved = resolveCitations(raw, makeSources());
     return { text: resolved.text, citations: resolved.citations, warnings: answerWarnings(resolved.text, resolved.citations, quotes) };
