@@ -61,7 +61,7 @@ JSON lives under `/api/`, validated with zod. Error shape:
 ```
 
 Use cursor pagination. Chat inventory uses immutable `(created_at,id)` descending so activity between pages cannot
-move an unseen chat above the cursor. Add idempotency only where a natural key exists: chat/turn ID, page-revision mutation ID and
+move an unseen chat above the cursor. Add idempotency only where a natural key exists: chat/turn ID, source-revision ID, page-revision mutation ID and
 deterministic Workflow ID. The MCP endpoint transports the shared toolset; it is not a second business API.
 
 ## 2. Access and actors
@@ -118,6 +118,7 @@ Store identities, relationships, states and compact claims in D1; bodies in R2:
 
 ```text
 source/<revision>/original
+source/<revision>/original-<upload>  # caller-ID file replacement; server-owned upload UUID
 source/<revision>/text.md
 source/<revision>/blocks.json
 source/<revision>/{guide.md,digest.md,glossary.json,distill.json,chunks.json}
@@ -166,6 +167,10 @@ strict JSON shapes. An explicit `sourceId` replacement creates a new revision of
 deliberate reconversion of identical bytes. Ordinary duplicate uploads return 409 plus the existing identity; a
 conditional insert in the D1 batch guards concurrent uploads and replacements against the same bytes belonging to
 another live source. Only a stored revision starts ingest; a losing request retains the existing source and revisions.
+File replacements may supply a revision UUID. A repeat returns that stored revision only when source membership and
+the immutable file identity match; changed bytes, metadata or an unavailable revision are rejected. It performs no R2 write
+or Workflow creation. Concurrent attempts use separate server-owned original keys: only the key recorded on the winning
+D1 revision may start ingest, including after a lost batch reply. Losing attempts may remove only their own unreferenced key.
 
 Add sources → Browse Library lists active shared sources not already attached to that project, including saved sources
 not yet readable. `GET /api/projects/:id/sources/available` reads metadata only: 50 rows plus one lookahead, ordered by
@@ -1200,14 +1205,18 @@ and same-tab project/Settings navigation. A→B→A and same-source query change
 settlement, while other project/source pairs can upload independently. Only the owning POST's settlement removes its
 key; completed requests leave no retained lock. This is a same-tab request guard, not cross-tab or reload idempotency.
 Existing source/citation and same-revision OCR navigation retain text/outline semantics.
-No write is cancelled/retried to infer its server outcome, and no read starts model work.
+An explicit repeat for the same selected replacement File reuses its revision UUID until a matching acknowledgement.
+A changed File or a confirmed new upload gets a new UUID. Reader remounts discard the File and attempt; no browser draft
+is persisted. Confirmation clears the file input so the same file can be deliberately selected again.
+No write is cancelled or automatically retried to infer its server outcome, and no read starts model work.
 
 `pnpm eval k2 --view-isolation` exercises the reused workspace on desktop and phone, including held success/error
 responses, A→B→A, project/Settings remounts, serialized polls, revision changes and independent project/source locks.
-Success/error cleanup is checked while the original workspace is absent. It uses native stored
-sources, intercepts model and delayed replacement POSTs before dispatch, and includes real native Markdown replacement
-controls. It checks stored turns remain empty and only those controls add zero-conversion revisions; this proves
-frontend ownership, not model semantics. Checked 2026-11-03 against pinned React 19.3 and official
+Success/error cleanup is checked while the original workspace is absent. It uses native stored sources and intercepts
+model and held replacement POSTs before dispatch. Lost, malformed and mismatched replies are also tested after actual
+native replacement acceptance: an explicit repeat adds no revision, while a confirmed new action does. Stored turns
+remain empty and native conversion calls stay zero; this proves view ownership and storage replay, not model semantics.
+Checked against pinned React 19.3 and official
 [effect cleanup](https://react.dev/reference/react/useEffect) and
 [AbortController](https://developer.mozilla.org/en-US/docs/Web/API/AbortController) contracts.
 

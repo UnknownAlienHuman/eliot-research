@@ -534,6 +534,8 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   const [failure, setFailure] = useState("");
   const [copied, setCopied] = useState(false);
   const [replace, setReplace] = useState<File | null>(null);
+  const replaceInput = useRef<HTMLInputElement | null>(null);
+  const replaceAttempt = useRef<{ file: File; revisionId: string } | null>(null);
   const replacing = replacingSources.has((projectId ?? "") + ":" + (sourceId ?? ""));
   const mounted = useRef(false);
   const metaSequence = useRef(0), metaAbort = useRef<AbortController | null>(null);
@@ -612,19 +614,25 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   async function replaceFile() {
     if (!replace || !projectId || !source || !beginReplacement(projectId, source.id)) return;
     const owner = actionView.current, targetSource = source.id, file = replace;
+    const attempt = replaceAttempt.current?.file === file ? replaceAttempt.current : { file, revisionId: crypto.randomUUID() };
+    replaceAttempt.current = attempt;
     const current = () => mounted.current && actionView.current === owner;
     setFailure("");
     try {
       const form = new FormData();
       form.append("file", file, file.name);
       form.append("sourceId", targetSource);
+      form.append("revisionId", attempt.revisionId);
       const res = await fetch("/api/projects/" + encodeURIComponent(projectId) + "/sources/file", { method: "POST", body: form, credentials: "same-origin" });
       if (!res.ok) throw new Error(await apiErrorMessage(res));
-      const body = (await res.json()) as { revisionId?: string };
+      const body = (await res.json()) as { sourceId?: string; revisionId?: string } | null;
+      if (body?.sourceId !== targetSource || body.revisionId !== attempt.revisionId)
+        throw new Error("Could not confirm that this replacement was received. Upload again to check the same revision.");
       if (!current()) return;
+      if (replaceAttempt.current === attempt) replaceAttempt.current = null;
       setReplace(null);
-      if (body.revisionId) setParams({ revisionId: body.revisionId }); // The new revision effect owns its reads.
-      else await refreshMeta();
+      if (replaceInput.current) replaceInput.current.value = "";
+      setParams({ revisionId: body.revisionId }); // The new revision effect owns its reads.
     } catch (err) { if (current()) setFailure(err instanceof Error ? err.message : "Replace failed before a response arrived."); }
     finally { endReplacement(projectId, targetSource); }
   }
@@ -658,7 +666,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
               setParams({ revisionId: id });
             }} /> : null}
           <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void replaceFile(); }}>
-            <label className="er-field__label" htmlFor="er-lib-replace">Replace source file</label><input id="er-lib-replace" type="file" disabled={replacing} onChange={(e) => setReplace(e.currentTarget.files?.[0] ?? null)} />
+            <label className="er-field__label" htmlFor="er-lib-replace">Replace source file</label><input ref={replaceInput} id="er-lib-replace" type="file" disabled={replacing} onChange={(e) => setReplace(e.currentTarget.files?.[0] ?? null)} />
             <button className="er-button er-button--tonal" type="submit" disabled={!replace || replacing}>{replacing ? "Uploading new revision…" : "Upload new revision"}</button>
           </form>
           {activeState === "pending" ? <p className="er-lib__hint" role="status">Converting…</p> : null}

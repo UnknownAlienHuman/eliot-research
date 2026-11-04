@@ -197,9 +197,11 @@ app.post("/api/projects/:id/sources/file", async (c) => {
   }
   if (file.size > MAX_SOURCE_BYTES) throw new LibraryError("invalid", "The file exceeds 25 MiB.", 413);
   const sourceId = uuid.optional().parse(form.get("sourceId") ?? undefined);
+  const revisionId = uuid.optional().parse(form.get("revisionId") ?? undefined);
+  if (revisionId && !sourceId) throw new LibraryError("invalid", "A replacement revision ID requires an attached source.", 400);
   return c.json(await addSource(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
     title: title.parse((form.get("title") ?? file.name).toString().slice(0, 200)), kind: "file", bytes: await file.arrayBuffer(),
-    filename: file.name.slice(0, 255), mimeType: file.type || "application/octet-stream", ...(sourceId ? { sourceId } : {}),
+    filename: file.name.slice(0, 255), mimeType: file.type || "application/octet-stream", ...(sourceId ? { sourceId } : {}), ...(revisionId ? { revisionId } : {}),
   }), 202);
 });
 app.post("/api/projects/:id/sources/text", async (c) => {
