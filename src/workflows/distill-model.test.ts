@@ -27,6 +27,7 @@ vi.mock("../model-transport", async () => ({
   modelFailure: vi.fn(() => "Unexpected model failure projection"),
 }));
 vi.mock("../model-catalog", () => ({ discoverGatewayModels: vi.fn() }));
+vi.mock("../model-quota", () => ({ assertProviderAllowance: vi.fn() }));
 vi.mock("../native-model-catalog", () => ({ discoverNativeModels: vi.fn() }));
 vi.mock("../models", async () => ({
   ...await vi.importActual<typeof Models>("../models"),
@@ -38,6 +39,7 @@ import { modelFailure, resolveModelTransport } from "../model-transport";
 import { availableModels, modelTokenLimit, requireAvailableModel, requireCatalogModel } from "../models";
 import { discoverGatewayModels } from "../model-catalog";
 import { discoverNativeModels } from "../native-model-catalog";
+import { assertProviderAllowance } from "../model-quota";
 import { DistillWorkflow, hasAvailableUnderstanding, requestUnderstanding, scheduleDistillation } from "./distill";
 
 const revisionId = "d9b7d198-0dd2-4d5f-8176-e824e25bb6d0";
@@ -69,16 +71,16 @@ function fixture(storedRoute: string, document?: { text: string; blocks: Block[]
   const dispatchCAS = vi.fn(), sourceWrites = vi.fn();
   const env = { DB: {
     prepare(sql: string) {
-      return { bind(...args: SQLInputValue[]) {
-        return {
+      const operations = (args: SQLInputValue[]) => ({
           first: async () => db.prepare(sql).get(...args) ?? null,
+          all: async () => ({ results: db.prepare(sql).all(...args) }),
           run: async () => {
             if (/^UPDATE\s+source\s/i.test(sql)) sourceWrites(sql, args);
             if (/SET\s+distill_calls\s*=\s*distill_calls\s*\+\s*1/i.test(sql)) dispatchCAS(sql, args);
             return { meta: { changes: Number(db.prepare(sql).run(...args).changes) } };
           },
-        };
-      } };
+        });
+      return { ...operations([]), bind: (...args: SQLInputValue[]) => operations(args) };
     },
   }, BUCKET: {
     async get(key: string) {
@@ -104,7 +106,7 @@ function callerFixture() {
   for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql", "0012_model_admission.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
 
-  const insertSource = (id: string, title: string, revision: string, state: "none" | "queued", createdAt: number) => {
+  const insertSource = (id: string, title: string, revision: string, state: "none" | "queued" | "running", createdAt: number) => {
     db.prepare("INSERT INTO source(id,title,kind,created_by,created_at,updated_at) VALUES (?,?,'text','owner',?,?)")
       .run(id, title, createdAt, createdAt);
     db.prepare(`INSERT INTO source_revision(id,source_id,revision_no,readable_state,readable_size,created_by,created_at,
@@ -117,6 +119,7 @@ function callerFixture() {
   insertSource(otherQueuedSourceId, "Older queued source", otherQueuedRevisionId, "queued", 1);
 
   const createWorkflow = vi.fn(async (_input: { id: string; params: { revisionId: string; model: ModelSpec } }) => ({ id: "stubbed-workflow" }));
+  const bodies = new Map<string, string>();
   const env = { DB: {
     prepare(sql: string) {
       const operations = (args: SQLInputValue[]) => ({
@@ -126,8 +129,34 @@ function callerFixture() {
       });
       return { ...operations([]), bind: (...args: SQLInputValue[]) => operations(args) };
     },
-  }, DISTILL: { create: createWorkflow } } as unknown as Env;
-  return { db, env, createWorkflow };
+  }, DISTILL: { create: createWorkflow }, BUCKET: {
+    async get(key: string) {
+      const body = bodies.get(key);
+      return body === undefined ? null : { json: async () => JSON.parse(body) as unknown };
+    },
+  } } as unknown as Env;
+  return { db, env, createWorkflow, insertSource, bodies };
+}
+
+// A and C occupy both slots while explicitly requested B waits. A's persisted
+// output simulates cached Workflow steps, not a new model generation.
+function queuedBehindRunning() {
+  const f = callerFixture();
+  f.insertSource(sourceId, "Finishing source", revisionId, "running", 0);
+  f.db.prepare("UPDATE source_revision SET distill_state='running',distill_started_at=? WHERE id IN (?,?)")
+    .run(Date.now(), revisionId, otherQueuedRevisionId);
+  f.db.prepare("UPDATE source_revision SET distill_calls=2,guide_summary='Saved understanding' WHERE id=?").run(revisionId);
+  f.bodies.set(prefix + "distill.json", JSON.stringify({ state: "done", error: null,
+    usage: { calls: 2, wallMs: 100, inputTokens: 20, cachedTokens: 0, outputTokens: 10, tokenLimit: 540672 } }));
+  return f;
+}
+
+async function completeSavedWorkflow(f: ReturnType<typeof callerFixture>) {
+  const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) =>
+    name === "finish understanding" ? callback() : undefined);
+  return new DistillWorkflow({} as ExecutionContext, f.env).run(
+    { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>,
+    { do: stepDo } as unknown as WorkflowStep);
 }
 
 function documentWithBlocks(parts: Array<{ type: Block["type"]; text: string }>): { text: string; blocks: Block[] } {
@@ -144,6 +173,7 @@ function documentWithBlocks(parts: Array<{ type: Block["type"]; text: string }>)
 const forbiddenLookups = [requireAvailableModel, requireCatalogModel, availableModels,
   discoverGatewayModels, discoverNativeModels];
 beforeEach(() => {
+  vi.mocked(assertProviderAllowance).mockReset().mockResolvedValue(undefined);
   vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation"));
   vi.mocked(resolveModelTransport).mockReset().mockRejectedValue(new Error("Fixture transport stopped before dispatch."));
   vi.mocked(modelFailure).mockReset().mockReturnValue("Unexpected model failure projection");
@@ -274,7 +304,223 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
-  it("explicit Understand dispatches only its revision; cron leaves queued untouched", async () => {
+  it("cron drains an explicitly requested queue after a concurrency slot is freed", async () => {
+    const f = queuedBehindRunning();
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    try {
+      await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId: explicitlySelectedSourceId });
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: "queued" });
+      f.db.prepare("UPDATE source_revision SET distill_state='done' WHERE id=?").run(revisionId);
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({ id: `distill-${explicitlySelectedRevisionId}`,
+        params: { revisionId: explicitlySelectedRevisionId, model: snapshot } });
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("Workflow completion drains a waiting explicitly requested revision without replaying paid steps", async () => {
+    const f = queuedBehindRunning();
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    try {
+      await completeSavedWorkflow(f);
+      expect(f.db.prepare("SELECT distill_state,distill_calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ distill_state: "done", distill_calls: 2 });
+      expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({ id: `distill-${explicitlySelectedRevisionId}`,
+        params: { revisionId: explicitlySelectedRevisionId, model: snapshot } });
+      expect(generateText).not.toHaveBeenCalled();
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["deleted source", "deleted revision", "unreadable revision", "changed model"])("admission rechecks %s after async catalogue lookup", async (change) => {
+    const f = callerFixture();
+    vi.mocked(requireAvailableModel).mockImplementation(async () => {
+      if (change === "deleted source") f.db.prepare("UPDATE source SET state='deleted' WHERE id=?").run(explicitlySelectedSourceId);
+      if (change === "deleted revision") f.db.prepare("UPDATE source_revision SET deleted_at=1 WHERE id=?").run(explicitlySelectedRevisionId);
+      if (change === "unreadable revision") f.db.prepare("UPDATE source_revision SET readable_state='failed' WHERE id=?").run(explicitlySelectedRevisionId);
+      if (change === "changed model") f.db.prepare("UPDATE source_revision SET distill_model='gateway:command-code/fixture/new' WHERE id=?").run(explicitlySelectedRevisionId);
+      return snapshot;
+    });
+    try {
+      await scheduleDistillation(f.env, explicitlySelectedRevisionId);
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state,distill_token_limit FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: "queued", distill_token_limit: null });
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("concurrent cron, explicit request and repeated completion create each waiting Workflow once", async () => {
+    const f = queuedBehindRunning();
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    try {
+      await Promise.all([
+        completeSavedWorkflow(f), completeSavedWorkflow(f), scheduleDistillation(f.env),
+        requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId: explicitlySelectedSourceId }),
+      ]);
+      await completeSavedWorkflow(f);
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({ id: `distill-${explicitlySelectedRevisionId}`,
+        params: { revisionId: explicitlySelectedRevisionId, model: snapshot } });
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM source_revision WHERE distill_state='running'").get()).toEqual({ n: 2 });
+      expect(f.db.prepare("SELECT distill_state,distill_calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ distill_state: "done", distill_calls: 2 });
+      expect(generateText).not.toHaveBeenCalled();
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("cron leaves a full concurrency window queued", async () => {
+    const f = queuedBehindRunning();
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    try {
+      await Promise.all([scheduleDistillation(f.env), scheduleDistillation(f.env)]);
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: "queued" });
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["none", "paused", "failed", "done", "partial", "running", "paid queued", "deleted source", "deleted revision", "unreadable"])("cron skips %s without catalogue or dispatch", async (state) => {
+    const f = callerFixture();
+    f.db.prepare("UPDATE source_revision SET distill_state='none' WHERE id=?").run(otherQueuedRevisionId);
+    if (["none", "paused", "failed", "done", "partial", "running"].includes(state))
+      f.db.prepare("UPDATE source_revision SET distill_state=?,distill_started_at=? WHERE id=?").run(state, Date.now(), explicitlySelectedRevisionId);
+    if (state === "paid queued") f.db.prepare("UPDATE source_revision SET distill_calls=1 WHERE id=?").run(explicitlySelectedRevisionId);
+    if (state === "deleted source") f.db.prepare("UPDATE source SET state='deleted' WHERE id=?").run(explicitlySelectedSourceId);
+    if (state === "deleted revision") f.db.prepare("UPDATE source_revision SET deleted_at=1 WHERE id=?").run(explicitlySelectedRevisionId);
+    if (state === "unreadable") f.db.prepare("UPDATE source_revision SET readable_state='needs_conversion' WHERE id=?").run(explicitlySelectedRevisionId);
+    const before = f.db.prepare("SELECT * FROM source_revision ORDER BY id").all();
+    try {
+      await scheduleDistillation(f.env);
+      expect(f.db.prepare("SELECT * FROM source_revision ORDER BY id").all()).toEqual(before);
+      expect(requireAvailableModel).not.toHaveBeenCalled();
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("cron uses the frozen route and pauses unavailable models until an explicit request", async () => {
+    const f = callerFixture();
+    f.db.prepare("UPDATE settings SET distill_model='gateway:command-code/fixture/new-default' WHERE id=1").run();
+    vi.mocked(requireAvailableModel).mockRejectedValue(new LibraryError("unavailable", "The selected model is unavailable.", 503));
+    try {
+      await scheduleDistillation(f.env);
+      expect(vi.mocked(requireAvailableModel).mock.calls.map(([, route]) => route)).toEqual([snapshot.route, snapshot.route]);
+      expect(f.db.prepare("SELECT distill_state,distill_model,distill_calls FROM source_revision").all())
+        .toEqual(Array.from({ length: 2 }, () => ({ distill_state: "paused", distill_model: snapshot.route, distill_calls: 0 })));
+      vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("does not replace a missing frozen model with the current setting", async () => {
+    const f = callerFixture();
+    f.db.prepare("UPDATE source_revision SET distill_model=NULL").run();
+    try {
+      await scheduleDistillation(f.env);
+      expect(f.db.prepare("SELECT distill_state FROM source_revision").all()).toEqual([{ distill_state: "paused" }, { distill_state: "paused" }]);
+      expect(requireAvailableModel).not.toHaveBeenCalled();
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("a drain failure cannot change or replay the already finalized revision", async () => {
+    const f = queuedBehindRunning();
+    const prepare = f.env.DB.prepare.bind(f.env.DB);
+    f.env.DB.prepare = ((sql: string) => {
+      if (sql.includes("SELECT r.id,r.distill_model AS model")) throw new Error("Queue read unavailable");
+      return prepare(sql);
+    }) as D1Database["prepare"];
+    try {
+      await expect(completeSavedWorkflow(f)).resolves.toEqual({ revisionId });
+      expect(f.db.prepare("SELECT distill_state,distill_calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ distill_state: "done", distill_calls: 2 });
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["allow", "deny"])("a stale %s allowance check cannot overwrite a route explicitly resumed after pause", async (outcome) => {
+    const f = queuedBehindRunning();
+    const replacement: ModelSpec = { ...snapshot, route: "gateway:command-code/fixture/replacement", id: "fixture/replacement" };
+    vi.mocked(requireAvailableModel).mockImplementation(async (_env, route) => route === replacement.route ? replacement : snapshot);
+    let release!: () => void, deny!: (error: Error) => void, enter!: () => void;
+    const pending = new Promise<void>((resolve, reject) => { release = resolve; deny = reject; });
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    vi.mocked(assertProviderAllowance)
+      .mockImplementationOnce(async () => { enter(); await pending; })
+      .mockRejectedValueOnce(new LibraryError("budget", "Provider allowance is unavailable.", 409));
+    try {
+      const staleAdmission = scheduleDistillation(f.env, explicitlySelectedRevisionId);
+      await entered;
+      await scheduleDistillation(f.env, explicitlySelectedRevisionId);
+      expect(f.db.prepare("SELECT distill_state FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId)).toEqual({ distill_state: "paused" });
+      await requestUnderstanding(f.env, { type: "owner" } as Actor,
+        { sourceId: explicitlySelectedSourceId, model: replacement.route });
+      // Both slots were still full, so the owner's new frozen choice is queued.
+      f.db.prepare("UPDATE source_revision SET distill_state='done' WHERE id=?").run(revisionId);
+      if (outcome === "allow") release();
+      else deny(new LibraryError("budget", "Old provider allowance is unavailable.", 409));
+      await staleAdmission;
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state,distill_model FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: "queued", distill_model: replacement.route });
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({ id: `distill-${explicitlySelectedRevisionId}`,
+        params: { revisionId: explicitlySelectedRevisionId, model: replacement } });
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { release(); f.db.close(); }
+  });
+
+  it.each([0, 1])("cron never recreates an ambiguous Workflow after %i model dispatches", async (calls) => {
+    const f = callerFixture();
+    f.db.prepare("UPDATE source_revision SET distill_state='none' WHERE id=?").run(otherQueuedRevisionId);
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    f.createWorkflow.mockImplementation(async () => {
+      f.db.prepare("UPDATE source_revision SET distill_calls=? WHERE id=?").run(calls, explicitlySelectedRevisionId);
+      throw new Error("Workflow acknowledgement lost");
+    });
+    const get = vi.fn().mockRejectedValue(new Error("Workflow status unavailable"));
+    f.env.DISTILL.get = get;
+    try {
+      await scheduleDistillation(f.env);
+      f.db.prepare("UPDATE source_revision SET distill_started_at=? WHERE id=?").run(Date.now() - 360_000, explicitlySelectedRevisionId);
+      await scheduleDistillation(f.env);
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).toHaveBeenCalledTimes(1);
+      expect(f.db.prepare("SELECT distill_state,distill_calls FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: calls === 0 ? "failed" : "running", distill_calls: calls });
+      expect(generateText).not.toHaveBeenCalled();
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("a next-Workflow dispatch failure leaves the previous terminal result intact", async () => {
+    const f = queuedBehindRunning();
+    const savedReport = f.bodies.get(prefix + "distill.json");
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    f.createWorkflow.mockRejectedValue(new Error("Dispatch unavailable"));
+    try {
+      await expect(completeSavedWorkflow(f)).resolves.toEqual({ revisionId });
+      await completeSavedWorkflow(f);
+      expect(f.db.prepare("SELECT distill_state,distill_calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ distill_state: "done", distill_calls: 2 });
+      expect(f.bodies.get(prefix + "distill.json")).toBe(savedReport);
+      expect(f.db.prepare("SELECT distill_state,distill_calls,distill_token_limit FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: "failed", distill_calls: 0, distill_token_limit: 0 });
+      expect(f.createWorkflow).toHaveBeenCalledTimes(1);
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("explicit Understand dispatches only its revision; cron can then drain other requested work", async () => {
     const f = callerFixture();
     vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
     try {
@@ -302,12 +548,12 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(f.createWorkflow).toHaveBeenCalledTimes(1);
       expect(generateText).not.toHaveBeenCalled();
 
-      // Cron (no target) only reconciles stale running: it must not admit queued work.
+      // The later background drain may admit the already requested older row.
       await scheduleDistillation(f.env);
-      expect(f.createWorkflow).toHaveBeenCalledTimes(1);
+      expect(f.createWorkflow).toHaveBeenCalledTimes(2);
       expect(f.db.prepare("SELECT id,distill_state AS state FROM source_revision ORDER BY created_at").all())
         .toEqual([
-          { id: otherQueuedRevisionId, state: "queued" },
+          { id: otherQueuedRevisionId, state: "running" },
           { id: explicitlySelectedRevisionId, state: "running" },
         ]);
       expect(generateText).not.toHaveBeenCalled();

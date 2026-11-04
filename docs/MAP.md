@@ -301,9 +301,10 @@ re-distilled automatically.
 1. Apply `migrations/0003_distill.sql` and `0007_manual_understanding.sql`; add `DistillWorkflow` and quote/number verification.
 2. Ingest makes a revision readable without queueing understanding. Understand explicitly requests one revision;
    unchanged completed or partial output is returned without another model call.
-3. Admit only the explicitly requested revision while concurrency and provider allowance permit. Blocked work is
-   visibly `paused` until another explicit request. Cron only reconciles stale `running` rows against
-   deterministic Workflow IDs; it never admits queued revisions.
+3. An Understand request admits only its requested revision while concurrency and provider allowance permit.
+   A full concurrency window leaves explicitly requested work `queued`; Workflow completion and cron drain that queue.
+   Unavailable models or provider allowance leave work visibly `paused` until another explicit request. Cron also
+   reconciles stale `running` rows against deterministic Workflow IDs without restarting uncertain or paid work.
    Keep an already queued model selection on repeat; reject a conflicting explicit model before dispatch.
 4. Use at most two bounded calls: labelled canonical text produces guide and candidate claims; code verifies
    quotes/ranges/numbers; the second call receives only verified material and produces digest/glossary. Store raw
