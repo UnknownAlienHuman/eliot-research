@@ -1156,6 +1156,9 @@ quota or justification for a hook hierarchy, generic lifecycle framework, new pr
 so a delayed first page cannot erase a newly created chat. Failure retains loaded rows/cursor; initial failure offers
 Retry. Cleanup aborts the current read. Conversation HTTP/socket/version/cursor/scroll and Send/Stop/Save remain in
 `ChatView`.
+Its memoized turn content retains unchanged answers across streamed frames. The existing conversation box's resize
+observer pauses content rendering while CSS hides that pane on desktop or phone, retaining its DOM/details and the
+owning socket/history/action state; revealing it renders the latest received turn without replaying hidden frames.
 
 **Post-stream usage.** `chat-usage.ts:turnUsageProjection` owns the pure
 post-stream projection of AI SDK reported token/provider usage and the known-zero undispatched case. `runTurn` applies
@@ -1198,7 +1201,9 @@ request generations prevent an old completion from unlocking a newer Send.
 
 Reader is keyed by project/source, resetting metadata, text and both React/native replacement-file state on source
 change. Revision and passage navigation reuse that source reader. Metadata reads carry source/revision generation
-and abort signals; pending polls do not overlap. Text/outline reads abort on revision change/unmount. A replacement
+and abort signals; pending polls do not overlap. A metadata read error retains the last source view, stops polling
+and offers Retry source status. Successful explicit Retry restores pending polling until conversion settles;
+metadata errors remain separate from text and replacement errors. Text/outline reads abort on revision change/unmount. A replacement
 POST remains bound to its original source/file, while only its initiating location may change URL, error or file
 selection. A narrow `(projectId,sourceId)` lock in the existing App outlives keyed Reader/workspace remounts, pane changes
 and same-tab project/Settings navigation. A→B→A and same-source query changes cannot dispatch another A upload before
