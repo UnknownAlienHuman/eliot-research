@@ -147,6 +147,9 @@ its text preview, and Apply a new readable revision while retaining the original
    Flag unexpected non-printing text characters without rewriting evidence; older readable revisions show the same
    reader warning on load without mutating their metadata or starting conversion.
 6. Implement outline, whole text, exact UTF-8 range and original download. Reading must not call a model.
+   Failed text/outline reads have an explicit retry without losing the selected citation. Text, outline and revision
+   identity publish together; navigation fences pending retry responses. The Reader component regression injects both
+   read failures and verifies UTF-8 selection, repeated retry and cross-revision/source navigation.
 7. Move the project/source/import/reader UI features and replace legacy adapters with `src/shared/api.ts` +
    `src/web/api.ts`. Show filenames, readable states and human revision labels; keep immutable IDs and exact ranges in
    links/API data, and conversion telemetry in eval output.

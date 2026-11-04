@@ -545,6 +545,10 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   const [metaFailure, setMetaFailure] = useState("");
   const [text, setText] = useState("");
   const [loadedRev, setLoadedRev] = useState("");
+  const [readError, setReadError] = useState<{ revisionId: string; message: string } | null>(null);
+  const [readAttempt, setReadAttempt] = useState(0);
+  const [readLoading, setReadLoading] = useState(false);
+  const readPending = useRef(false);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [failure, setFailure] = useState("");
   const [copied, setCopied] = useState(false);
@@ -569,9 +573,10 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   const activeState = revisionId ? (rev?.readableState ?? "") : (rev?.readableState ?? source?.readableState ?? "");
   const conversionError = rev ? rev.error : source?.error;
   const textReady = loadedRev !== "" && loadedRev === activeRevision;
+  const readFailure = readError?.revisionId === activeRevision ? readError.message : "";
   const readableWarning = useMemo(() => rev?.warningSummary ?? (textReady ? readableTextWarning(text) : null), [rev?.warningSummary, textReady, text]);
   const hasRange = sp !== null || ep !== null;
-  const openingPassage = !textReady && !!activeRevision && ["pending", "readable", "readable_with_warnings"].includes(activeState) && !failure && !metaFailure;
+  const openingPassage = !textReady && !!activeRevision && ["pending", "readable", "readable_with_warnings"].includes(activeState) && !failure && !readFailure && !metaFailure;
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; metaSequence.current++; metaAbort.current?.abort(); };
@@ -597,21 +602,28 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   useEffect(() => {
     if (!activeRevision || activeState === "pending" || activeState === "failed" || activeState === "needs_conversion" || activeState === "") return;
     const abort = new AbortController();
+    readPending.current = true; setReadLoading(true);
     (async () => {
       try {
         const res = await fetch("/api/revisions/" + encodeURIComponent(activeRevision) + "/text", { credentials: "same-origin", signal: abort.signal });
         if (!res.ok) throw new Error(await apiErrorMessage(res));
         const raw = decodeCanonical(await res.arrayBuffer());
         if (abort.signal.aborted || !mounted.current) return;
-        setText(raw);
         const od = await apiJson<{ blocks: unknown }>("/api/revisions/" + encodeURIComponent(activeRevision) + "/outline", { signal: abort.signal });
         if (abort.signal.aborted || !mounted.current) return;
-        setOutline(toOutlineItems(od.blocks, raw));
-        setLoadedRev(activeRevision);
-      } catch (err) { if (!abort.signal.aborted && mounted.current) setFailure(err instanceof Error ? err.message : "Could not read the text."); }
+        const items = toOutlineItems(od.blocks, raw);
+        setText(raw); setOutline(items);
+        setLoadedRev(activeRevision); setReadError(null);
+      } catch (err) { if (!abort.signal.aborted && mounted.current)
+        setReadError({ revisionId: activeRevision, message: err instanceof Error ? err.message : "Could not read the text." }); }
+      finally { if (!abort.signal.aborted && mounted.current) { readPending.current = false; setReadLoading(false); } }
     })();
-    return () => abort.abort();
-  }, [activeRevision, activeState]);
+    return () => { abort.abort(); readPending.current = false; };
+  }, [activeRevision, activeState, readAttempt]);
+  function retryReadable() {
+    if (readPending.current || !readFailure) return;
+    readPending.current = true; setReadLoading(true); setReadAttempt(attempt => attempt + 1);
+  }
   const passage = useMemo(() => {
     if (!textReady || !hasRange) return undefined;
     try { return splitReaderRange(text, rangeStart, rangeEnd); }
@@ -663,6 +675,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
     <section className="er-lib" aria-labelledby="er-lib-reader">
       <header className="er-lib__head"><Link className="er-button er-button--text" to={"/p/" + encodeURIComponent(projectId ?? "") + "/sources"}>Sources</Link><h1 className="er-lib__title" id="er-lib-reader">{source.title}</h1><p className="er-lib__hint"><span className="er-chip er-lib__badge" data-tone={tone(activeState)}>{stateLabel(activeState)}</span></p></header>
       {failure ? <p className="er-lib__error" role="alert">{failure}</p> : null}
+      {readFailure ? <p className="er-lib__error" role="alert">{readFailure}{" "}<button className="er-button er-button--text" type="button" disabled={readLoading} onClick={retryReadable}>Retry readable text</button></p> : null}
       {metaFailure ? <p className="er-lib__error" role="alert">{metaFailure}{" "}<button className="er-button er-button--text" type="button" onClick={() => void refreshMeta()}>Retry source status</button></p> : null}
       {revisionId && !rev ? <p className="er-lib__error" role="alert">This revision is not available for this source. Open its current revision from the Library.</p> : null}
       {readableWarning ? <p className="er-lib__row-meta">{readableWarning}</p> : null}

@@ -169,7 +169,11 @@ An exact duplicate returns the existing source plus Attach; never silently merge
 
 The HTTP surface is `/api/projects`, `/api/projects/:id/sources/{file,text,url,attach,available}`, `/api/sources/:id` and
 `/api/revisions/:id/{text,range,outline,original}`. The file route accepts one multipart `file`; text/URL use separate,
-strict JSON shapes. An explicit `sourceId` replacement creates a new revision of that attached source, including a
+strict JSON shapes. Reader text/outline GET failures expose an explicit Retry readable text action for the same
+revision and selected UTF-8 range. Retry coalesces repeated clicks, does no writes or model work, and ignores departed
+responses. Text, outline and loaded revision publish together: a failed outline cannot leave another revision's text
+under the previous revision identity. Read failures are separate from clipboard and upload actions.
+An explicit `sourceId` replacement creates a new revision of that attached source, including a
 deliberate reconversion of identical bytes. Ordinary duplicate uploads return 409 plus the existing identity; a
 conditional insert in the D1 batch guards concurrent uploads and replacements against the same bytes belonging to
 another live source. Only a stored revision starts ingest; a losing request retains the existing source and revisions.
