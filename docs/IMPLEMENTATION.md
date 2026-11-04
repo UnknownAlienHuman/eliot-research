@@ -114,7 +114,7 @@ Migrations own schema names:
 | `0011_studio_pages.sql` | published-page index on immutable creation time and ID for Studio pagination |
 | `0012_model_admission.sql` | chat admission claim independent of nullable capacity, revision capacity basis; old terminal receipts remain unchanged |
 
-Apply all active `migrations/*.sql` in filename order: currently `0001`–`0003` and `0005`–`0011`.
+Apply all active `migrations/*.sql` in filename order: currently `0001`–`0003` and `0005`–`0012`.
 The unaccepted `0004_agents.sql` draft is preserved at `infra/legacy-migrations/0004_agents.sql`, outside that selection.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:
@@ -656,8 +656,9 @@ Each source context declares its exact citable-label inventory from the resolver
 gaps and are never page numbers; the inventory is included in the existing input-token estimate.
 
 Freeze readable revision IDs at turn start. Context modes are whole labelled text, verified K3 guides/claims when whole
-text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. Whole-text capacity is
-`min(0.6 × model context, 400k)` after history/output reserve. If the complete scope does not fit, choose whole or
+text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. The input estimate must fit the published input/assembly ceiling. Only when an explicit combined
+`contextWindowTokens` is known, also reserve existing output headroom inside that window: the input budget is
+`min(contextTokens, contextWindowTokens - outputReserveTokens)`; without a known window it is `contextTokens`. If the complete scope does not fit, choose whole or
 compact evidence per source within that same budget, compressing eligible sources with the greatest savings first.
 Readable sources without usable knowledge remain whole when they fit; no source is dropped or reordered. Mixed
 requests retain `claims` mode whenever any source is compressed. Recompute history against the final label inventory
@@ -681,7 +682,10 @@ quotes from the same block. Keep derived claim statements and conditions in a se
 non-evidence; only original quoted passages provide evidence and citation labels. Source and orientation text both
 count toward the same context budget.
 
-Estimate text as UTF-8 bytes / 3. Include newest in-scope history up to 10% of context. Public assistant history retains
+Estimate the final instructions/messages JSON as UTF-8 bytes / 3 plus existing per-message and fixed framing overhead.
+Assembly and dispatch use the same estimate without copying the full source JSON. This remains a planning estimate,
+not provider tokenization. `estimatedInputTokens` retains its content-only API meaning. Include newest in-scope history
+up to 10% of context, charging JSON escaping and message framing during selection while retaining content-only totals. Public assistant history retains
 a citation only when the prior full ordered scope is a prefix of the current scope and its stored source, revision,
 block and exact range match a currently supplied passage. Render that citation with its current compact alias;
 strip unverified, stale and unavailable references. Prior assistant prose remains conversation context, not evidence.
@@ -772,8 +776,10 @@ The materialization bound below is implemented by the current repair slice; chat
 [MAP's repair order](MAP.md#active-repair-order) owns acceptance status.
 
 - **Materialization bound — `context.ts`.** Each assembly has one cumulative **16 MiB** allocation allowance, separate
-  from the unchanged model-token cap. It counts actual streamed R2 bytes, chunk bookkeeping, contiguous copies,
+  from the provider input budget. It counts actual streamed R2 bytes, chunk bookkeeping, contiguous copies,
   decoded UTF-16 strings, conservative parsed-JSON overhead, metadata, labels, orientation and joined projections.
+  Distill extraction and verification reuse the streamed canonical-text/block-map reader and the same per-operation
+  allowance; extraction also charges decoded passages, escaped source JSON and joined projections before dispatch.
   Charges are not released for discarded attempts. This is a product guard, not a measurement of V8's heap or a
   process-wide concurrency limit; SDKs, the caller's already-loaded turn payloads and other isolate requests need
   additional memory. The implementation PR records observed memory separately from this accounting bound.

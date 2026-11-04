@@ -3,7 +3,8 @@ import { scanBlocks, sliceUtf8 } from "./blocks.js";
 import { buildContext } from "./context.js";
 import { resolveCitations } from "./citations.js";
 import { LibraryError } from "./library.js";
-import { modelOutputReserve } from "./models.js";
+import { modelInputLimit, modelOutputReserve } from "./models.js";
+import { estimateModelInput } from "./model-input.js";
 import type { Actor } from "./auth";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
@@ -12,6 +13,10 @@ import { readFileSync, readdirSync } from "node:fs";
 const NL = String.fromCharCode(10);
 const actor = { type: "owner", id: "o1", authentication: "local" } as unknown as Actor;
 const MODEL = { contextTokens: 1048576, maxOutputTokens: 2000 };
+function requestEstimate(messages: { role: string; content: string }[], question = "", instructions = "") {
+  return estimateModelInput({ instructions: [...messages.filter(m => m.role === "system").map(m => m.content), instructions].filter(Boolean).join("\n\n"),
+    messages: [...messages.filter(m => m.role !== "system").map(({ role, content }) => ({ role, content })), { role: "user", content: question }] });
+}
 
 interface MemSource {
   id: string;
@@ -272,6 +277,68 @@ function mixedScopeEnv(firstText = "Небольшой читаемый исто
 }
 
 describe("buildContext K2 whole scope", () => {
+  it.each([undefined, null, { contextTokens: 0, maxOutputTokens: 100 },
+    { contextTokens: 2000, maxOutputTokens: 100, outputReserveTokens: 0 }])("preserves invalid400 for a missing or malformed model %j", async (model) => {
+    const { env, reads } = twoSourceEnv();
+    await expect(buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: model as never }))
+      .rejects.toMatchObject({ code: "invalid", status: 400, message: "The model configuration is missing. Try again." });
+    expect(reads()).toBe(0);
+  });
+
+  it("applies a known combined window without treating an input-only ceiling as that window", async () => {
+    const text = Array(16).fill("Canonical source evidence. ".repeat(300)).join("\n\n"), blocks = scanBlocks(text);
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Canonical source", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: text.length, distillState: "none", guideSummary: null, deletedAt: null }],
+      texts: { r0: { text, blocks } } });
+    const input = { projectId: "p1", scopeMode: "explicit" as const, sourceIds: ["s0"],
+      model: { contextTokens: 1000000, maxOutputTokens: null, outputReserveTokens: 2048 } };
+    const result = await buildContext(fixture.env, actor, input);
+    expect(result.mode).toBe("whole");
+    expect(result.sources[0]?.blocks).toEqual(blocks);
+    await expect(buildContext(fixture.env, actor, { ...input, model: { ...input.model, contextWindowTokens: 40000 } }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(input.model.maxOutputTokens).toBeNull();
+  });
+
+  it("drops escape-heavy optional history by serialized cost while keeping fitting sources whole", async () => {
+    const paragraph = "Canonical source evidence. ".repeat(300);
+    const text = Array(15).fill(paragraph).join("\n\n"), blocks = scanBlocks(text);
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Canonical source", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: text.length, distillState: "none", guideSummary: null, deletedAt: null }],
+      texts: { r0: { text, blocks } } });
+    const model = { contextTokens: 44000, maxOutputTokens: 2000 };
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"], model,
+      history: [{ role: "user", content: '"'.repeat(10000) }, { role: "user", content: "Recent question" }] });
+    expect(result.mode).toBe("whole");
+    expect(result.messages.some(message => message.content === "Recent question")).toBe(true);
+    expect(result.messages.some(message => message.content.includes('"'.repeat(100)))).toBe(false);
+    expect(result.sources[0]?.blocks).toEqual(blocks);
+    expect(requestEstimate(result.messages)).toBeLessThanOrEqual(modelInputLimit(model));
+  });
+
+  it.each([
+    { bytes: 80000, context: 40000, previousCap: 24000 },
+    { bytes: 1230000, context: 1000000, previousCap: 400000 },
+  ])("keeps a canonical $bytes-byte source whole above the former $previousCap-token cap", async ({ bytes, context, previousCap }) => {
+    const paragraph = "Canonical evidence describes the method, its conditions and limitations. ".repeat(120);
+    const text = Array.from({ length: Math.ceil(bytes / paragraph.length) }, () => paragraph).join("\n\n").slice(0, bytes);
+    const blocks = scanBlocks(text);
+    expect(blocks.length).toBeGreaterThan(1);
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Canonical source", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: bytes, distillState: "none", guideSummary: null, deletedAt: null }],
+      texts: { r0: { text, blocks } } });
+    const model = { contextTokens: context, contextWindowTokens: context, maxOutputTokens: 32768, outputReserveTokens: 2048 };
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"], model, question: "Explain the source." });
+    expect(result.mode).toBe("whole");
+    expect(result.estimatedInputTokens).toBeGreaterThan(previousCap);
+    expect(result.revisionIds).toEqual(["r0"]);
+    expect(result.sources[0]?.blocks.map(block => [block.id, block.start, block.end]))
+      .toEqual(blocks.map(block => [block.id, block.start, block.end]));
+  });
+
   it("freezes enabled readable revisions with per-block labels and sourceIds", async () => {
     const { env } = twoSourceEnv();
     const res = await buildContext(env, actor, {
@@ -372,7 +439,7 @@ describe("buildContext K2 whole scope", () => {
     const estimateTokens = (value: string) => Math.ceil(new TextEncoder().encode(value).byteLength / 3);
     expect(res.messages.map((message) => message.role)).toEqual(["system", "user"]);
     expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + estimateTokens(message.content), 0));
-    expect(res.estimatedInputTokens + modelOutputReserve(MODEL)).toBeLessThanOrEqual(Math.min(Math.floor(MODEL.contextTokens * 0.6), 400000));
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(modelInputLimit(MODEL));
   });
 
   it("narrowed scope keeps answers citing only A and drops answers citing B", async () => {
@@ -413,11 +480,12 @@ describe("buildContext K2 whole scope", () => {
     const base = await buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: MODEL });
     const systemTokens = Math.ceil(new TextEncoder().encode(base.messages[0]?.content ?? "").byteLength / 3);
     const maxOutputTokens = 100;
-    const contextTokens = Math.ceil((systemTokens + maxOutputTokens) / 0.6);
-    expect(base.estimatedInputTokens + maxOutputTokens).toBeGreaterThan(Math.floor(contextTokens * 0.6));
+    const contextTokens = requestEstimate(base.messages.slice(0, 1)) + maxOutputTokens;
+    expect(requestEstimate(base.messages) + maxOutputTokens).toBeGreaterThan(contextTokens);
+    expect(systemTokens).toBeGreaterThan(0);
 
     await expect(buildContext(env, actor, {
-      projectId: "p1", scopeMode: "empty", model: { contextTokens, maxOutputTokens },
+      projectId: "p1", scopeMode: "empty", model: { contextTokens, contextWindowTokens: contextTokens, maxOutputTokens },
     })).rejects.toMatchObject({ code: "invalid", status: 400, message: "Narrow the source selection so the answer fits." });
     expect(reads()).toBe(0);
   });
@@ -425,10 +493,11 @@ describe("buildContext K2 whole scope", () => {
   it("keeps empty-scope history inside the cap after reserving its policy", async () => {
     const { env, reads } = twoSourceEnv();
     const base = await buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: MODEL });
-    const contextTokens = 2000, cap = Math.floor(contextTokens * 0.6);
-    const maxOutputTokens = cap - base.estimatedInputTokens - 10;
+    const contextTokens = 2000;
+    const maxOutputTokens = contextTokens - requestEstimate(base.messages) - 10;
+    const cap = contextTokens - maxOutputTokens;
     const res = await buildContext(env, actor, {
-      projectId: "p1", scopeMode: "empty", model: { contextTokens, maxOutputTokens },
+      projectId: "p1", scopeMode: "empty", model: { contextTokens, contextWindowTokens: contextTokens, maxOutputTokens },
       history: [
         { role: "user", content: "q".repeat(60), revisionIds: [] },
         { role: "assistant", content: "a".repeat(60), turnId: "prior" },
@@ -438,7 +507,7 @@ describe("buildContext K2 whole scope", () => {
     expect(res.revisionIds).toEqual([]);
     expect(res.sources).toEqual([]);
     expect(res.messages.some((message) => message.role === "assistant")).toBe(false);
-    expect(res.estimatedInputTokens + maxOutputTokens).toBeLessThanOrEqual(cap);
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(cap);
     expect(reads()).toBe(0);
   });
 
@@ -583,7 +652,7 @@ describe("buildContext K2 whole scope", () => {
 
   it("caps history at newest ten percent of context", async () => {
     const { env } = twoSourceEnv();
-    const pad = "y".repeat(2994);
+    const pad = "y".repeat(2800);
     const history = [1, 2, 3, 4, 5].map((n) => ({ role: "user" as const, content: "MARK" + n + " " + pad }));
     const res = await buildContext(env, actor, {
       projectId: "p1",
@@ -604,15 +673,9 @@ describe("buildContext K2 whole scope", () => {
     expect(modelOutputReserve({ maxOutputTokens: 460800 })).toBe(460800);
     expect(modelOutputReserve(dots)).toBe(8192);
     const { env } = twoSourceEnv();
-    let err: unknown;
-    try {
-      await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [], model: { contextTokens: 512000, maxOutputTokens: 460800 } });
-      expect.unreachable();
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(LibraryError);
-    expect((err as LibraryError).code).toBe("invalid");
+    // An input-only ceiling does not lose the published output maximum.
+    const inputOnly = await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [], model: { contextTokens: 512000, maxOutputTokens: 460800 } });
+    expect(inputOnly.mode).toBe("none");
     const empty = await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [], model: dots });
     expect(empty.mode).toBe("none");
     expect(empty.revisionIds).toEqual([]);
@@ -662,7 +725,7 @@ describe("buildContext K3 claims fallback", () => {
 
   it("keeps readable failed and unstarted sources whole while compacting large eligible sources", async () => {
     const fixture = mixedScopeEnv();
-    const model = { contextTokens: 1048576, maxOutputTokens: 8192 };
+    const model = { contextTokens: 400000, contextWindowTokens: 408192, maxOutputTokens: 8192 };
     const res = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model });
     const compactSourceId = fixture.sourceIds[1];
     if (compactSourceId === undefined) throw new Error("Expected a second frozen source.");
@@ -700,7 +763,7 @@ describe("buildContext K3 claims fallback", () => {
     expect(fixture.requested).toContain("source/" + fixture.revisionIds[11] + "/text.md");
     expect(fixture.requested).not.toContain("source/" + fixture.revisionIds[1] + "/text.md");
     expect(fixture.requested.some((key) => key.startsWith("source/" + fixture.revisionIds[1] + "/text.md#r"))).toBe(true);
-    expect(res.estimatedInputTokens + modelOutputReserve(model)).toBeLessThanOrEqual(400000);
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(modelInputLimit(model));
   });
 
   it("rejects an over-budget mixed scope after exact projection without dropping sources", async () => {
@@ -709,7 +772,7 @@ describe("buildContext K3 claims fallback", () => {
     let err: unknown;
     try {
       await buildContext(fixture.env, actor, {
-        projectId: "p1", scopeMode: "project_default", model: { contextTokens: 1048576, maxOutputTokens: 8192 },
+        projectId: "p1", scopeMode: "project_default", model: { contextTokens: 400000, maxOutputTokens: 8192 },
       });
       expect.unreachable();
     } catch (error) {
@@ -727,7 +790,7 @@ describe("buildContext K3 claims fallback", () => {
 
   it("recomputes retained history and enforces the existing output and caller budget for mixed context", async () => {
     const fixture = mixedScopeEnv();
-    const model = { contextTokens: 1048576, maxOutputTokens: 8192 };
+    const model = { contextTokens: 400000, contextWindowTokens: 408192, maxOutputTokens: 8192 };
     const smallBlock = fixture.firstBlock;
     const smallSourceId = fixture.sourceIds[0], compactSourceId = fixture.sourceIds[1];
     const smallRevisionId = fixture.revisionIds[0], compactRevisionId = fixture.revisionIds[1];
@@ -767,10 +830,11 @@ describe("buildContext K3 claims fallback", () => {
     const estimate = (value: string) => Math.ceil(new TextEncoder().encode(value).byteLength / 3);
     const callerTokens = estimate(question) + estimate(instructions);
     const historyTokens = res.messages.slice(3).reduce((sum, message) => sum + estimate(message.content), 0);
-    const cap = Math.min(Math.floor(model.contextTokens * 0.6), 400000);
+    const cap = modelInputLimit(model);
     expect(historyTokens).toBeLessThanOrEqual(Math.floor(model.contextTokens * 0.1));
     expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + estimate(message.content), 0));
-    expect(res.estimatedInputTokens + callerTokens + modelOutputReserve(model)).toBeLessThanOrEqual(cap);
+    expect(requestEstimate(res.messages, question, instructions)).toBeLessThanOrEqual(cap);
+    expect(callerTokens).toBeGreaterThan(0);
   });
 
   it("filters structural page markers from hydrated claim and guide passages", async () => {
@@ -843,7 +907,7 @@ describe("buildContext K3 claims fallback", () => {
         { ordinal: 2, statement: "A derived evaluation description.", quote: otherQuote, conditions: null, blockIndex: 2, ambiguous: 0 },
       ] },
     });
-    const model = { contextTokens: 5000, maxOutputTokens: 100 };
+    const model = { contextTokens: 3000, maxOutputTokens: 100 };
     const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s1"], model });
     expect(res.mode).toBe("claims");
     expect(res.revisionIds).toEqual(["r9"]);
@@ -867,19 +931,19 @@ describe("buildContext K3 claims fallback", () => {
     expect(orientation).not.toMatch(/\[S\d+:\d+\]/);
     expect(requested.filter((key) => key.includes("text.md"))).toEqual([]);
     expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + Math.ceil(new TextEncoder().encode(message.content).byteLength / 3), 0));
-    expect(res.estimatedInputTokens + model.maxOutputTokens).toBeLessThanOrEqual(Math.min(Math.floor(model.contextTokens * 0.6), 400000));
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(modelInputLimit(model));
     const resolved = resolveCitations("Original [S1:2], unseen [S1:3].", res.sources);
     expect(resolved.citations).toMatchObject([{ sourceId: "s1", revisionId: "r9", block: 2, start: 0, end: passageEnd }]);
     expect(resolved.invalidLabels).toBe(1);
   });
 
   it("reserved caller text pushes whole over cap and chooses claims", async () => {
-    const body = "T".repeat(600);
+    const body = "T".repeat(6000);
     const { env, requested } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
-      revisions: [{ id: "r9", readableState: "readable", readableSize: 600, distillState: "done", guideSummary: "Guide: G.", deletedAt: null, claimCount: 2 }],
-      texts: { r9: { text: body, guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 300, heading: null }, { id: 2, type: "paragraph", start: 300, end: 600, heading: null }] } },
+      revisions: [{ id: "r9", readableState: "readable", readableSize: 6000, distillState: "done", guideSummary: "Guide: G.", deletedAt: null, claimCount: 2 }],
+      texts: { r9: { text: body, guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 3000, heading: null }, { id: 2, type: "paragraph", start: 3000, end: 6000, heading: null }] } },
       claims: { r9: [{ ordinal: 1, statement: "Finding one", quote: "quoted one", conditions: null, blockIndex: 2, ambiguous: 0 }] },
     });
     const question = "Q" + "q".repeat(459), instructions = "I" + "i".repeat(459), outputTokens = 100;
@@ -887,19 +951,15 @@ describe("buildContext K3 claims fallback", () => {
     const measuredSystem = await buildContext(env, actor, {
       projectId: "p1", scopeMode: "empty", model: { contextTokens: 5000, maxOutputTokens: outputTokens }, question, instructions,
     });
-    const systemTokens = estimateTokens(measuredSystem.messages[0]?.content ?? "");
     const callerTokens = estimateTokens(question) + estimateTokens(instructions);
-    const wholePrefitTokens = Math.ceil(600 / 3) + systemTokens + callerTokens + outputTokens;
-    // Place the existing 60% cap one token below the current whole-prefit estimate;
-    // claims must still fit after its smaller labelled excerpts are estimated.
-    const contextTokens = Math.floor((wholePrefitTokens - 1) / 0.6);
-    const cap = Math.min(Math.floor(contextTokens * 0.6), 400000);
-    expect(cap).toBeLessThan(wholePrefitTokens);
+    const cap = requestEstimate(measuredSystem.messages.slice(0, 1), question, instructions) + 800;
+    const contextTokens = cap;
     const res = await buildContext(env, actor, {
       projectId: "p1", scopeMode: "project_default", model: { contextTokens, maxOutputTokens: outputTokens }, question, instructions,
     });
     expect(res.mode).toBe("claims");
-    expect(res.estimatedInputTokens + callerTokens + outputTokens).toBeLessThanOrEqual(cap);
+    expect(requestEstimate(res.messages, question, instructions)).toBeLessThanOrEqual(cap);
+    expect(callerTokens).toBeGreaterThan(0);
     expect(res.revisionIds).toEqual(["r9"]);
     expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
     expect(res.messages[1]).toMatchObject({ role: "user" });
@@ -1154,16 +1214,16 @@ describe("orientation from stored guides", () => {
     expect(measuredWhole.messages).toHaveLength(3);
     const baseTokens = estimateTokens(measuredWhole.messages[0]?.content ?? "") + estimateTokens(measuredWhole.messages[1]?.content ?? "");
     const orientationTokens = estimateTokens(measuredWhole.messages[2]?.content ?? "");
-    const contextTokens = Math.ceil((baseTokens + outputTokens) / 0.6);
-    const cap = Math.min(Math.floor(contextTokens * 0.6), 400000);
-    expect(baseTokens + outputTokens).toBeLessThanOrEqual(cap);
-    expect(baseTokens + orientationTokens + outputTokens).toBeGreaterThan(cap);
+    const contextTokens = requestEstimate(measuredWhole.messages.slice(0, 2));
+    const cap = contextTokens;
+    expect(requestEstimate(measuredWhole.messages)).toBeGreaterThan(cap);
     const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens, maxOutputTokens: outputTokens } });
     expect(res.mode).toBe("whole");
     expect(res.messages.length).toBe(2);
     expect(res.estimatedInputTokens).toBe(baseTokens);
-    expect(res.estimatedInputTokens + outputTokens).toBeLessThanOrEqual(cap);
-    expect(res.estimatedInputTokens + orientationTokens + outputTokens).toBeGreaterThan(cap);
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(cap);
+    expect(requestEstimate(measuredWhole.messages)).toBeGreaterThan(cap);
+    expect(orientationTokens).toBeGreaterThan(0);
     const body = res.messages.map((m) => m.content).join(NL);
     expect(body).not.toContain("Derived orientation");
     expect(body).not.toContain("GGGGGGGG");

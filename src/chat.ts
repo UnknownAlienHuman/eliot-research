@@ -6,7 +6,8 @@ import { buildContext } from "./context";
 import { answerWarnings, numericCitationLabels, persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn } from "./cost";
-import { modelOutputLimit, modelOutputReserve, requireAvailableModel } from "./models";
+import { modelInputLimit, modelOutputLimit, requireAvailableModel } from "./models";
+import { estimateModelInput } from "./model-input";
 import type { ModelSpec } from "./models";
 import { modelFailure, resolveModelTransport } from "./model-transport";
 import { turnUsageProjection } from "./chat-usage";
@@ -431,7 +432,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       });
       const context = await buildContext(this.env, { type: "owner", id: "owner", authentication: "access" }, {
         projectId: input.projectId, scopeMode: input.scopeMode, model, history, question: input.question,
-        instructions: settings.instructions + (partialTurnIds.size ? "\n" + PARTIAL_HISTORY_NOTICE : ""),
+        instructions: [settings.instructions, ...(partialTurnIds.size ? [PARTIAL_HISTORY_NOTICE] : [])].filter(Boolean).join("\n\n"),
         ...(input.sourceIds === undefined ? {} : { sourceIds: input.sourceIds }),
       });
       turn.revisionIds = context.revisionIds;
@@ -445,8 +446,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const messages = context.messages.filter((message) => message.role !== "system")
         .map(({ role, content }) => ({ role: role as "user" | "assistant", content }));
       messages.push({ role: "user", content: input.question });
-      const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages })).byteLength / 3) + messages.length * 32 + 1024;
-      if (inputTokens + modelOutputReserve(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
+      const inputTokens = estimateModelInput({ instructions, messages });
+      if (inputTokens > modelInputLimit(model)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
       const maxOutputTokens = modelOutputLimit(model, inputTokens);
       this.writeTurn(turn);
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")

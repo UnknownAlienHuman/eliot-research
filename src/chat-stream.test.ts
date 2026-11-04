@@ -1833,7 +1833,7 @@ describe("chat-stream K2 wire regression", () => {
     const h = makeHarness();
     try {
       await h.agent.onStart();
-      const huge = "x".repeat(1300000);
+      const huge = "x".repeat(3300000);
       const t1 = "cccccccc-cccc-4ccc-8ccc-000000000099";
       const r1 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t1, question: huge, scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
       expect(r1.state).toBe("failed");

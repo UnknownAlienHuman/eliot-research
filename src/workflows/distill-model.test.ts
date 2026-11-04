@@ -3,9 +3,11 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import type { Block } from "../blocks";
+import { scanBlocks, type Block } from "../blocks";
 import type { Actor } from "../auth";
 import { LibraryError } from "../library";
+import { estimateModelInput } from "../model-input";
+import { modelInputLimit } from "../models";
 import type { ModelSpec } from "../models";
 import type * as Models from "../models";
 import type * as ModelTransport from "../model-transport";
@@ -85,8 +87,10 @@ function fixture(storedRoute: string, document?: { text: string; blocks: Block[]
   }, BUCKET: {
     async get(key: string) {
       const body = bodies.get(key);
-      return body === undefined ? null : { text: async () => body, json: async () => JSON.parse(body) as unknown,
-        arrayBuffer: async () => new TextEncoder().encode(body).buffer };
+      if (body === undefined) return null;
+      const bytes = new TextEncoder().encode(body);
+      return { text: async () => body, json: async () => JSON.parse(body) as unknown,
+        arrayBuffer: async () => bytes.buffer, size: bytes.byteLength, body: new Response(bytes).body };
     },
     async put(key: string, body: string) {
       if (bodies.has(key)) return null;
@@ -209,6 +213,62 @@ function finished(f: ReturnType<typeof fixture>, error: string) {
 }
 
 describe("DistillWorkflow admitted model snapshot", () => {
+  it.each([
+    { paragraphs: 12, capacity: 40000, formerCap: 24000 },
+    { paragraphs: 164, capacity: 1000000, formerCap: 360000 },
+    { paragraphs: 190, capacity: 1000000, formerCap: 400000 },
+  ])("dispatches $paragraphs canonical paragraphs above the former $formerCap estimate", async ({ paragraphs, capacity, formerCap }) => {
+    const paragraph = "The method preserves source evidence and its conditions. ".repeat(120);
+    const text = Array(paragraphs).fill(paragraph).join("\n\n"), blocks = scanBlocks(text);
+    const model = { ...snapshot, contextTokens: capacity, contextWindowTokens: capacity + 2048, outputReserveTokens: 2048 };
+    const f = fixture(model.route, { text, blocks });
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    try {
+      await run(f, false, model);
+      expect(text.length / 3).toBeGreaterThan(formerCap);
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      const options = vi.mocked(generateText).mock.calls[0]?.[0];
+      const instructions = options?.instructions;
+      if (!options || typeof instructions !== "string") throw new Error("Missing extraction instructions.");
+      const schema = JSON.parse(instructions.slice(instructions.lastIndexOf("Return one JSON object conforming to this schema: ") + "Return one JSON object conforming to this schema: ".length));
+      expect(estimateModelInput({ instructions, messages: options.messages as { role: string; content: string }[], schema })).toBeLessThanOrEqual(modelInputLimit(model));
+      const content = options?.messages?.[0]?.content;
+      if (typeof content !== "string") throw new Error("Missing extraction context.");
+      expect(content.split("\n").map(line => JSON.parse(line).text).join(""))
+        .toBe(blocks.map(block => text.slice(block.start, block.end)).join(""));
+    } finally { f.db.close(); }
+  });
+
+  it("rejects cumulative extraction allocations at the existing memory allowance before dispatch", async () => {
+    const paragraph = "The method preserves source evidence and its conditions. ".repeat(120);
+    const text = Array(400).fill(paragraph).join("\n\n");
+    const model = { ...snapshot, contextTokens: 3000000 };
+    const f = fixture(model.route, { text, blocks: scanBlocks(text) });
+    try {
+      await run(f, false, model);
+      finished(f, "Narrow the source selection so the answer fits.");
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["text.md", "blocks.json"])("cancels an understated oversized %s stream without dispatch", async (name) => {
+    const f = fixture(snapshot.route), originalGet = f.env.BUCKET.get.bind(f.env.BUCKET);
+    let pulls = 0;
+    const cancel = vi.fn();
+    f.env.BUCKET.get = vi.fn(async (key: string) => {
+      if (key !== prefix + name) return originalGet(key);
+      return { size: 1, body: new ReadableStream({ pull(controller) { pulls++; controller.enqueue(new Uint8Array(1024 * 1024)); }, cancel }) };
+    }) as unknown as R2Bucket["get"];
+    try {
+      await run(f, false, { ...snapshot, contextTokens: 100000000 });
+      finished(f, "Narrow the source selection so the answer fits.");
+      expect(pulls).toBeLessThanOrEqual(17);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
   it("validates extraction statement references before numeric support without losing candidate order", async () => {
     const document = documentWithBlocks([{ type: "paragraph", text: "The method uses normalization for 9 layers." }]);
     const f = fixture(snapshot.route, document);

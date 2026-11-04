@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { scanBlocks } from '../../src/blocks.ts';
 assert(process.env.ELIOT_K2_MODEL !== '1', 'Context query fixture forbids model calls.');
 const root = process.cwd(), require = createRequire(path.join(root, 'package.json')), wr = createRequire(require.resolve('wrangler'));
 const { build } = wr('esbuild'), { Miniflare, convertV4MiniflareOptions } = wr('miniflare'), { unstable_splitSqlQuery } = wr('wrangler');
@@ -70,10 +71,21 @@ try {
     assert.equal(result.error.status, 400); assert.equal(result.r2Reads, 0);
     assert.equal(result.d1Reads, sourceIds.length > 1024 ? 1 : 2);
   }
+  const paragraph = 'Canonical evidence describes the method, its conditions and limitations. '.repeat(120);
+  const largeText = Array(150).fill(paragraph).join('\n\n').slice(0, 1230000), largeBlocks = scanBlocks(largeText);
+  await bucket.put('source/' + revisions[0] + '/text.md', largeText);
+  await bucket.put('source/' + revisions[0] + '/blocks.json', JSON.stringify(largeBlocks));
+  await db.prepare('UPDATE source_revision SET readable_size=? WHERE id=?').bind(largeText.length, revisions[0]).run();
+  const aboveCap = await invoke([ids[0]], { model: { contextTokens: 1000000, contextWindowTokens: 1000000, maxOutputTokens: 32768, outputReserveTokens: 2048 } });
+  assert.equal(aboveCap.error, undefined); assert.equal(aboveCap.context.mode, 'whole');
+  assert(aboveCap.context.estimatedInputTokens > 400000);
+  assert.deepEqual(aboveCap.context.revisionIds, [revisions[0]]);
+  assert.deepEqual(aboveCap.context.sources[0].blocks, largeBlocks);
   await db.prepare("UPDATE source SET state='deleted' WHERE id=?").bind(ids[0]).run();
   const deleted = await invoke([ids[0]]); assert.equal(deleted.error.status, 400); assert.equal(deleted.r2Reads, 0);
   console.log(JSON.stringify({ scope: 'K2_CONTEXT_QUERY', runtime: 'pinned Workerd/D1/R2', sourceCounts: [0, 1, 1024],
     d1Reads: [1, 2, 2], largeCase: '1024 metadata rows validated; token cap rejects before R2',
     orderDuplicatesDisabledMembership: true, missingDeletedAndRawCap: true, canonicalUnicodeRanges: true,
-    boundedMetadataBytes: bounded.metadataBytes, modelCalls: 0, fullK2Accepted: false }));
+    boundedMetadataBytes: bounded.metadataBytes, aboveFormerCap: { bytes: largeText.length, blocks: largeBlocks.length, inputEstimate: aboveCap.context.estimatedInputTokens },
+    modelCalls: 0, fullK2Accepted: false }));
 } finally { await mf.dispose(); }
