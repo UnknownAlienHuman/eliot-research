@@ -465,6 +465,11 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillInput> {
       const projection = await step.do("store understanding", store, () => commitSynthesis(this.env, id));
       await step.do("finish understanding", store, () => finish(this.env, id, undefined, projection));
     } catch (error) { await finish(this.env, id, error); }
+    try { await scheduleDistillation(this.env); }
+    catch {
+      // Cron can drain the queue later. A scheduling failure must not replay
+      // this revision's already finalized model steps.
+    }
     return { revisionId: id };
   }
 }
@@ -497,19 +502,21 @@ export async function scheduleDistillation(env: Env, targetRevisionId?: string) 
       else await env.DB.prepare("UPDATE source_revision SET distill_error=? WHERE id=? AND distill_state='running'").bind(detail, row.id).run();
     }
   }
-  // Manual distillation only: cron (no target) reconciles stale running above
-  // and never admits queued work. An explicit target admits only its own row.
-  if (targetRevisionId === undefined) return;
-  const queuedQuery = env.DB.prepare(`SELECT r.id,COALESCE(r.distill_model,s.distill_model) AS model FROM source_revision r JOIN source source ON source.id=r.source_id CROSS JOIN settings s
-      WHERE r.id=? AND r.distill_state='queued' AND r.deleted_at IS NULL AND source.state!='deleted' AND r.readable_state IN ('readable','readable_with_warnings') ORDER BY r.created_at LIMIT 2`)
-      .bind(targetRevisionId);
-  const rows = await queuedQuery.all<{ id: string; model: string }>();
+  // Only explicitly queued, undispatched revisions can advance in the background.
+  // An owner request keeps its target restriction; stored model choices stay frozen.
+  const queuedQuery = env.DB.prepare(`SELECT r.id,r.distill_model AS model FROM source_revision r JOIN source source ON source.id=r.source_id
+      WHERE r.distill_state='queued' AND r.distill_calls=0 AND r.deleted_at IS NULL AND source.state!='deleted'
+      AND r.readable_state IN ('readable','readable_with_warnings')${targetRevisionId === undefined ? "" : " AND r.id=?"} ORDER BY r.created_at,r.id LIMIT 2`);
+  const rows = await (targetRevisionId === undefined ? queuedQuery : queuedQuery.bind(targetRevisionId)).all<{ id: string; model: string | null }>();
   for (const row of rows.results) {
     let model;
-    try { model = await requireAvailableModel(env, row.model); }
+    try {
+      if (row.model === null) throw new LibraryError("unavailable", "The queued model is unavailable. Resume explicitly with a model.", 503);
+      model = await requireAvailableModel(env, row.model);
+    }
     catch (error) {
-      await env.DB.prepare("UPDATE source_revision SET distill_state='paused',distill_error=? WHERE id=? AND distill_state='queued' AND distill_calls=0")
-        .bind(error instanceof LibraryError ? error.message : "Model configuration is unavailable. Resume explicitly after reconnecting.", row.id).run();
+      await env.DB.prepare("UPDATE source_revision SET distill_state='paused',distill_error=? WHERE id=? AND distill_state='queued' AND distill_calls=0 AND distill_model IS ?")
+        .bind(error instanceof LibraryError ? error.message : "Model configuration is unavailable. Resume explicitly after reconnecting.", row.id, row.model).run();
       continue;
     }
     if (!await admitDistill(env, row.id, model)) continue;
