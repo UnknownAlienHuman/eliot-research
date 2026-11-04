@@ -1285,6 +1285,33 @@ describe("chat-stream K2 wire regression", () => {
       expect(fetchCalls).toBe(1);
     } finally { h.db.close(); }
   });
+  it.each([true, false])("retains a nonstandard provider finish code in the stored error (text: %s)", async (hasText) => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: hasText ? "Partial answer [S1:1]." : "" }, "upstream_timeout",
+        { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 })]);
+      const turnId = "66666666-6666-4666-8666-000000000012";
+      const turn = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+      expect(turn.state).toBe(hasText ? "partial" : "failed");
+      expect(turn.error).toContain("other; provider: upstream_timeout");
+      expect(turn.inputTokens).toBe(8); expect(turn.outputTokens).toBe(6);
+      expect((await h.agent.getTurns(projectId)).find((item) => item.turnId === turnId)?.error).toBe(turn.error);
+      expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); }
+  });
+  it.each(["other", "upstream timeout", "private\nmessage", "x".repeat(65)])("does not echo an unbounded or non-code provider finish (%j)", async (rawFinish) => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "Partial answer [S1:1]." }, rawFinish)]);
+      const turnId = "66666666-6666-4666-8666-000000000013";
+      const turn = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+      expect(turn.state).toBe("partial");
+      expect(turn.error).toBe("The model stopped before a normal completion (other).");
+      expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); }
+  });
   it("owner Stop just before the deadline keeps cancelled when the timer fires late", async () => {
     vi.useFakeTimers();
     const h = makeHarness();

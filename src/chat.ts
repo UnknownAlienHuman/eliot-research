@@ -462,14 +462,18 @@ export class ChatAgent extends Agent<Env, ChatState> {
       usage = await result.totalUsage;
       turn.answer = await result.text;
       const finish = await result.finishReason;
+      const rawFinish = finish === "other" ? await result.rawFinishReason : undefined;
+      // Preserve a short provider status code, never an arbitrary upstream message.
+      const finishDetail = rawFinish && rawFinish !== finish && /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/.test(rawFinish)
+        ? `${finish}; provider: ${rawFinish}` : finish;
       if (finish === "stop" && !streamError) turn.state = "completed";
       else {
         turn.state = "partial";
-        turn.error = streamError || `The model stopped before a normal completion (${finish}).`;
+        turn.error = streamError || `The model stopped before a normal completion (${finishDetail}).`;
       }
       if (!turn.answer.trim()) {
         turn.state = "failed";
-        turn.error = streamError || `The model returned no answer text (finish: ${finish}).`;
+        turn.error = streamError || `The model returned no answer text (finish: ${finishDetail}).`;
       }
     } catch (error) {
       const ownerStop = controller.signal.aborted && this.state.stopRequested && !timedOut;

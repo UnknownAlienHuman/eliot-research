@@ -683,6 +683,8 @@ is resumed automatically. If only creation committed, the full question is not r
 unaccepted draft text is not persisted in the URL, localStorage or another client cache.
 The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
 cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
+When the SDK normalizes a provider finish to `other`, the stored error retains its distinct raw code only if it
+matches `[A-Za-z][A-Za-z0-9_.:-]{0,63}`. Arbitrary upstream messages are omitted.
 Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the recorded
 token bound and is never treated as zero usage.
 Missing-citation and unsupported-number diagnostics are advisory UTF-16 answer ranges stored in the existing
