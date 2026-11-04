@@ -1326,11 +1326,12 @@ describe("chat-stream K2 wire regression", () => {
 
   it.each([
     { capacity: 32768, context: 1048576 }, { capacity: 4096, context: 1048576 },
-    { capacity: null, context: 1048576 }, { capacity: 32768, context: 20000 },
-  ])("sends published $capacity within context $context without treating the reserve as an output cap", async ({ capacity, context }) => {
+    { capacity: null, context: 1048576 }, { capacity: 32768, context: 20000, window: 20000 },
+  ])("sends published $capacity within context $context without treating the reserve as an output cap", async ({ capacity, context, window }) => {
     const h = makeHarness();
     const base = await requireAvailableModel(h.env, "gateway:command-code/native-beam");
-    vi.mocked(requireAvailableModel).mockResolvedValueOnce({ ...base, contextTokens: context, maxOutputTokens: capacity, outputReserveTokens: 8192 });
+    vi.mocked(requireAvailableModel).mockResolvedValueOnce({ ...base, contextTokens: context,
+      ...(window === undefined ? {} : { contextWindowTokens: window }), maxOutputTokens: capacity, outputReserveTokens: 8192 });
     try {
       await h.agent.onStart();
       nextSSE = sse([chunk({ content: "The source [S1:1]." }, "stop")]);
@@ -1342,7 +1343,7 @@ describe("chat-stream K2 wire regression", () => {
       const input = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions: request.instructions, messages: request.messages })).byteLength / 3)
         + request.messages.length * 32 + 1024;
       if (capacity === null) expect(sentBodies[0]).not.toHaveProperty("max_tokens");
-      else expect(sentBodies[0]?.max_tokens).toBe(Math.min(capacity, context - input));
+      else expect(sentBodies[0]?.max_tokens).toBe(window === undefined ? capacity : Math.min(capacity, window - input));
       expect(fetchCalls).toBe(1);
       expect(turn).toMatchObject({ state: "completed", inputTokens: null, outputTokens: null });
       expect(turn.tokenLimitKind).toBe(capacity === null ? "unknown" : "published");

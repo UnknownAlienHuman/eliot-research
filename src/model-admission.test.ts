@@ -71,6 +71,6 @@ describe("strict migrated model admission", () => {
     expect(modelTokenLimit({ ...model, maxOutputTokens: 32768 })).toBe(96768);
     expect(modelTokenLimit({ ...model, maxOutputTokens: 4096 })).toBe(68096);
     expect(modelOutputLimit({ ...model, contextWindowTokens: 128000, maxOutputTokens: 65536 }, 40000)).toBe(65536);
-    expect(modelOutputLimit({ ...model, contextWindowTokens: 128000, maxOutputTokens: 65536 }, 100000)).toBe(28000);
+    expect(modelOutputLimit({ ...model, contextTokens: 120000, contextWindowTokens: 128000, maxOutputTokens: 65536 }, 100000)).toBe(28000);
   });
 });

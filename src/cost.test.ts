@@ -102,7 +102,11 @@ describe("published generation maximum", () => {
     expect(modelOutputReserve(model)).toBe(Math.min(8192, capacity));
   });
   it("caps a published maximum by the remaining context window", () => {
-    expect(modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, 40000)).toBe(24000);
+    expect(modelOutputLimit({ contextTokens: 64000, contextWindowTokens: 64000, maxOutputTokens: 32768 }, 40000)).toBe(24000);
+  });
+  it("does not subtract an input-only ceiling from published output capacity", () => {
+    expect(modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, 40000)).toBe(32768);
+    expect(modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, 64000)).toBe(32768);
   });
   it("omits an unknown maximum without changing metadata or the recorded accounting bound", () => {
     const model = Object.freeze({ ...flashModel(), maxOutputTokens: null });
@@ -113,7 +117,16 @@ describe("published generation maximum", () => {
     expect(modelTokenReservation(model)).toBe(FLASH_BOUND);
   });
   it.each([64000, 64001, -1, 1.5])("rejects unusable input allocation %i before generation", (input) => {
-    expect(() => modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, input)).toThrow(LibraryError);
+    expect(() => modelOutputLimit({ contextTokens: 64000, contextWindowTokens: 64000, maxOutputTokens: 32768 }, input)).toThrow(LibraryError);
+  });
+  it.each([0, -1, null, NaN, Infinity, 1.5])("rejects invalid input ceiling %s even with a known window", (context) => {
+    expect(() => modelOutputLimit({ contextTokens: context, contextWindowTokens: 64000, maxOutputTokens: 32768 }, 1)).toThrow(LibraryError);
+  });
+  it.each([0, -1, NaN, Infinity, 1.5])("rejects invalid combined window %s", (window) => {
+    expect(() => modelOutputLimit({ contextTokens: 64000, contextWindowTokens: window, maxOutputTokens: 32768 }, 1)).toThrow(LibraryError);
+  });
+  it("rejects input beyond its ceiling without inferring a combined window", () => {
+    expect(() => modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, 64001)).toThrow(LibraryError);
   });
 });
 

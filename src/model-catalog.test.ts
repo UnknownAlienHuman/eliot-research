@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { discoverGatewayModels } from "./model-catalog";
-import { getModelProviders, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, saveModelProviders } from "./models";
+import { getModelProviders, modelOutputLimit, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, saveModelProviders } from "./models";
 import type { ModelProvider } from "./models";
 import { nativeModel } from "./native-model-catalog";
 import { resolveModelTransport } from "./model-transport";
@@ -70,6 +70,33 @@ function fixtureEnv(bucket: R2Bucket, opts: { providers?: ModelProvider[]; provi
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("provider model catalogue discovery", () => {
+  it("does not infer a combined window when reading an old cached input ceiling", async () => {
+    const old = { route: "gateway:command-code/hy3", id: "hy3", label: "Legacy metadata",
+      contextTokens: 192000, maxOutputTokens: 128000, outputReserveTokens: 8192, enabled: true, checkedOn: "2026-11-03" };
+    const bucket = fakeBucket({ updatedAt: "2026-11-03T00:00:00.000Z", warnings: [], models: [old], providers: defaultProviders() });
+    const before = JSON.stringify(bucket.stored());
+    const network = vi.fn(async () => { throw new Error("Unexpected metadata refresh"); });
+    vi.stubGlobal("fetch", network);
+    const model = await requireAvailableModel(fixtureEnv(bucket.binding), old.route);
+    expect(model).not.toHaveProperty("contextWindowTokens");
+    expect(modelOutputLimit(model, 100000)).toBe(128000);
+    expect(JSON.stringify(bucket.stored())).toBe(before);
+    expect(bucket.put).not.toHaveBeenCalled();
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("does not infer a combined window after generic provider refresh with context_length only", async () => {
+    const row = { id: "hy3", context_length: 192000, max_output_tokens: 128000, supported_endpoints: ["/chat/completions"] };
+    const fetcher = catalogues([row], []);
+    const bucket = fakeBucket();
+    const result = await refreshModelCatalog(fixtureEnv(bucket.binding));
+    const model = result.models.find((entry) => entry.route === "gateway:command-code/hy3");
+    if (!model) throw new Error("The generic provider model is missing.");
+    expect(model).not.toHaveProperty("contextWindowTokens");
+    expect(modelOutputLimit(model, 100000)).toBe(128000);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("lists arbitrary new native IDs without a model allowlist and preserves unknown metadata", async () => {
     const id = "unlisted-vendor/new-model:preview";
     const fetcher = catalogues([{ id: id, name: "New public model", context_length: 256000, supported_endpoints: ["/chat/completions"] }], []);

@@ -664,8 +664,10 @@ requests retain `claims` mode whenever any source is compressed. Recompute histo
 and reject the full request before inference if no representation fits. No source understanding or search is started.
 `outputReserveTokens` is assembly headroom, not the provider's generation maximum. Chat and source understanding
 use a published `maxOutputTokens`, clamped by an estimated remaining allowance, not measured provider tokenization.
-`contextWindowTokens` retains a declared combined window independently of the previous input/assembly ceiling;
-old cached metadata without it keeps the conservative old allowance until the existing explicit Refresh. An unknown
+`contextWindowTokens` retains a declared combined window independently of the input/assembly ceiling. Clamp output
+by estimated remaining headroom only when that combined window is known. Old cached rows and generic refreshes may
+retain no combined-window metadata; then preserve published output capacity without subtracting the input ceiling.
+An unknown
 maximum stays `null` in the catalogue and Eliot omits the SDK option; SDK/provider defaults may then apply,
 not an inferred 8,192-token maximum or an unlimited output promise. A non-null chat `token_limit_kind` is its admission
 claim even with `token_limit=null`; the atomic claim cannot repeat or change while started. Migration 0012 marks only

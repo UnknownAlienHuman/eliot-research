@@ -107,16 +107,19 @@ export const modelOutputReserve = (model: Pick<CatalogModel, "outputReserveToken
   const bound = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
   return Math.min(bound, model.maxOutputTokens ?? bound);
 };
-export function modelOutputLimit(model: Pick<CatalogModel, "contextTokens" | "contextWindowTokens" | "maxOutputTokens">, inputTokens: number): number | undefined {
-  const remaining = (model.contextWindowTokens ?? model.contextTokens ?? 0) - inputTokens;
-  if (!Number.isSafeInteger(model.contextTokens) || !Number.isSafeInteger(inputTokens) || inputTokens < 0 ||
-    !Number.isSafeInteger(remaining) || remaining <= 0)
+export function modelOutputLimit(model: Pick<CatalogModel, "contextTokens" | "contextWindowTokens" | "maxOutputTokens">, inputEstimate: number): number | undefined {
+  const inputCeiling = model.contextTokens ?? 0, window = model.contextWindowTokens;
+  if (!Number.isSafeInteger(inputCeiling) || inputCeiling <= 0 || !Number.isSafeInteger(inputEstimate) ||
+    inputEstimate < 0 || inputEstimate > inputCeiling ||
+    (window !== undefined && (!Number.isSafeInteger(window) || window <= inputEstimate)))
     throw new LibraryError("unavailable", "This request has no usable output context.", 503);
   // Unknown provider capacity stays unknown; omission inherits SDK/provider defaults.
   if (model.maxOutputTokens === null) return undefined;
   if (!Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens <= 0)
     throw new LibraryError("unavailable", "The model has no usable output maximum.", 503);
-  return Math.min(model.maxOutputTokens, remaining);
+  // The prompt ceiling does not prove a combined window. Without one, preserve
+  // published output capacity rather than inventing remaining headroom.
+  return window === undefined ? model.maxOutputTokens : Math.min(model.maxOutputTokens, window - inputEstimate);
 }
 export function modelTokenReservation(model: Pick<CatalogModel, "contextTokens" | "outputReserveTokens" | "maxOutputTokens">): number {
   const output = modelOutputReserve(model), total = (model.contextTokens ?? 0) + output;
