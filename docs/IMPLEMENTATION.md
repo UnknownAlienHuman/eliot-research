@@ -1135,6 +1135,9 @@ unambiguous catalogue choices is visibly unavailable. Model changes affect the n
 model's name. New chats may Send with no sources, while existing chats wait for their history to load. Changing chats
 clears the previous queue view and ignores messages from the closed connection. The inherited model name is displayed
 without sending an explicit override.
+On phone, one Sources and model disclosure shows the current scope and model summary while the existing controls
+stay mounted. Opening it exposes scope navigation and the same picker; collapsing keeps draft/selection/provider
+state and leaves model errors, pending status and data-use warnings visible. Desktop controls remain expanded.
 History and New chat confirm before discarding a nonblank question draft. Cancel preserves the open menu, chat, draft
 and source scope. Choosing the current chat, remaining in a new chat or using a modified link leaves its draft intact
 without confirmation; blank drafts follow the existing navigation. This applies to these controls, not browser Back/Forward.
