@@ -661,6 +661,8 @@ an already stored answer's D1 projection, as specified below; it does not admit 
 GET, history, reconnect and Save never start model/search work. One active turn
 and one queued submission are allowed; the next returns `409/busy`. Stop stores partial text, closing a tab does not
 cancel, and failed streams are not automatically continued. Retrying a confirmed failed generation is a new owner submission.
+Before the first turn payload is durable, fresh acceptance retains its full input in the existing self-handoff slot.
+A distinct next question gets a truthful busy response until that input is saved; the normal waiting slot then reopens.
 The mounted composer retains one unconfirmed Send ID, its normalized question/scope/ordered source IDs/explicit model
 and any acknowledged chat ID. An explicit Send with identical input reuses them after a lost or unreadable response;
 only a matching turn-ID acknowledgement consumes the attempt in its visible view. Sources/overview navigation retains
@@ -742,22 +744,23 @@ The materialization bound below is implemented by the current repair slice; chat
   [R2 range/body contract](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and
   [Worker memory contract](https://developers.cloudflare.com/workers/platform/limits/#memory). The platform's
   128 MB limit is shared by the isolate, not a separate allowance for each assembly.
-- **Interrupted queue — `chat.ts`.** Before clearing persisted `queued`, store its unchanged turn ID/question/input
+- **Interrupted accepted input - `chat.ts`.** Fresh acceptance and queue promotion both retain the unchanged request in
+  `queued` with the same active ID until validation, first DO payload write and state clear finish. Snapshots hide this
+  self-handoff; it is not a second waiting question. Before clearing input on recovery, store its turn ID/question/input
   in the existing DO turn history as `failed` with an explicit never-dispatched message and zero token usage/bound.
   Do not resolve a new model or invent frozen revision IDs for a question that never started. Persist this recovery
   before clearing the queue; repeat recovery must preserve an already recorded turn. Retain the active turn's partial
-  text and unknown usage as today. GET, onStart and reconnect never start either model call. Repeating the queued ID
+  text and unknown usage as today. GET, onStart and reconnect never start either model call. Repeating the recovered ID
   returns the stored result; retry through a new Send has a new ID. The existing reader shows the saved failure reason.
   The original request is retained in optional `TurnView.input` inside that existing DO payload. `model` keeps only
   an explicitly requested route, or an empty string when none was chosen; no default/catalogue lookup or revision
-  freeze is performed. A never-started queued turn has no D1 admission row. Its DO usage and token bound are known zero,
+  freeze is performed. A never-started retained question has no D1 admission row. Its DO usage and token bound are known zero,
   while an interrupted active turn retains its existing known values and nulls.
   Shared question/selection/model fields are stored once on the turn; compact input metadata retains project/chat
   identity and optional-field presence, and reads reconstruct the exact request. This avoids doubling a long accepted
   question within the platform's [2 MB SQLite row limit](https://developers.cloudflare.com/durable-objects/platform/limits/).
-  During ordinary handoff, retain B's input in `queued` while `active=B` until project validation and the first DO
-  payload write finish; snapshots do not present that retained input as a second waiting question. Stop preserves this
-  recovery input while aborting the active handoff. A validation failure records B as undispatched without a model call.
+  Stop preserves the retained input while aborting the active handoff. A validation failure records the question as
+  undispatched without a model call.
   If its local write or queue-state clear fails, release the settled in-memory task/controller and retain the input.
   Make one storage-only recovery attempt when that task ends. A subsequent authorised history read/reconnect, submit
   or Stop may make one further attempt after project validation; no timer, background loop or automatic Send is added.

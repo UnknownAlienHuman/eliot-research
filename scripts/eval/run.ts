@@ -3,6 +3,7 @@ if (contour !== 'k0' && contour !== 'k1' && contour !== 'k2' && contour !== 'k3'
   throw new Error('Usage: pnpm eval k0|k1|k2|k3|k4 (other contours are not implemented yet).');
 }
 await import('./' + (contour === 'k2' && process.argv.includes('--context-only') ? 'k2-context'
+  : contour === 'k2' && process.argv.includes('--admission-only') ? 'chat-admission'
   : contour === 'k2' && process.argv.includes('--view-isolation') ? 'view-isolation'
   : contour === 'k2' && process.argv.includes('--send-browser') ? 'send-browser'
   : contour === 'k2' && process.argv.includes('--project-browser') ? 'project-browser'

@@ -60,6 +60,7 @@ jobs:
           pnpm eval k1 --projects-browser
           pnpm eval k2 --native-only
           pnpm eval k2 --context-only
+          pnpm eval k2 --admission-only
           pnpm eval k2 --picker-only
           pnpm eval k2 --view-isolation
           pnpm eval k2 --send-browser
