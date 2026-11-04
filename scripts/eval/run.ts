@@ -7,6 +7,7 @@ await import('./' + (contour === 'k2' && process.argv.includes('--context-only')
   : contour === 'k2' && process.argv.includes('--view-isolation') ? 'view-isolation'
   : contour === 'k2' && process.argv.includes('--send-browser') ? 'send-browser'
   : contour === 'k2' && process.argv.includes('--project-browser') ? 'project-browser'
+  : contour === 'k3' && process.argv.includes('--retry-only') ? 'k3-retry'
   : contour === 'k3' && process.argv.includes('--metadata-only') ? 'k3-metadata'
   : contour === 'k3' && process.argv.includes('--overview-only') ? 'k3-overview'
   : contour === 'k3' && process.argv.includes('--overview-browser') ? 'overview-browser'

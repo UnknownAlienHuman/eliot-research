@@ -431,7 +431,7 @@ Understand request queues its requested revision and attempts admission, subject
 A full concurrency window leaves work `queued`; Workflow completion and cron admit already requested `queued` rows
 with zero calls, in creation order, using their stored model route. Unavailable models or allowance become visible
 `paused` until another explicit request. Cron also reconciles stale `running` rows against Workflow ID
-`distill-<revisionId>` without restarting uncertain work. Migration `0007_manual_understanding.sql`
+`distill-<revisionId>` for original attempts and `distill-attempt-<attemptId>` for explicit retries, without restarting uncertain work. Migration `0007_manual_understanding.sql`
 removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
 resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
 
@@ -582,9 +582,9 @@ Known inline reference annotations are excluded from numeric verification but pr
 in guide/digest/glossary storage, including within sentence-level validation. Code literals remain literal; unknown
 annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.
 
-K3 records `distill_calls` (hard maximum two), `distill_started_at` and `distill_ms` on the owning revision. Admission
+K3 records `distill_calls` (hard maximum two per explicit attempt), `distill_started_at` and `distill_ms` on the owning revision. Admission
 records declared capacity when known before dispatch, with at most two revisions running. Each
-new internal `DistillInput` is `{ revisionId, model: ModelSpec }`: after admission and before Workflow creation,
+new internal `DistillInput` is `{ revisionId, model: ModelSpec, attemptId? }`: after admission and before Workflow creation,
 snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
 Admission basis is `published`, `unknown` or `legacy`. New declared capacity is the input ceiling plus published
 output capacity per call; unknown output leaves the numeric capacity `null`. `progress.maximumTokens` exposes only
@@ -601,7 +601,7 @@ call. Explicit Understand schedules only its requested revision. Ingest never qu
 may admit only already requested, undispatched queued work; admission atomically rechecks revision/source liveness,
 readability, the frozen model route and the two-slot limit after asynchronous model/provider checks. Missing stored
 routes pause rather than adopting a new default. A failure draining the queue cannot retry the finalized Workflow.
-Completed or unchanged work is not automatically re-distilled, and failed paid work is not retried. The
+Completed or unchanged work is not automatically re-distilled, and failed paid work is never retried automatically. The
 pipeline uses at most two bounded model calls with zero paid-step retries. Completed/partial revisions return existing
 artifacts on repeat. Budget-paused work resumes
 only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
@@ -636,6 +636,53 @@ are retained but excluded by readers, context and later FTS queries. No original
 Calls, tokens, estimated cost, original model wall time and retained provider usage telemetry remain unchanged.
 A repeated save of the checked head returns the same result. GET exposes `canRecover` from compatible stored output
 only; failed output is never re-queued.
+**Explicit failed/partial-attempt retry.** Migration `0013_understanding_retry.sql` adds nullable current
+`distill_attempt_id` and canonical `distill_request_json` to `source_revision`; the revision remains the sole active
+state/counter owner. Null means the original revision-scoped attempt. `distill_history` is an immutable terminal
+archive with a real reader: GET `/api/sources/:id/understanding/history?revisionId=...` pages stable archived identities;
+GET understanding with `attemptId` opens their exact saved receipt, claims and artifact pointers. A new retry uses
+`source/<revision>/understanding/<attemptId>/` for raw output, verification, bodies and checked reports. Canonical
+original/text/block keys and citation identities do not change. Future K9 source-prefix export/cleanup must include
+these paths; this change implements no lifecycle mutation.
+
+POST understanding accepts `retry:{attemptId,previousAttemptId}` separately from `saveAvailable`. The client retains
+that UUID and exact body in session storage before dispatch. Server replay checks current and archived identities
+before model/default/allowance work; a reused identity with a different canonical body conflicts. New acceptance
+requires the expected current failed or partial predecessor. Paid predecessors require confirmed `complete|errored|terminated`
+Workflow status; unknown, active or unreadable status blocks retry, including retention cases that cannot be
+distinguished from a transient failure. A failed zero-call predecessor may switch despite uncertain instance create:
+its terminal state and the new identity fence the old dispatch CAS. No elapsed-time guess proves quiescence.
+
+Before switching, immutable `history/<retryRequestId>.json` beneath the predecessor attempt prefix preserves the exact owning revision row (including legacy cost/pricing,
+unknown token counts and zero sentinels) and current claims. It contains no request-time timestamp or newly generated value; the caller request ID makes a distinct snapshot key when a competing Save changes that predecessor.
+The owning row is reread after confirmed Workflow quiescence so an in-flight legacy settlement cannot be lost.
+`Understanding.recordedUsage` exposes that exact current/archived D1 accounting separately from unchanged R2
+`report.usage`; nulls, zeros and legacy currency/date fields are retained verbatim. Snapshot failure or unequal existing bytes blocks retry. A single D1 batch archives that pointer and changes the current
+identity/projection; the old attempt's fields are never reconstructed from current model defaults. A lost batch reply
+rereads the same identity; cron can admit only the already accepted queued attempt. Finish captures the owning claim count in its initial attempt-scoped SQL snapshot, before R2 waits; later claims from another attempt cannot enter the old report. Every admission, dispatch, failure,
+verification, claim publication, finish and Save publication is fenced by the owning attempt. Old artifacts remain
+immutable and late old writes cannot publish into the new current attempt. Context freezes attempt, report, claim count,
+summary and state, then checks them in its single claims read; a changed projection rejects before inference.
+
+The reader distinguishes Retry understanding (a new model run using provider allowance), storage-only Reload and Save.
+A lost/malformed retry reply stays unresolved across remount; GET with `requestId` returns that exact `knownRequestId` only when it is
+already current or archived; an older cached acknowledgement cannot clear a later pending request. Reading its old predecessor does not clear the pending identity. After a successful status
+read, Send same request explicitly resends the retained body; it may start that run if never accepted. Only a confirmed
+receipt permits a later explicit new retry. Previous-attempt controls perform reads only. Partial retry archives the working prior guide/claims/report before
+switching, so that result remains readable in history. Terminal pre-admission rejections use the same immutable
+`distill_history` table with `rejection` instead of a snapshot pointer; they do not appear as model runs in history.
+The rejection insert refuses an accepted current identity, while acceptance refuses any rejected identity, so the
+D1 winner is definitive even when a duplicate preflight fails while the original request is still in flight.
+POST returns a matching `rejected` outcome and GET returns `requestRejection` beside its exact `knownRequestId`.
+Only this durable outcome clears a rejected pending request and permits a fresh explicit model/ID choice; an ordinary
+HTTP error leaves the request unknown. Replays adopt either accepted or rejected winners before model work.
+`pnpm eval k3 --retry-only` applies strict migrations and exercises pinned Workerd/Workflows/D1/R2 and the production
+browser controls at 1440/390 widths. Both paid producer callbacks are replaced with retained synthetic output and external
+network is denied. This verifies storage/replay/fencing behavior, not model quality, provider availability or deployed
+migration compatibility. Production migration/deployment are NOT_RUN. Once retry rows exist, the Worker and Workflow
+binding must execute attempt-aware code; old unfenced code cannot safely process the new identity/artifact paths.
+This change does not establish a safe rollback to an older build.
+
 ## 7. Shared tools
 
 Tools return compact Markdown with explicit pagination and a default 4,000-token cap:

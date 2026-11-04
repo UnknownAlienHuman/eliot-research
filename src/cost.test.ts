@@ -46,7 +46,7 @@ const DISTILL_DDL = "CREATE TABLE source_revision (" +
   " distill_model TEXT DEFAULT '" + FLASH_ROUTE + "', distill_started_at INTEGER," +
   " distill_token_limit INTEGER CHECK (distill_token_limit IS NULL OR distill_token_limit >= 0)," +
   " distill_token_limit_kind TEXT," +
-  " distill_error TEXT," +
+  " distill_attempt_id TEXT, distill_error TEXT," +
   " distill_calls INTEGER NOT NULL DEFAULT 0 CHECK (distill_calls BETWEEN 0 AND 2)," +
   " distill_input_tokens INTEGER, distill_cached_tokens INTEGER, distill_output_tokens INTEGER," +
   " distill_estimated_cost_microusd INTEGER CHECK (distill_estimated_cost_microusd IS NULL OR distill_estimated_cost_microusd >= 0)," +

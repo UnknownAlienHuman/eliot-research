@@ -98,11 +98,11 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
                   const revision = source && opts.revisions.find(r => r.id === source.currentRevisionId);
                   return { id: source?.id, title: source?.title, revisionId: source?.currentRevisionId,
                     readableState: revision?.readableState, readableSize: revision?.readableSize, distillState: revision?.distillState,
-                    guideSummary: revision?.guideSummary, reportKey: revision?.reportKey ?? null };
+                    guideSummary: revision?.guideSummary, reportKey: revision?.reportKey ?? null, attemptId: null, claimCount: revision?.claimCount ?? 0 };
                 }) };
               }
               if (sql.includes("FROM claim")) {
-                const rev = params[0] as string;
+                const rev = params[sql.includes("WITH owner") ? 5 : 0] as string;
                 const head = opts.revisions.find((x) => x.id === rev)?.claimCount;
                 const rows = (opts.claims?.[rev] ?? [])
                   .filter((c) => c.ambiguous === 0 && (typeof head !== "number" || c.ordinal < head))
@@ -121,7 +121,7 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
                 .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))
                 .map((s) => {
                   const r = opts.revisions.find((x) => x.id === s.currentRevisionId);
-                  return { id: s.id, title: s.title, revisionId: s.currentRevisionId as string, readableSize: r ? r.readableSize : null, distillState: r ? r.distillState : null, guideSummary: r ? r.guideSummary : null, reportKey: r?.reportKey ?? null };
+                  return { id: s.id, title: s.title, revisionId: s.currentRevisionId as string, readableSize: r ? r.readableSize : null, distillState: r ? r.distillState : null, guideSummary: r ? r.guideSummary : null, reportKey: r?.reportKey ?? null, attemptId: null, claimCount: r?.claimCount ?? 0 };
                 });
               return { results: rows };
             },
@@ -1613,11 +1613,11 @@ describe("bounded context materialization", () => {
     try {
       db.exec(`CREATE TABLE project(id TEXT); INSERT INTO project VALUES('p1');
         CREATE TABLE source(id TEXT,title TEXT,current_revision_id TEXT,state TEXT,created_at INTEGER);
-        CREATE TABLE source_revision(id TEXT,readable_state TEXT,readable_size INTEGER,distill_state TEXT,guide_summary TEXT,distill_report_key TEXT,deleted_at INTEGER,claim_count INTEGER);
+        CREATE TABLE source_revision(id TEXT,readable_state TEXT,readable_size INTEGER,distill_state TEXT,guide_summary TEXT,distill_report_key TEXT,deleted_at INTEGER,claim_count INTEGER,distill_attempt_id TEXT);
         CREATE TABLE project_source(project_id TEXT,source_id TEXT,enabled INTEGER);
         CREATE TABLE claim(source_revision_id TEXT,ordinal INTEGER,statement TEXT,quote TEXT,conditions TEXT,block_index INTEGER,ambiguous INTEGER);
         INSERT INTO source VALUES('s0','Paper','r0','active',1);
-        INSERT INTO source_revision VALUES('r0','readable',9000000,'done',NULL,NULL,NULL,1);
+        INSERT INTO source_revision VALUES('r0','readable',9000000,'done',NULL,NULL,NULL,1,NULL);
         INSERT INTO project_source VALUES('p1','s0',1);`);
       if (kind === "sources" || kind === "source NUL") db.prepare("UPDATE source SET title=?").run((kind.endsWith("NUL") ? "a\0" : "") + "t".repeat(20000));
       else if (kind === "summary NUL") db.prepare("UPDATE source_revision SET guide_summary=?").run("a\0" + "g".repeat(40000));

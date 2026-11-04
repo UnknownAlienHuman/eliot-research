@@ -79,11 +79,12 @@ export function handleMcp(request: Request, env: Env, actor: Actor): Promise<Res
     }));
     server.registerTool("request_understanding", {
       description: "Owner only: explicitly request understanding or save existing output for a readable revision. Agent invocations are denied before dispatch.",
-      inputSchema: z.object({ sourceId: uuid, revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional() }).strict(),
+      inputSchema: z.object({ sourceId: uuid, revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional(), retry: z.object({ attemptId: uuid, previousAttemptId: uuid }).strict().optional() }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     }, (input) => toolResult(async () => {
       if (actor.type !== "owner") throw new AuthError("invalid", "Only the owner may start paid source understanding.");
       const result = await requestUnderstanding(env, actor, input);
+      if ("rejected" in result) return "Retry was not started: " + result.rejected;
       return (input.saveAvailable ? "Saved existing understanding for revision " : "Understanding request processed for revision ") + result.revisionId + ".";
     }));
     server.registerTool("propose_page", {

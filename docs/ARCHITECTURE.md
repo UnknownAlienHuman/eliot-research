@@ -84,8 +84,8 @@ citations or starts understanding. AI Search can be deleted and rebuilt without 
 the answer, and never invents page numbers, labels or source names. Every accepted citation is server-resolved.
 
 **No hidden paid work.** Opening, listing, reading, reconnecting and saving existing output are storage operations only.
-An ordinary answer is one model call in whole/claim mode or a short capped tool loop in search mode. Distillation runs
-at most once for an unchanged revision. Research is an explicit job. Failed streams are not automatically continued.
+An ordinary answer is one model call in whole/claim mode or a short capped tool loop in search mode. Distillation reuses an unchanged revision by default. A confirmed failed or partial attempt can be retried only by an explicit
+owner request, preserving its previous output and usage. Research is an explicit job. Failed streams are not automatically continued.
 
 **Graceful degradation.** Reading works without any model. Whole/claim answering works without AI Search. When a paid
 service is unavailable or the budget is exhausted, the UI shows the blocked operation and the cheaper available path.

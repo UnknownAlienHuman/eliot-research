@@ -56,7 +56,7 @@ const snapshot: ModelSpec = Object.freeze({
 
 function fixture(storedRoute: string, document?: { text: string; blocks: Block[] }) {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql", "0012_model_admission.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql", "0012_model_admission.sql", "0013_understanding_retry.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
   const text = document?.text ?? "The method uses normalization. Its source passage is retained.";
   const blocks = document?.blocks ?? [{ id: 1, type: "paragraph", start: 0, end: new TextEncoder().encode(text).byteLength, heading: null }];
@@ -103,7 +103,7 @@ const otherQueuedSourceId = "c3fd7da4-b662-4aa5-a6fc-9c84b6299940";
 
 function callerFixture() {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql", "0012_model_admission.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql", "0012_model_admission.sql", "0013_understanding_retry.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
 
   const insertSource = (id: string, title: string, revision: string, state: "none" | "queued" | "running", createdAt: number) => {
@@ -286,7 +286,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
         });
         await new DistillWorkflow({} as ExecutionContext, f.env).run(
           { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>, { do: stepDo } as unknown as WorkflowStep);
-        expect(stepDo.mock.calls.map(([name]) => name)).toEqual(["extract source", "verify source excerpts", "review and synthesize"]);
+        expect(stepDo.mock.calls.map(([name]) => name)).toEqual(replay ? ["extract source", "verify source excerpts"] : ["extract source", "verify source excerpts", "review and synthesize"]);
         expect(f.db.prepare("SELECT authors,published FROM source WHERE id=?").get(sourceId)).toEqual(metadata);
         expect(f.db.prepare("SELECT current_revision_id AS head FROM source WHERE id=?").get(sourceId))
           .toEqual({ head: replay ? explicitlySelectedRevisionId : revisionId });
