@@ -49,7 +49,7 @@ function storedModelLabel(route: string, models: readonly ModelRoute[]): string 
 }
 
 function turnModelSpan(turn: TurnView, models: readonly ModelRoute[]) {
-  if (turn.state === 'started' && turn.tokenLimit == null) return null;
+  if (turn.state === 'started' && turn.tokenLimit == null && turn.tokenLimitKind === undefined) return null;
   if (turn.model === '') return null;
   return <span>{storedModelLabel(turn.model, models)}</span>;
 }

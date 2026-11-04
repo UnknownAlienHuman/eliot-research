@@ -156,6 +156,7 @@ export interface TurnView {
   outputTokens: number | null;
   providerUsage?: ProviderUsage | null;
   tokenLimit: number | null;
+  tokenLimitKind?: "published" | "unknown" | "legacy";
   firstTokenMs: number | null;
   totalMs: number | null;
   error: string | null;

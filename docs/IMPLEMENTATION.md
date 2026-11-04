@@ -44,8 +44,8 @@ Wrangler; never hand-write it.
 
 A paid effect is a model call, rendered Browser capture, billable AI Search use, or a Workflow that invokes one. Page
 load, list, read, citation open, reconnect and saving existing output must not start paid work. Before dispatch,
-`src/cost.ts` checks the job's token/call/time bounds and provider allowance. Model prices and a local
-monthly currency/token budget are not admission prerequisites. Store the token bound and actual input/cached/output
+`src/cost.ts` claims admission separately from nullable declared token capacity and checks call/time limits and provider allowance. Model prices and a local
+monthly currency/token budget are not admission prerequisites. Store capacity basis and actual input/cached/output
 counts on the owning row; unknown counts remain unknown. Historical currency estimates and reservations remain recorded
 without being reinterpreted as tokens or Neurons. Distillation runs once per
 immutable revision; ordinary whole/claim answers use one model call; search/tool loops and explicit jobs have hard caps.
@@ -112,6 +112,7 @@ Migrations own schema names:
 | `0009_agents.sql` | trigram claim FTS/backfill and immutable proposal base revision |
 | `0010_source_ocr.sql` | owner-requested `source_ocr_job`, frozen PDF/model inputs, bounded page progress/usage, preview identity and applied revision |
 | `0011_studio_pages.sql` | published-page index on immutable creation time and ID for Studio pagination |
+| `0012_model_admission.sql` | chat admission claim independent of nullable capacity, revision capacity basis; old terminal receipts remain unchanged |
 
 Apply all active `migrations/*.sql` in filename order: currently `0001`–`0003` and `0005`–`0011`.
 The unaccepted `0004_agents.sql` draft is preserved at `infra/legacy-migrations/0004_agents.sql`, outside that selection.
@@ -289,7 +290,7 @@ The owner API is rooted at `/api/projects/:projectId/sources/:sourceId/ocr`:
 
 Shared bounds are 1–1,000 pages, at most 1 MiB PNG and 4,000,000 pixels per page, browser render long edge at most
 2,000 pixels, 90 seconds per page call, and 25 MiB for the complete/reviewed text. Admission stores
-`pageCount * modelTokenLimit(model)` as the job token bound and a finite deadline; these are job bounds, not provider
+`pageCount * modelTokenReservation(model)` as the job token bound and a finite deadline; these are job bounds, not provider
 prices or a billing guarantee. The ordinary 60-second `toMarkdown` conversion bound remains separate.
 OCR allocates output independently of the interactive chat reserve. The shared `ocrOutputLimit` used by admission
 and the Run preview selects at least 16,384 output tokens per page when published capacity permits, caps that
@@ -582,13 +583,16 @@ in guide/digest/glossary storage, including within sentence-level validation. Co
 annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.
 
 K3 records `distill_calls` (hard maximum two), `distill_started_at` and `distill_ms` on the owning revision. Admission
-records both full-context call bounds before dispatch, with at most two revisions running. Each
+records declared capacity when known before dispatch, with at most two revisions running. Each
 new internal `DistillInput` is `{ revisionId, model: ModelSpec }`: after admission and before Workflow creation,
 snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
-The reader's `progress.maximumTokens` uses the owning revision's recorded admission bound, with its retained report
-as the historical fallback. Only unstarted work without a recorded bound may forecast from its stored selected route
-or the current default. Changing defaults or catalogue metadata never recomputes an admitted or terminal job's bound;
-missing historical bounds remain unknown.
+Admission basis is `published`, `unknown` or `legacy`. New declared capacity is the input ceiling plus published
+output capacity per call; unknown output leaves the numeric capacity `null`. `progress.maximumTokens` exposes only
+a positive published value; `recordedTokenLimit` retains the owning row/report value separately. Legacy reservations
+are not provider maxima. Zero is the existing released-reservation sentinel when no call dispatched, with known-zero
+usage; it is not published provider capacity. Only unstarted work without a recorded value may forecast from metadata.
+Changing defaults never recomputes stored admission values. Legacy replay retains its original output cap, and old R2
+reports are not rewritten; API copies mark missing historical basis as legacy. OCR keeps its frozen per-page cap.
 Queued work retains its selected route. Repeating the request without an override keeps that selection; an explicit
 different route conflicts before scheduling. Only a successful `none`/`paused` transition may establish a new selection.
 Old terminal reports and cached Save retain their recorded usage and shape. Each
@@ -658,6 +662,19 @@ compact evidence per source within that same budget, compressing eligible source
 Readable sources without usable knowledge remain whole when they fit; no source is dropped or reordered. Mixed
 requests retain `claims` mode whenever any source is compressed. Recompute history against the final label inventory
 and reject the full request before inference if no representation fits. No source understanding or search is started.
+`outputReserveTokens` is assembly headroom, not the provider's generation maximum. Chat and source understanding
+use a published `maxOutputTokens`, clamped by an estimated remaining allowance, not measured provider tokenization.
+`contextWindowTokens` retains a declared combined window independently of the input/assembly ceiling. Clamp output
+by estimated remaining headroom only when that combined window is known. Old cached rows and generic refreshes may
+retain no combined-window metadata; then preserve published output capacity without subtracting the input ceiling.
+An unknown
+maximum stays `null` in the catalogue and Eliot omits the SDK option; SDK/provider defaults may then apply,
+not an inferred 8,192-token maximum or an unlimited output promise. A non-null chat `token_limit_kind` is its admission
+claim even with `token_limit=null`; the atomic claim cannot repeat or change while started. Migration 0012 marks only
+previously admitted started rows as legacy; terminal rows are never backfilled. GET, stream and repeat receipts expose
+the same basis without changing old payloads. Actual reported usage is retained even if it contradicts declared capacity.
+OCR retains its separate frozen
+per-page output cap described in section 4.
 For compressed sources, include the stored guide with its exact
 quoted source passages. Deduplicate identical (block, quote) pairs within each frozen revision while retaining distinct
 quotes from the same block. Keep derived claim statements and conditions in a separate orientation message marked as
@@ -933,10 +950,11 @@ cannot be disabled. The admitted model keeps this parameter frozen with its cont
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
-selection. Paid admission requires usable context/output bounds and provider allowance, without a price lookup or a
-locally invented monthly allowance. Record `modelTokenLimit = contextTokens + outputLimit` before dispatch (twice for
-two-call distillation), freeze the admitted `ModelSpec`, and retain unknown usage as unknown. The 8,192-token job
-output bound is separate from published model capacity. Provider errors/limits remain visible; there is no artificial
+selection. Paid admission requires usable input metadata and provider allowance, without a price lookup or a
+locally invented monthly allowance. Record declared input plus published output capacity when both are known (twice
+for distillation), otherwise `null` with an independent admission claim. Freeze the admitted `ModelSpec` and retain
+unknown usage as unknown. The assembly reserve does not become a provider maximum; legacy/OCR snapshots retain
+their admitted per-call cap. Provider errors/limits remain visible; there is no artificial
 quota, paid fallback or model-name allowlist/banlist.
 
 **Providers.** Migration `0008_model_providers.sql` stores the editable provider configuration in

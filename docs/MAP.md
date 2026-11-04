@@ -231,7 +231,9 @@ stop/reconnect, reopen chat and save an answer as a page.
 7. Add label/context/cost cases and `pnpm eval k2`.
 
 **Behavioral contract.** Only Send starts answer inference. Each turn freezes its source revisions and admitted model
-metadata. Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
+metadata. Context reserve is separate from the published generation maximum; unknown maxima retain provider/SDK defaults.
+Admission has its own claim; a missing numeric capacity never permits another call for the same turn.
+Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
 across corpora, with no fixed-paper coaching or JSON sentence/label enum. The server resolves labels and byte ranges.
 Groups of fully specified labels may normalize to separate inline references after every member passes the same
 frozen-scope validation; unknown identities and shorthand remain failures.

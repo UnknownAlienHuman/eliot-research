@@ -4,7 +4,7 @@ import type { Actor } from "./auth";
 import { LibraryError } from "./library";
 import { resolveCitations } from "./citations.js";
 import type { Citation, LabelSource } from "./citations.js";
-import { modelOutputLimit } from "./models";
+import { modelOutputReserve } from "./models";
 
 export interface ContextModel {
   contextTokens: number;
@@ -483,7 +483,7 @@ async function buildMixedContext(
   historyBudget: number,
   systemTokens: number,
   callerTokens: number,
-  maxOutputTokens: number,
+  outputReserveTokens: number,
   cap: number,
   wholePrefitTokens: number,
   preloadedWhole?: Array<Awaited<ReturnType<typeof loadSourceText>> | undefined>,
@@ -500,7 +500,7 @@ async function buildMixedContext(
     const sources = wholeParts.flatMap((part) => part ? [part.source] : []);
     const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources, assembly);
     projectedTokens = systemTokens + estimateTokens(joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]))
-      + history.tokens + callerTokens + maxOutputTokens;
+      + history.tokens + callerTokens + outputReserveTokens;
   } else {
     projectedTokens += estimateTokens(SOURCES_HEADER) + Math.max(0, frozen.length - 1) * estimateTokens("\n\n");
     for (let i = 0; i < frozen.length; i++) {
@@ -548,7 +548,7 @@ async function buildMixedContext(
     const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources, assembly);
     const estimatedInputTokens = systemTokens + estimateTokens(sourcesText)
       + (claimOrientation ? estimateTokens(claimOrientation) : 0) + history.tokens;
-    if (estimatedInputTokens + callerTokens + maxOutputTokens > cap) return undefined;
+    if (estimatedInputTokens + callerTokens + outputReserveTokens > cap) return undefined;
     return {
       mode: compressed.size ? "claims" : "whole",
       revisionIds: frozen.map((entry) => entry.revisionId),
@@ -589,12 +589,12 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     throw new LibraryError("invalid", "Choose a project before asking.", 400);
   }
   const contextTokens = input.model?.contextTokens ?? 0;
-  const maxOutputTokens = input.model ? modelOutputLimit(input.model) : 0;
+  const outputReserveTokens = input.model ? modelOutputReserve(input.model) : 0;
   if (
     !Number.isSafeInteger(contextTokens) ||
     contextTokens <= 0 ||
-    !Number.isSafeInteger(maxOutputTokens) ||
-    maxOutputTokens <= 0
+    !Number.isSafeInteger(outputReserveTokens) ||
+    outputReserveTokens <= 0
   ) {
     throw new LibraryError("invalid", "The model configuration is missing. Try again.", 400);
   }
@@ -609,11 +609,11 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
   const systemTokens = estimateTokens(SYSTEM_PROMPT);
   const scopePolicyTokens = frozen.length === 0 ? estimateTokens(NONE_SCOPE_POLICY) : 0;
   const callerTokens = estimateTokens(input.question ?? "") + estimateTokens(input.instructions ?? "");
-  if (systemTokens + scopePolicyTokens + callerTokens + maxOutputTokens > cap) {
+  if (systemTokens + scopePolicyTokens + callerTokens + outputReserveTokens > cap) {
     throw new LibraryError("invalid", NARROW_SCOPE, 400);
   }
   const frozenSet = new Set(frozen.map((entry) => entry.revisionId));
-  const historyBudget = Math.min(Math.floor(contextTokens * 0.1), cap - maxOutputTokens - systemTokens - scopePolicyTokens - callerTokens);
+  const historyBudget = Math.min(Math.floor(contextTokens * 0.1), cap - outputReserveTokens - systemTokens - scopePolicyTokens - callerTokens);
   const history = selectHistory(input.history, frozenSet, Math.max(0, historyBudget), [], assembly);
   let knownBytes = 0;
   for (const entry of frozen) {
@@ -621,7 +621,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
       knownBytes = Math.min(Number.MAX_SAFE_INTEGER, knownBytes + entry.readableSize);
     }
   }
-  const wholePrefitTokens = Math.ceil(knownBytes / 3) + systemTokens + history.tokens + callerTokens + maxOutputTokens;
+  const wholePrefitTokens = Math.ceil(knownBytes / 3) + systemTokens + history.tokens + callerTokens + outputReserveTokens;
   const wholePrefit = wholePrefitTokens <= cap;
 
   if (frozen.length === 0) {
@@ -654,7 +654,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     const sourceTokens = estimateTokens(sourcesText);
     const historyFinal = selectHistory(input.history, frozenSet, Math.max(0, historyBudget), sources, assembly);
     const estimatedInputTokens = systemTokens + sourceTokens + historyFinal.tokens;
-    if (estimatedInputTokens + callerTokens + maxOutputTokens <= cap) {
+    if (estimatedInputTokens + callerTokens + outputReserveTokens <= cap) {
       let orientation: ContextMessage[] = [];
       let orientationTokens = 0;
       const guideLines: string[] = [];
@@ -668,7 +668,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
       if (guideLines.length > 0) {
         const guideText = joinContext(assembly, ["Derived orientation only; facts and citations must come from original labelled blocks.\n\n", joinContext(assembly, guideLines, "\n")]);
         const guideTokens = estimateTokens(guideText);
-        if (estimatedInputTokens + guideTokens + callerTokens + maxOutputTokens <= cap) {
+        if (estimatedInputTokens + guideTokens + callerTokens + outputReserveTokens <= cap) {
           orientationTokens = guideTokens;
           orientation = [{ role: "user", content: guideText }];
         }
@@ -688,7 +688,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     }
   }
   return buildMixedContext(env, assembly, frozen, input.history, frozenSet, historyBudget, systemTokens, callerTokens,
-    maxOutputTokens, cap, wholePrefitTokens, wholePrefit ? wholeParts : undefined);
+    outputReserveTokens, cap, wholePrefitTokens, wholePrefit ? wholeParts : undefined);
 }
 
 

@@ -6,7 +6,7 @@ import { buildContext } from "./context";
 import { answerWarnings, numericCitationLabels, persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn } from "./cost";
-import { modelOutputLimit, requireAvailableModel } from "./models";
+import { modelOutputLimit, modelOutputReserve, requireAvailableModel } from "./models";
 import type { ModelSpec } from "./models";
 import { modelFailure, resolveModelTransport } from "./model-transport";
 import { turnUsageProjection } from "./chat-usage";
@@ -19,12 +19,13 @@ interface StoredInput { projectId: string; chatId: string; hasModel: boolean; ha
 interface D1TurnProjection {
   model: string; scopeMode: TurnView["scopeMode"]; scopeJson: string; contextMode: string; state: TurnView["state"];
   inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null;
+  tokenLimitKind: NonNullable<TurnView["tokenLimitKind"]> | null;
   citations: number; invalidLabels: number; firstTokenMs: number | null; totalMs: number | null; error: string | null;
 }
 function turnProjection(turn: TurnView): D1TurnProjection {
   return { model: turn.model, scopeMode: turn.scopeMode, scopeJson: JSON.stringify(turn.revisionIds), contextMode: turn.contextMode ?? "none",
     state: turn.state, inputTokens: turn.inputTokens, cachedTokens: turn.cachedTokens, outputTokens: turn.outputTokens,
-    tokenLimit: turn.tokenLimit, citations: turn.citations.length, invalidLabels: turn.invalidLabels,
+    tokenLimit: turn.tokenLimit, tokenLimitKind: turn.tokenLimitKind ?? null, citations: turn.citations.length, invalidLabels: turn.invalidLabels,
     firstTokenMs: turn.firstTokenMs, totalMs: turn.totalMs, error: turn.error };
 }
 const SETTLEMENT_PENDING = "This answer is saved, but its usage could not be confirmed. Reopen this conversation to try saving usage again; the answer will not be sent again.";
@@ -35,6 +36,9 @@ function parseStoredTurn(payload: string): TurnView {
     { projectId: input.projectId, chatId: input.chatId, turnId: turn.turnId, question: turn.question, scopeMode: turn.scopeMode,
       ...(input.hasModel ? { model: turn.model } : {}), ...(input.hasSourceIds ? { sourceIds: turn.sourceIds } : {}) }
     } : {}) };
+}
+function publicTurn(turn: TurnView): TurnView {
+  return turn.tokenLimitKind === undefined && turn.tokenLimit !== null ? { ...turn, tokenLimitKind: "legacy" } : turn;
 }
 const PARTIAL_HISTORY_NOTICE = "An earlier assistant answer was partial. Its unfinished text and omissions are not conclusions; ground this answer in the current frozen evidence.";
 function sameTurnRequest(a: RunTurnInput, b: RunTurnInput): boolean {
@@ -115,7 +119,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,history_version=turns.history_version+1 RETURNING created_at,history_version`;
     if (!row) throw new Error("Stored turn ordering is unavailable.");
     turn.createdAt = row.created_at; turn.historyVersion = row.history_version;
-    if (notify) this.notify(JSON.stringify({ type: "turn", turn }));
+    if (notify) this.notify(JSON.stringify({ type: "turn", turn: publicTurn(turn) }));
   }
   private bumpHistoryClock() { void this.sql`UPDATE chat_history_clock SET version=version+1 WHERE id=1`; }
   private historyClock() { return this.sql<{ version: number }>`SELECT version FROM chat_history_clock WHERE id=1`[0]?.version ?? 0; }
@@ -171,7 +175,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
   }
   private settlementRow(turnId: string) {
     return this.env.DB.prepare(`SELECT model,scope_mode AS scopeMode,scope_json AS scopeJson,context_mode AS contextMode,state,
-      input_tokens AS inputTokens,cached_tokens AS cachedTokens,output_tokens AS outputTokens,token_limit AS tokenLimit,
+      input_tokens AS inputTokens,cached_tokens AS cachedTokens,output_tokens AS outputTokens,token_limit AS tokenLimit,token_limit_kind AS tokenLimitKind,
       citations,invalid_labels AS invalidLabels,first_token_ms AS firstTokenMs,total_ms AS totalMs,error
       FROM chat_turn WHERE chat_id=? AND turn_id=?`).bind(this.name, turnId).first<D1TurnProjection>();
   }
@@ -185,6 +189,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
         // Recover known values from that uncompleted row; never replace known usage with null.
         turn.model ||= row.model;
         turn.tokenLimit ??= row.tokenLimit;
+        if (row.tokenLimitKind !== null) turn.tokenLimitKind ??= row.tokenLimitKind;
         turn.inputTokens ??= row.inputTokens; turn.cachedTokens ??= row.cachedTokens; turn.outputTokens ??= row.outputTokens;
         if (turn.revisionIds.length === 0 && row.scopeJson !== "[]") {
           const revisions: unknown = JSON.parse(row.scopeJson);
@@ -193,7 +198,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
           if (!["none", "whole", "claims"].includes(row.contextMode)) throw new Error("Invalid frozen context mode");
           turn.contextMode = row.contextMode as NonNullable<TurnView["contextMode"]>;
         }
-        if (row.model !== turn.model || row.scopeMode !== turn.scopeMode) failure = SETTLEMENT_MISMATCH;
+        if (row.model !== turn.model || row.scopeMode !== turn.scopeMode || row.tokenLimitKind !== (turn.tokenLimitKind ?? null)) failure = SETTLEMENT_MISMATCH;
         else {
           this.writeTurn(turn, false); // Keep recovered known values durable before terminalising D1.
           const p = turnProjection(turn);
@@ -206,7 +211,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
           row = await this.settlementRow(turn.turnId);
         }
       }
-      if (!row && turn.tokenLimit === null && turn.inputTokens === null && turn.cachedTokens === null && turn.outputTokens === null
+      if (!row && turn.tokenLimitKind === undefined && turn.tokenLimit === null && turn.inputTokens === null && turn.cachedTokens === null && turn.outputTokens === null
         && turn.answer === "" && turn.firstTokenMs === null && turn.revisionIds.length === 0) {
         // The pre-INSERT checkpoint cannot have dispatched. A successful primary read
         // confirms that no admission row exists; do not invent one just to settle it.
@@ -214,7 +219,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       }
       const expected = turnProjection(turn);
       const matches = row && Object.entries(expected).every(([key, value]) => row[key as keyof D1TurnProjection] === value);
-      const noAdmission = !row && turn.tokenLimit === 0 && turn.inputTokens === 0 && turn.cachedTokens === 0 && turn.outputTokens === 0;
+      const noAdmission = !row && turn.tokenLimitKind === undefined && turn.tokenLimit === 0 && turn.inputTokens === 0 && turn.cachedTokens === 0 && turn.outputTokens === 0;
       if (matches || noAdmission) {
         delete turn.settlementPending; delete turn.settlementError;
         this.writeTurn(turn);
@@ -286,7 +291,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       : this.sql<Row>`SELECT id,payload,created_at,history_version FROM turns ORDER BY created_at DESC,id DESC LIMIT 50`;
     const oldest = rows[rows.length - 1];
     const more = rows.length === 50 && oldest && this.sql<{ id: string }>`SELECT id FROM turns WHERE (created_at,id)<(${oldest.created_at},${oldest.id}) LIMIT 1`.length > 0;
-    return { turns: rows.reverse().map((row) => ({ ...parseStoredTurn(row.payload), createdAt: row.created_at, historyVersion: row.history_version })),
+    return { turns: rows.reverse().map((row) => publicTurn({ ...parseStoredTurn(row.payload), createdAt: row.created_at, historyVersion: row.history_version })),
       nextCursor: more ? JSON.stringify([this.name, oldest.created_at, oldest.id]) : null };
   }
   async getSnapshot(projectId: string) {
@@ -348,8 +353,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
     this.requireRecoveredHandoff();
     await this.recoverFinishedTurn();
     const prior = this.readTurn(input.turnId);
-    if (prior) return wait && this.state.active === input.turnId && this.current ? this.current : prior;
-    if (this.state.active === input.turnId) return wait && this.current ? this.current : { turnId: input.turnId };
+    if (prior) return wait && this.state.active === input.turnId && this.current ? this.current.then(publicTurn) : publicTurn(prior);
+    if (this.state.active === input.turnId) return wait && this.current ? this.current.then(publicTurn) : { turnId: input.turnId };
     if (this.state.active) {
       const settlementError = this.readTurn(this.state.active)?.settlementError;
       if (!this.current && settlementError) return { busy: true, message: settlementError };
@@ -365,7 +370,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       return { turnId: input.turnId, queued: true };
     }
     const task = this.startTurn(input);
-    return wait ? task : { turnId: input.turnId };
+    return wait ? task.then(publicTurn) : { turnId: input.turnId };
   }
   async stopTurn(projectId: string, turnId: string) {
     await this.ensureProject(projectId);
@@ -382,7 +387,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       if (!queued || this.state.active !== input.turnId || !sameTurnRequest(queued, input)) throw error;
       const turn = this.preserveUndispatched(queued, "This accepted question was not sent to the model because its conversation could not be validated. Reopen the conversation before sending a new question.");
       this.changeState({ ...this.state, queued: null });
-      return turn;
+      return publicTurn(turn);
     }
     if (this.state.active !== input.turnId) throw new LibraryError("conflict", "Turn was not admitted by this chat.", 409);
     const started = Date.now();
@@ -412,6 +417,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       await this.env.DB.prepare(`INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at)
         VALUES(?,?,?,?,?,'none','started',?)`).bind(this.name, turn.turnId, turn.model, turn.scopeMode, "[]", started).run();
       turn.tokenLimit = await admitTurn(this.env, this.name, turn.turnId, model);
+      turn.tokenLimitKind = turn.tokenLimit === null ? "unknown" : "published";
       this.writeTurn(turn);
       const priorTurns = (await this.getTurns(input.projectId)).filter((item) => item.turnId !== turn.turnId
         && (item.state === "completed" || (item.state === "partial" && item.citations.length > 0)));
@@ -440,14 +446,15 @@ export class ChatAgent extends Agent<Env, ChatState> {
         .map(({ role, content }) => ({ role: role as "user" | "assistant", content }));
       messages.push({ role: "user", content: input.question });
       const inputTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions, messages })).byteLength / 3) + messages.length * 32 + 1024;
-      if (inputTokens + modelOutputLimit(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
+      if (inputTokens + modelOutputReserve(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
+      const maxOutputTokens = modelOutputLimit(model, inputTokens);
       this.writeTurn(turn);
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
         .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
       if (controller.signal.aborted) throw controller.signal.reason;
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
-        maxOutputTokens: modelOutputLimit(model), maxRetries: 0, ...(selectedModel?.supportsTemperature ? { temperature: 0 } : {}), abortSignal: controller.signal,
+        ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0, ...(selectedModel?.supportsTemperature ? { temperature: 0 } : {}), abortSignal: controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
       let lastWrite = 0;
@@ -545,6 +552,6 @@ export class ChatAgent extends Agent<Env, ChatState> {
     this.writeTurn(turn);
     const settled = await this.settleTurn(turn);
     await this.env.DB.prepare("UPDATE chat SET updated_at=? WHERE id=?").bind(Date.now(), this.name).run();
-    return settled;
+    return publicTurn(settled);
   }
 }

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { isCitableBlock, type Block } from "../blocks";
 import { admitDistill, failUndispatchedDistill } from "../cost";
 import { LibraryError } from "../library";
-import { modelOutputLimit, modelTokenLimit, requireAvailableModel } from "../models";
+import { modelOutputLimit, modelOutputReserve, requireAvailableModel } from "../models";
 import type { ModelSpec } from "../models";
 import type { DistillInput } from "../shared/api";
 import { modelFailure, resolveModelTransport, safeErrorLogProjection } from "../model-transport";
@@ -32,7 +32,7 @@ function extractionSchema(labels: [string, ...string[]]) {
     questions: z.array(z.string().min(1).max(500)).min(3).max(5) });
 }
 type Extraction = z.infer<ReturnType<typeof extractionSchema>>;
-interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage?: JSONObject | null }
+interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; tokenLimitKind?: "published" | "unknown" | "legacy"; providerUsage?: JSONObject | null }
 interface Raw<T> { output: T | null; usage: Usage; validation?: { dropped: { index: number; reason: string }[] } }
 interface Evidence { label: string; block: number; quote: string }
 interface GuideItem { labels: string[]; text: string }
@@ -78,12 +78,12 @@ function asNonNegativeInt(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 type GeneratedUsage = { inputTokens?: unknown; inputTokenDetails?: { cacheReadTokens?: unknown } | null; outputTokens?: unknown; raw?: unknown };
-function toStoredUsage(usage: GeneratedUsage | null | undefined, model: ModelSpec): Usage {
+function toStoredUsage(usage: GeneratedUsage | null | undefined, tokenLimit: number | null, tokenLimitKind: NonNullable<Usage["tokenLimitKind"]>): Usage {
   const inputTokens = asNonNegativeInt(usage?.inputTokens);
   const cachedTokens = asNonNegativeInt(usage?.inputTokenDetails?.cacheReadTokens);
   const outputTokens = asNonNegativeInt(usage?.outputTokens);
   const raw = usage?.raw;
-  return { inputTokens, cachedTokens, outputTokens, tokenLimit: modelTokenLimit(model), providerUsage: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as JSONObject) : null };
+  return { inputTokens, cachedTokens, outputTokens, tokenLimit, tokenLimitKind, providerUsage: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as JSONObject) : null };
 }
 function structuredFailureDetail(error: unknown, result: { finishReason: string; totalUsage: GeneratedUsage } | undefined): { usage: GeneratedUsage | undefined; finishReason: string | null } | null {
   if (NoObjectGeneratedError.isInstance(error)) {
@@ -106,8 +106,8 @@ export async function hasAvailableUnderstanding(env: Env, revisionId: string): P
 }
 
 async function call<T>(env: Env, revisionId: string, ordinal: number, instructions: string, content: string, schema: z.ZodType<T>, language: "English" | "Russian", model: ModelSpec): Promise<Raw<T>> {
-  const row = await env.DB.prepare("SELECT distill_model,distill_started_at FROM source_revision WHERE id=? AND distill_state='running'")
-    .bind(revisionId).first<{ distill_model: string; distill_started_at: number }>();
+  const row = await env.DB.prepare("SELECT distill_model,distill_started_at,distill_token_limit,distill_token_limit_kind FROM source_revision WHERE id=? AND distill_state='running'")
+    .bind(revisionId).first<{ distill_model: string; distill_started_at: number; distill_token_limit: number | null; distill_token_limit_kind: Usage["tokenLimitKind"] | null }>();
   if (!row) throw new Error("Source understanding is no longer running.");
   if (row.distill_model !== model.route) throw new LibraryError("conflict", "The admitted model snapshot no longer matches the stored model route.", 409);
   const remaining = row.distill_started_at + DISTILL_DEADLINE_MS - Date.now();
@@ -115,8 +115,12 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   const transport = await resolveModelTransport(env, model, `distill-${revisionId}`, { structuredOutput: true });
   const fidelityInstructions = instructions + " Preserve source technical literals verbatim. In JSON prose strings encode literal square brackets as \\u005b and \\u005d; keep authority-label strings exactly as supplied by the closed label set. Only those authority labels are citations; all other source literals remain content. Keep every table value with its exact row or method, metric, and column or data-split identity. A blank or dash cell is unreported, never a measurement; omit a fact if these associations are ambiguous.";
   const modelInstructions = model.responseFormat === false ? fidelityInstructions + "\nReturn one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema)) : fidelityInstructions;
-  const inputBound = Math.ceil(new TextEncoder().encode(modelInstructions + content + JSON.stringify(z.toJSONSchema(schema))).byteLength / 3) + 1024;
-  if (inputBound + modelOutputLimit(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
+  const messages = [{ role: "user" as const, content }, { role: "user" as const, content: `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }];
+  const inputBound = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions: modelInstructions, messages, schema: z.toJSONSchema(schema) })).byteLength / 3) + messages.length * 32 + 1024;
+  if (inputBound + modelOutputReserve(model) > Math.min(model.contextTokens * 0.6, 400000)) throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
+  const tokenLimitKind = row.distill_token_limit_kind ?? "legacy";
+  const tokenLimit = row.distill_token_limit === null ? null : row.distill_token_limit / 2;
+  const maxOutputTokens = tokenLimitKind === "legacy" ? modelOutputReserve(model) : modelOutputLimit(model, inputBound);
   const dispatch = await env.DB.prepare(`UPDATE source_revision SET distill_calls=distill_calls+1
     WHERE id=? AND distill_state='running' AND distill_calls=? AND distill_started_at>?`)
     .bind(revisionId, ordinal - 1, Date.now() - DISTILL_DEADLINE_MS).run();
@@ -125,18 +129,17 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   let result: Awaited<ReturnType<typeof generateText>> | undefined;
   try {
     result = await generateText({ model: transport,
-      instructions: modelInstructions, messages: [{ role: "user", content }, { role: "user", content: `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }], output: Output.object({ schema }),
-      maxOutputTokens: modelOutputLimit(model), maxRetries: 0, ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
+      instructions: modelInstructions, messages, output: Output.object({ schema }),
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0, ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
     const output = result.output as T;
     const usage = result.totalUsage;
     const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
-    const tokenLimit = modelTokenLimit(model);
-    return { output, usage: { inputTokens, cachedTokens, outputTokens, tokenLimit, providerUsage: usage.raw ?? null } };
+    return { output, usage: { inputTokens, cachedTokens, outputTokens, tokenLimit, tokenLimitKind, providerUsage: usage.raw ?? null } };
   } catch (error) {
     const detail = structuredFailureDetail(error, result);
     let failure: string;
     if (detail) {
-      const failed = { output: null, usage: toStoredUsage(detail.usage, model) };
+      const failed = { output: null, usage: toStoredUsage(detail.usage, tokenLimit, tokenLimitKind) };
       try { await put(env, revisionId, artifactName, failed); } catch { /* Preserve the failure without repeating inference if storage is unavailable. */ }
       failure = detail.finishReason === "length" ? "model reached output bound before complete output"
         : "model returned incomplete or invalid structured output";
@@ -159,7 +162,7 @@ async function extract(env: Env, revisionId: string, model: ModelSpec) {
     .bind(revisionId).first<{ readable_size: number; distill_model: string }>();
   if (!row) throw new Error("Source understanding is no longer running.");
   if (row.distill_model !== model.route) throw new LibraryError("conflict", "The admitted model snapshot no longer matches the stored model route.", 409);
-  if (Math.ceil(row.readable_size / 3) + modelOutputLimit(model) + 16384 > Math.min(model.contextTokens * 0.6, 400000))
+  if (Math.ceil(row.readable_size / 3) + modelOutputReserve(model) + 16384 > Math.min(model.contextTokens * 0.6, 400000))
     throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
   const object = await env.BUCKET.get(key(revisionId, "text.md"));
   if (!object) throw new Error("Readable text is missing.");
@@ -238,11 +241,10 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
   const owner = await env.DB.prepare("SELECT distill_model FROM source_revision WHERE id=?").bind(revisionId).first<{ distill_model: string }>();
   if (!owner) throw new Error("Source revision is missing.");
   if (owner.distill_model !== model.route) throw new LibraryError("conflict", "The admitted model snapshot no longer matches the stored model route.", 409);
-  const jobTokenLimit = 2 * modelTokenLimit(model);
   // Canonical text and model output carry no trusted bibliographic fields. Legacy raw
   // authors/published remain immutable evidence, never inputs to source metadata writes.
-  await env.DB.prepare("UPDATE source_revision SET distill_input_tokens=?,distill_cached_tokens=?,distill_output_tokens=?,distill_token_limit=? WHERE id=?")
-    .bind(raw.usage.inputTokens ?? null, raw.usage.cachedTokens ?? null, raw.usage.outputTokens ?? null, jobTokenLimit, revisionId).run();
+  await env.DB.prepare("UPDATE source_revision SET distill_input_tokens=?,distill_cached_tokens=?,distill_output_tokens=? WHERE id=?")
+    .bind(raw.usage.inputTokens ?? null, raw.usage.cachedTokens ?? null, raw.usage.outputTokens ?? null, revisionId).run();
   return { kept: verified.claims.length, dropped: verified.dropped.length };
 }
 async function synthesize(env: Env, revisionId: string, model: ModelSpec) {
@@ -420,8 +422,8 @@ async function commitSynthesis(env: Env, revisionId: string): Promise<Projection
   return { kept: prepared.kept, guideSentences: prepared.guideSentences, dropped: prepared.dropped, clearedNumbers: prepared.clearedNumbers, requiresReview: prepared.requiresReview ?? false };
 }
 async function finish(env: Env, revisionId: string, error?: unknown, projection?: Projection) {
-  const row = await env.DB.prepare("SELECT distill_state,distill_started_at,distill_calls,guide_summary,distill_token_limit,distill_error FROM source_revision WHERE id=?")
-    .bind(revisionId).first<{ distill_state: string; distill_started_at: number; distill_calls: number; guide_summary: string | null; distill_token_limit: number | null; distill_error: string | null }>();
+  const row = await env.DB.prepare("SELECT distill_state,distill_started_at,distill_calls,guide_summary,distill_token_limit,distill_token_limit_kind,distill_error FROM source_revision WHERE id=?")
+    .bind(revisionId).first<{ distill_state: string; distill_started_at: number; distill_calls: number; guide_summary: string | null; distill_token_limit: number | null; distill_token_limit_kind: Usage["tokenLimitKind"] | null; distill_error: string | null }>();
   if (!row || row.distill_state !== "running") return;
   const saved = await env.BUCKET.get(key(revisionId, "distill.json"));
   let report = saved ? await saved.json<FinalReport>() : null;
@@ -432,8 +434,7 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
   const completeUsage = measured.length === row.distill_calls;
   const sumTokens = (field: "inputTokens" | "cachedTokens" | "outputTokens") => measured.every((item) => item.usage[field] !== null && item.usage[field] !== undefined)
     ? measured.reduce((n, item) => n + (item.usage[field] ?? 0), 0) : null;
-  const firstBound = measured.length > 0 ? measured[0]?.usage.tokenLimit ?? null : null;
-  const tokenLimit = row.distill_token_limit ?? (firstBound !== null ? 2 * firstBound : null);
+  const tokenLimit = row.distill_token_limit;
   const verifiedObject = await env.BUCKET.get(key(revisionId, "distill-verified.json"));
   const verified = verifiedObject ? await verifiedObject.json<Verified>() : null;
   const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM claim c JOIN source_revision r ON r.id=c.source_revision_id WHERE r.id=? AND c.ordinal<r.claim_count").bind(revisionId).first<{ n: number }>();
@@ -444,7 +445,7 @@ async function finish(env: Env, revisionId: string, error?: unknown, projection?
   const wallMs = Date.now() - row.distill_started_at;
   await put(env, revisionId, "distill.json", { state, questions: verified?.questions ?? [],
     usage: { calls: row.distill_calls, inputTokens: completeUsage ? sumTokens("inputTokens") : null, cachedTokens: completeUsage ? sumTokens("cachedTokens") : null,
-      outputTokens: completeUsage ? sumTokens("outputTokens") : null, tokenLimit, wallMs,
+      outputTokens: completeUsage ? sumTokens("outputTokens") : null, tokenLimit, tokenLimitKind: row.distill_token_limit_kind ?? "legacy", wallMs,
       providerUsage: measured.map((item) => item.usage.providerUsage ?? null) },
     kept, dropped, clearedNumbers: projection?.clearedNumbers ?? verified?.clearedNumbers ?? 0,
     raw: { first: first ? key(revisionId, "distill-call1.json") : null, second: second ? key(revisionId, "distill-call2.json") : null }, error: error ? row.distill_error ?? message(error) : null } satisfies FinalReport);

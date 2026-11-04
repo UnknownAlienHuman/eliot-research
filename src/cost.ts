@@ -6,34 +6,36 @@ import { modelTokenLimit } from "./models";
 // Each explicit job records its token bound on its owning row before dispatch.
 // Historical stored accounting values are not rewritten.
 
-// Admit one chat turn: reserve the model's full context+output token bound on
-// the owning turn row. Provider allowance is checked before the reservation;
+// Claim one chat turn and record input+published-output capacity when known.
+// Unknown capacity stays null; token_limit_kind owns the admission CAS.
+// Provider allowance is checked before the claim;
 // its failure throws a safe owner-readable error and starts no call. The
 // conditional update is atomic: exactly one writer can claim a
 // started/unreserved turn. There is no monthly or dollar gate.
-export async function admitTurn(env: Env, chatId: string, turnId: string, model: ModelSpec): Promise<number> {
+export async function admitTurn(env: Env, chatId: string, turnId: string, model: ModelSpec): Promise<number | null> {
   const bound = modelTokenLimit(model);
   await assertProviderAllowance(env, model);
   const result = await env.DB.prepare(
-    "UPDATE chat_turn SET token_limit = ? WHERE chat_id = ? AND turn_id = ? AND state = 'started' AND token_limit IS NULL"
-  ).bind(bound, chatId, turnId).run();
+    "UPDATE chat_turn SET token_limit = ?, token_limit_kind = ? WHERE chat_id = ? AND turn_id = ? AND state = 'started' AND token_limit_kind IS NULL AND token_limit IS NULL"
+  ).bind(bound, bound === null ? "unknown" : "published", chatId, turnId).run();
   if (!result.meta.changes)
     throw new LibraryError("conflict", "This answer cannot start right now. Retry starts a new turn; it will not continue automatically.", 409);
   return bound;
 }
 
-// Admit one explicitly requested distill revision: reserve twice the model's
-// context+output bound (two bounded calls) on the owning revision row. Only an
+// Admit one explicitly requested distill revision: record twice the declared
+// per-call capacity (or null unknown) on its row. State owns the admission CAS. Only an
 // explicitly queued, undispatched row is eligible, and at most two revisions
 // run at once. Provider allowance is checked first; its failure parks the row
 // as paused with a safe error before any call. Unusable model metadata parks
 // the row the same way. A full concurrency window leaves the row queued and
 // returns false without pausing it. There is no monthly or dollar gate.
 export async function admitDistill(env: Env, revisionId: string, model: ModelSpec): Promise<boolean> {
-  let bound: number;
+  let bound: number | null;
   try {
-    bound = 2 * modelTokenLimit(model);
-    if (!Number.isSafeInteger(bound)) throw new LibraryError("unavailable", "This model has no usable input/output limits.", 503);
+    const callBound = modelTokenLimit(model);
+    bound = callBound === null ? null : 2 * callBound;
+    if (bound !== null && !Number.isSafeInteger(bound)) throw new LibraryError("unavailable", "This model has no usable input/output limits.", 503);
   } catch (err) {
     await pauseDistill(env, revisionId, model.route, err instanceof Error ? err.message : "This model has no usable input/output limits.");
     return false;
@@ -45,12 +47,12 @@ export async function admitDistill(env: Env, revisionId: string, model: ModelSpe
     return false;
   }
   const admitted = await env.DB.prepare(
-    "UPDATE source_revision SET distill_state = 'running', distill_model = ?, distill_started_at = ?, distill_token_limit = ?, distill_error = NULL" +
+    "UPDATE source_revision SET distill_state = 'running', distill_model = ?, distill_started_at = ?, distill_token_limit = ?, distill_token_limit_kind = ?, distill_error = NULL" +
     " WHERE id = ? AND distill_state = 'queued' AND distill_calls = 0" +
     " AND distill_model = ? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings')" +
     " AND EXISTS (SELECT 1 FROM source WHERE source.id = source_revision.source_id AND source.state != 'deleted')" +
     " AND (SELECT COUNT(*) FROM source_revision WHERE distill_state = 'running') < 2"
-  ).bind(model.route, Date.now(), bound, revisionId, model.route).run();
+  ).bind(model.route, Date.now(), bound, bound === null ? "unknown" : "published", revisionId, model.route).run();
   return admitted.meta.changes === 1;
 }
 
