@@ -1,10 +1,12 @@
 // Workerd/D1/R2 coverage for attaching a saved shared Library source.
-// No AI or external network; the Workflow only counts dispatches.
+// No AI or external network. Default storage checks count Workflow dispatches;
+// --source-add-browser uses real native ingest and bounded local URL responses.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { reserveMiniflareForbiddenPorts } from '../lib/miniflare-port-guard.mjs';
 
 assert(process.env.ELIOT_K1_MODEL !== '1' && process.env.ELIOT_K2_MODEL !== '1' && process.env.ELIOT_K3_MODEL !== '1',
   'K1 Library storage proof forbids model opt-in.');
@@ -15,9 +17,12 @@ const { build } = wr('esbuild');
 const { Miniflare, convertV4MiniflareOptions } = wr('miniflare');
 const { unstable_splitSqlQuery } = wr('wrangler');
 const runtime = await mkdtemp(path.join(os.tmpdir(), 'eliot-k1-library-'));
-const origin = 'http://127.0.0.1';
+const sourceAddBrowser = process.argv.includes('--source-add-browser');
+const portGuard = sourceAddBrowser ? await reserveMiniflareForbiddenPorts() : null;
+const origin = sourceAddBrowser ? 'http://127.0.0.1:5202' : 'http://127.0.0.1';
 const entry = `
 import app from ${JSON.stringify(path.join(root, 'src/index.ts'))};
+export {IngestWorkflow} from ${JSON.stringify(path.join(root, 'src/workflows/ingest.ts'))};
 import {addSource,updateProject} from ${JSON.stringify(path.join(root, 'src/library.ts'))};
 import {WorkflowEntrypoint} from 'cloudflare:workers';
 export class FixtureIngest extends WorkflowEntrypoint {
@@ -132,7 +137,9 @@ const mf = new Miniflare(convertV4MiniflareOptions({
     name: 'library', rootPath: runtime, scriptPath: output, modules: true,
     compatibilityDate: '2026-10-24', compatibilityFlags: ['nodejs_compat'],
     d1Databases: { DB: 'library-db' }, r2Buckets: { BUCKET: 'library-r2' },
-    workflows: { INGEST: { name: 'library-storage-counter', className: 'FixtureIngest' } },
+    workflows: { INGEST: { name: 'library-storage-counter', className: sourceAddBrowser ? 'IngestWorkflow' : 'FixtureIngest' } },
+    ...(sourceAddBrowser ? { assets: { directory: path.join(root, 'dist/client'), binding: 'ASSETS',
+      routerConfig: { has_user_worker: true }, assetConfig: { not_found_handling: 'single-page-application' } } } : {}),
     outboundService: { name: 'no-network' },
     bindings: {
       ELIOT_LOCAL_DEV: '1', ELIOT_ORIGIN: origin, ELIOT_ACCESS_TEAM_DOMAIN: '', ELIOT_ACCESS_AUD: '',
@@ -140,8 +147,17 @@ const mf = new Miniflare(convertV4MiniflareOptions({
     },
   }, {
     name: 'no-network', modules: true,
-    script: "export default{async fetch(){throw new Error('External network forbidden in K1 Library proof');}};",
+    ...(sourceAddBrowser ? { d1Databases: { DB: 'library-db' } } : {}),
+    script: sourceAddBrowser ? `export default{async fetch(request,env){
+      const url=new URL(request.url);
+      if(request.method==='GET'&&url.origin==='https://example.com'&&/^\\/source-add-fixture\\/[a-z0-9-]+\\.txt$/.test(url.pathname)){
+        await env.DB.prepare('INSERT INTO fixture_url_capture(url) VALUES(?)').bind(url.href).run();
+        return new Response('# Captured fixture\\n\\n'+url.pathname,{headers:{'content-type':'text/plain; charset=utf-8'}});
+      }
+      throw new Error('External network forbidden in K1 Library proof');
+    }};` : "export default{async fetch(){throw new Error('External network forbidden in K1 Library proof');}};",
   }],
+  ...(sourceAddBrowser ? { host: '127.0.0.1', port: 5202, inspectorPort: 0 } : {}),
   resourcePersistencePath: path.join(runtime, 'state'),
 }));
 
@@ -449,6 +465,201 @@ async function replacementReplayChecks(db, bucket) {
     workflowBinding: 'SYNTHETIC_DURABLE_DISPATCH_COUNTER', newWorkflowStarts: counters.length - startedBefore, conversionAndModelCalls: 0 }));
 }
 
+async function sourceAddBrowserChecks(db) {
+  const { chromium, expect } = require('@playwright/test');
+  await db.exec('CREATE TABLE fixture_url_capture(url TEXT NOT NULL)');
+  await mkdir('eval/out/k1', { recursive: true });
+  const browser = await chromium.launch();
+  const replies = [], unexpectedWrites = [], pageErrors = [], wallMs = [];
+  let fixtureSeq = 0;
+  const draft = (kind, label) => ({ title: label + ' ' + ++fixtureSeq,
+    body: kind === 'text' ? '# Native source\n\n' + label + ' ' + fixtureSeq
+      : 'https://example.com/source-add-fixture/source-' + fixtureSeq + '.txt' });
+  const acceptedText = reply => reply.kind === 'text' ? reply.payload.text
+    : '# Captured fixture\n\n' + new URL(reply.payload.url).pathname;
+  try {
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+      const project = (await requestJson('/api/projects', 'POST', { title: 'Add drafts ' + viewport.width })).project.id;
+      const other = (await requestJson('/api/projects', 'POST', { title: 'Other add drafts ' + viewport.width })).project.id;
+      const context = await browser.newContext({ viewport });
+      await context.route('https://**', route => route.abort());
+      const page = await context.newPage();
+      page.on('pageerror', error => pageErrors.push(error.message));
+      const held = [];
+      let nextFailure = '';
+      await page.route('**/api/**', async route => {
+        const request = route.request(), url = new URL(request.url());
+        if (request.method() === 'GET' || request.method() === 'HEAD') return route.fallback();
+        const match = url.pathname.match(/^\/api\/projects\/([^/]+)\/sources\/(text|url)$/u);
+        if (request.method() !== 'POST' || !match) {
+          unexpectedWrites.push({ method: request.method(), path: url.pathname }); return route.abort('blockedbyclient');
+        }
+        const failure = nextFailure; nextFailure = '';
+        const started = performance.now();
+        const native = failure ? null : await route.fetch();
+        if (native) wallMs.push(performance.now() - started);
+        const reply = { projectId: match[1], kind: match[2], payload: request.postDataJSON(),
+          status: native?.status() ?? failure, result: native ? await native.json() : null };
+        replies.push(reply);
+        let finish;
+        const gate = new Promise(resolve => { finish = resolve; });
+        let settled = false;
+        held.push({ reply, async release() {
+          if (settled) return;
+          settled = true;
+          if (failure === 'network') await route.abort('failed');
+          else if (failure === 'http') await route.fulfill({ status: 503, json: { error: { message: 'Source fixture unavailable.' } } });
+          else await route.fulfill({ response: native });
+          finish();
+        } });
+        await gate;
+      });
+      const dialog = page.getByRole('dialog');
+      const frame = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const open = async () => {
+        await page.getByRole('button', { name: 'Add', exact: true }).click(); await expect(dialog).toBeVisible();
+      };
+      const navigate = async path => {
+        await page.evaluate(path => { history.pushState({}, '', path); dispatchEvent(new PopStateEvent('popstate')); }, path);
+        await expect(page).toHaveURL(origin + path); await frame();
+      };
+      const switchProject = async (id, title) => {
+        await page.getByRole('button', { name: 'Switch project', exact: true }).click();
+        await page.getByRole('dialog', { name: 'Switch project', exact: true }).getByRole('link', { name: title, exact: true }).click();
+        await expect(page).toHaveURL(origin + '/p/' + id + '/chat');
+        if (viewport.width === 390) await page.getByRole('navigation', { name: 'Primary', exact: true })
+          .getByRole('link', { name: 'Sources', exact: true }).click();
+        await expect(page.getByRole('heading', { name: 'Sources', exact: true })).toBeVisible(); await open();
+      };
+      const controls = kind => ({
+        title: dialog.getByRole('textbox', { name: kind === 'text' ? 'Pasted text title' : 'Title (optional)', exact: true }),
+        body: dialog.getByRole('textbox', { name: kind === 'text' ? 'Text' : 'Page URL (https only)', exact: true }),
+        button: dialog.getByRole('button', { name: kind === 'text' ? 'Add text' : 'Add URL', exact: true }),
+      });
+      const fill = async (control, value) => { await control.title.fill(value.title); await control.body.fill(value.body); };
+      const values = async (control, value) => { await expect(control.title).toHaveValue(value.title); await expect(control.body).toHaveValue(value.body); };
+      const submit = async (control, value) => {
+        await fill(control, value); const before = held.length; await control.button.click();
+        await expect.poll(() => held.length).toBe(before + 1); return held[before];
+      };
+      try {
+        await page.goto(origin + '/p/' + project + '/sources');
+        await expect(page.getByRole('heading', { name: 'Sources', exact: true })).toBeVisible();
+        await open();
+        for (const kind of ['text', 'url']) {
+          const control = controls(kind);
+          for (const change of ['unchanged', 'changed', 'title', 'body', 'whitespace', 'aba']) {
+            const original = draft(kind, kind + ' ' + change + ' ' + viewport.width);
+            const pending = await submit(control, original);
+            assert.equal(pending.reply.status, 202);
+            await expect(control.button).toBeDisabled();
+            await expect(control.title).toBeEditable(); await expect(control.body).toBeEditable();
+            let current = original;
+            if (change === 'changed') {
+              await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+              await navigate('/p/' + project + '/chat'); await navigate('/p/' + project + '/sources'); await open();
+              current = draft(kind, 'Next complete draft'); await fill(control, current);
+            } else if (change === 'title') {
+              current = { ...original, title: 'Next title' }; await control.title.fill(current.title);
+            } else if (change === 'body') {
+              current = { ...original, body: draft(kind, 'Next body').body }; await control.body.fill(current.body);
+            } else if (change === 'whitespace') {
+              current = { title: ' ' + original.title + ' ', body: ' ' + original.body + ' ' }; await fill(control, current);
+            } else if (change === 'aba') {
+              await fill(control, draft(kind, 'Temporary edit')); await fill(control, original);
+            }
+            await pending.release();
+            await values(control, change === 'unchanged' ? { title: '', body: '' } : current);
+            if (change !== 'unchanged') await expect(control.button).toBeEnabled();
+            if (change === 'changed') await page.screenshot({ path: `eval/out/k1/source-add-${kind}-${viewport.width}.png`, fullPage: true });
+          }
+          // Failed and exact-duplicate submissions retain both fields and release this form's guard.
+          const duplicate = replies.find(reply => reply.projectId === project && reply.kind === kind && reply.status === 202);
+          for (const outcome of ['network', 'http', 'conflict']) {
+            const original = outcome === 'conflict'
+              ? { title: 'Duplicate title', body: kind === 'text' ? duplicate.payload.text : duplicate.payload.url }
+              : draft(kind, outcome);
+            nextFailure = outcome === 'conflict' ? '' : outcome;
+            const pending = await submit(control, original);
+            assert.equal(pending.reply.status, outcome === 'conflict' ? 409 : outcome);
+            const current = draft(kind, 'Edited after ' + outcome); await fill(control, current);
+            await pending.release(); await values(control, current); await expect(control.button).toBeEnabled();
+            if (outcome === 'conflict') {
+              assert.equal(pending.reply.result.duplicate.sourceId, duplicate.result.sourceId);
+              await expect(dialog.getByRole('button', { name: /^Attach from Library/ }).last()).toBeVisible();
+            }
+            const retry = await submit(control, current); assert.equal(retry.reply.status, 202);
+            await retry.release(); await values(control, { title: '', body: '' });
+          }
+        }
+        // requestSubmit bypasses the disabled button: two same-tick events still dispatch once per form.
+        const text = controls('text'), url = controls('url');
+        const originals = [draft('text', 'Independent text'), draft('url', 'Independent URL')];
+        const start = held.length;
+        for (const [index, control] of [text, url].entries()) {
+          await fill(control, originals[index]); await expect(control.button).toBeEnabled();
+          await control.button.evaluate(button => { const form = button.closest('form'); form.requestSubmit(); form.requestSubmit(); });
+          await expect.poll(() => held.length).toBe(start + index + 1); await expect(control.button).toBeDisabled();
+          await control.button.evaluate(button => button.closest('form').requestSubmit());
+          await frame(); assert.equal(held.length, start + index + 1);
+        }
+        assert.equal(held[start].reply.status, 202); assert.equal(held[start + 1].reply.status, 202);
+        const nextText = draft('text', 'Next independent text'), nextUrl = draft('url', 'Next independent URL');
+        await fill(text, nextText); await fill(url, nextUrl);
+        for (const index of viewport.width === 1440 ? [0, 1] : [1, 0]) {
+          await held[start + index].release();
+          await values(text, nextText); await values(url, nextUrl);
+        }
+        await expect(text.button).toBeEnabled(); await expect(url.button).toBeEnabled();
+        await frame(); assert.equal(held.length, start + 2);
+        for (const kind of ['text', 'url']) {
+          const pending = await submit(controls(kind), draft(kind, 'Original project submission'));
+          assert.equal(pending.reply.status, 202);
+          await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+          await switchProject(other, 'Other add drafts ' + viewport.width);
+          const fresh = draft(kind, 'Other project unsaved draft'); await fill(controls(kind), fresh);
+          await pending.release(); await frame();
+          await values(controls(kind), fresh); await expect(controls(kind).button).toBeEnabled();
+          await expect(dialog.getByRole('alert')).toHaveCount(0);
+          await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+          await switchProject(project, 'Add drafts ' + viewport.width);
+        }
+        const accepted = replies.filter(reply => reply.projectId === project && reply.status === 202);
+        const members = (await db.prepare('SELECT source_id FROM project_source WHERE project_id=?').bind(project).all()).results;
+        assert.deepEqual(members.map(row => row.source_id).sort(), accepted.map(reply => reply.result.sourceId).sort());
+        assert.equal((await db.prepare('SELECT count(*) AS n FROM project_source WHERE project_id=?').bind(other).first()).n, 0);
+        for (const reply of accepted) {
+          let source;
+          await expect.poll(async () => { source = (await requestJson('/api/sources/' + reply.result.sourceId)).source;
+            return source.readableState; }, { timeout: 30000 }).toBe('readable');
+          assert.equal(source.title, reply.payload.title); assert.equal(source.kind, reply.kind);
+          assert.equal(source.currentRevisionId, reply.result.revisionId); assert.equal(source.conversionCalls, 0);
+          assert.equal(source.distillState, 'none');
+          for (const endpoint of ['text', 'original']) {
+            const response = await rawRequest('/api/revisions/' + reply.result.revisionId + '/' + endpoint);
+            assert(response.ok); assert.equal(await response.text(), acceptedText(reply));
+          }
+        }
+        console.log(JSON.stringify({ scope: 'K1_SOURCE_ADD_BROWSER', viewport, acceptedSources: accepted.length,
+          unchangedClears: true, editedPairAndIndividualFieldsRetained: true, rawWhitespaceAndAbaRetained: true,
+          closeReopenAndPaneChanges: true, synchronousSameFormGuard: true, independentForms: true, projectPickerHeldResponseIsolation: true,
+          networkHttpAndExactDuplicateKeepDraftAndUnlock: true, explicitRetry: true, originalProjectAndBytes: true,
+          workflowBinding: 'NATIVE_INGEST', urlCapture: 'REAL_CAPTURE_LOCAL_PLAINTEXT_EGRESS', modelCalls: 0, externalNetwork: 'FORBIDDEN' }));
+      } finally {
+        for (const pending of held) await pending.release().catch(() => {});
+        await context.close();
+      }
+    }
+    const captures = (await db.prepare('SELECT url FROM fixture_url_capture').all()).results;
+    assert.equal(captures.length, replies.filter(reply => reply.kind === 'url' && typeof reply.status === 'number').length);
+    assert(captures.every(row => /^https:\/\/example\.com\/source-add-fixture\/source-\d+\.txt$/u.test(row.url)));
+    assert.deepEqual(unexpectedWrites, []); assert.deepEqual(pageErrors, []);
+    console.log(JSON.stringify({ scope: 'K1_SOURCE_ADD_TOTAL', nativePostWallMs: { samples: wallMs.length,
+      p50: percentile(wallMs, 0.5), p95: percentile(wallMs, 0.95) }, actualUrlCapturesWithLocalResponses: captures.length,
+      unexpectedWrites: 0, pageErrors: 0, modelCalls: 0, externalNetwork: 'FORBIDDEN' }));
+  } finally { await browser.close(); }
+}
+
 try {
   await mf.ready;
   const db = await mf.getD1Database('DB', 'library');
@@ -457,6 +668,9 @@ try {
     const sql = await readFile(path.join(root, 'migrations', file), 'utf8');
     await db.batch(unstable_splitSqlQuery(sql).map((statement) => db.prepare(statement)));
   }
+  if (sourceAddBrowser) {
+    await sourceAddBrowserChecks(db);
+  } else {
   let projectSeq = 10_000;
   assert.deepEqual(await requestJson('/api/projects?archived=true'),{projects:[],nextCursor:null});
   const nextProject = async (name = 'K1 Library fixture') => {
@@ -787,6 +1001,7 @@ try {
   }));
   await replacementDuplicateChecks(db, bucket);
   await replacementReplayChecks(db, bucket);
+  }
 } finally {
-  await mf.dispose();
+  try { await mf.dispose(); } finally { await portGuard?.release(); }
 }

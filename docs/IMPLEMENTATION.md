@@ -1101,6 +1101,10 @@ sources. Sources start with readable-source checkboxes and current understanding
 the existing file/text/URL forms in a native dialog. History is a menu and project settings a dialog. Opening a source
 passage temporarily replaces the center reader without dropping the selected chat or source scope. Saved output
 refreshes Studio through the existing storage-only page API.
+Add sources keeps text and URL drafts independent. Each form allows one pending submission while its fields remain
+editable. Success clears only the unchanged submitted draft; later edits, failures and duplicate responses keep it.
+Closing and reopening the dialog does not cancel the write or discard newer input. Drafts stay local to the mounted
+project workspace; no automatic retry or browser persistence is added.
 Projects exposes Show archived projects and Unarchive. Each list view owns its query/cursor; switching views aborts
 old reads and starts its first page. Failed reads keep loaded rows and offer Retry. A pending write or Rename edit
 disables view switching; failed writes preserve the row/edit, while success refreshes that view. The active-only
