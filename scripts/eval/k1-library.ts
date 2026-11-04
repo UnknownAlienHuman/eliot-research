@@ -1,5 +1,5 @@
 // Workerd/D1/R2 coverage for attaching a saved shared Library source.
-// This fixture has no AI, Workflow, or external network binding.
+// No AI or external network; the Workflow only counts dispatches.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdtemp, readFile, readdir } from 'node:fs/promises';
