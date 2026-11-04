@@ -587,7 +587,9 @@ records declared capacity when known before dispatch, with at most two revisions
 new internal `DistillInput` is `{ revisionId, model: ModelSpec, attemptId? }`: after admission and before Workflow creation,
 snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
 Admission basis is `published`, `unknown` or `legacy`. New declared capacity is the input ceiling plus published
-output capacity per call; unknown output leaves the numeric capacity `null`. `progress.maximumTokens` exposes only
+output capacity per call, capped by an explicitly known combined context window. An input-only ceiling does not
+imply a combined window; unknown output leaves the numeric capacity `null`. Previously admitted values remain
+unchanged, including older conservative sums that exceed a now-known combined window. `progress.maximumTokens` exposes only
 a positive published value; `recordedTokenLimit` retains the owning row/report value separately. Legacy reservations
 are not provider maxima. Zero is the existing released-reservation sentinel when no call dispatched, with known-zero
 usage; it is not published provider capacity. Only unstarted work without a recorded value may forecast from metadata.

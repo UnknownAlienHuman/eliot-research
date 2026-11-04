@@ -66,6 +66,34 @@ describe("strict migrated model admission", () => {
     } finally { f.db.close(); }
   });
 
+  it("records the Crouton combined window once without changing reported usage or old admissions", async () => {
+    const f = fixture();
+    const crouton = { ...model, contextTokens: 1048576, contextWindowTokens: 1048576, maxOutputTokens: 943718 };
+    try {
+      await expect(admitTurn(f.env, "c", "new", crouton)).resolves.toBe(1048576);
+      await expect(admitTurn(f.env, "c", "new", crouton)).rejects.toMatchObject({ code: "conflict" });
+      f.db.prepare("UPDATE chat_turn SET state='completed',input_tokens=43702,cached_tokens=0,output_tokens=1049 WHERE turn_id='new'").run();
+      expect(f.db.prepare("SELECT token_limit,token_limit_kind,input_tokens,output_tokens FROM chat_turn WHERE turn_id='new'").get())
+        .toEqual({ token_limit: 1048576, token_limit_kind: "published", input_tokens: 43702, output_tokens: 1049 });
+      await expect(admitTurn(f.env, "c", "old-started", crouton)).rejects.toMatchObject({ code: "conflict" });
+      expect(f.db.prepare("SELECT token_limit FROM chat_turn WHERE turn_id='old-started'").get()).toEqual({ token_limit: 72192 });
+    } finally { f.db.close(); }
+  });
+
+  it("caps total capacity only by a known combined window, independently of reserve", () => {
+    const known = { ...model, maxOutputTokens: 32768 };
+    expect(modelTokenLimit({ ...known, contextWindowTokens: 64000 })).toBe(64000);
+    expect(modelTokenLimit({ ...known, contextWindowTokens: 80000 })).toBe(80000);
+    expect(modelTokenLimit({ ...known, contextWindowTokens: 128000 })).toBe(96768);
+    const differentReserve = { ...known, contextWindowTokens: 64000, outputReserveTokens: 1 };
+    expect(modelTokenLimit(differentReserve)).toBe(64000);
+    expect(modelTokenLimit({ ...model, contextWindowTokens: 64000 })).toBeNull();
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity])("rejects invalid combined accounting window %s", (contextWindowTokens) => {
+    expect(() => modelTokenLimit({ ...model, contextWindowTokens, maxOutputTokens: 32768 })).toThrow();
+  });
+
   it("uses independent declared input and output capacities, with no invented unknown maximum", () => {
     expect(modelTokenLimit(model)).toBeNull();
     expect(modelTokenLimit({ ...model, maxOutputTokens: 32768 })).toBe(96768);

@@ -135,14 +135,17 @@ export function modelTokenReservation(model: Pick<CatalogModel, "contextTokens" 
     throw new LibraryError("unavailable", "The model has no usable input/output limits.", 503);
   return total;
 }
-export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "maxOutputTokens">): number | null {
+export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "contextWindowTokens" | "maxOutputTokens">): number | null {
   // Declared capacities, independent of byte/token planning estimates. Not a
   // guarantee of upstream acceptance or a substitute for reported usage.
-  const input = model.contextTokens ?? 0, output = model.maxOutputTokens;
+  const input = model.contextTokens ?? 0, output = model.maxOutputTokens, window = model.contextWindowTokens;
   if (!Number.isSafeInteger(input) || input <= 0 ||
+    (window !== undefined && (!Number.isSafeInteger(window) || window <= 0)) ||
     (output !== null && (!Number.isSafeInteger(output) || output <= 0 || !Number.isSafeInteger(input + output))))
     throw new LibraryError("unavailable", "The model has no usable input/output limits.", 503);
-  return output === null ? null : input + output;
+  // Input and output share an explicitly published combined window. Input-only
+  // metadata cannot establish that window; unknown output remains unknown.
+  return output === null ? null : Math.min(input + output, window ?? Infinity);
 }
 function missingMetadata(model: CatalogModel): string | null {
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||

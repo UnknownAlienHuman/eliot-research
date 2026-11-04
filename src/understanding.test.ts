@@ -132,6 +132,16 @@ describe("getUnderstanding stored-catalogue regression", () => {
     expect(off.writes()).toBe(0);
   });
 
+  it("forecasts combined capacity but preserves an earlier published receipt", async () => {
+    const known = { ...entry(HIST, "synth-historic-v1", 1048576, 8192), contextWindowTokens: 1048576, maxOutputTokens: 943718 };
+    const fresh = makeEnv(HIST, [known], { state: "queued", attempts: 0, report: null });
+    const prior = makeEnv(HIST, [known], { state: "running", tokenLimit: 3984588, tokenLimitKind: "published", report: null });
+    expect((await getUnderstanding(fresh.env, owner, { sourceId: SRC, revisionId: REV })).progress.maximumTokens).toBe(2097152);
+    expect((await getUnderstanding(prior.env, owner, { sourceId: SRC, revisionId: REV })).progress)
+      .toMatchObject({ maximumTokens: 3984588, recordedTokenLimit: 3984588, tokenLimitKind: "published" });
+    expect(fresh.writes() + prior.writes()).toBe(0);
+  });
+
   it("forecasts only unstarted revisions from their selected route or default, retaining unknown as null", async () => {
     const fetchSpy = vi.fn(async () => { throw new Error("no discovery"); });
     vi.stubGlobal("fetch", fetchSpy);

@@ -6,7 +6,7 @@ import { modelTokenLimit } from "./models";
 // Each explicit job records its token bound on its owning row before dispatch.
 // Historical stored accounting values are not rewritten.
 
-// Claim one chat turn and record input+published-output capacity when known.
+// Claim one chat turn and record declared total capacity, capped by a known combined window.
 // Unknown capacity stays null; token_limit_kind owns the admission CAS.
 // Provider allowance is checked before the claim;
 // its failure throws a safe owner-readable error and starts no call. The

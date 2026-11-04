@@ -205,6 +205,18 @@ describe("admitDistill", () => {
     expect(row.error).toBeNull();
     expect(Number(row.startedAt)).toBeGreaterThanOrEqual(before);
   });
+  it("records two combined windows without rewriting an already admitted distill", async () => {
+    const fixed = testEnv();
+    const model = { ...flashModel(), contextWindowTokens: 1048576, maxOutputTokens: 943718 };
+    try {
+      fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES ('bounded', 'queued')").run();
+      await expect(admitDistill(fixed.env, "bounded", model)).resolves.toBe(true);
+      expect(distillRow(fixed.db, "bounded").tokenLimit).toBe(2097152);
+      fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_token_limit, distill_token_limit_kind) VALUES ('prior', 'running', 3984588, 'published')").run();
+      await expect(admitDistill(fixed.env, "prior", model)).resolves.toBe(false);
+      expect(distillRow(fixed.db, "prior").tokenLimit).toBe(3984588);
+    } finally { fixed.db.close(); }
+  });
   it("holds a third revision queued while two are already running", async () => {
     const fixed = testEnv();
     fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES (?, 'running')").run("r1");
