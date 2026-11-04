@@ -1,5 +1,6 @@
+import { useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { Link } from 'react-router';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -53,6 +54,35 @@ function mathDelimiters(text: string): string {
     });
 }
 
+function DisplayMath({ children }: { readonly children: ReactNode }) {
+  const scroll = useRef<HTMLDivElement>(null);
+  const hintId = useId();
+  const [overflow, setOverflow] = useState(false);
+  useEffect(() => {
+    const element = scroll.current;
+    if (!element) return;
+    const measure = () => setOverflow(element.scrollWidth > element.clientWidth + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    const math = element.querySelector('math');
+    if (math) observer.observe(math);
+    return () => observer.disconnect();
+  }, [children]);
+  return <div className='er-math-block'>
+    <div ref={scroll} className='er-math-scroll' tabIndex={overflow ? 0 : undefined}
+      role={overflow ? 'region' : undefined} aria-label={overflow ? 'Scrollable mathematical expression' : undefined}
+      aria-describedby={overflow ? hintId : undefined}>{children}</div>
+    {overflow ? <p id={hintId} className='er-math-hint'>↔ Swipe or use arrow keys to read the full formula.</p> : null}
+  </div>;
+}
+
+function MathSpan({ node, children, ...props }: ComponentProps<'span'> & ExtraProps) {
+  const span = <span {...props}>{children}</span>;
+  return node?.children.some(child => child.type === 'element' && child.tagName === 'math' && child.properties.display === 'block')
+    ? <DisplayMath>{span}</DisplayMath> : span;
+}
+
 export function Markdown({ text, references = [] }: { readonly text: string; readonly references?: readonly MarkdownReference[] }) {
   function linkify(value: string): MarkdownNode[] {
     const hits = references.filter((ref) => ref.text !== '').flatMap((ref) => {
@@ -88,6 +118,7 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
     return visit;
   }
   return <ReactMarkdown skipHtml remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[citationLinks, [rehypeKatex, { output: 'mathml', trust: false, errorColor: 'currentColor' }]]} components={{ img: () => null,
+    span: MathSpan,
     a: ({ href, children, title }) => references.some((ref) => ref.href === href)
       ? <Link className='er-citation' to={href ?? ''} title={title}>{children}</Link>
       : <a href={href} title={title}>{children}</a>,
