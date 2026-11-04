@@ -10,6 +10,10 @@ const api = async (path, body?) => {
     ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}) }, origin, process.env.ELIOT_ORIGIN);
   const data = await response.json(); assert(response.ok, JSON.stringify({ path, status: response.status, data })); return data;
 };
+const replacementReceipt = async request => {
+  const form = await new Request(request.url(), { method: 'POST', headers: request.headers(), body: request.postDataBuffer() }).formData();
+  return { sourceId: String(form.get('sourceId')), revisionId: String(form.get('revisionId')) };
+};
 const project = (await api('/api/projects', { title: 'View isolation ' + crypto.randomUUID() })).project.id;
 const other = (await api('/api/projects', { title: 'Other view isolation ' + crypto.randomUUID() })).project.id;
 const chats = await Promise.all(['A', 'B'].map(async title => (await api('/api/projects/' + project + '/chats', { title })).chat.id));
@@ -63,7 +67,8 @@ try {
       await page.route(url, handler);
       return { waiting, body: () => route.request().postDataJSON(), request: () => route.request(),
         release: async (body?, status = 200) => {
-          const reply = body ?? (method === 'POST' && url.endsWith('/turns') ? { turnId: route.request().postDataJSON().turnId } : {});
+          const reply = body ?? (method === 'POST' && url.endsWith('/turns') ? { turnId: route.request().postDataJSON().turnId }
+            : method === 'POST' && url.endsWith('/sources/file') ? await replacementReceipt(route.request()) : {});
           await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(reply) }).catch(() => {});
           await page.unroute(url, handler); await settle();
         } };
@@ -214,7 +219,7 @@ try {
     await input.setInputFiles({ name: 'returned-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Returned A') });
     let beforeAttempt = uploadRequests;
     await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
-    await pending.release({ revisionId: sources[0].source.currentRevisionId }); await expect(input).toBeEnabled();
+    await pending.release(await replacementReceipt(pending.request())); await expect(input).toBeEnabled();
     await expect(page).toHaveURL(origin + sourcePath(0)); assert.equal(await input.evaluate(input => input.files[0].name), 'returned-a.md');
     const afterSuccess = await hold(uploadUrl); await upload.click(); await afterSuccess.waiting; interceptedUploads++;
     assert.equal(uploadRequests, beforeAttempt + 1); await afterSuccess.release();
@@ -252,7 +257,7 @@ try {
       await input.setInputFiles({ name: 'duplicate-again.md', mimeType: 'text/markdown', buffer: Buffer.from('Duplicate again') });
       beforeAttempt = uploadRequests; await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
       await navigate('/settings');
-      await awayA.release(status === 200 ? { revisionId: sources[0].source.currentRevisionId } : { error: { message: 'Away replacement error' } }, status);
+      await awayA.release(status === 200 ? await replacementReceipt(awayA.request()) : { error: { message: 'Away replacement error' } }, status);
       await navigate(sourcePath(0)); await expect(input).toBeEnabled(); await expect(page.getByText('Away replacement error')).toHaveCount(0);
       await input.setInputFiles({ name: 'after-away.md', mimeType: 'text/markdown', buffer: Buffer.from('After away') });
       const retryA = await hold(uploadUrl); await upload.click(); await retryA.waiting; interceptedUploads++;
@@ -278,6 +283,65 @@ try {
     await expect(page.locator('.er-lib__text')).toContainText('B replacement'); await expect(upload).toBeDisabled();
     const stored = await api('/api/sources/' + sources[1].source.id); assert.equal(stored.source.conversionCalls, 0);
     assert.equal(stored.revisions.length, sources[1].revisions.length + 1); sources[1] = stored;
+    // Corrupt only an already accepted response. Explicit retries keep the same
+    // File/ID; the server returns its stored revision without another conversion.
+    for (const outcome of ['before', 'lost', 'malformed', 'wrong-identity']) {
+      const initial = await api('/api/sources/' + sources[1].source.id), receipts = [];
+      const text = `# Source B Replay\n\nImmutable native text ${outcome} replacement ${viewport.width} ${project}`;
+      const handler = async route => {
+        receipts.push(await replacementReceipt(route.request()));
+        if (receipts.length === 1 && outcome === 'before') return route.fulfill({ status: 503, json: { error: { message: 'Rejected before dispatch' } } });
+        const actual = await route.fetch(); assert.equal(actual.status(), 202); const accepted = await actual.json(); nativeUploads++;
+        if (receipts.length === 1) {
+          if (outcome === 'lost') return route.abort('failed');
+          if (outcome === 'malformed') return route.fulfill({ status: 202, contentType: 'application/json', body: '{broken accepted response' });
+          return route.fulfill({ status: 202, json: { ...accepted, revisionId: crypto.randomUUID() } });
+        }
+        return route.fulfill({ response: actual });
+      };
+      await page.route(uploadUrl, handler);
+      await input.setInputFiles({ name: 'replay.md', mimeType: 'text/markdown', buffer: Buffer.from(text) });
+      await upload.click(); await expect(page.locator('.er-lib__error[role="alert"]')).toBeVisible(); await expect(upload).toBeEnabled();
+      assert.equal(await input.evaluate(node => node.files[0].name), 'replay.md'); await settle(); assert.equal(receipts.length, 1);
+      const afterFailure = await api('/api/sources/' + sources[1].source.id);
+      assert.equal(afterFailure.revisions.length, initial.revisions.length + (outcome === 'before' ? 0 : 1));
+      await upload.click(); await expect(page).toHaveURL(origin + sourcePath(1) + '?revisionId=' + receipts[0].revisionId);
+      await expect(page.locator('.er-lib__text')).toContainText(text.split('\n\n')[1]); await expect(upload).toBeDisabled();
+      assert.equal(await input.evaluate(node => node.files.length), 0); assert.deepEqual(receipts[1], receipts[0]);
+      await page.unroute(uploadUrl, handler);
+      const afterRetry = await api('/api/sources/' + sources[1].source.id);
+      assert.equal(afterRetry.revisions.length, initial.revisions.length + 1); assert.equal(afterRetry.source.conversionCalls, 0);
+      // Confirmed completion consumes the attempt; selecting that same file anew
+      // deliberately creates another revision with a new ID.
+      if (outcome === 'malformed') {
+        await input.setInputFiles({ name: 'replay.md', mimeType: 'text/markdown', buffer: Buffer.from(text) });
+        const accepted = page.waitForResponse(response => response.url() === uploadUrl && response.request().method() === 'POST');
+        await upload.click(); const next = await accepted, receipt = await next.json(); nativeUploads++;
+        assert.notEqual(receipt.revisionId, receipts[0].revisionId);
+        await expect(page.locator('.er-lib__text')).toContainText(text.split('\n\n')[1]); await expect(upload).toBeDisabled();
+      }
+      sources[1] = await api('/api/sources/' + sources[1].source.id);
+    }
+    const beforeChangedFile = sources[1].revisions.length, changedReceipts = [];
+    const changedHandler = async route => {
+      changedReceipts.push(await replacementReceipt(route.request()));
+      const response = await route.fetch(); assert.equal(response.status(), 202); nativeUploads++;
+      return changedReceipts.length === 1 ? route.fulfill({ status: 202, contentType: 'application/json', body: '{lost accepted identity' }) : route.fulfill({ response });
+    };
+    await page.route(uploadUrl, changedHandler);
+    const oldChangedText = '# Source B\n\nImmutable native text before changed file ' + viewport.width + project;
+    await input.setInputFiles({ name: 'change.md', mimeType: 'text/markdown', buffer: Buffer.from(oldChangedText) });
+    await upload.click(); await expect(page.locator('.er-lib__error[role="alert"]')).toBeVisible(); await expect(upload).toBeEnabled();
+    await expect.poll(async () => (await api('/api/sources/' + sources[1].source.id)).revisions.find(r => r.id === changedReceipts[0].revisionId)?.readableState).toBe('readable');
+    const acceptedBeforeChange = (await api('/api/sources/' + sources[1].source.id)).revisions.find(r => r.id === changedReceipts[0].revisionId);
+    await input.setInputFiles({ name: 'change.md', mimeType: 'text/markdown', buffer: Buffer.from('# Source B\n\nImmutable native text after changed file ' + viewport.width + project) });
+    await upload.click(); await expect(upload).toBeDisabled(); await expect(page.locator('.er-lib__text')).toContainText('after changed file');
+    assert.notEqual(changedReceipts[0].revisionId, changedReceipts[1].revisionId);
+    await page.unroute(uploadUrl, changedHandler);
+    sources[1] = await api('/api/sources/' + sources[1].source.id); assert.equal(sources[1].revisions.length, beforeChangedFile + 2);
+    assert.deepEqual(sources[1].revisions.find(r => r.id === changedReceipts[0].revisionId), acceptedBeforeChange);
+    for (const suffix of ['original', 'text']) assert.equal(await (await fetchEval(origin + '/api/revisions/' + changedReceipts[0].revisionId + '/' + suffix,
+      { headers: { Origin: origin } }, origin, process.env.ELIOT_ORIGIN)).text(), oldChangedText);
     await context.close();
   }
 } finally { await browser.close(); }

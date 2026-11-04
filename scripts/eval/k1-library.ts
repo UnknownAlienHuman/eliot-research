@@ -66,14 +66,16 @@ export default {async fetch(request,env,ctx){
         };
         const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
       }});
-      const BUCKET={async put(key,...args){keys[index]=key;const stored=await env.BUCKET.put(key,...args);
+      const BUCKET={async put(key,...args){keys[index]=key;
+        if(fault==='original-key')await env.BUCKET.put(key,'Preexisting original must survive');
+        const stored=await env.BUCKET.put(key,...args);
         if(++arrivals===inputs.length)releaseReady();await ready;return stored;},delete:key=>env.BUCKET.delete(key)};
       const INGEST={async create(options){await env.DB.prepare('INSERT INTO fixture_ingest_dispatch(id,revision_id,starts,completed) VALUES(?,?,1,0) '+
         'ON CONFLICT(id) DO UPDATE SET starts=starts+1').bind(options.id,options.params.revisionId).run();return env.INGEST.create(options);},
         get:id=>env.INGEST.get(id)};
       try{return {ok:true,value:await addSource({...env,DB,BUCKET,INGEST},{type:'owner'},projectId,
-        {title:'Duplicate boundary',kind:'text',bytes:new TextEncoder().encode(input.text).buffer,filename:'fixture.md',mimeType:'text/markdown',
-          ...(input.sourceId?{sourceId:input.sourceId}:{})})};}
+        {title:'Duplicate boundary',kind:input.revisionId?'file':'text',bytes:new TextEncoder().encode(input.text).buffer,filename:input.filename??'fixture.md',mimeType:input.mimeType??'text/markdown',
+          ...(input.sourceId?{sourceId:input.sourceId}:{}),...(input.revisionId?{revisionId:input.revisionId}:{})})};}
       catch(error){return {ok:false,status:error.status,code:error.code,duplicate:error.duplicate,message:error.message};}
       finally{if(index===first)releaseFirst();}
     }));}finally{clearTimeout(timer);}
@@ -350,6 +352,101 @@ async function replacementDuplicateChecks(db, bucket) {
     sameSourceReconversionAndUniqueRevisionCas: true, ordinaryNewDuplicateRollback: true, beforeAndLostBatchReplies: true,
     liveArchivedDeletedRevisionPolicy: true, missingMembershipRejected: true, oldHeadsAndOriginalsRetained: true,
     workflowBinding: 'SYNTHETIC_DURABLE_DISPATCH_COUNTER', workflowStarts: rows.length, conversionAndModelCalls: 0 }));
+}
+
+async function replacementReplayChecks(db, bucket) {
+  const projectId = uuid(99_999_002), startedBefore = (await db.prepare('SELECT count(*) AS n FROM fixture_ingest_dispatch').first()).n;
+  await createProject(db, projectId, 'Replacement replay');
+  const target = () => seedSource(db, bucket, { projectId });
+  const a = await target(), b = await target();
+  const input = (sourceId = a.id, text = 'Exact replacement input') => ({ sourceId, text, revisionId: crypto.randomUUID() });
+  const submit = (inputs, first = 0, fault?) => requestJson('/__source-pair', 'POST', { projectId, inputs, first, ...(fault ? { fault } : {}) });
+  const row = id => db.prepare('SELECT * FROM source_revision WHERE id=?').bind(id).first();
+  const starts = id => db.prepare('SELECT starts,completed FROM fixture_ingest_dispatch WHERE revision_id=?').bind(id).first();
+  const same = input(), created = await submit([same]);
+  assert.equal(created.outcomes[0].ok, true);
+  const original = await row(same.revisionId);
+  assert(original.original_key.startsWith(`source/${same.revisionId}/original-`));
+  for (const state of ['pending', 'failed', 'readable']) {
+    await db.prepare('UPDATE source_revision SET readable_state=? WHERE id=?').bind(state, same.revisionId).run();
+    const before = await row(same.revisionId), replay = await submit([same]);
+    assert.deepEqual(replay.outcomes[0], created.outcomes[0]); assert.deepEqual(replay.keys, []);
+    assert.deepEqual(await row(same.revisionId), before); assert.equal((await starts(same.revisionId)).starts, 1);
+  }
+  const downloaded = await rawRequest(`/api/revisions/${same.revisionId}/original`);
+  assert.equal(downloaded.status, 200); assert.equal(await downloaded.text(), same.text);
+  const beforeMismatch = await row(same.revisionId);
+  for (const change of [{ text: same.text + '!' }, { text: same.text.replace('Exact', 'Equal') },
+    { filename: 'different.md' }, { mimeType: 'text/plain' }, { sourceId: b.id }]) {
+    const rejected = await submit([{ ...same, ...change }]);
+    assert.equal(rejected.outcomes[0].status, 409); assert.deepEqual(rejected.keys, []);
+    assert.deepEqual(await row(same.revisionId), beforeMismatch);
+  }
+  for (const state of ['pending', 'readable']) {
+    await db.prepare('UPDATE source_revision SET readable_state=? WHERE id=?').bind(state, same.revisionId).run();
+    await db.prepare("UPDATE source SET state='deleted' WHERE id=?").bind(a.id).run();
+    const before = await row(same.revisionId), rejected = await submit([same]);
+    assert.equal(rejected.outcomes[0].status, 409); assert.deepEqual(rejected.keys, []);
+    assert.deepEqual(await row(same.revisionId), before); assert.equal((await starts(same.revisionId)).starts, 1);
+    await db.prepare("UPDATE source SET state='active' WHERE id=?").bind(a.id).run();
+  }
+  const later = { ...same, revisionId: crypto.randomUUID() };
+  assert.equal((await submit([later])).outcomes[0].ok, true); // New explicit identity permits deliberate reconversion.
+  assert.equal((await submit([same])).outcomes[0].value.revisionId, same.revisionId);
+  for (const first of [0, 1]) for (const mismatch of ['none', 'bytes', 'source']) {
+    const source = await target(), other = await target(), left = input(source.id, `Concurrent ${first}/${mismatch}`);
+    const right = { ...left, ...(mismatch === 'bytes' ? { text: left.text + ' changed' } : mismatch === 'source' ? { sourceId: other.id } : {}) };
+    const pair = await submit([left, right], first); assert.equal(pair.arrivals, 2);
+    assert.equal(pair.outcomes[first].ok, true);
+    if (mismatch === 'none') assert.deepEqual(pair.outcomes[1 - first], pair.outcomes[first]);
+    else assert.equal(pair.outcomes[1 - first].status, 409);
+    const stored = await row(left.revisionId); assert.equal(stored.original_key, pair.keys[first]);
+    assert.notEqual(pair.keys[0], pair.keys[1]); assert.equal(await bucket.get(pair.keys[1 - first]), null);
+    assert.equal(await (await bucket.get(pair.keys[first])).text(), [left, right][first].text);
+    assert.equal((await starts(left.revisionId)).starts, 1);
+  }
+  for (const fault of ['before', 'after']) {
+    const source = await target(), attempt = input(source.id, 'Batch reply ' + fault), initial = await submit([attempt], 0, fault);
+    assert.equal(initial.outcomes[0].ok, fault === 'after');
+    if (fault === 'before') { assert.equal(await row(attempt.revisionId), null); assert.equal(await starts(attempt.revisionId), null); assert.equal(await bucket.get(initial.keys[0]), null); }
+    const replay = await submit([attempt]); assert.equal(replay.outcomes[0].ok, true);
+    assert.equal((await starts(attempt.revisionId)).starts, 1);
+    if (fault === 'after') { assert.deepEqual(replay.keys, []); assert.equal((await row(attempt.revisionId)).original_key, initial.keys[0]); }
+  }
+  const occupied = input(a.id, 'Occupied key');
+  const collision = await submit([occupied], 0, 'original-key');
+  assert.equal(collision.outcomes[0].status, 409); assert.equal(await row(occupied.revisionId), null);
+  assert.equal(await starts(occupied.revisionId), null); assert.equal(await (await bucket.get(collision.keys[0])).text(), 'Preexisting original must survive');
+  await db.prepare('UPDATE source_revision SET deleted_at=2 WHERE id=?').bind(same.revisionId).run();
+  assert.equal((await submit([same])).outcomes[0].status, 409);
+  await db.prepare('DELETE FROM project_source WHERE project_id=? AND source_id=?').bind(projectId, a.id).run();
+  assert.equal((await submit([later])).outcomes[0].status, 404);
+  await db.prepare("INSERT INTO project_source(project_id,source_id,added_by,added_at) VALUES(?,?,'owner',1)").bind(projectId, a.id).run();
+  const legacyText = 'Legacy captured original', hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(legacyText))), b => b.toString(16).padStart(2, '0')).join('');
+  const legacy = await seedSource(db, bucket, { projectId, title: 'legacy', revisions: [{ originalSha: hash, originalSize: legacyText.length }] });
+  assert.equal((await submit([{ sourceId: legacy.id, revisionId: legacy.revisionId, text: legacyText, filename: 'legacy.txt', mimeType: 'text/plain' }])).outcomes[0].status, 409);
+  const pdfSource = await target(), pdf = { ...input(pdfSource.id, '%PDF-Synthetic retained original'), filename: 'fixture.pdf', mimeType: 'application/pdf' };
+  assert.equal((await submit([pdf])).outcomes[0].ok, true);
+  const jobId = crypto.randomUUID();
+  await db.prepare(`INSERT INTO source_ocr_job(id,project_id,source_id,base_revision_id,base_current_revision_id,model_route,model_snapshot,page_count,state,token_limit,created_by,created_at,updated_at)
+    VALUES(?,?,?,?,?,'synthetic','{}',1,'ready',1,'owner',1,1)`).bind(jobId, projectId, pdfSource.id, pdf.revisionId, pdfSource.currentRevisionId).run();
+  const applied = await requestJson(`/api/projects/${projectId}/sources/${pdfSource.id}/ocr/${jobId}/apply`, 'POST', { text: 'Synthetic reviewed canonical text.' });
+  const pdfRow = await row(pdf.revisionId), ocr = await row(applied.revisionId);
+  assert.equal(ocr.original_key, pdfRow.original_key);
+  assert.equal(await (await rawRequest(`/api/revisions/${applied.revisionId}/original`)).text(), pdf.text);
+  assert.equal(await (await rawRequest(`/api/revisions/${applied.revisionId}/text`)).text(), 'Synthetic reviewed canonical text.');
+  assert.equal((await submit([{ ...pdf, revisionId: applied.revisionId }])).outcomes[0].status, 409);
+  assert.deepEqual(await row(pdf.revisionId), pdfRow); assert.deepEqual(await row(applied.revisionId), ocr);
+  assert.equal(await (await bucket.get(original.original_key)).text(), same.text);
+  const deadline = Date.now() + 5000;
+  while ((await db.prepare('SELECT count(*) AS n FROM fixture_ingest_dispatch WHERE completed!=1').first()).n && Date.now() < deadline)
+    await new Promise(resolve => setTimeout(resolve, 25));
+  const counters = (await db.prepare('SELECT starts,completed FROM fixture_ingest_dispatch').all()).results;
+  assert(counters.every(item => item.starts === 1 && item.completed === 1));
+  console.log(JSON.stringify({ scope: 'K1_REPLACEMENT_REPLAY', runtime: 'pinned Workerd/D1/R2', sameIdConcurrentCases: 6,
+    exactIdentityAndTerminalReplay: true, privateOriginalKeyOwnership: true, conditionalKeyCollisionPreserved: true,
+    beforeAndAfterBatchReply: true, deletedMembershipLegacyOcrCollisions: true, originalDownloadAndReviewedOcrKeyReuse: true,
+    workflowBinding: 'SYNTHETIC_DURABLE_DISPATCH_COUNTER', newWorkflowStarts: counters.length - startedBefore, conversionAndModelCalls: 0 }));
 }
 
 try {
@@ -689,6 +786,7 @@ try {
     modelCalls: 0, workflowBinding: 'SYNTHETIC_DURABLE_DISPATCH_COUNTER', externalNetwork: 'FORBIDDEN',
   }));
   await replacementDuplicateChecks(db, bucket);
+  await replacementReplayChecks(db, bucket);
 } finally {
   await mf.dispose();
 }
