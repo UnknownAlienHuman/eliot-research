@@ -79,11 +79,11 @@ function utf8Bytes(text: string): number {
   }
   return bytes;
 }
-export async function readContextBytes(env: Env, assembly: Materialization, key: string, range?: { offset: number; length: number }): Promise<Uint8Array> {
+export async function readContextBytes(env: Env, assembly: Materialization, key: string, range?: { offset: number; length: number }, pending?: Promise<R2ObjectBody | null>): Promise<Uint8Array> {
   if (range && ++assembly.rangeReads > MAX_GUIDE_RANGES) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   reserve(assembly, 128);
   if (range && range.length > MATERIALIZATION_BYTES - assembly.used) reserve(assembly, range.length);
-  const object = await env.BUCKET.get(key, range ? { range } : undefined);
+  const object = await (pending ?? env.BUCKET.get(key, range ? { range } : undefined));
   if (!object) throw new LibraryError("unavailable", UNAVAILABLE, 503);
   const reader = object.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -342,13 +342,31 @@ async function loadBlocks(env: Env, revisionId: string, assembly: Materializatio
 
 async function loadSourceText(env: Env, frozen: Frozen, index: number, assembly: Materialization): Promise<{ section: string; source: LabelSource }> {
   const alias = "S" + (index + 1);
-  const blocks = await loadBlocks(env, frozen.revisionId, assembly);
-  // A block this large cannot be materialized even if most of the revision consists
-  // of omitted page markers. Do not treat readable_size as a projected token count.
-  for (const block of blocks) {
-    if (block.end - block.start > MATERIALIZATION_BYTES - assembly.used) reserve(assembly, block.end - block.start);
+  // Overlap only this source's GETs. Consume and charge bodies in the original
+  // order; never materialize text in parallel with the block map or another source.
+  const size = frozen.readableSize;
+  const prefetch = !assembly.blocks.has(frozen.revisionId) && typeof size === "number" && Number.isSafeInteger(size)
+    // Leave room for the pending GET and initial block reader before starting either.
+    && size >= 0 && size <= MATERIALIZATION_BYTES - assembly.used - 384;
+  if (prefetch) reserve(assembly, 256);
+  const pendingBlocks = loadBlocks(env, frozen.revisionId, assembly);
+  const textKey = "source/" + frozen.revisionId + "/text.md";
+  const pendingText = prefetch ? (async () => env.BUCKET.get(textKey))() : undefined;
+  // Observe an early text failure without letting it outrank a block-map failure.
+  void pendingText?.catch(() => undefined);
+  let blocks: Block[], bytes: Uint8Array;
+  try {
+    blocks = await pendingBlocks;
+    // Do not treat readable_size as a projected token count or skip streamed checks.
+    for (const block of blocks) {
+      if (block.end - block.start > MATERIALIZATION_BYTES - assembly.used) reserve(assembly, block.end - block.start);
+    }
+    bytes = await readContextBytes(env, assembly, textKey, undefined, pendingText);
+  } finally {
+    // A failed map/budget can leave one unconsumed text GET, never a later source.
+    const unused = await pendingText?.catch(() => null);
+    if (unused && !unused.bodyUsed) await unused.body.cancel().catch(() => undefined);
   }
-  const bytes = await readContextBytes(env, assembly, "source/" + frozen.revisionId + "/text.md");
   const lines = [sourceHeader(alias, frozen.title)];
   const citableBlocks: Block[] = [];
   for (const block of blocks) {

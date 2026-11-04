@@ -1535,6 +1535,60 @@ describe("bounded context materialization", () => {
       .rejects.toMatchObject({ code: "invalid", status: 400 });
     expect(fixture.requested).toEqual(["source/r0/blocks.json"]);
   });
+  it("does not start a speculative GET when its overhead would exhaust the allowance", async () => {
+    const fixture = scope(1, "Evidence.", 9);
+    // One metadata row costs 300 bytes, leaving 300 for the block reader.
+    const question = "q".repeat((limit - 600) / 2);
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default",
+      model: { ...MODEL, contextTokens: 20000000 }, question })).rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toEqual(["source/r0/blocks.json"]);
+  });
+  it.each(["missing", "invalid", "oversized block", "oversized map"])("cancels unread speculative text after a %s block map", async (kind) => {
+    const fixture = scope(2, "Evidence.", 9);
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    let textPulls = 0, textCancels = 0, textStartedBeforeMapSize = false;
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      if (key === "source/r0/text.md") {
+        fixture.requested.push(key);
+        return { size: 9, body: new ReadableStream<Uint8Array>({
+          pull() { textPulls++; }, cancel() { textCancels++; },
+        }, { highWaterMark: 0 }) };
+      }
+      if (key !== "source/r0/blocks.json") return get(key, options);
+      fixture.requested.push(key);
+      if (kind === "oversized map") return { ...streamObject(new Uint8Array(0)), get size() {
+        textStartedBeforeMapSize = fixture.requested.includes("source/r0/text.md");
+        return limit + 1;
+      } };
+      // Text headers can arrive before block validation fails.
+      await new Promise(resolve => setTimeout(resolve, 1));
+      if (kind === "missing") return null;
+      return streamObject(new TextEncoder().encode(JSON.stringify(kind === "invalid" ? []
+        : [{ id: 1, type: "paragraph", start: 0, end: limit + 1, heading: null }])));
+    }) as typeof fixture.env.BUCKET.get;
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: kind.startsWith("oversized") ? "invalid" : "unavailable" });
+    expect(textPulls).toBe(0); expect(textCancels).toBe(1);
+    if (kind === "oversized map") expect(textStartedBeforeMapSize).toBe(true);
+    expect(fixture.requested).toEqual(["source/r0/blocks.json", "source/r0/text.md"]);
+  });
+  it.each([true, false])("preserves block-first failure order when prefetched text rejects early (map fails: %s)", async (mapFails) => {
+    const fixture = scope(2, "Evidence.", 9), failure = new Error("R2 text failed");
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      if (key === "source/r0/text.md") { fixture.requested.push(key); throw failure; }
+      if (key === "source/r0/blocks.json") {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        if (mapFails) { fixture.requested.push(key); return null; }
+      }
+      return get(key, options);
+    }) as typeof fixture.env.BUCKET.get;
+    const result = buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
+    if (mapFails) await expect(result).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    else await expect(result).rejects.toBe(failure);
+    expect(fixture.requested).toHaveLength(2);
+    expect(fixture.requested.some(key => key.startsWith("source/r1/"))).toBe(false);
+  });
   it.each([null, 1])("counts unknown/understated source and object sizes (%s), cancels the stream and opens no later body", async (readableSize) => {
     const fixture = scope(3, "x", readableSize);
     const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);

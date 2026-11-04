@@ -852,12 +852,18 @@ The materialization bound below is implemented by the current repair slice; chat
   Charges are not released for discarded attempts. This is a product guard, not a measurement of V8's heap or a
   process-wide concurrency limit; SDKs, the caller's already-loaded turn payloads and other isolate requests need
   additional memory. The implementation PR records observed memory separately from this accounting bound.
-  R2 bodies use `body.getReader()`, count chunks before retaining them, and cancel on failure. Block maps are read
-  first and reused within the assembly; a block larger than the remaining allowance rejects before its text GET.
+  R2 bodies use `body.getReader()`, count chunks before retaining them, and cancel on failure. Block maps are consumed
+  first and reused within the assembly. For whole-reading with a known nonnegative readable size inside the remaining
+  allowance, including pending-GET/block-reader overhead, overlap only that source's block-map and text GETs.
+  Hold at most one unread text body; do not materialize it until block validation succeeds. Unknown/over-limit sizes
+  and reused maps keep serial reads. A block larger than the remaining allowance rejects before text consumption:
+  cancel an already pending text body, or do not issue its GET on the serial path. Missing/invalid maps and budget
+  failures also cancel the unused body, preserve block-first errors, and never open a later source.
+  Successful whole-reading still uses two GETs per source; a failed map may incur one unused text GET.
   Reports, guides and exact ranges use the same bound, and ranges must return exactly their requested byte length.
   At most 256 guide ranges are fetched per assembly; another range rejects the whole request before its GET,
   preventing small passages from turning the byte allowance into thousands of serial reads.
-  Declared sizes cannot waive the streamed checks. No subsequent body is fetched after exhaustion.
+  Declared sizes cannot waive the streamed checks. No new GET starts after exhaustion.
   Source queries return at most 1,025 rows and reject more than **1,024** sources; explicit ID arrays share that cap.
   Explicit selection uses one `json_each` query in first-occurrence order and the same conservative byte-based SQL
   metadata bound as default selection. Near the allowance, non-ASCII metadata may reject earlier than the old JS loop.
@@ -873,7 +879,7 @@ The materialization bound below is implemented by the current repair slice; chat
   preflight estimate, not an exact token count or a lower bound on projected citable text: fitting marker-heavy
   sources remain eligible. Frozen scope/order, aliases and original UTF-8 citation ranges are preserved. Failure
   returns the existing narrow-scope/understanding-needed response before inference, without automatic distillation.
-  Checked 2026-11-02 against the installed `@cloudflare/workers-types@5.20261024.1` R2 declarations and the official
+  Checked 2026-11-04 against the installed `@cloudflare/workers-types@5.20261024.1` R2 declarations and the official
   [R2 range/body contract](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and
   [Worker memory contract](https://developers.cloudflare.com/workers/platform/limits/#memory). The platform's
   128 MB limit is shared by the isolate, not a separate allowance for each assembly.
