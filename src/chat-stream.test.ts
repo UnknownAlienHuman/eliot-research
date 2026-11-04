@@ -1327,6 +1327,7 @@ describe("chat-stream K2 wire regression", () => {
   it.each([
     { capacity: 32768, context: 1048576 }, { capacity: 4096, context: 1048576 },
     { capacity: null, context: 1048576 }, { capacity: 32768, context: 20000, window: 20000 },
+    { capacity: 943718, context: 1048576, window: 1048576 },
   ])("sends published $capacity within context $context without treating the reserve as an output cap", async ({ capacity, context, window }) => {
     const h = makeHarness();
     const base = await requireAvailableModel(h.env, "gateway:command-code/native-beam");
@@ -1348,7 +1349,7 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn).toMatchObject({ state: "completed", inputTokens: null, outputTokens: null });
       expect(turn.tokenLimitKind).toBe(capacity === null ? "unknown" : "published");
       if (capacity === null) expect(turn.tokenLimit).toBeNull();
-      else expect(turn.tokenLimit).toBe(context + capacity);
+      else expect(turn.tokenLimit).toBe(Math.min(context + capacity, window ?? Infinity));
     } finally { h.db.close(); h.d1.close(); }
   });
 
