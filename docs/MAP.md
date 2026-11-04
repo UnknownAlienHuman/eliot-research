@@ -277,8 +277,8 @@ links. A completed-before-Stop or cancelled-before-text outcome remains `NOT_RUN
   usage separately from unknown usage. It does not convert tokens into Cloudflare Neurons or infer monetary prices.
 
 **Measured budget.** Record cold/warm p50/p95 first-token and total time. Initial target: warm p50 first token ≤ 10 s,
-p95 total ≤ 40 s. Catastrophic ceiling: a completed answer taking > 90 s fails K2. Promote tighter thresholds after three
-comparable runs rather than making one provider fluctuation invalidate the architecture.
+p95 total ≤ 40 s. A completed answer taking > 90 s fails the K2 latency gate; that metric does not abort generation.
+Promote tighter thresholds after three comparable runs rather than making one provider fluctuation invalidate the architecture.
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 

@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as ai from "ai";
 import type { RunTurnInput, TurnView } from "./shared/api";
 import type { ContextInput, ContextMessage, ContextResult } from "./context";
 import type { Actor } from "./auth";
@@ -11,6 +12,11 @@ interface WireAgentState { active: string | null; queued: RunTurnInput | null; s
 interface WireAgentCtx { database: DatabaseSync; waitUntil: (task: Promise<unknown>) => void }
 interface WireSentMessage { role: string; content?: unknown; reasoning_content?: unknown; reasoning?: unknown; reasoning_details?: unknown; [key: string]: unknown }
 interface WireSentBody { messages?: WireSentMessage[]; model?: unknown; [key: string]: unknown }
+
+vi.mock("ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof ai>();
+  return { ...actual, streamText: vi.fn(actual.streamText) };
+});
 
 vi.mock("agents", () => ({
   getAgentByName: vi.fn(),
@@ -232,7 +238,7 @@ describe("ChatAgent stream checkpoints", () => {
       expect(saved.historyVersion).toBe((first.historyVersion ?? 0) + 1);
       await vi.advanceTimersByTimeAsync(5000);
       expect((await h.agent.getTurns(projectId))[0]).toEqual(saved);
-      expect(vi.getTimerCount()).toBe(1); // Only the execution deadline remains.
+      expect(vi.getTimerCount()).toBe(0); // No pending tail and no runtime-abort timer.
       stream.enqueue(encoder.encode("data: " + chunk({}, "stop", { prompt_tokens: 8, completion_tokens: 42 }) + "\n\ndata: [DONE]\n\n")); stream.close();
       await vi.advanceTimersByTimeAsync(0);
       const terminal = requireTurn(await pending);
@@ -340,6 +346,65 @@ describe("ChatAgent stream checkpoints", () => {
       expect(h.agent.state.active).toBeNull(); expect(fetchCalls).toBe(1); expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(5000);
       expect((await h.agent.getSnapshot(projectId)).turns[0]).toEqual(failed);
+    } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
+  });
+});
+
+describe("ChatAgent stream lifetime", () => {
+  async function startStream(h: ReturnType<typeof makeHarness>, id: string) {
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    nextSSE = new ReadableStream({ start(controller) { stream = controller; } });
+    await h.agent.onStart();
+    const input: RunTurnInput = { projectId, chatId, turnId: id, question: "Progress", scopeMode: "explicit", sourceIds: ["s1"] };
+    const pending = h.agent.submitTurn(input, true);
+    for (let i = 0; i < 50 && fetchCalls === 0; i++) await vi.advanceTimersByTimeAsync(10);
+    expect(fetchCalls).toBe(1);
+    return { input, pending,
+      send: async (delta: unknown) => { stream.enqueue(encoder.encode("data: " + chunk(delta, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0); },
+      finish: async () => { stream.enqueue(encoder.encode("data: " + chunk({}, "stop", { prompt_tokens: 8, completion_tokens: 42 }) + "\n\ndata: [DONE]\n\n")); stream.close(); await vi.advanceTimersByTimeAsync(0); } };
+  }
+  it("lets an active answer finish after 90 seconds without changing its usage or retrying", async () => {
+    vi.useFakeTimers(); const h = makeHarness();
+    try {
+      const run = await startStream(h, "aaaaaaaa-aaaa-4aaa-8aaa-123456789011");
+      await run.send({ content: "First [S1:1]." });
+      await vi.advanceTimersByTimeAsync(60_000); await run.send({ content: " More text." });
+      await vi.advanceTimersByTimeAsync(35_000);
+      expect((await h.agent.getTurns(projectId))[0]?.state).toBe("started");
+      for (let i = 0; i < 2; i++) { await vi.advanceTimersByTimeAsync(60_000); await run.send({ content: " Still answering." }); }
+      await run.send({ content: " Complete." }); await run.finish();
+      const turn = requireTurn(await run.pending);
+      expect(turn).toMatchObject({ state: "completed", answer: "First [S1:1]. More text. Still answering. Still answering. Complete.", inputTokens: 8, outputTokens: 42 });
+      expect(turn.totalMs).toBeGreaterThan(180_000); expect(fetchCalls).toBe(1); expect(vi.getTimerCount()).toBe(0);
+    } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
+  });
+  it("honors Stop after the SDK resolves usage but closes its iterator normally", async () => {
+    vi.useFakeTimers(); const h = makeHarness();
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-123456789012", intercepted = vi.mocked(ai.streamText), original = intercepted.getMockImplementation();
+    if (!original) throw new Error("Missing real SDK implementation");
+    intercepted.mockImplementationOnce((options) => original({ ...options,
+      onEnd: async () => { await h.agent.stopTurn(projectId, id); } }));
+    try {
+      const run = await startStream(h, id);
+      await run.send({ content: "Full text [S1:1]." }); await run.finish();
+      const turn = requireTurn(await run.pending);
+      expect(turn).toMatchObject({ state: "partial", answer: "Full text [S1:1].", inputTokens: 8, outputTokens: 42 });
+      expect(turn.error).toContain("Stopped."); expect(fetchCalls).toBe(1); expect(vi.getTimerCount()).toBe(0);
+    } finally { intercepted.mockImplementation(original); h.db.close(); h.d1.close(); vi.useRealTimers(); }
+  });
+  it("counts nonempty reasoning as progress without storing it as answer text", async () => {
+    vi.useFakeTimers(); const h = makeHarness();
+    try {
+      const run = await startStream(h, "aaaaaaaa-aaaa-4aaa-8aaa-123456789013");
+      await run.send({ reasoning_content: "Provider reasoning." });
+      await vi.advanceTimersByTimeAsync(60_000); await run.send({ reasoning_content: "More provider reasoning." });
+      await vi.advanceTimersByTimeAsync(35_000);
+      expect((await h.agent.getTurns(projectId))[0]).toMatchObject({ state: "started", answer: "", firstTokenMs: null });
+      await run.send({ content: "Public answer [S1:1]." }); await run.finish();
+      const turn = requireTurn(await run.pending);
+      expect(turn).toMatchObject({ state: "completed", answer: "Public answer [S1:1].", inputTokens: 8, outputTokens: 42 });
+      expect(turn.firstTokenMs).toBeGreaterThan(90_000); expect(fetchCalls).toBe(1); expect(vi.getTimerCount()).toBe(0);
     } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
   });
 });
@@ -1419,7 +1484,7 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.inputTokens).toBeNull();
     } finally { h.db.close(); }
   });
-  it("deadline abort without an owner Stop settles failed with a time-bound message and keeps the held reservation", async () => {
+  it("keeps a silent provider request running until explicit Stop", async () => {
     vi.useFakeTimers();
     const h = makeHarness();
     try {
@@ -1439,16 +1504,18 @@ describe("chat-stream K2 wire regression", () => {
       const pending = h.agent.submitTurn({ projectId, chatId, turnId, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true) as Promise<TurnView>;
       for (let i = 0; i < 50 && fetchCalls === callsBefore; i += 1) await vi.advanceTimersByTimeAsync(10);
       expect(fetchCalls).toBeGreaterThan(callsBefore);
-      await vi.advanceTimersByTimeAsync(90_000);
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect((await h.agent.getTurns(projectId))[0]?.state).toBe("started");
+      expect(vi.getTimerCount()).toBe(0);
+      await h.agent.stopTurn(projectId, turnId);
       const turn = requireTurn(await pending);
-      expect(turn.state).toBe("failed");
-      expect(turn.error ?? "").toContain("time bound");
-      expect(turn.error ?? "").not.toContain("Stopped.");
+      expect(turn.state).toBe("cancelled");
+      expect(turn.error).toContain("Stopped.");
       expect(turn.tokenLimit).toBe(TOKEN_BOUND);
       expect(turn.inputTokens).toBeNull();
     } finally { h.db.close(); vi.useRealTimers(); }
   });
-  it("deadline closes an open response body, preserves partial text and releases the turn without a retry", async () => {
+  it("preserves partial text after a provider disconnect without retrying", async () => {
     vi.useFakeTimers();
     const h = makeHarness();
     try {
@@ -1468,18 +1535,19 @@ describe("chat-stream K2 wire regression", () => {
         if ((await h.agent.getTurns(projectId))[0]?.firstTokenMs !== null) break;
       }
       expect((await h.agent.getTurns(projectId))[0]?.answer).toBe("Retained text [S1:1].");
-      await vi.advanceTimersByTimeAsync(89_000);
+      await vi.advanceTimersByTimeAsync(45_000);
       stream.enqueue(new TextEncoder().encode("data: " + chunk({ content: " Before deadline." }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(100);
       stream.enqueue(new TextEncoder().encode("data: " + chunk({ content: " Pending tail 🧪." }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0);
-      expect(vi.getTimerCount()).toBe(2); // Deadline precedes the pending tail checkpoint.
-      await vi.advanceTimersByTimeAsync(1000);
+      expect(vi.getTimerCount()).toBe(1); // Only the pending-tail checkpoint.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect((await h.agent.getTurns(projectId))[0]?.state).toBe("started");
+      stream.error(new Error("Provider connection closed")); await vi.advanceTimersByTimeAsync(0);
       const turn = requireTurn(await pending);
       expect(turn).toMatchObject({ state: "partial", answer: "Retained text [S1:1]. Before deadline. Pending tail 🧪.", inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: TOKEN_BOUND });
       expect(turn.firstTokenMs).not.toBeNull();
-      expect(turn.error).toContain("90 s time bound");
-      expect(cancelled).toBe(true);
-      expect((await h.agent.getStoredTurn(projectId, turn.turnId)).answer).toContain("90 s time bound");
+      expect(turn.error).not.toContain("Stopped.");
+      expect(cancelled).toBe(false); // The provider failed; the application did not abort it.
       expect(requireTurn(await h.agent.submitTurn(input, true))).toEqual(turn);
       expect(fetchCalls).toBe(1);
       expect(h.agent.state.active).toBeNull();
@@ -1530,7 +1598,7 @@ describe("chat-stream K2 wire regression", () => {
       expect(fetchCalls).toBe(1);
     } finally { h.db.close(); }
   });
-  it("owner Stop just before the deadline keeps cancelled when the timer fires late", async () => {
+  it("owner Stop remains terminal after subsequent clock advances", async () => {
     vi.useFakeTimers();
     const h = makeHarness();
     try {

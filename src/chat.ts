@@ -394,11 +394,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
     this.notify(JSON.stringify({ type: "turn", turn }));
     const controller = new AbortController();
     this.controller = controller;
-    let timedOut = false, checkpointFailed = false;
+    let checkpointFailed = false;
     let checkpointTimer: ReturnType<typeof setTimeout> | undefined;
     if (this.state.stopRequested) controller.abort();
-    // First abort wins: an owner Stop that already aborted must not be overwritten by the deadline.
-    const timer = setTimeout(() => { if (controller.signal.aborted) return; timedOut = true; controller.abort(); }, 90_000);
     let dispatched = false, usage: LanguageModelUsage | undefined, selectedModel: ModelSpec | undefined;
     let labelSources: LabelSource[] = [], sourceMode = "none", streamError = "";
     try {
@@ -446,7 +444,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       this.writeTurn(turn);
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
         .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
-      if (controller.signal.aborted) throw new Error(this.state.stopRequested && !timedOut ? "Stopped before dispatch." : "Time bound exceeded before dispatch.");
+      if (controller.signal.aborted) throw controller.signal.reason;
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
         maxOutputTokens: modelOutputLimit(model), maxRetries: 0, ...(selectedModel?.supportsTemperature ? { temperature: 0 } : {}), abortSignal: controller.signal,
@@ -473,6 +471,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       turn.answer = await result.text;
       const finish = await result.finishReason;
       const rawFinish = finish === "other" ? await result.rawFinishReason : undefined;
+      if (controller.signal.aborted) throw controller.signal.reason;
       // Preserve a short provider status code, never an arbitrary upstream message.
       const finishDetail = rawFinish && rawFinish !== finish && /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/.test(rawFinish)
         ? `${finish}; provider: ${rawFinish}` : finish;
@@ -486,19 +485,15 @@ export class ChatAgent extends Agent<Env, ChatState> {
         turn.error = streamError || `The model returned no answer text (finish: ${finishDetail}).`;
       }
     } catch (error) {
-      const ownerStop = controller.signal.aborted && this.state.stopRequested && !timedOut;
-      const deadline = controller.signal.aborted && timedOut && !ownerStop;
+      const ownerStop = controller.signal.aborted && this.state.stopRequested;
       if (ownerStop) {
         turn.state = turn.answer ? "partial" : "cancelled";
         turn.error = "Stopped. A new Send starts a new turn.";
-      } else if (deadline) {
-        turn.state = turn.answer ? "partial" : "failed";
-        turn.error = "The answer exceeded the 90 s time bound. A new Send starts a new turn; no retry was started.";
       } else {
         turn.state = turn.answer ? "partial" : "failed";
         turn.error = streamError || (error instanceof LibraryError ? error.message : selectedModel ? modelFailure(error, selectedModel) : "The answer could not be completed.");
       }
-    } finally { clearTimeout(timer); if (checkpointTimer !== undefined) clearTimeout(checkpointTimer); }
+    } finally { if (checkpointTimer !== undefined) clearTimeout(checkpointTimer); }
     if (checkpointFailed) {
       turn.state = turn.answer ? "partial" : "failed";
       turn.error = "The answer stopped because its progress could not be saved. A new Send starts a new turn; no retry was started.";
@@ -547,7 +542,6 @@ export class ChatAgent extends Agent<Env, ChatState> {
     }
     Object.assign(turn, turnUsageProjection(dispatched, usage));
     turn.totalMs = Date.now() - started;
-    if (turn.totalMs > 90000 && turn.state === "completed") { turn.state = "partial"; turn.error = "The answer exceeded the time bound."; }
     this.writeTurn(turn);
     const settled = await this.settleTurn(turn);
     await this.env.DB.prepare("UPDATE chat SET updated_at=? WHERE id=?").bind(Date.now(), this.name).run();

@@ -592,8 +592,9 @@ completed or unchanged work is not automatically re-distilled, and failed paid w
 pipeline uses at most two bounded model calls with zero paid-step retries. Completed/partial revisions return existing
 artifacts on repeat. Budget-paused work resumes
 only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
-Each background distillation call has a 180 s deadline (native paid-step deadline 4 minutes); the K2 chat ceiling stays
-90 s. The owner reader shows availability, progress, useful model names and verification caveats. Calls, reservations,
+Each background distillation call has a 180 s deadline (native paid-step deadline 4 minutes). Ordinary chat uses Stop
+and platform/provider limits; its K2 latency gate remains separate from execution. The owner reader shows availability,
+progress, useful model names and verification caveats. Calls, reservations,
 token counts and wall time remain in API/eval diagnostics rather than the reading interface. Long papers can use the
 same bounded two-call pipeline without a chat-sized timeout or a reduced quality target.
 An unconfirmed Workflow dispatch with zero paid calls is terminalized by a `running AND distill_calls=0` compare-and-set,
@@ -691,8 +692,16 @@ server-generated creation. Titles must be valid Unicode; the composer uses up to
 After reload, History can open a committed chat and any accepted turn through existing storage-only reads. No request
 is resumed automatically. If only creation committed, the full question is not recoverable from its truncated title;
 unaccepted draft text is not persisted in the URL, localStorage or another client cache.
-The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
-cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
+Ordinary chat has no application wall-clock or idle-abort timer. Stop aborts its active SDK call and preserves received
+text; provider/platform failures remain failed without text or partial with text. Only explicit owner Stop can produce
+cancelled. After the SDK iterator closes, read any resolved usage and check the signal before accepting a normal finish:
+abort can close the iterator normally. The eval's model POST wait has no 90-second client cutoff; a failed wait is
+reconciled by bounded reads of that same submitted turn ID, never another Send.
+Platform facts checked 2026-11-04: [Durable Objects RPC/HTTP](https://developers.cloudflare.com/durable-objects/platform/limits/)
+has no fixed wall-time cap while a request, connection or I/O remains active; CPU/memory limits still apply.
+[AI Gateway request timeout](https://developers.cloudflare.com/ai-gateway/configuration/request-handling/) concerns the
+first response, rather than the duration of an already streaming response. Provider limits remain independent; no
+gateway timeout, retry or provider setting is changed by this policy.
 When the SDK normalizes a provider finish to `other`, the stored error retains its distinct raw code only if it
 matches `[A-Za-z][A-Za-z0-9_.:-]{0,63}`. Arbitrary upstream messages are omitted.
 Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the recorded
