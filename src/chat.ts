@@ -394,7 +394,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
     this.notify(JSON.stringify({ type: "turn", turn }));
     const controller = new AbortController();
     this.controller = controller;
-    let timedOut = false;
+    let timedOut = false, checkpointFailed = false;
+    let checkpointTimer: ReturnType<typeof setTimeout> | undefined;
     if (this.state.stopRequested) controller.abort();
     // First abort wins: an owner Stop that already aborted must not be overwritten by the deadline.
     const timer = setTimeout(() => { if (controller.signal.aborted) return; timedOut = true; controller.abort(); }, 90_000);
@@ -452,17 +453,21 @@ export class ChatAgent extends Agent<Env, ChatState> {
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
       let lastWrite = 0;
-      const publish = () => {
-        const firstText = turn.firstTokenMs === null && turn.answer.trim().length > 0;
-        if (firstText) turn.firstTokenMs = Date.now() - started;
-        // First text and terminal results persist immediately. Intermediate
-        // snapshots are bounded to once a second; a process crash can lose
-        // only the newer, uncheckpointed tail (no automatic continuation).
-        if (firstText || Date.now() - lastWrite >= 1000) { this.writeTurn(turn); lastWrite = Date.now(); }
+      const checkpoint = () => {
+        if (checkpointTimer !== undefined) clearTimeout(checkpointTimer);
+        checkpointTimer = undefined;
+        if (controller.signal.aborted) return;
+        try { this.writeTurn(turn); lastWrite = Date.now(); }
+        catch { checkpointFailed = true; controller.abort(); }
       };
       for await (const text of result.textStream) {
+        if (!text) continue;
         turn.answer += text;
-        publish();
+        const firstText = turn.firstTokenMs === null && turn.answer.trim().length > 0;
+        if (firstText) turn.firstTokenMs = Date.now() - started;
+        const delay = 1000 - (Date.now() - lastWrite);
+        if (firstText || delay <= 0) checkpoint();
+        else if (checkpointTimer === undefined) checkpointTimer = setTimeout(checkpoint, delay);
       }
       usage = await result.totalUsage;
       turn.answer = await result.text;
@@ -493,7 +498,11 @@ export class ChatAgent extends Agent<Env, ChatState> {
         turn.state = turn.answer ? "partial" : "failed";
         turn.error = streamError || (error instanceof LibraryError ? error.message : selectedModel ? modelFailure(error, selectedModel) : "The answer could not be completed.");
       }
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); if (checkpointTimer !== undefined) clearTimeout(checkpointTimer); }
+    if (checkpointFailed) {
+      turn.state = turn.answer ? "partial" : "failed";
+      turn.error = "The answer stopped because its progress could not be saved. A new Send starts a new turn; no retry was started.";
+    }
     const resolved = resolveCitations(turn.answer, labelSources);
     turn.answer = resolved.text; turn.citations = resolved.citations; turn.invalidLabels = resolved.invalidLabels;
     if (resolved.invalidLabelExamples !== undefined && resolved.invalidLabelExamples.length > 0) turn.invalidLabelExamples = resolved.invalidLabelExamples;

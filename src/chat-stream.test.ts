@@ -208,6 +208,38 @@ beforeEach(() => {
 });
 
 describe("ChatAgent stream checkpoints", () => {
+  it("flushes a received tail during provider silence without recurring idle writes", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    nextSSE = new ReadableStream({ start(controller) { stream = controller; } });
+    try {
+      await h.agent.onStart();
+      const pending = h.agent.submitTurn({ projectId, chatId, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-123456789003", question: "Pause", scopeMode: "explicit", sourceIds: ["s1"] }, true);
+      for (let i = 0; i < 50 && fetchCalls === 0; i++) await vi.advanceTimersByTimeAsync(10);
+      const emit = async (text: string) => { stream.enqueue(encoder.encode("data: " + chunk({ content: text }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0); };
+      await emit("First [S1:1].");
+      const first = (await h.agent.getTurns(projectId))[0];
+      if (!first) throw new Error("Missing first-text checkpoint");
+      await vi.advanceTimersByTimeAsync(50); await emit(" Quiet tail 🧪.");
+      await vi.advanceTimersByTimeAsync(949);
+      expect((await h.agent.getTurns(projectId))[0]).toEqual(first);
+      await vi.advanceTimersByTimeAsync(1);
+      const saved = (await h.agent.getTurns(projectId))[0];
+      if (!saved) throw new Error("Missing deferred checkpoint");
+      expect(saved.answer).toBe("First [S1:1]. Quiet tail 🧪.");
+      expect(saved.historyVersion).toBe((first.historyVersion ?? 0) + 1);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect((await h.agent.getTurns(projectId))[0]).toEqual(saved);
+      expect(vi.getTimerCount()).toBe(1); // Only the execution deadline remains.
+      stream.enqueue(encoder.encode("data: " + chunk({}, "stop", { prompt_tokens: 8, completion_tokens: 42 }) + "\n\ndata: [DONE]\n\n")); stream.close();
+      await vi.advanceTimersByTimeAsync(0);
+      const terminal = requireTurn(await pending);
+      expect(terminal.answer).toBe(saved.answer); expect(terminal.state).toBe("completed");
+      expect(vi.getTimerCount()).toBe(0); expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
+  });
   it("persists first text immediately, checkpoints at one second, and stores the exact terminal tail and usage", async () => {
     vi.useFakeTimers();
     const h = makeHarness();
@@ -229,7 +261,8 @@ describe("ChatAgent stream checkpoints", () => {
       await vi.advanceTimersByTimeAsync(100); pieces.push(" Checkpoint."); await emit(" Checkpoint.");
       const checkpoint = (await h.agent.getSnapshot(projectId)).turns[0];
       if (!checkpoint) throw new Error("Missing one-second checkpoint");
-      expect(checkpoint.answer).toBe(pieces.join("")); expect(checkpoint.historyVersion).toBe((first.historyVersion ?? 0) + 1);
+      // The timer runs before the chunk emitted at the exact boundary.
+      expect(checkpoint.answer).toBe(pieces.slice(0, -1).join("")); expect(checkpoint.historyVersion).toBe((first.historyVersion ?? 0) + 1);
       expect(checkpoint.createdAt).toBe(first.createdAt);
       await vi.advanceTimersByTimeAsync(100); pieces.push(" Final uncheckpointed tail [S1:1]."); await emit(" Final uncheckpointed tail [S1:1].");
       expect((await h.agent.getTurns(projectId))[0]).toEqual(checkpoint);
@@ -243,6 +276,9 @@ describe("ChatAgent stream checkpoints", () => {
       const frames = vi.mocked(h.agent.broadcast).mock.calls.map(([payload]) => JSON.parse(String(payload)) as { type: string; turn?: TurnView });
       expect(frames.filter(frame => frame.type === "turn" && frame.turn?.state === "started" && frame.turn.answer)).toHaveLength(2);
       expect(frames.filter(frame => frame.type === "turn").at(-1)?.turn).toEqual(terminal); expect(fetchCalls).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect((await h.agent.getSnapshot(projectId)).turns[0]).toEqual(terminal);
     } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
   });
   it("Stop persists text received inside the checkpoint window with unknown usage and no continuation", async () => {
@@ -271,6 +307,39 @@ describe("ChatAgent stream checkpoints", () => {
       expect(stopped.error).toContain("Stopped."); expect(stopped.inputTokens).toBeNull(); expect(stopped.outputTokens).toBeNull();
       expect(stopped.tokenLimit).toBe(TOKEN_BOUND); expect(stopped.citations).toHaveLength(1); expect(stopped.settlementPending).toBeUndefined();
       expect((await h.agent.getSnapshot(projectId)).turns[0]).toEqual(stopped); expect(fetchCalls).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect((await h.agent.getSnapshot(projectId)).turns[0]).toEqual(stopped);
+    } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
+  });
+  it("contains a deferred SQLite failure, stops the stream and preserves unknown usage without retrying", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    let stream!: ReadableStreamDefaultController<Uint8Array>, cancelled = false, faults = 0;
+    const encoder = new TextEncoder();
+    nextSSE = new ReadableStream({ start(controller) { stream = controller; }, cancel() { cancelled = true; } });
+    try {
+      await h.agent.onStart();
+      const input: RunTurnInput = { projectId, chatId, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-123456789004", question: "Storage fault", scopeMode: "explicit", sourceIds: ["s1"] };
+      const pending = h.agent.submitTurn(input, true);
+      for (let i = 0; i < 50 && fetchCalls === 0; i++) await vi.advanceTimersByTimeAsync(10);
+      stream.enqueue(encoder.encode("data: " + chunk({ content: "First [S1:1]." }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(50);
+      stream.enqueue(encoder.encode("data: " + chunk({ content: " Retained tail 🧪." }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0);
+      h.db.function("fail_checkpoint_once", () => { if (faults++ === 0) throw new Error("Fixture SQLite write failure"); return null; });
+      h.db.exec("CREATE TRIGGER fail_checkpoint BEFORE INSERT ON turns WHEN json_extract(NEW.payload,'$.state')='started' AND instr(NEW.payload,'Retained tail')>0 BEGIN SELECT fail_checkpoint_once(); END");
+      await vi.advanceTimersByTimeAsync(950);
+      const failed = requireTurn(await pending);
+      expect(faults).toBe(1); expect(cancelled).toBe(true);
+      expect(failed).toMatchObject({ state: "partial", answer: "First [S1:1]. Retained tail 🧪.", inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: TOKEN_BOUND });
+      expect(failed.error).toContain("progress could not be saved");
+      const frames = vi.mocked(h.agent.broadcast).mock.calls.map(([payload]) => JSON.parse(String(payload)) as { type: string; turn?: TurnView });
+      expect(frames.filter(frame => frame.type === "turn" && frame.turn?.state === "started" && frame.turn.answer.includes("Retained tail"))).toHaveLength(0);
+      expect((await h.agent.getSnapshot(projectId)).turns[0]).toEqual(failed);
+      expect(requireTurn(await h.agent.submitTurn(input, true))).toEqual(failed);
+      expect(h.agent.state.active).toBeNull(); expect(fetchCalls).toBe(1); expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect((await h.agent.getSnapshot(projectId)).turns[0]).toEqual(failed);
     } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
   });
 });
@@ -1384,11 +1453,11 @@ describe("chat-stream K2 wire regression", () => {
     const h = makeHarness();
     try {
       await h.agent.onStart();
-      let cancelled = false;
+      let cancelled = false, stream!: ReadableStreamDefaultController<Uint8Array>;
       (h.env.AI as unknown as { fetch: () => Promise<Response> }).fetch = async () => {
         fetchCalls += 1;
         return new Response(new ReadableStream<Uint8Array>({
-          start(controller) { controller.enqueue(new TextEncoder().encode("data: " + chunk({ content: "Retained text [S1:1]." }, null) + "\n\n")); },
+          start(controller) { stream = controller; controller.enqueue(new TextEncoder().encode("data: " + chunk({ content: "Retained text [S1:1]." }, null) + "\n\n")); },
           cancel() { cancelled = true; },
         }), { headers: { "content-type": "text/event-stream" } });
       };
@@ -1399,9 +1468,14 @@ describe("chat-stream K2 wire regression", () => {
         if ((await h.agent.getTurns(projectId))[0]?.firstTokenMs !== null) break;
       }
       expect((await h.agent.getTurns(projectId))[0]?.answer).toBe("Retained text [S1:1].");
-      await vi.advanceTimersByTimeAsync(90_000);
+      await vi.advanceTimersByTimeAsync(89_000);
+      stream.enqueue(new TextEncoder().encode("data: " + chunk({ content: " Before deadline." }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(100);
+      stream.enqueue(new TextEncoder().encode("data: " + chunk({ content: " Pending tail 🧪." }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBe(2); // Deadline precedes the pending tail checkpoint.
+      await vi.advanceTimersByTimeAsync(1000);
       const turn = requireTurn(await pending);
-      expect(turn).toMatchObject({ state: "partial", answer: "Retained text [S1:1].", inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: TOKEN_BOUND });
+      expect(turn).toMatchObject({ state: "partial", answer: "Retained text [S1:1]. Before deadline. Pending tail 🧪.", inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: TOKEN_BOUND });
       expect(turn.firstTokenMs).not.toBeNull();
       expect(turn.error).toContain("90 s time bound");
       expect(cancelled).toBe(true);
@@ -1409,6 +1483,9 @@ describe("chat-stream K2 wire regression", () => {
       expect(requireTurn(await h.agent.submitTurn(input, true))).toEqual(turn);
       expect(fetchCalls).toBe(1);
       expect(h.agent.state.active).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect((await h.agent.getSnapshot(projectId)).turns[0]).toEqual(turn);
     } finally { h.db.close(); vi.useRealTimers(); }
   });
   it("truncated answer with an uncited sentence stays partial and keeps warnings", async () => {
