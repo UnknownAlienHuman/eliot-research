@@ -61,7 +61,7 @@ JSON lives under `/api/`, validated with zod. Error shape:
 ```
 
 Use cursor pagination. Chat inventory uses immutable `(created_at,id)` descending so activity between pages cannot
-move an unseen chat above the cursor. Add idempotency only where a natural key exists: chat/turn ID, source-revision ID, page-revision mutation ID and
+move an unseen chat above the cursor. Add idempotency only where a natural key exists: project/chat/turn ID, source-revision ID, page-revision mutation ID and
 deterministic Workflow ID. The MCP endpoint transports the shared toolset; it is not a second business API.
 
 ## 2. Access and actors
@@ -133,6 +133,9 @@ stays readable with a visible conflict warning and never replaces the newer head
 mutation UUID returns its already committed winner. Old revisions remain readable for old citations. Use UUIDs and Unix milliseconds. Do not add
 a generic effects ledger; each operation stores its own model route, usage and estimate.
 
+`POST /api/projects` accepts an optional caller UUID. Repeating it with the same trimmed title and effective description
+returns the active project without updating it; changed inputs or an archived/renamed collision return 409. New and
+replayed acceptance responses retain 201. Omitting the UUID still creates a new project.
 Project lists default to active rows; `/api/projects?archived=true` returns only archived projects with the same
 50-row cursor pagination. Archive/restore uses the existing project PATCH and changes no memberships, evidence,
 history or pages. Omitted title/archive fields are preserved by the UPDATE itself so concurrent Rename and Unarchive
@@ -1109,6 +1112,9 @@ Create waits for Rename to finish or be cancelled. If an update removes the edit
 existing editor stays available above the list with the unsaved name and original target; Save/Cancel never depend
 on that row remaining visible.
 A successful Save closes only the submitted edit; typing while it is pending remains unsaved until another explicit Save.
+Create also preserves text edited while its request is pending. An explicit repeat of an unconfirmed, unchanged
+payload reuses its UUID; confirmation or a changed payload starts a new attempt. The draft and UUID are local to the
+mounted Projects form and are discarded on remount/reload.
 The project header's Switch project opens a native dialog over the existing `/api/projects` pages. Loading, empty,
 initial/page Retry and Refresh stay in that picker; its list reads abort on close or route change. Selecting a project
 opens its chat route without creating a chat or sending a question. Escape/Close returns focus and preserves the

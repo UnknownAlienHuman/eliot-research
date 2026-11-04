@@ -30,15 +30,16 @@ function instrumentStatement(statement,write,fault){return new Proxy(statement,{
   if(key==='bind')return(...args)=>instrumentStatement(target.bind(...args),write,fault);
   if(['first','all','run','raw'].includes(key))return async(...args)=>{
     if(write)metrics.d1Writes++;
-    if(fault==='before')throw new Error('Synthetic chat INSERT before commit');
+    if(fault==='before')throw new Error('Synthetic D1 statement unavailable');
     const result=await target[key](...args);
-    if(fault==='after')throw new Error('Synthetic chat INSERT lost commit acknowledgement');
+    if(fault==='after')throw new Error('Synthetic D1 statement lost commit acknowledgement');
     return result;
   };
   const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
 }});}
-function instrumentDb(db,fault){return new Proxy(db,{get(target,key){
-  if(key==='prepare')return(sql)=>instrumentStatement(target.prepare(sql),writeSql.test(sql),sql.startsWith('INSERT INTO chat(')?fault:null);
+function instrumentDb(db,fault,projectFault){return new Proxy(db,{get(target,key){
+  if(key==='prepare')return(sql)=>instrumentStatement(target.prepare(sql),writeSql.test(sql),sql.startsWith('INSERT INTO chat(')?fault:
+    sql.startsWith('INSERT INTO project(')&&projectFault!=='read'?projectFault:sql.includes('FROM project WHERE id=?')&&projectFault==='read'?'before':null);
   if(key==='batch'||key==='exec')return(...args)=>{metrics.d1Writes++;return target[key](...args);};
   const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
 }});}
@@ -106,7 +107,7 @@ export default {async fetch(request,env,ctx){
   if(url.pathname==='/__library-metrics')return Response.json(metrics);
   const wrapped=new Proxy(env,{get(target,key){
     if(key==='BUCKET')return instrumentBucket(Reflect.get(target,key,target));
-    if(key==='DB')return instrumentDb(Reflect.get(target,key,target),request.headers.get('x-test-chat-create-fault'));
+    if(key==='DB')return instrumentDb(Reflect.get(target,key,target),request.headers.get('x-test-chat-create-fault'),request.headers.get('x-test-project-create-fault'));
     return Reflect.get(target,key,target);
   }});
   return app.fetch(request,wrapped,ctx);
@@ -449,6 +450,70 @@ async function replacementReplayChecks(db, bucket) {
     workflowBinding: 'SYNTHETIC_DURABLE_DISPATCH_COUNTER', newWorkflowStarts: counters.length - startedBefore, conversionAndModelCalls: 0 }));
 }
 
+async function projectCreationChecks(db) {
+  await resetMetrics();
+  const beforeDispatch = await db.prepare('SELECT count(*) AS n FROM fixture_ingest_dispatch').first('n');
+  const row = id => db.prepare('SELECT * FROM project WHERE id=?').bind(id).first();
+  const input = { id: uuid(94_000), title: '  Проект 🧪 e\u0301  ', description: '  Описание 🛰 e\u0301\n' };
+  const pair = await Promise.all([rawRequest('/api/projects', 'POST', input), rawRequest('/api/projects', 'POST', input)]);
+  assert(pair.every(response => response.status === 201));
+  const accepted = await pair[0].json(); assert.deepEqual(await pair[1].json(), accepted);
+  assert.equal(accepted.project.id, input.id); assert.equal(accepted.project.title, input.title.trim());
+  assert.equal(accepted.project.description, input.description);
+  const original = await row(input.id);
+  assert.deepEqual(await requestJson('/api/projects', 'POST', input), accepted);
+  for (const change of [{ title: 'Different title' }, { title: input.title.replace('e\u0301', 'é') },
+    { description: input.description.trim() }, { description: '' }]) {
+    assert.equal((await rawRequest('/api/projects', 'POST', { ...input, ...change })).status, 409);
+    assert.deepEqual(await row(input.id), original);
+  }
+  const defaultDescription = { id: uuid(94_001), title: 'Effective empty description' };
+  const empty = await requestJson('/api/projects', 'POST', defaultDescription), emptyRow = await row(defaultDescription.id);
+  assert.deepEqual(await requestJson('/api/projects', 'POST', { ...defaultDescription, description: '' }), empty);
+  assert.equal((await rawRequest('/api/projects', 'POST', { ...defaultDescription, description: ' ' })).status, 409);
+  assert.deepEqual(await row(defaultDescription.id), emptyRow);
+  for (const [index, change] of [{ title: 'Renamed project' }, { archived: true }].entries()) {
+    const value = { id: uuid(94_002 + index), title: 'Collision ' + index, description: 'Retained description' };
+    await requestJson('/api/projects', 'POST', value);
+    await requestJson('/api/projects/' + value.id, 'PATCH', change);
+    const changed = await row(value.id);
+    assert.equal((await rawRequest('/api/projects', 'POST', value)).status, 409);
+    assert.deepEqual(await row(value.id), changed);
+  }
+  for (const [index, fault] of ['before', 'after', 'read'].entries()) {
+    const value = { id: uuid(94_010 + index), title: 'Explicit recovery ' + fault, description: 'Retained ' + fault };
+    assert.equal((await rawRequest('/api/projects', 'POST', value, { 'x-test-project-create-fault': fault })).status, 503);
+    const committed = await row(value.id); assert.equal(committed !== null, fault !== 'before');
+    const replay = await rawRequest('/api/projects', 'POST', value); assert.equal(replay.status, 201);
+    assert.equal((await replay.json()).project.id, value.id);
+    if (committed) assert.deepEqual(await row(value.id), committed);
+    assert.equal(await db.prepare('SELECT count(*) AS n FROM project WHERE id=?').bind(value.id).first('n'), 1);
+  }
+  for (const [index, change] of [{ title: 'Second title' }, { description: 'Second description' }].entries()) {
+    const value = { id: uuid(94_020 + index), title: 'First title', description: 'First description' };
+    const responses = await Promise.all([rawRequest('/api/projects', 'POST', value), rawRequest('/api/projects', 'POST', { ...value, ...change })]);
+    assert.deepEqual(responses.map(response => response.status).sort(), [201, 409]);
+    const winner = await responses.find(response => response.status === 201).json(), saved = await row(value.id);
+    assert.equal(saved.title, winner.project.title); assert.equal(saved.description, winner.project.description);
+    assert.equal(winner.project.id, value.id);
+    assert.deepEqual(await requestJson('/api/projects', 'POST', { id: value.id, title: winner.project.title, description: winner.project.description }), winner);
+    assert.deepEqual(await row(value.id), saved);
+  }
+  const count = await db.prepare('SELECT count(*) AS n FROM project').first('n');
+  for (const invalid of [{ id: 'invalid', title: 'No project' }, { id: uuid(94_030), title: '\uD800' },
+    { id: uuid(94_031), title: 'No project', description: '\uDC00' }])
+    assert.equal((await rawRequest('/api/projects', 'POST', invalid)).status, 400);
+  assert.equal(await db.prepare('SELECT count(*) AS n FROM project').first('n'), count);
+  const legacy = await rawRequest('/api/projects', 'POST', { title: 'Legacy project' });
+  assert.equal(legacy.status, 201); assert.equal((await legacy.json()).project.description, '');
+  assert.deepEqual(await row(input.id), original); assertNoObjectIO(await readMetrics());
+  assert.equal(await db.prepare('SELECT count(*) AS n FROM fixture_ingest_dispatch').first('n'), beforeDispatch);
+  console.log(JSON.stringify({ scope: 'K1_PROJECT_CREATE_STORAGE', runtime: 'pinned Workerd/D1', sameIdConcurrent: true,
+    mismatchedTitleAndDescriptionRaces: 2, normalizedTitleExactDescription: true, renamedAndArchivedRejected: true,
+    originalRowsAndTimestampsRetained: true, explicitRetryAfterBeforeAfterCommitAndReadFault: true,
+    unicodePreservedAndLoneSurrogatesRejected: true, legacy201AndReplay201: true, workflowStarts: 0, conversionAndModelCalls: 0 }));
+}
+
 try {
   await mf.ready;
   const db = await mf.getD1Database('DB', 'library');
@@ -787,6 +852,7 @@ try {
   }));
   await replacementDuplicateChecks(db, bucket);
   await replacementReplayChecks(db, bucket);
+  await projectCreationChecks(db);
 } finally {
   await mf.dispose();
 }

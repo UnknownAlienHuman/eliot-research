@@ -102,17 +102,22 @@ export function Projects() {
   });
   const projects = listing.data?.pages.flatMap(page => page.projects);
   const [failure, setFailure] = useState("");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState({ value: "" });
+  const createAttempt = useRef<{ id: string; title: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<{ id: string; title: string } | undefined>(undefined);
   const loadMore = () => { if (!listing.isFetching) void listing.fetchNextPage({ cancelRefetch: false }); };
   async function create() {
-    const next = title.trim();
+    const submittedDraft = title, next = title.value.trim();
     if (!next || busy || editing !== undefined) return;
+    const attempt = createAttempt.current?.title === next ? createAttempt.current : { id: crypto.randomUUID(), title: next };
+    createAttempt.current = attempt;
     setBusy(true); setFailure("");
     try {
-      await apiJson("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: next }) });
-      setTitle(""); await client.resetQueries({ queryKey, exact: true });
+      const result = await apiJson<{ project?: Project } | null>("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(attempt) });
+      if (result?.project?.id !== attempt.id) throw new Error("Could not confirm that this project was created. Create again to check the same project.");
+      if (createAttempt.current === attempt) createAttempt.current = null;
+      setTitle(current => current === submittedDraft ? { value: "" } : current); await client.resetQueries({ queryKey, exact: true });
     } catch (err) { setFailure(err instanceof Error ? err.message : "Could not create the project."); }
     finally { setBusy(false); }
   }
@@ -142,8 +147,8 @@ export function Projects() {
         <button className="er-button er-button--text" type="button" disabled={listing.isFetching}
           onClick={() => listing.isFetchNextPageError ? loadMore() : void listing.refetch()}>Retry projects</button></p> : null}
       {!archived ? <form className="er-field er-lib__form" onSubmit={(e) => { e.preventDefault(); void create(); }}>
-        <label className="er-field__label" htmlFor="er-lib-new-title">New project</label><input id="er-lib-new-title" value={title} onChange={(e) => setTitle(e.currentTarget.value)} placeholder="Paper trail" maxLength={200} />
-        <button className="er-button er-button--primary" type="submit" disabled={busy || editing !== undefined || !title.trim()}>Create</button>
+        <label className="er-field__label" htmlFor="er-lib-new-title">New project</label><input id="er-lib-new-title" value={title.value} onChange={(e) => setTitle({ value: e.currentTarget.value })} placeholder="Paper trail" maxLength={200} />
+        <button className="er-button er-button--primary" type="submit" disabled={busy || editing !== undefined || !title.value.trim()}>Create</button>
       </form> : null}
       {editing && !editVisible ? <div className="er-card er-field" role="group" aria-label="Rename project">
         <p role="status">This project is not shown here. Finish or cancel its rename.</p>
