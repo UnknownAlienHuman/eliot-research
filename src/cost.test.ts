@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { admitDistill, admitTurn, failUndispatchedDistill } from "./cost.js";
 import { LibraryError } from "./library.js";
+import { estimateHistoryMessage, estimateModelInput } from "./model-input.js";
 import { assertProviderAllowance } from "./model-quota.js";
 import type * as ModelQuota from "./model-quota.js";
 import type { ModelSpec } from "./models.js";
-import { modelOutputLimit, modelOutputReserve, modelTokenLimit, modelTokenReservation } from "./models.js";
+import { modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, modelTokenReservation } from "./models.js";
 
 // Provider allowance is mocked: the real model-quota module currently holds
 // a closed native placeholder, so admission tests pin allow/deny directly
@@ -92,6 +93,30 @@ function distillRow(db: DatabaseSync, id: string) {
 beforeEach(() => {
   allowance.mockReset();
   allowance.mockResolvedValue(undefined);
+});
+
+describe("provider input budget and request estimate", () => {
+  it.each([32768, 4096, null])("reserves output only inside a proved combined window (%s)", (maxOutputTokens) => {
+    const model = { contextTokens: 192000, maxOutputTokens, outputReserveTokens: 2048 };
+    expect(modelInputLimit(model)).toBe(192000);
+    expect(modelInputLimit({ ...model, contextWindowTokens: 256000 })).toBe(192000);
+    expect(modelInputLimit({ ...model, contextWindowTokens: 128000 })).toBe(125952);
+    expect(model.maxOutputTokens).toBe(maxOutputTokens);
+  });
+  it.each([0, -1, 1.5, NaN, Infinity])("rejects an invalid provider ceiling %s", (contextTokens) => {
+    expect(() => modelInputLimit({ contextTokens, maxOutputTokens: null, outputReserveTokens: 8192 })).toThrow(LibraryError);
+  });
+  it("rejects a combined window with no output headroom", () => {
+    expect(() => modelInputLimit({ contextTokens: 8192, contextWindowTokens: 8192, maxOutputTokens: null, outputReserveTokens: 8192 })).toThrow(LibraryError);
+  });
+  it.each(["ordinary source", '"\\\r\n\t\b\f\0\u001f', "\ufeffРусский 😀 漢字", "\ud800 x \udc00", "[S1:92]"])("matches the existing serialized JSON estimate for %j", (content) => {
+    const request = { instructions: content, messages: [{ role: "user", content }, { role: "assistant", content: content + " tail" }],
+      schema: { type: "object", description: content } };
+    expect(estimateModelInput(request)).toBe(Math.ceil(new TextEncoder().encode(JSON.stringify(request)).byteLength / 3) + request.messages.length * 32 + 1024);
+    const first = request.messages[0];
+    if (!first) throw new Error("Missing message fixture.");
+    expect(estimateHistoryMessage(first)).toBe(Math.ceil(new TextEncoder().encode(JSON.stringify(first)).byteLength / 3) + 32);
+  });
 });
 
 describe("published generation maximum", () => {

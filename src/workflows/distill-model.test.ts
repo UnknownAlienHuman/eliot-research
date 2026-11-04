@@ -3,9 +3,11 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import type { Block } from "../blocks";
+import { scanBlocks, type Block } from "../blocks";
 import type { Actor } from "../auth";
 import { LibraryError } from "../library";
+import { estimateModelInput } from "../model-input";
+import { modelInputLimit } from "../models";
 import type { ModelSpec } from "../models";
 import type * as Models from "../models";
 import type * as ModelTransport from "../model-transport";
@@ -70,6 +72,15 @@ function fixture(storedRoute: string, document?: { text: string; blocks: Block[]
   const bodies = new Map([[prefix + "text.md", text], [prefix + "blocks.json", JSON.stringify(blocks)]]);
   const dispatchCAS = vi.fn(), sourceWrites = vi.fn();
   const env = { DB: {
+    async batch(statements: Array<{ run(): Promise<unknown> }>) {
+      db.exec("BEGIN");
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        db.exec("COMMIT");
+        return results;
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+    },
     prepare(sql: string) {
       const operations = (args: SQLInputValue[]) => ({
           first: async () => db.prepare(sql).get(...args) ?? null,
@@ -85,8 +96,10 @@ function fixture(storedRoute: string, document?: { text: string; blocks: Block[]
   }, BUCKET: {
     async get(key: string) {
       const body = bodies.get(key);
-      return body === undefined ? null : { text: async () => body, json: async () => JSON.parse(body) as unknown,
-        arrayBuffer: async () => new TextEncoder().encode(body).buffer };
+      if (body === undefined) return null;
+      const bytes = new TextEncoder().encode(body);
+      return { text: async () => body, json: async () => JSON.parse(body) as unknown,
+        arrayBuffer: async () => bytes.buffer, size: bytes.byteLength, body: new Response(bytes).body };
     },
     async put(key: string, body: string) {
       if (bodies.has(key)) return null;
@@ -209,6 +222,130 @@ function finished(f: ReturnType<typeof fixture>, error: string) {
 }
 
 describe("DistillWorkflow admitted model snapshot", () => {
+  it.each(["scanner >400k", "legacy >4096-byte block"])("completes both synthetic producers and actual verify/store for %s", async (shape) => {
+    const lead = "The method preserves source evidence and its conditions. The source retains canonical text. The source describes its method. ";
+    const paragraph = "Canonical evidence preserves the source conditions and terminology. ".repeat(120);
+    const text = shape === "scanner >400k" ? lead + Array(160).fill(paragraph).join("\n\n") : lead + "Ordinary retained content. ".repeat(400);
+    const blocks = shape === "scanner >400k" ? scanBlocks(text) : [{ id: 1, type: "paragraph" as const, start: 0, end: text.length, heading: null }];
+    const first = blocks[0];
+    if (!first) throw new Error("Missing canonical first block.");
+    const f = fixture(snapshot.route, { text, blocks });
+    const model = { ...snapshot, contextTokens: 1000000, contextWindowTokens: 1000000 };
+    f.db.prepare("UPDATE source_revision SET distill_token_limit=NULL,distill_token_limit_kind='unknown' WHERE id=?").run(revisionId);
+    const guide = ["The method preserves source evidence and its conditions.", "The source retains canonical text.", "The source describes its method."]
+      .map(text => ({ labels: ["[S1:1]"], text }));
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ output: { guide, questions: ["Which method?", "Which evidence?", "Which conditions?"],
+        claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: guide[0]?.text,
+          task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] },
+        totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
+      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], guide, digest: [guide[0]], glossary: [] },
+        totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
+    const original = new Map(f.bodies);
+    try {
+      const steps = await run(f, false, model);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source", "verify source excerpts", "review and synthesize", "store understanding", "finish understanding"]);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+      if (shape === "scanner >400k") expect(text.length / 3).toBeGreaterThan(400000);
+      else expect(first.end - first.start).toBeGreaterThan(4096);
+      const quote = text.slice(first.start, first.end);
+      expect(f.db.prepare("SELECT block_index AS block,start_byte AS start,end_byte AS end,quote FROM claim WHERE source_revision_id=?").get(revisionId))
+        .toEqual({ block: first.id, start: first.start, end: first.end, quote });
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_token_limit AS bound,distill_token_limit_kind AS kind FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "done", calls: 2, bound: null, kind: "unknown" });
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      expect(report).toMatchObject({ state: "done", usage: { calls: 2, inputTokens: 36, outputTokens: 17, tokenLimit: null, tokenLimitKind: "unknown" } });
+      expect(f.bodies.get(prefix + "guide.md")).toContain(`[R${revisionId}:1]`);
+      expect(f.bodies.get(prefix + "digest.md")).toContain(guide[0]?.text);
+      expect(f.bodies.get(prefix + "glossary.json")).toBe("[]");
+      for (const [key, body] of original) expect(f.bodies.get(key)).toBe(body);
+    } finally { f.db.close(); }
+  });
+
+  it.each(["overlapping", "invalid end", "mid-byte"])("bounds %s legacy verification after a retained first call without a second dispatch", async (shape) => {
+    const text = shape === "mid-byte" ? "\u00e9 retained text" : "Retained source evidence. " + "x".repeat(1000000);
+    const size = new TextEncoder().encode(text).length;
+    const blocks: Block[] = shape === "overlapping" ? Array.from({ length: 12 }, (_, i) => ({ id: i + 1, type: "paragraph", start: 0, end: size, heading: null }))
+      : [{ id: 1, type: "paragraph", start: shape === "mid-byte" ? 1 : 0, end: shape === "invalid end" ? size + 1 : size, heading: null }];
+    const f = fixture(snapshot.route, { text, blocks });
+    const raw = JSON.stringify({ output: { claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "Retained source evidence.",
+      task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }],
+      guide: [], questions: [] }, usage: { inputTokens: 17, cachedTokens: 0, outputTokens: 8, tokenLimit: null, tokenLimitKind: "unknown" } });
+    f.bodies.set(prefix + "distill-call1.json", raw);
+    f.db.prepare("UPDATE source_revision SET distill_calls=1 WHERE id=?").run(revisionId);
+    try {
+      const steps = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) => name === "extract source" ? undefined : callback());
+      await new DistillWorkflow({} as ExecutionContext, f.env).run({ payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>, { do: steps } as unknown as WorkflowStep);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source", "verify source excerpts"]);
+      expect(generateText).not.toHaveBeenCalled(); expect(f.dispatchCAS).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId)).toEqual({ state: "failed", calls: 1 });
+      expect(f.bodies.get(prefix + "distill-call1.json")).toBe(raw);
+      expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
+      expect(f.bodies.has(prefix + "distill-verified.json")).toBe(false);
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      expect(report.usage).toMatchObject({ calls: 1, inputTokens: 17, outputTokens: 8 });
+      if (shape === "overlapping") expect(report.error).toBe("Narrow the source selection so the answer fits.");
+    } finally { f.db.close(); }
+  });
+
+  it.each([
+    { paragraphs: 12, capacity: 40000, formerCap: 24000 },
+    { paragraphs: 164, capacity: 1000000, formerCap: 360000 },
+    { paragraphs: 190, capacity: 1000000, formerCap: 400000 },
+  ])("dispatches $paragraphs canonical paragraphs above the former $formerCap estimate", async ({ paragraphs, capacity, formerCap }) => {
+    const paragraph = "The method preserves source evidence and its conditions. ".repeat(120);
+    const text = Array(paragraphs).fill(paragraph).join("\n\n"), blocks = scanBlocks(text);
+    const model = { ...snapshot, contextTokens: capacity, contextWindowTokens: capacity + 2048, outputReserveTokens: 2048 };
+    const f = fixture(model.route, { text, blocks });
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    try {
+      await run(f, false, model);
+      expect(text.length / 3).toBeGreaterThan(formerCap);
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      const options = vi.mocked(generateText).mock.calls[0]?.[0];
+      const instructions = options?.instructions;
+      if (!options || typeof instructions !== "string") throw new Error("Missing extraction instructions.");
+      const schema = JSON.parse(instructions.slice(instructions.lastIndexOf("Return one JSON object conforming to this schema: ") + "Return one JSON object conforming to this schema: ".length));
+      expect(estimateModelInput({ instructions, messages: options.messages as { role: string; content: string }[], schema })).toBeLessThanOrEqual(modelInputLimit(model));
+      const content = options?.messages?.[0]?.content;
+      if (typeof content !== "string") throw new Error("Missing extraction context.");
+      expect(content.split("\n").map(line => JSON.parse(line).text).join(""))
+        .toBe(blocks.map(block => text.slice(block.start, block.end)).join(""));
+    } finally { f.db.close(); }
+  });
+
+  it("rejects cumulative extraction allocations at the existing memory allowance before dispatch", async () => {
+    const paragraph = "The method preserves source evidence and its conditions. ".repeat(120);
+    const text = Array(400).fill(paragraph).join("\n\n");
+    const model = { ...snapshot, contextTokens: 3000000 };
+    const f = fixture(model.route, { text, blocks: scanBlocks(text) });
+    try {
+      await run(f, false, model);
+      finished(f, "Narrow the source selection so the answer fits.");
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["text.md", "blocks.json"])("cancels an understated oversized %s stream without dispatch", async (name) => {
+    const f = fixture(snapshot.route), originalGet = f.env.BUCKET.get.bind(f.env.BUCKET);
+    let pulls = 0;
+    const cancel = vi.fn();
+    f.env.BUCKET.get = vi.fn(async (key: string) => {
+      if (key !== prefix + name) return originalGet(key);
+      return { size: 1, body: new ReadableStream({ pull(controller) { pulls++; controller.enqueue(new Uint8Array(1024 * 1024)); }, cancel }) };
+    }) as unknown as R2Bucket["get"];
+    try {
+      await run(f, false, { ...snapshot, contextTokens: 100000000 });
+      finished(f, "Narrow the source selection so the answer fits.");
+      expect(pulls).toBeLessThanOrEqual(17);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
   it("validates extraction statement references before numeric support without losing candidate order", async () => {
     const document = documentWithBlocks([{ type: "paragraph", text: "The method uses normalization for 9 layers." }]);
     const f = fixture(snapshot.route, document);

@@ -28,6 +28,34 @@ function claim(overrides: Partial<CandidateClaim> & { quote: string; block: numb
 }
 
 describe("verifyClaims", () => {
+  it("charges a legacy fold map before allocating it and preserves the ordinary quote contract", () => {
+    const text = 'The \u201cexact quote\u201d is retained. ' + "x".repeat(900000), bytes = TE.encode(text);
+    const blocks = [{ id: 1, type: "paragraph" as const, start: 0, end: bytes.length, heading: null }];
+    const candidate = claim({ kind: "method", quote: 'The "exact quote" is retained.', block: 1 });
+    const stop = new Error("Allocation guard");
+    let used = 0;
+    const allocate = vi.fn((size: number) => { if (size > 16 * 1024 * 1024 - used) throw stop; used += size; });
+    const decode = vi.spyOn(TextDecoder.prototype, "decode");
+    try {
+      expect(() => verifyClaims(bytes, blocks, [candidate], allocate)).toThrow(stop);
+      expect(allocate).toHaveBeenLastCalledWith(20 * text.length + 128);
+      expect(decode).toHaveBeenCalledTimes(1); // Canonical slice only; no verified quote after the rejected fold.
+    } finally { decode.mockRestore(); }
+    const small = text.slice(0, 30), normal = verifyClaims(small, [blockFor(1, small, small)], [candidate]);
+    expect(normal.claims[0]?.quote).toBe('The \u201cexact quote\u201d is retained.');
+  });
+
+  it("checks a caller's allocation guard before decoding a legacy block larger than the current scanner size", () => {
+    const bytes = TE.encode("Canonical retained content. ".repeat(400));
+    const blocks = [{ id: 1, type: "paragraph" as const, start: 0, end: bytes.length, heading: null }];
+    const stop = new Error("Allocation guard"), decode = vi.spyOn(TextDecoder.prototype, "decode");
+    try {
+      expect(() => resolveQuoteBlock(bytes, blocks, "[S1:1]", () => { throw stop; })).toThrow(stop);
+      expect(decode).not.toHaveBeenCalled();
+      expect(resolveQuoteBlock(bytes, blocks, "[S1:1]")?.quote).toBe(new TextDecoder().decode(bytes));
+    } finally { decode.mockRestore(); }
+  });
+
   it("encodes a 512 KiB source once across 512 blocks and reuses supplied bytes", () => {
     const text = ("x".repeat(1023) + "\n").repeat(512), bytes = TE.encode(text);
     const blocks: Block[] = Array.from({ length: 512 }, (_, i) => ({ id: i + 1, type: "paragraph", start: i * 1024, end: (i + 1) * 1024, heading: null }));

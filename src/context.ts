@@ -4,10 +4,12 @@ import type { Actor } from "./auth";
 import { LibraryError } from "./library";
 import { resolveCitations } from "./citations.js";
 import type { Citation, LabelSource } from "./citations.js";
-import { modelOutputReserve } from "./models";
+import { modelInputLimit, modelOutputReserve } from "./models";
+import { estimateHistoryMessage, estimateModelInput } from "./model-input";
 
 export interface ContextModel {
   contextTokens: number;
+  contextWindowTokens?: number;
   maxOutputTokens: number | null;
   outputReserveTokens?: number;
 }
@@ -48,21 +50,20 @@ export interface ContextResult {
 
 const READABLE = new Set(["readable", "readable_with_warnings"]);
 const DISTILLED = new Set(["done", "partial"]);
-const WHOLE_CAP = 400000;
 // Per assembly, not a Worker limit. Count retained bytes and conservative allocation
 // charges monotonically, including discarded attempts; leave the isolate room for SDKs.
 const MATERIALIZATION_BYTES = 16 * 1024 * 1024;
 const MAX_SOURCES = 1024;
 const MAX_CLAIMS = 256;
 const MAX_GUIDE_RANGES = 256;
-interface Materialization { used: number; blocks: Map<string, Block[]>; rangeReads: number }
-function reserve(assembly: Materialization, bytes: number): void {
+export interface Materialization { used: number; blocks: Map<string, Block[]>; rangeReads: number }
+export function reserve(assembly: Materialization, bytes: number): void {
   if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > MATERIALIZATION_BYTES - assembly.used) {
     throw new LibraryError("invalid", NARROW_SCOPE, 400);
   }
   assembly.used += bytes;
 }
-function joinContext(assembly: Materialization, parts: string[], separator = ""): string {
+export function joinContext(assembly: Materialization, parts: string[], separator = ""): string {
   reserve(assembly, 2 * (parts.reduce((sum, part) => sum + part.length, 0) + Math.max(0, parts.length - 1) * separator.length));
   return parts.join(separator);
 }
@@ -77,7 +78,7 @@ function utf8Bytes(text: string): number {
   }
   return bytes;
 }
-async function readContextBytes(env: Env, assembly: Materialization, key: string, range?: { offset: number; length: number }): Promise<Uint8Array> {
+export async function readContextBytes(env: Env, assembly: Materialization, key: string, range?: { offset: number; length: number }): Promise<Uint8Array> {
   if (range && ++assembly.rangeReads > MAX_GUIDE_RANGES) throw new LibraryError("invalid", NARROW_SCOPE, 400);
   reserve(assembly, 128);
   if (range && range.length > MATERIALIZATION_BYTES - assembly.used) reserve(assembly, range.length);
@@ -112,7 +113,7 @@ function decodeContext(assembly: Materialization, bytes: Uint8Array, start = 0):
   reserve(assembly, bytes.byteLength * 2);
   return (start === 0 ? bomDecoder : decoder).decode(bytes);
 }
-async function readContextJson<T>(env: Env, assembly: Materialization, key: string): Promise<T> {
+export async function readContextJson<T>(env: Env, assembly: Materialization, key: string): Promise<T> {
   const bytes = await readContextBytes(env, assembly, key);
   // Strings plus parsed objects/arrays (including tiny JSON values) have overhead.
   reserve(assembly, bytes.byteLength * 12);
@@ -137,6 +138,13 @@ const bomDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 function estimateTokens(text: string): number {
   return Math.ceil(utf8Bytes(text) / 3);
+}
+function requestTokens(messages: ContextMessage[], caller: Pick<ContextInput, "question" | "instructions">): number {
+  const instructions = [...messages.filter(message => message.role === "system").map(message => message.content), caller.instructions ?? ""]
+    .filter(Boolean).join("\n\n");
+  const requestMessages = messages.filter(message => message.role !== "system").map(({ role, content }) => ({ role, content }));
+  requestMessages.push({ role: "user", content: caller.question ?? "" });
+  return estimateModelInput({ instructions, messages: requestMessages });
 }
 function stripLabels(content: string): string {
   return content
@@ -282,7 +290,7 @@ function selectHistory(
   const picked: ContextMessage[] = [];
   const orderedFrozen = [...frozen];
   const turns = history ?? [];
-  let used = 0;
+  let used = 0, contentTokens = 0;
   for (let i = turns.length - 1; i >= 0;) {
     const tail = turns[i--];
     const assistant = tail?.role === "assistant" ? tail : undefined;
@@ -305,11 +313,13 @@ function selectHistory(
       messages.push({ role: "assistant", content, ...(assistant.turnId ? { turnId: assistant.turnId } : {}) });
       tokens += estimateTokens(content);
     }
-    if (used + tokens > budget) break;
-    used += tokens;
+    const serializedTokens = messages.reduce((sum, message) => sum + estimateHistoryMessage(message), 0);
+    if (used + serializedTokens > budget) break;
+    used += serializedTokens;
+    contentTokens += tokens;
     picked.unshift(...messages);
   }
-  return { messages: picked, tokens: used };
+  return { messages: picked, tokens: contentTokens };
 }
 
 async function loadBlocks(env: Env, revisionId: string, assembly: Materialization): Promise<Block[]> {
@@ -483,9 +493,9 @@ async function buildMixedContext(
   historyBudget: number,
   systemTokens: number,
   callerTokens: number,
-  outputReserveTokens: number,
   cap: number,
   wholePrefitTokens: number,
+  caller: Pick<ContextInput, "question" | "instructions">,
   preloadedWhole?: Array<Awaited<ReturnType<typeof loadSourceText>> | undefined>,
 ): Promise<ContextResult> {
   const compactParts: Array<ClaimContextPart | undefined> = [];
@@ -500,7 +510,7 @@ async function buildMixedContext(
     const sources = wholeParts.flatMap((part) => part ? [part.source] : []);
     const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources, assembly);
     projectedTokens = systemTokens + estimateTokens(joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]))
-      + history.tokens + callerTokens + outputReserveTokens;
+      + history.tokens + callerTokens;
   } else {
     projectedTokens += estimateTokens(SOURCES_HEADER) + Math.max(0, frozen.length - 1) * estimateTokens("\n\n");
     for (let i = 0; i < frozen.length; i++) {
@@ -548,17 +558,14 @@ async function buildMixedContext(
     const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources, assembly);
     const estimatedInputTokens = systemTokens + estimateTokens(sourcesText)
       + (claimOrientation ? estimateTokens(claimOrientation) : 0) + history.tokens;
-    if (estimatedInputTokens + callerTokens + outputReserveTokens > cap) return undefined;
+    const messages: ContextMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: sourcesText },
+      ...(claimOrientation ? [{ role: "user" as const, content: claimOrientation }] : []), ...history.messages];
+    if (requestTokens(messages, caller) > cap) return undefined;
     return {
       mode: compressed.size ? "claims" : "whole",
       revisionIds: frozen.map((entry) => entry.revisionId),
       sources,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: sourcesText },
-        ...(claimOrientation ? [{ role: "user" as const, content: claimOrientation }] : []),
-        ...history.messages,
-      ],
+      messages,
       estimatedInputTokens,
     };
   };
@@ -589,15 +596,13 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     throw new LibraryError("invalid", "Choose a project before asking.", 400);
   }
   const contextTokens = input.model?.contextTokens ?? 0;
-  const outputReserveTokens = input.model ? modelOutputReserve(input.model) : 0;
   if (
     !Number.isSafeInteger(contextTokens) ||
-    contextTokens <= 0 ||
-    !Number.isSafeInteger(outputReserveTokens) ||
-    outputReserveTokens <= 0
+    contextTokens <= 0 || !Number.isSafeInteger(modelOutputReserve(input.model)) || modelOutputReserve(input.model) <= 0
   ) {
     throw new LibraryError("invalid", "The model configuration is missing. Try again.", 400);
   }
+  const cap = modelInputLimit(input.model);
   await ensureProject(env, input.projectId);
   let frozen: Frozen[];
   if (input.scopeMode === "empty") frozen = [];
@@ -605,15 +610,15 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
   else if (input.scopeMode === "project_default") frozen = await freezeProjectDefault(env, input.projectId, assembly);
   else throw new LibraryError("invalid", "Choose sources before asking.", 400);
 
-  const cap = Math.min(Math.floor(contextTokens * 0.6), WHOLE_CAP);
   const systemTokens = estimateTokens(SYSTEM_PROMPT);
   const scopePolicyTokens = frozen.length === 0 ? estimateTokens(NONE_SCOPE_POLICY) : 0;
   const callerTokens = estimateTokens(input.question ?? "") + estimateTokens(input.instructions ?? "");
-  if (systemTokens + scopePolicyTokens + callerTokens + outputReserveTokens > cap) {
+  const baseMessages: ContextMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, ...(frozen.length === 0 ? [{ role: "system" as const, content: NONE_SCOPE_POLICY }] : [])];
+  if (requestTokens(baseMessages, input) > cap) {
     throw new LibraryError("invalid", NARROW_SCOPE, 400);
   }
   const frozenSet = new Set(frozen.map((entry) => entry.revisionId));
-  const historyBudget = Math.min(Math.floor(contextTokens * 0.1), cap - outputReserveTokens - systemTokens - scopePolicyTokens - callerTokens);
+  const historyBudget = Math.min(Math.floor(contextTokens * 0.1), cap - requestTokens(baseMessages, input));
   const history = selectHistory(input.history, frozenSet, Math.max(0, historyBudget), [], assembly);
   let knownBytes = 0;
   for (const entry of frozen) {
@@ -621,19 +626,17 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
       knownBytes = Math.min(Number.MAX_SAFE_INTEGER, knownBytes + entry.readableSize);
     }
   }
-  const wholePrefitTokens = Math.ceil(knownBytes / 3) + systemTokens + history.tokens + callerTokens + outputReserveTokens;
+  const wholePrefitTokens = Math.ceil(knownBytes / 3) + systemTokens + history.tokens + callerTokens;
   const wholePrefit = wholePrefitTokens <= cap;
 
   if (frozen.length === 0) {
+    const messages = [...baseMessages, ...history.messages];
+    if (requestTokens(messages, input) > cap) throw new LibraryError("invalid", NARROW_SCOPE, 400);
     return {
       mode: "none",
       revisionIds: [],
       sources: [],
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "system", content: NONE_SCOPE_POLICY },
-        ...history.messages,
-      ],
+      messages,
       estimatedInputTokens: systemTokens + scopePolicyTokens + history.tokens,
     };
   }
@@ -654,7 +657,8 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     const sourceTokens = estimateTokens(sourcesText);
     const historyFinal = selectHistory(input.history, frozenSet, Math.max(0, historyBudget), sources, assembly);
     const estimatedInputTokens = systemTokens + sourceTokens + historyFinal.tokens;
-    if (estimatedInputTokens + callerTokens + outputReserveTokens <= cap) {
+    const wholeMessages: ContextMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: sourcesText }, ...historyFinal.messages];
+    if (requestTokens(wholeMessages, input) <= cap) {
       let orientation: ContextMessage[] = [];
       let orientationTokens = 0;
       const guideLines: string[] = [];
@@ -668,7 +672,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
       if (guideLines.length > 0) {
         const guideText = joinContext(assembly, ["Derived orientation only; facts and citations must come from original labelled blocks.\n\n", joinContext(assembly, guideLines, "\n")]);
         const guideTokens = estimateTokens(guideText);
-        if (estimatedInputTokens + guideTokens + callerTokens + outputReserveTokens <= cap) {
+        if (requestTokens([{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: sourcesText }, { role: "user", content: guideText }, ...historyFinal.messages], input) <= cap) {
           orientationTokens = guideTokens;
           orientation = [{ role: "user", content: guideText }];
         }
@@ -688,7 +692,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     }
   }
   return buildMixedContext(env, assembly, frozen, input.history, frozenSet, historyBudget, systemTokens, callerTokens,
-    outputReserveTokens, cap, wholePrefitTokens, wholePrefit ? wholeParts : undefined);
+    cap, wholePrefitTokens, input, wholePrefit ? wholeParts : undefined);
 }
 
 
