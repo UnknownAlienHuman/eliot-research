@@ -214,6 +214,8 @@ stop/reconnect, reopen chat and save an answer as a page.
 4. Implement compact turn aliases and full-revision persistent labels; persist the full revision ID and exact range.
 5. Use one `runTurn` for WebSocket and eval RPC; persist the turn before the model call, stream once, resolve labels,
    store citations/usage/timing/cost and never auto-continue a paid failed stream.
+   Retain accepted input before post-acceptance validation; a restart before the first payload stores the same question
+   as never sent, with known zero usage. Reads and repeat IDs do not start it again.
 6. Add chat/page APIs, one visible Material catalogue with answer/understanding defaults, compact chat/project pickers,
    saved answers and the moved chat/evidence UI. Provider configuration is separate from credentials kept in Cloudflare.
    The project header opens a paged active-project picker with Refresh/Retry; switching opens that project's chat

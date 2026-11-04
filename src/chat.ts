@@ -66,10 +66,10 @@ export class ChatAgent extends Agent<Env, ChatState> {
     void this.sql`CREATE INDEX IF NOT EXISTS turns_pending_settlement ON turns(created_at,id) WHERE json_extract(payload,'$.settlementPending')=1`;
     const queued = this.state.queued;
     if (queued) {
-      // A queued question has never entered model admission. Preserve its accepted
+      // A retained question has never entered model admission. Preserve its accepted
       // input before any await or state clear, including a promotion interrupted
       // while runTurn was still validating the project.
-      this.preserveUndispatched(queued, "This queued question was not sent to the model because the conversation restarted. Send it again as a new question to retry.");
+      this.preserveUndispatched(queued, "This accepted question was not sent to the model because the conversation restarted. Send it again as a new question to retry.");
     }
     if (this.state.active) {
       const turn = this.readTurn(this.state.active);
@@ -159,7 +159,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     const queued = this.state.queued;
     if (this.current || !queued || this.state.active !== queued.turnId) return true;
     try {
-      const turn = this.preserveUndispatched(queued, "This queued question was not sent to the model because it could not be saved before starting. Send it again as a new question to retry.");
+      const turn = this.preserveUndispatched(queued, "This accepted question was not sent to the model because it could not be saved before starting. Send it again as a new question to retry.");
       if (turn.state === "started") return false; // Never regrade already-admitted work.
       this.changeState({ active: null, queued: null, stopRequested: false });
       this.notifyQueued(null);
@@ -167,7 +167,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     } catch { return false; } // Retain input for one storage-only attempt on the next authorised read/submit.
   }
   private requireRecoveredHandoff() {
-    if (!this.recoverStoppedHandoff()) throw new LibraryError("unavailable", "The queued question could not be saved yet. Reopen this conversation to try the storage operation again.", 503);
+    if (!this.recoverStoppedHandoff()) throw new LibraryError("unavailable", "The accepted question could not be saved yet. Reopen this conversation to try the storage operation again.", 503);
   }
   private settlementRow(turnId: string) {
     return this.env.DB.prepare(`SELECT model,scope_mode AS scopeMode,scope_json AS scopeJson,context_mode AS contextMode,state,
@@ -307,7 +307,9 @@ export class ChatAgent extends Agent<Env, ChatState> {
       citations: saved.citations, revisionIds: turn.revisionIds, state: turn.state };
   }
   private startTurn(input: RunTurnInput): Promise<TurnView> {
-    this.changeState({ active: input.turnId, queued: null, stopRequested: false });
+    // Fresh acceptance needs the same durable input as queue promotion until
+    // project validation and the first app-owned payload finish.
+    this.changeState({ active: input.turnId, queued: input, stopRequested: false });
     const task = this.runTurn(input);
     this.current = task;
     this.ctx.waitUntil(task.finally(() => this.advanceQueue(input.turnId)));
@@ -351,6 +353,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       if (!this.current && settlementError) return { busy: true, message: settlementError };
       if (wait) return { busy: true, message: "Another answer is running. Wait or stop it first." };
       if (this.state.queued) {
+        if (this.state.queued.turnId === this.state.active) return { busy: true, message: "The current question is still being saved. Wait before sending another question." };
         if (this.state.queued.turnId !== input.turnId) return { busy: true, message: "One question is already queued." };
         if (!sameTurnRequest(this.state.queued, input)) throw new LibraryError("conflict", "This turn ID is already queued with different input.", 409);
         return { turnId: input.turnId, queued: true };
@@ -375,7 +378,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
     catch (error) {
       const queued = this.state.queued;
       if (!queued || this.state.active !== input.turnId || !sameTurnRequest(queued, input)) throw error;
-      const turn = this.preserveUndispatched(queued, "This queued question was not sent to the model because its conversation could not be validated. Reopen the conversation before sending a new question.");
+      const turn = this.preserveUndispatched(queued, "This accepted question was not sent to the model because its conversation could not be validated. Reopen the conversation before sending a new question.");
       this.changeState({ ...this.state, queued: null });
       return turn;
     }
