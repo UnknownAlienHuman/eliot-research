@@ -110,7 +110,7 @@ const chatId = "wire-chat";
 
 const sentBodies: WireSentBody[] = [];
 let fetchCalls = 0;
-let nextSSE: string | null = null;
+let nextSSE: string | ReadableStream<Uint8Array> | null = null;
 const executedSql: string[] = [];
 const TOKEN_BOUND = 1048576 + 8192;
 
@@ -205,6 +205,74 @@ beforeEach(() => {
   fetchCalls = 0;
   nextSSE = null;
   vi.clearAllMocks();
+});
+
+describe("ChatAgent stream checkpoints", () => {
+  it("persists first text immediately, checkpoints at one second, and stores the exact terminal tail and usage", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder(), pieces = ["Supported текст 🧪 [S1:1]."];
+    nextSSE = new ReadableStream({ start(controller) { stream = controller; } });
+    try {
+      await h.agent.onStart();
+      const pending = h.agent.submitTurn({ projectId, chatId, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-123456789001", question: "Q", scopeMode: "explicit", sourceIds: ["s1"] }, true);
+      for (let i = 0; i < 50 && fetchCalls === 0; i++) await vi.advanceTimersByTimeAsync(10);
+      expect(fetchCalls).toBe(1);
+      const emit = async (text: string) => { stream.enqueue(encoder.encode("data: " + chunk({ content: text }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0); };
+      await emit("Supported текст 🧪 [S1:1].");
+      const first = (await h.agent.getTurns(projectId))[0];
+      if (!first) throw new Error("Missing first-text checkpoint");
+      expect(first.answer).toBe(pieces[0]); expect(first.firstTokenMs).not.toBeNull();
+      for (let n = 0; n < 9; n++) { await vi.advanceTimersByTimeAsync(100); pieces.push(" More текст 🧪."); await emit(" More текст 🧪."); }
+      expect((await h.agent.getTurns(projectId))[0]).toEqual(first);
+      await vi.advanceTimersByTimeAsync(100); pieces.push(" Checkpoint."); await emit(" Checkpoint.");
+      const checkpoint = (await h.agent.getSnapshot(projectId)).turns[0];
+      if (!checkpoint) throw new Error("Missing one-second checkpoint");
+      expect(checkpoint.answer).toBe(pieces.join("")); expect(checkpoint.historyVersion).toBe((first.historyVersion ?? 0) + 1);
+      expect(checkpoint.createdAt).toBe(first.createdAt);
+      await vi.advanceTimersByTimeAsync(100); pieces.push(" Final uncheckpointed tail [S1:1]."); await emit(" Final uncheckpointed tail [S1:1].");
+      expect((await h.agent.getTurns(projectId))[0]).toEqual(checkpoint);
+      stream.enqueue(encoder.encode("data: " + chunk({}, "stop", { prompt_tokens: 8, completion_tokens: 42, total_tokens: 50 }) + "\n\ndata: [DONE]\n\n")); stream.close();
+      await vi.advanceTimersByTimeAsync(0);
+      const terminal = requireTurn(await pending);
+      expect(terminal.answer).toBe(pieces.join("")); expect(terminal.state).toBe("completed");
+      expect(terminal.inputTokens).toBe(8); expect(terminal.outputTokens).toBe(42); expect(terminal.citations).toHaveLength(1);
+      expect(terminal.settlementPending).toBeUndefined(); expect(terminal.createdAt).toBe(first.createdAt);
+      expect((await h.agent.getSnapshot(projectId)).turns[0]).toEqual(terminal);
+      const frames = vi.mocked(h.agent.broadcast).mock.calls.map(([payload]) => JSON.parse(String(payload)) as { type: string; turn?: TurnView });
+      expect(frames.filter(frame => frame.type === "turn" && frame.turn?.state === "started" && frame.turn.answer)).toHaveLength(2);
+      expect(frames.filter(frame => frame.type === "turn").at(-1)?.turn).toEqual(terminal); expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
+  });
+  it("Stop persists text received inside the checkpoint window with unknown usage and no continuation", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    (h.env.AI as unknown as { fetch: (url: unknown, init?: RequestInit) => Promise<Response> }).fetch = async (_url, init) => {
+      fetchCalls++;
+      return new Response(new ReadableStream({ start(controller) { stream = controller;
+        init?.signal?.addEventListener("abort", () => controller.error(new DOMException("Aborted", "AbortError")), { once: true });
+      } }), { headers: { "Content-Type": "text/event-stream" } });
+    };
+    try {
+      await h.agent.onStart();
+      const id = "aaaaaaaa-aaaa-4aaa-8aaa-123456789002";
+      const pending = h.agent.submitTurn({ projectId, chatId, turnId: id, question: "Stop", scopeMode: "explicit", sourceIds: ["s1"] }, true);
+      for (let i = 0; i < 50 && fetchCalls === 0; i++) await vi.advanceTimersByTimeAsync(10);
+      stream.enqueue(encoder.encode("data: " + chunk({ content: "First [S1:1]." }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(400);
+      stream.enqueue(encoder.encode("data: " + chunk({ content: " New tail 🧪." }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0);
+      expect((await h.agent.getTurns(projectId))[0]?.answer).toBe("First [S1:1].");
+      await h.agent.stopTurn(projectId, id); await vi.advanceTimersByTimeAsync(0);
+      const stopped = requireTurn(await pending);
+      expect(stopped.answer).toBe("First [S1:1]. New tail 🧪."); expect(stopped.state).toBe("partial");
+      expect(stopped.error).toContain("Stopped."); expect(stopped.inputTokens).toBeNull(); expect(stopped.outputTokens).toBeNull();
+      expect(stopped.tokenLimit).toBe(TOKEN_BOUND); expect(stopped.citations).toHaveLength(1); expect(stopped.settlementPending).toBeUndefined();
+      expect((await h.agent.getSnapshot(projectId)).turns[0]).toEqual(stopped); expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
+  });
 });
 
 describe("ChatAgent older history", () => {

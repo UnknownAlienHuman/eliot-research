@@ -661,6 +661,8 @@ Resolve one `ModelSpec` for each turn and freeze it across admission, context li
 The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, record the token bound after
 provider admission, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
 citation, token, timing, invalid-label and terminal-state fields. Historical currency columns remain unchanged.
+First nonblank text and terminal/Stop results persist immediately; arriving text checkpoints and broadcasts the full
+turn at most once per second. Restart retains the last checkpoint; newer text can be lost without automatic continuation.
 WebSocket frames and reconnect expose state snapshots and never enqueue or dispatch paid work. An authorised history
 read/reconnect may finish the idempotent local save of an already accepted, proven-undispatched self-handoff or settle
 an already stored answer's D1 projection, as specified below; it does not admit work or change terminal D1 accounting.

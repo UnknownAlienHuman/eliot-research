@@ -453,7 +453,10 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const publish = () => {
         const firstText = turn.firstTokenMs === null && turn.answer.trim().length > 0;
         if (firstText) turn.firstTokenMs = Date.now() - started;
-        if (firstText || Date.now() - lastWrite > 100) { this.writeTurn(turn); lastWrite = Date.now(); }
+        // First text and terminal results persist immediately. Intermediate
+        // snapshots are bounded to once a second; a process crash can lose
+        // only the newer, uncheckpointed tail (no automatic continuation).
+        if (firstText || Date.now() - lastWrite >= 1000) { this.writeTurn(turn); lastWrite = Date.now(); }
       };
       for await (const text of result.textStream) {
         turn.answer += text;
