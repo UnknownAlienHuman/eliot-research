@@ -683,8 +683,11 @@ non-evidence; only original quoted passages provide evidence and citation labels
 count toward the same context budget.
 
 Estimate the final instructions/messages JSON as UTF-8 bytes / 3 plus existing per-message and fixed framing overhead.
-Assembly and dispatch use the same estimate without copying the full source JSON. This remains a planning estimate,
-not provider tokenization. `estimatedInputTokens` retains its content-only API meaning. Include newest in-scope history
+Assembly and dispatch use the same estimate without copying the full source JSON. This is a heuristic, not a guaranteed
+token upper bound or proof that a provider will accept the request. Unknown output defaults can also exceed the reserved
+headroom (the pinned Anthropic Claude adapter can serialize `max_tokens=128000` when Eliot omits the option); capacity
+and accounting stay unknown rather than adopting that default as published metadata. `estimatedInputTokens` retains
+its content-only API meaning. Include newest in-scope history
 up to 10% of context, charging JSON escaping and message framing during selection while retaining content-only totals. Public assistant history retains
 a citation only when the prior full ordered scope is a prefix of the current scope and its stored source, revision,
 block and exact range match a currently supplied passage. Render that citation with its current compact alias;
@@ -780,6 +783,9 @@ The materialization bound below is implemented by the current repair slice; chat
   decoded UTF-16 strings, conservative parsed-JSON overhead, metadata, labels, orientation and joined projections.
   Distill extraction and verification reuse the streamed canonical-text/block-map reader and the same per-operation
   allowance; extraction also charges decoded passages, escaped source JSON and joined projections before dispatch.
+  Verification and synthesis storage charge resolved canonical quotes, verifier slices/fold maps and joined evidence;
+  repeated references reuse one decoded block within the operation. Legacy maps are not rescanned or capped at the
+  current scanner's block size. Charges remain conservative allocation accounting, not measured heap usage.
   Charges are not released for discarded attempts. This is a product guard, not a measurement of V8's heap or a
   process-wide concurrency limit; SDKs, the caller's already-loaded turn payloads and other isolate requests need
   additional memory. The implementation PR records observed memory separately from this accounting bound.

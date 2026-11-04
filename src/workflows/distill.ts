@@ -78,6 +78,17 @@ async function canonicalSource(env: Env, revision: string) {
     throw new Error("The source has invalid readable blocks.");
   return { bytes, blocks, memory };
 }
+function quotedBlocks(bytes: Uint8Array, blocks: Block[], memory: Materialization) {
+  const cached = new Map<string, { block: number; quote: string }>();
+  return (label: string) => {
+    const existing = cached.get(label);
+    if (existing) return existing;
+    const passage = resolveQuoteBlock(bytes, blocks, label, size => reserve(memory, size));
+    if (!passage) throw new Error("The model selected a source block outside the frozen revision.");
+    cached.set(label, passage);
+    return passage;
+  };
+}
 async function put(env: Env, revision: string, name: string, value: unknown) {
   const body = typeof value === "string" ? value : JSON.stringify(value);
   const saved = await env.BUCKET.put(key(revision, name), body,
@@ -222,12 +233,8 @@ async function extract(env: Env, revisionId: string, model: ModelSpec) {
 async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
   const raw = await json<Raw<Extraction>>(env, revisionId, "distill-call1.json");
   if (!raw.output) throw new Error("The retained source material did not produce supported understanding. No paid step will be repeated.");
-  const { bytes, blocks } = await canonicalSource(env, revisionId);
-  const evidence = (label: string) => {
-    const passage = resolveQuoteBlock(bytes, blocks, label);
-    if (!passage) throw new Error("The model selected a source block outside the frozen revision.");
-    return passage;
-  };
+  const { bytes, blocks, memory } = await canonicalSource(env, revisionId);
+  const evidence = quotedBlocks(bytes, blocks, memory);
   const referenceErrors = new Map<number, string>();
   const candidates: CandidateClaim[] = raw.output.claims.map(({ quoteBlock, ...item }, index) => {
     const cleaned = cleanDistillText(item.statement, [quoteBlock], revisionId);
@@ -235,7 +242,7 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
     else if (checkDistillContent(item.statement, [quoteBlock], revisionId).empty) referenceErrors.set(index, "empty-claim-statement");
     return { ...item, statement: cleaned.text, ...evidence(quoteBlock) };
   });
-  const verified = verifyClaims(bytes, blocks, candidates);
+  const verified = verifyClaims(bytes, blocks, candidates, size => reserve(memory, size));
   const verifiedClaims = verified.claims;
   const rejectedCandidates = new Set(verified.dropped.map((item) => item.index));
   let verifiedIndex = 0;
@@ -255,7 +262,7 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec) {
   verified.claims = synthesisCandidates;
   const guideDropped: { index: number; reason: string }[] = [];
   const guide: GuideItem[] = raw.output.guide.flatMap((item, index) => {
-    const labels = [...new Set(item.labels)], quotes = labels.map((label) => evidence(label).quote).join("\n");
+    const labels = [...new Set(item.labels)], quotes = joinContext(memory, labels.map((label) => evidence(label).quote), "\n");
     const cleaned = cleanDistillText(item.text, labels, revisionId);
     if (cleaned.invalidReferences) { guideDropped.push({ index, reason: "guide-invalid-reference" }); return []; }
     const sentence = splitDistillStatements(item.text).find((part) => numbersSupported(cleanDistillText(part, labels, revisionId).text, quotes));
@@ -321,17 +328,15 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
     dropped.push({ index, reason: "claim-not-supported-by-own-quote" }); return [];
   });
   const byLabel = new Map(verified.evidence.map((item) => [item.label, item]));
-  const object = await env.BUCKET.get(key(revisionId, "text.md"));
-  if (!object) throw new Error("Readable text is missing.");
-  const bytes = new Uint8Array(await object.arrayBuffer());
-  const blocks = await json<Block[]>(env, revisionId, "blocks.json");
+  const { bytes, blocks, memory } = await canonicalSource(env, revisionId);
+  const canonicalBlock = quotedBlocks(bytes, blocks, memory);
   for (const item of verified.evidence) {
-    const canonical = resolveQuoteBlock(bytes, blocks, item.label);
-    if (!canonical || canonical.block !== item.block || canonical.quote !== item.quote)
+    const canonical = canonicalBlock(item.label);
+    if (canonical.block !== item.block || canonical.quote !== item.quote)
       throw new Error("The retained excerpts do not match the immutable source revision.");
   }
   // Cached output may predate a verifier fix; it gets the current byte/number checks too.
-  const rechecked = verifyClaims(bytes, blocks, selected);
+  const rechecked = verifyClaims(bytes, blocks, selected, size => reserve(memory, size));
   const primary = (item: VerifiedClaim, index: number, stage: string): VerifiedClaim[] => {
     const statement = resultStatement(item);
     if (statement === null) { dropped.push({ index, reason: `${stage}-missing-or-unsupported-primary-result` }); return []; }
@@ -361,7 +366,7 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
       task: item.task ?? null, metric: item.metric ?? null, dataset: item.dataset ?? null,
       valueText: item.valueText ?? null, unit: item.unit ?? null, conditions: item.conditions ?? null });
   }
-  const checked = verifyClaims(bytes, blocks, additional);
+  const checked = verifyClaims(bytes, blocks, additional, size => reserve(memory, size));
   let checkedIndex = 0;
   for (const [index, originalIndex] of additionalIndexes.entries()) {
     const rejected = checked.dropped.find((item) => item.index === index);
@@ -379,7 +384,7 @@ async function prepareSynthesis(env: Env, revisionId: string): Promise<Prepared>
     } else dropped.push({ index: originalIndex, reason: "claim-output-bound" });
   }
   if (checkedIndex !== checked.claims.length) throw new Error("The call-2 verifier lost candidate ordering.");
-  const evidence = (labels: string[]) => labels.map((label) => byLabel.get(label)?.quote ?? "").join("\n");
+  const evidence = (labels: string[]) => joinContext(memory, labels.map((label) => byLabel.get(label)?.quote ?? ""), "\n");
   const prose = (items: { text: string; labels: string[] }[], stage: string) => items.flatMap((item, index) => {
     const cleaned = cleanDistillText(item.text, item.labels, revisionId);
     if (cleaned.invalidReferences || !item.labels.every((label) => byLabel.has(label))) {

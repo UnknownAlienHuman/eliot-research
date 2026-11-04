@@ -77,6 +77,7 @@ export function resolveQuoteBlock(
   text: string | Uint8Array,
   blocks: readonly Block[],
   label: string,
+  allocate?: (bytes: number) => void,
 ): { block: number; quote: string } | undefined {
   if ((typeof text !== "string" && !(text instanceof Uint8Array)) || typeof label !== "string") return undefined;
   const match = COMPACT_LABEL_RE.exec(label);
@@ -88,6 +89,8 @@ export function resolveQuoteBlock(
   if (!Number.isSafeInteger(block) || block < 1) return undefined;
   const row = blocks.find((entry) => entry.id === block);
   if (row === undefined) return undefined;
+  if (Number.isSafeInteger(row.start) && Number.isSafeInteger(row.end) && row.start >= 0 && row.end > row.start)
+    allocate?.(2 * (row.end - row.start));
   let quote: string;
   try {
     quote = sliceUtf8(text, row.start, row.end);
@@ -201,7 +204,9 @@ export function splitDistillStatements(text: string): string[] {
 }
 
 /** Fold one slice; map[folded index] is the UTF-16 index of the source unit. */
-function foldText(input: string): { folded: string; map: number[] } {
+function foldText(input: string, allocate?: (bytes: number) => void): { folded: string; map: number[] } {
+  // Folded UTF-16 plus a conservatively charged growing numeric-index array.
+  allocate?.(20 * input.length + 128);
   let folded = "";
   const map: number[] = [];
   let i = 0;
@@ -238,10 +243,12 @@ function byteOffset(base: number, slice: string, utf16Index: number): number {
   return offset;
 }
 
-function loadSlices(bytes: Uint8Array, blocks: readonly Block[]): Map<number, Slice> {
+function loadSlices(bytes: Uint8Array, blocks: readonly Block[], allocate?: (bytes: number) => void): Map<number, Slice> {
   const out = new Map<number, Slice>();
   for (const block of blocks) {
     if (!Number.isInteger(block.id) || block.id < 1) continue;
+    if (Number.isSafeInteger(block.start) && Number.isSafeInteger(block.end) && block.start >= 0 && block.end >= block.start && block.end <= bytes.byteLength)
+      allocate?.(2 * (block.end - block.start) + 64);
     let slice: string;
     try {
       slice = sliceUtf8(bytes, block.start, block.end);
@@ -277,12 +284,12 @@ function exactHits(slices: Map<number, Slice>, order: number[], quote: string): 
   return hits;
 }
 
-function foldedHits(slices: Map<number, Slice>, order: number[], foldedQuote: string): Hit[] {
+function foldedHits(slices: Map<number, Slice>, order: number[], foldedQuote: string, allocate?: (bytes: number) => void): Hit[] {
   const hits: Hit[] = [];
   for (const id of order) {
     const slice = slices.get(id);
     if (slice === undefined) continue;
-    const { folded, map } = slice.fold ??= foldText(slice.text);
+    const { folded, map } = slice.fold ??= foldText(slice.text, allocate);
     let from = 0;
     while (hits.length < 2) {
       const at = folded.indexOf(foldedQuote, from);
@@ -317,14 +324,16 @@ export function verifyClaims(
   text: string | Uint8Array,
   blocks: readonly Block[],
   candidates: readonly CandidateClaim[],
+  allocate?: (bytes: number) => void,
 ): { claims: VerifiedClaim[]; dropped: { index: number; reason: string }[]; clearedNumbers: number } {
   const claims: VerifiedClaim[] = [];
   const dropped: { index: number; reason: string }[] = [];
   let clearedNumbers = 0;
   if (candidates.length === 0) return { claims, dropped, clearedNumbers };
   const bytes = typeof text === "string" ? encoder.encode(text) : text;
-  const slices = loadSlices(bytes, blocks);
+  const slices = loadSlices(bytes, blocks, allocate);
   candidates.forEach((candidate, index) => {
+    if (typeof candidate.quote === "string") allocate?.(2 * candidate.quote.length);
     if (typeof candidate.quote !== "string" || candidate.quote.replace(/[\s\u00AD]/gu, "") === "") {
       dropped.push({ index, reason: "empty-quote" });
       return;
@@ -336,14 +345,15 @@ export function verifyClaims(
     const order = scopeOrder(slices, candidate.block);
     let hits = exactHits(slices, order, candidate.quote);
     if (hits.length === 0) {
-      const foldedQuote = foldText(candidate.quote).folded;
-      hits = foldedQuote === "" ? [] : foldedHits(slices, order, foldedQuote);
+      const foldedQuote = foldText(candidate.quote, allocate).folded;
+      hits = foldedQuote === "" ? [] : foldedHits(slices, order, foldedQuote, allocate);
     }
     const first = hits[0];
     if (first === undefined) {
       dropped.push({ index, reason: "unmatched" });
       return;
     }
+    allocate?.(2 * (first.end - first.start));
     const verifiedText = sliceUtf8(bytes, first.start, first.end);
     if (!numbersSupported(candidate.statement, verifiedText)) {
       dropped.push({ index, reason: "unsupported-statement-numbers" });

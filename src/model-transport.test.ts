@@ -1,7 +1,35 @@
 import { streamText } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import { resolveModelTransport } from "./model-transport";
-import { DEFAULT_MODEL, MODELS, modelOutputLimit, modelOutputReserve, type ModelSpec } from "./models";
+import { DEFAULT_MODEL, MODELS, modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, type ModelSpec } from "./models";
+import { estimateModelInput } from "./model-input";
+
+it("captures the pinned Anthropic default near the estimated input boundary while accounting remains unknown", async () => {
+  const provider = { id: "fixture", type: "openai-compatible" as const, gatewaySlug: "fixture", gatewayPath: "v1", enabled: true, baseUrl: "https://vendor.example/api" };
+  const model: ModelSpec = { route: "gateway:fixture/claude-fixture", id: "claude-fixture", label: "Offline boundary fixture",
+    contextTokens: 64000, contextWindowTokens: 64000, maxOutputTokens: null, outputReserveTokens: 8192,
+    checkedOn: "2026-11-04", enabled: true, routing: { provider, gatewayId: "fixture" }, apiProtocol: "anthropic", apiBaseUrl: provider.baseUrl };
+  const inputBudget = modelInputLimit(model), instructions = "Offline boundary capture.";
+  const framing = estimateModelInput({ instructions, messages: [{ role: "user", content: "" }] });
+  const messages = [{ role: "user" as const, content: "x".repeat((inputBudget - framing) * 3) }];
+  const estimate = estimateModelInput({ instructions, messages });
+  expect(estimate).toBe(inputBudget);
+  expect(modelOutputLimit(model, estimate)).toBeUndefined();
+  let captured: Record<string, unknown> | undefined;
+  const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    captured = JSON.parse(String(init?.body));
+    throw new Error("Offline capture only, no upstream request.");
+  });
+  const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+  try {
+    const transport = await resolveModelTransport({ AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] }, model, "boundary-capture");
+    await expect(streamText({ model: transport, instructions, messages, maxRetries: 0 }).text).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(1); expect(network).not.toHaveBeenCalled();
+    expect(captured?.max_tokens).toBe(128000);
+    expect(estimate + Number(captured?.max_tokens)).toBeGreaterThan(model.contextWindowTokens ?? Infinity);
+    expect(model.maxOutputTokens).toBeNull(); expect(modelTokenLimit(model)).toBeNull();
+  } finally { network.mockRestore(); }
+});
 
 describe("native fallback reasoning request", () => {
   it.each([32768, 4096, null])("forwards low and the published %s output maximum through the installed adapter", async (capacity) => {
