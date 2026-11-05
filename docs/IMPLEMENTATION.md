@@ -101,6 +101,50 @@ On 2026-10-25 the owner retained the existing legacy `eliotr-core.kleymor-metal.
 no replacement deployment or new-domain setup has been performed. Live browser and deployed owner-token acceptance
 remain separate from local/signed-fixture checks.
 
+### Replacing the existing Worker
+
+The owner authorized replacing the version at the existing `eliotr-core` address on 2026-11-05. The prepared
+`env.production` keeps that Worker name and its existing `workers.dev` hostname; it does not create a staging address.
+Build with `pnpm cf:production-dry-run`. Vite selects `CLOUDFLARE_ENV=production` at build time; a later deploy flag
+does not retarget the artifact. Inspect the config named by `.wrangler/deploy/config.json` before any remote action
+([Vite environments](https://developers.cloudflare.com/workers/vite-plugin/reference/cloudflare-environments/)).
+
+The active legacy Worker already uses declarative `exports`. `src/production.ts` exports the new `ChatAgent` as
+`ResearchSession`; `CHAT` binds to that same existing export, with SQLite storage and no DO lifecycle migration.
+Generate binding types with `pnpm cf:types`, which targets the production entrypoint so Wrangler resolves the
+`ResearchSession` alias rather than producing an untyped namespace union. Both environments use the same binding
+contracts. The logical `/agents/chat-agent` route is unchanged. This reuses the existing namespace, not a new namespace; it is
+allowed only after a fresh pre-cutover check confirms the namespace has no stored objects. Stop if it is nonempty.
+Cloudflare documents the [named-export alias](https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/#avoid-downtime-during-a-rename).
+`pnpm eval k4 --signed-agent-miniflare --production-build` checks this exact build with synthetic JWKS and local
+D1/R2: authenticated ChatAgent RPC and WebSocket 101 through the alias, forged-Origin 403, separate Access audiences,
+the built owner HTML/JS assets, MCP reads/proposals and zero model calls. The same production probe runs in fast-ci
+after default-build browser checks. This is local evidence, not deployed Access acceptance.
+
+Provision a separate **working** library D1/R2 under `eliot-research-library`, not a staging copy. The all-zero UUID is
+a non-resource placeholder until the new D1 ID is returned. Apply all active `migrations/*.sql` there, including
+`0013` and excluding archived `0004`. Keep both legacy databases, all legacy buckets and the old Workflow intact;
+never apply replacement SQL to the legacy schema or delete its data. Existing legacy data remains retained but is
+not automatically visible in the replacement; verified K10 import is a separate operation.
+
+Before cutover, save the active version/config, obtain legacy D1 Time Travel bookmarks, and recheck DO objects,
+Workflow activity and both queue backlogs. Full D1 SQL export can temporarily block queries and belongs in the
+planned maintenance window. Quiesce old producers/cron, pause delivery and detach old queue consumers without
+purging messages or deleting queues. The new config has no queue consumers; its `*/5 * * * *` cron reconciles only
+already owner-requested native work under existing admission limits. It replaces both old legacy schedules. Keep the
+old configuration for restoration; queues retain messages only for their configured retention period even when paused.
+
+Set the verified account, existing Access team/UI audience/MCP audience/owner and exact origins before deployment.
+Access policies, service tokens and provider credentials are not created or changed by this configuration. Existing
+hostname Access already protects the address; keep previews disabled and `ELIOT_LOCAL_DEV=0`. Empty auth values fail
+closed until configured. Start live acceptance with owner login, API, WebSocket and native Markdown/read/range only.
+
+Rollback must restore the old code **and its bindings/triggers/consumers** while retaining the new library resources.
+The alias makes no DO lifecycle change, but new chat data is not promised compatible with old ResearchSession code;
+the old app must continue using its old D1 mappings. Do not delete resources or treat Worker rollback as a data restore
+([rollback limits](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)). All deployment,
+remote provisioning, queue changes and live acceptance remain NOT_RUN by these local preparation commands.
+
 ## 3. Data and immutable writes
 
 Migrations own schema names:

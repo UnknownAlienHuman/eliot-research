@@ -33,5 +33,47 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "run_worker_first": true
+  },
+  "env": {
+    "production": {
+      "name": "eliotr-core",
+      "main": "src/production.ts",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": [],
+      "assets": { "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": true },
+      // Preserve the existing class/namespace identity, with no lifecycle migration.
+      "migrations": [],
+      "exports": { "ResearchSession": { "type": "durable-object", "storage": "sqlite" } },
+      "durable_objects": { "bindings": [{ "name": "CHAT", "class_name": "ResearchSession" }] },
+      // Replace legacy schedules with reconciliation of already requested native work.
+      "triggers": { "crons": ["*/5 * * * *"] },
+      "queues": { "producers": [], "consumers": [] },
+      "d1_databases": [{
+        "binding": "DB", "database_name": "eliot-research-library",
+        // Replace with the new library database UUID. Never use either legacy D1 ID.
+        "database_id": "00000000-0000-0000-0000-000000000000",
+        "migrations_dir": "migrations", "remote": false
+      }],
+      "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "eliot-research-library", "remote": false }],
+      "ai": { "binding": "AI", "remote": false },
+      "workflows": [
+        { "binding": "INGEST", "name": "eliot-research-ingest", "class_name": "IngestWorkflow" },
+        { "binding": "DISTILL", "name": "eliot-research-distill", "class_name": "DistillWorkflow" },
+        { "binding": "OCR", "name": "eliot-research-ocr", "class_name": "OcrWorkflow" }
+      ],
+      "vars": {
+        "ELIOT_CF_ACCOUNT_ID": "",
+        "ELIOT_ACCESS_TEAM_DOMAIN": "",
+        "ELIOT_ACCESS_AUD": "",
+        "ELIOT_MCP_ACCESS_AUD": "",
+        "ELIOT_OWNER_EMAIL": "",
+        "ELIOT_OWNER_SERVICE_TOKEN": "",
+        "ELIOT_ORIGIN": "https://eliotr-core.kleymor-metal.workers.dev",
+        "ELIOT_MCP_ORIGIN": "https://eliotr-core.kleymor-metal.workers.dev",
+        "ELIOT_LOCAL_DEV": "0"
+      },
+      "observability": { "enabled": true, "redact_query_string": true }
+    }
   }
 }
