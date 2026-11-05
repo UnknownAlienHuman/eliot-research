@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import ReactMarkdown, { type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -84,6 +84,22 @@ function MathSpan({ node, children, ...props }: ComponentProps<'span'> & ExtraPr
     ? <DisplayMath>{span}</DisplayMath> : span;
 }
 
+// Keep the component identity stable so snapshots do not replace focused anchors.
+const MarkdownLinks = createContext({
+  targets: new Map<string, { label: string }>(), numbers: new Map<string, number>(),
+});
+function MarkdownLink({ href, children, title, node }: ComponentProps<'a'> & ExtraProps) {
+  const { targets, numbers } = useContext(MarkdownLinks);
+  const target = href === undefined ? undefined : targets.get(href);
+  if (target && node?.properties.dataCitation) {
+    const key = href ?? '', number = numbers.get(key) ?? numbers.size + 1;
+    numbers.set(key, number);
+    return <Link className='er-citation er-citation--inline' to={key} title={target.label}
+      aria-label={'Citation ' + number + ': ' + target.label}>{number}</Link>;
+  }
+  return target ? <Link to={href ?? ''} title={title}>{children}</Link> : <a href={href} title={title}>{children}</a>;
+}
+
 export function Markdown({ text, references = [] }: { readonly text: string; readonly references?: readonly MarkdownReference[] }) {
   const markdown = mathDelimiters(text);
   // Micromark omits exactly one leading BOM from its source offsets.
@@ -137,17 +153,8 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
     }
     return visit;
   }
-  return <ReactMarkdown skipHtml remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[citationLinks, [rehypeKatex, { output: 'mathml', trust: false, errorColor: 'currentColor' }]]} components={{ img: () => null,
+  return <MarkdownLinks.Provider value={{ targets, numbers }}><ReactMarkdown skipHtml remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[citationLinks, [rehypeKatex, { output: 'mathml', trust: false, errorColor: 'currentColor' }]]} components={{ img: () => null,
     span: MathSpan,
-    a: ({ href, children, title, node }) => {
-      const target = href === undefined ? undefined : targets.get(href);
-      if (target && node?.properties.dataCitation) {
-        const key = href ?? '', number = numbers.get(key) ?? numbers.size + 1;
-        numbers.set(key, number);
-        return <Link className='er-citation er-citation--inline' to={key} title={target.label}
-          aria-label={'Citation ' + number + ': ' + target.label}>{number}</Link>;
-      }
-      return target ? <Link to={href ?? ''} title={title}>{children}</Link> : <a href={href} title={title}>{children}</a>;
-    },
-  }}>{markdown}</ReactMarkdown>;
+    a: MarkdownLink,
+  }}>{markdown}</ReactMarkdown></MarkdownLinks.Provider>;
 }

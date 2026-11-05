@@ -1293,7 +1293,8 @@ Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:
 Every screen has loading, empty and actionable error states plus stale/paused where relevant. Use one Markdown renderer
 with raw HTML disabled and resolved citation chips. Inline citations show one compact number per distinct passage
 URL in visible occurrence order; compact/persistent aliases share that number, while hidden definitions and unused metadata consume none. Their accessible names and hover titles
-retain the full source title and block, with 24px minimum targets and visible keyboard focus. Full source lists retain
+retain the full source title and block, with 24px minimum targets and visible keyboard focus. Snapshot and streaming
+rerenders retain existing link elements and their keyboard focus. Full source lists retain
 their title labels. This changes presentation only, never the immutable revision or byte-range destination.
 Do not cache private text in localStorage or a service worker.
 An exact registered compact/persistent citation token keeps its resolved Reader target even when Markdown has a

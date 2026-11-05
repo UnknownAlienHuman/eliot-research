@@ -738,6 +738,7 @@ try {
     assert(await inlineCitations.nth(1).evaluate(el => el.matches(':focus-visible') && getComputedStyle(el).outlineStyle !== 'none'
       && parseFloat(getComputedStyle(el).outlineWidth) >= 2), 'Keyboard focus must remain visible.');
     await page.screenshot({ path: outDir + '/' + (viewport.width === 1440 ? 'desktop' : 'phone') + '-compact-citations.png' });
+    await expect(inlineCitations.nth(1)).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(origin + '/p/' + readerProject + '/source/' + readerSource
       + '?revisionId=' + revisionId + '&start=' + longBlock.start + '&end=' + longBlock.end);

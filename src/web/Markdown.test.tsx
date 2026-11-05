@@ -1,4 +1,6 @@
-import { createElement } from 'react';
+// @vitest-environment jsdom
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
@@ -14,6 +16,33 @@ function render(text: string, refs: readonly MarkdownReference[] = references) {
 }
 
 describe('Markdown citation rendering', () => {
+  it.each(['.er-citation--inline', 'a:not(.er-citation--inline)'])(
+    'preserves focused %s across snapshot and streaming rerenders', async (selector) => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host);
+    const text = `${compact} and ${persistent}. [Ordinary](https://example.com)`;
+    const update = async (body: string) => {
+      // Chat snapshots rebuild citation references even when the answer is unchanged.
+      await act(async () => root.render(createElement(MemoryRouter, null,
+        createElement(Markdown, { text: body, references: references.map(ref => ({ ...ref })) }))));
+    };
+    try {
+      await update(text);
+      const anchor = host.querySelector<HTMLAnchorElement>(selector);
+      if (!anchor) throw new Error('Missing link: ' + selector);
+      anchor.focus();
+      expect(document.activeElement).toBe(anchor);
+      for (const body of [text, text + ' More streamed text.']) {
+        await update(body);
+        expect(document.activeElement).toBe(anchor);
+        expect(host.querySelector(selector)).toBe(anchor);
+        expect(anchor.getAttribute('href')).toBe(selector.startsWith('.') ? href : 'https://example.com');
+        expect([...host.querySelectorAll('.er-citation--inline')].map(el => el.textContent)).toEqual(['1', '1']);
+      }
+    } finally { await act(async () => root.unmount()); host.remove(); }
+  });
+
   it.each(['chat', 'saved'].flatMap(kind => [
     { format: 'plain', prefix: 'Claim ' },
     { format: 'leading BOM', prefix: '\uFEFF\n\n' },
