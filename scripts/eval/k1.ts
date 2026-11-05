@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import { assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 // K1 Read eval: exact API transport only, no fallbacks.
 // H (Origin + owner credentials) goes only to ELIOT_URL. External PDF downloads send no headers.
@@ -575,7 +575,16 @@ try {
   await page.goto(origin);
   await page.getByLabel('New project', { exact: true }).fill(name);
   await page.getByRole('button', { name: 'Create', exact: true }).click();
+  const createdProjectPath = await page.getByRole('link', { name, exact: true }).getAttribute('href');
+  assert(createdProjectPath, 'The created project must have a workspace link.');
+  const initialSourcesUrl = origin + '/api/projects/' + createdProjectPath.split('/')[2] + '/sources';
+  let delayedSources: Route | undefined;
+  await page.route(initialSourcesUrl, route => {
+    if (route.request().method() === 'GET' && !delayedSources) { delayedSources = route; return; }
+    return route.continue();
+  });
   await page.getByRole('link', { name, exact: true }).click();
+  await expect.poll(() => delayedSources !== undefined).toBe(true);
   let activeUploads = 0, peakUploads = 0;
   page.on('request', (request) => { if (request.method() === 'POST' && request.url().endsWith('/sources/file')) peakUploads = Math.max(peakUploads, ++activeUploads); });
   page.on('response', (response) => { if (response.request().method() === 'POST' && response.url().endsWith('/sources/file')) activeUploads--; });
@@ -590,6 +599,12 @@ try {
   let addDialog = await openAddSources(page);
   await addDialog.getByLabel('Choose files', { exact: true }).setInputFiles(batchFiles);
   await addDialog.getByRole('button', { name: 'Close', exact: true }).click();
+  // Upload progress remains in the closed native dialog and is hidden from normal role queries.
+  const uploadProgress = page.getByRole('dialog', { name: 'Add sources', exact: true, includeHidden: true });
+  await expect(uploadProgress.locator('.er-lib__progress li').filter({ hasText: / — Uploaded$/ })).toHaveCount(batchFiles.length);
+  // A pre-upload first page must not hide the confirmed files or stop conversion polling.
+  await delayedSources?.fulfill({ json: { sources: [], nextCursor: null } }).catch(() => {});
+  await page.unroute(initialSourcesUrl);
   await page.getByRole('link', { name: name + '-0.md', exact: true }).click({ timeout: 10000 });
   await expect(page.locator('.er-lib__text')).toContainText('Точный русский текст', { timeout: 10000 });
   const reader = new URL(page.url()), revisionId = reader.searchParams.get('revisionId');

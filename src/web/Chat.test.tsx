@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
-import { act } from 'react';
+import { act, StrictMode, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider, useParams } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveAnswer } from '../pages';
-import type { TurnView } from '../shared/api';
+import type { SourceSelection, TurnView } from '../shared/api';
 import { ChatView } from './Chat';
 
 vi.mock('./ModelPicker', () => ({ ModelPicker: () => null }));
@@ -156,4 +156,172 @@ it.each(['before', 'after'])('retains the pending mutation when an old success a
   expect(saves[3]?.mutationId).not.toBe(saves[0]?.mutationId);
   await act(async () => replies[3]?.resolve(json({ page: replies[3]?.page }, 201))); await settle();
   expect(db.prepare('SELECT COUNT(*) AS n FROM page').get()?.n).toBe(2);
+});
+
+
+describe('Chat snapshot source selection', () => {
+  let historyReply: { resolve(response: Response): void; reject(error: Error): void };
+  const historyReads: Array<typeof historyReply & { signal: AbortSignal | null | undefined }> = [];
+  const sockets: Array<{ onmessage?: (event: { data: string }) => void }> = [];
+  let chooseScope: (scope: SourceSelection) => void;
+  let changeQuestion: (question: string) => void;
+  let deferReceipt: boolean, receiptReply: (response: Response) => void;
+  let currentScope: SourceSelection;
+  let posts: Array<{ scopeMode: string; sourceIds?: string[]; turnId: string }>;
+  let stored: TurnView;
+  const snapshot = () => ({ turns: [stored], nextCursor: null, queued: null, stateVersion: 3 });
+  async function receiveSnapshot() {
+    await act(async () => { sockets.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'snapshot', ...snapshot() }) }); });
+  }
+  async function failHistory() {
+    await act(async () => { historyReply.reject(new TypeError('Transient GET failure')); }); await settle();
+  }
+  async function resolveHistory() {
+    await act(async () => { historyReply.resolve(json({ chat: { id: router.state.location.pathname.split('/').at(-1) }, ...snapshot() })); }); await settle();
+  }
+  async function submit() {
+    const form = host.querySelector<HTMLFormElement>('form');
+    if (!form) throw new Error('Missing chat composer');
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    await settle();
+  }
+  function Subject() {
+    const [selection, setSelection] = useState<SourceSelection>({ scopeMode: 'project_default', sourceIds: [] });
+    const [question, setQuestion] = useState('Follow up');
+    currentScope = selection; chooseScope = setSelection; changeQuestion = setQuestion;
+    const { chatId } = useParams();
+    return <ChatView projectId='p1' {...(chatId ? { chatId } : {})} selection={selection} question={question}
+      onQuestionChange={setQuestion} onSelectionChange={setSelection} onNewChat={() => {}} onSavedPage={() => {}} />;
+  }
+  beforeEach(async () => {
+    vi.stubGlobal('WebSocket', class { constructor() { sockets.push(this); } close() {} onmessage?: (event: { data: string }) => void; });
+    stored = { ...turn('t1'), createdAt: 1, historyVersion: 2 }; posts = []; sockets.length = 0; historyReads.length = 0; deferReceipt = false;
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/models') return json({ models: [], warnings: [] });
+      if (url === '/api/projects/p1/chats' && init?.method === 'POST') {
+        const creation = JSON.parse(String(init.body)) as { id: string; title: string };
+        return json({ chat: { ...creation, updatedAt: 1 } });
+      }
+      if (url === '/api/projects/p1/chats') return json({ chats: [{ id: 'c1', title: 'Existing conversation', updatedAt: 1 }], nextCursor: null });
+      if (/^\/api\/projects\/p1\/chats\/[^/]+\/turns$/.test(url) && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as typeof posts[number]; posts.push(body);
+        if (deferReceipt) return new Promise<Response>(resolve => { receiptReply = resolve; });
+        return json({ turnId: body.turnId });
+      }
+      expect(url).toMatch(/^\/api\/projects\/p1\/chats\/[^/]+$/);
+      return new Promise<Response>((resolve, reject) => {
+        historyReply = { resolve, reject }; historyReads.push({ ...historyReply, signal: init?.signal });
+      });
+    }));
+    router = createMemoryRouter([{ path: '/p/:projectId/chat/:chatId?', element: <Subject /> }], { initialEntries: ['/p/p1/chat/c1'] });
+    await act(async () => { root.render(<StrictMode><RouterProvider router={router} /></StrictMode>); }); await settle();
+  });
+  it('retries the active history read after StrictMode aborts the first request', async () => {
+    expect(historyReads).toHaveLength(2);
+    expect(historyReads[0]?.signal?.aborted).toBe(true);
+    expect(historyReads[1]?.signal?.aborted).toBe(false);
+    // The browser fixture must fail every pending GET, not just the aborted first one.
+    await act(async () => {
+      for (const read of historyReads) read.resolve(json({ error: { message: 'Initial history unavailable' } }, 503));
+    }); await settle();
+    const retry = [...host.querySelectorAll('button')].find(button => button.textContent === 'Retry');
+    expect(host.textContent).toContain('Initial history unavailable');
+    if (!retry) throw new Error('Missing history Retry');
+    await act(async () => { retry.click(); }); await settle();
+    expect(historyReads).toHaveLength(3);
+    expect(historyReads[2]?.signal?.aborted).toBe(false);
+    expect(posts).toHaveLength(0);
+    await receiveSnapshot(); await resolveHistory(); await submit();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.sourceIds).toEqual(['s1']);
+  });
+  it.each(['explicit', 'empty'] as const)('restores %s scope before Send when the socket precedes HTTP', async scopeMode => {
+    stored = { ...stored, scopeMode, sourceIds: scopeMode === 'explicit' ? ['s1'] : [],
+      revisionIds: scopeMode === 'explicit' ? ['r1'] : [], citations: scopeMode === 'explicit' ? [citation] : [],
+      answer: scopeMode === 'explicit' ? stored.answer : 'Saved evidence-free answer' };
+    await receiveSnapshot();
+    expect(host.textContent).toContain('Saved evidence');
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
+    await submit();
+    await resolveHistory();
+    expect(currentScope).toEqual({ scopeMode, sourceIds: stored.sourceIds });
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.scopeMode).toBe(scopeMode);
+    expect(posts[0]?.sourceIds).toEqual(scopeMode === 'explicit' ? ['s1'] : undefined);
+  });
+  it.each(['GET fails first', 'socket first'])('restores source scope when %s and the other transport fails', async order => {
+    if (order === 'GET fails first') await failHistory();
+    await receiveSnapshot();
+    if (order === 'socket first') await failHistory();
+    await submit();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.scopeMode).toBe('explicit');
+    expect(posts[0]?.sourceIds).toEqual(['s1']);
+  });
+  it('keeps HTTP-first restoration and later reconnects consistent', async () => {
+    await resolveHistory(); await receiveSnapshot(); await submit();
+    expect(posts[0]?.scopeMode).toBe('explicit'); expect(posts[0]?.sourceIds).toEqual(['s1']);
+  });
+  it('does not restore a later reconnect scope after initial hydration', async () => {
+    await receiveSnapshot(); await resolveHistory();
+    stored = { ...stored, turnId: 't2', createdAt: 2, sourceIds: ['s2'] };
+    await receiveSnapshot(); await submit();
+    expect(currentScope).toEqual({ scopeMode: 'explicit', sourceIds: ['s1'] });
+    expect(posts[0]?.sourceIds).toEqual(['s1']);
+  });
+  it('restores from the merged latest live turn rather than an older head', async () => {
+    const newer = { ...stored, turnId: 't2', createdAt: 2, sourceIds: ['s2'] };
+    await act(async () => { sockets.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'turn', turn: newer }) }); });
+    await receiveSnapshot(); await submit();
+    expect(currentScope).toEqual({ scopeMode: 'explicit', sourceIds: ['s2'] });
+    expect(posts[0]?.sourceIds).toEqual(['s2']);
+  });
+  it.each(['before hydration', 'after socket'])('preserves a manual selection made %s across both transports and reconnect', async timing => {
+    if (timing === 'after socket') await receiveSnapshot();
+    await act(async () => { chooseScope({ scopeMode: 'explicit', sourceIds: ['s2'] }); });
+    await receiveSnapshot(); await resolveHistory(); await receiveSnapshot(); await submit();
+    expect(currentScope).toEqual({ scopeMode: 'explicit', sourceIds: ['s2'] });
+    expect(posts[0]?.sourceIds).toEqual(['s2']);
+  });
+  it.each(['HTTP first', 'socket first'].flatMap(order => ['unchanged', 'empty', 'explicit empty'].map(choice => ({ order, choice }))))('keeps $choice scope through history Retry with $order', async ({ order, choice }) => {
+      await failHistory();
+      if (choice !== 'unchanged') await act(async () => { chooseScope({ scopeMode: choice === 'empty' ? 'empty' : 'explicit', sourceIds: [] }); });
+      const retry = [...host.querySelectorAll('button')].find(button => button.textContent === 'Retry');
+      if (!retry) throw new Error('Missing history Retry');
+      await act(async () => { retry.click(); }); await settle();
+      expect(posts).toHaveLength(0);
+      if (order === 'HTTP first') { await resolveHistory(); await receiveSnapshot(); }
+      else { await receiveSnapshot(); await resolveHistory(); }
+      await submit();
+      const scopeMode = choice === 'empty' ? 'empty' : 'explicit';
+      expect(currentScope).toEqual({ scopeMode, sourceIds: choice === 'unchanged' ? ['s1'] : [] });
+      expect(posts).toHaveLength(1);
+      expect(posts[0]?.scopeMode).toBe(scopeMode);
+      expect(posts[0]?.sourceIds).toEqual(choice === 'empty' ? undefined : choice === 'unchanged' ? ['s1'] : []);
+    });
+  it('keeps a manual empty scope when retrying a later settlement notice', async () => {
+    await receiveSnapshot(); await resolveHistory();
+    await act(async () => { chooseScope({ scopeMode: 'empty', sourceIds: [] }); });
+    await act(async () => { sockets.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'queued', stateVersion: 4,
+      queued: null, settlementError: 'Usage save needs retry' }) }); });
+    const retry = [...host.querySelectorAll('button')].find(button => button.textContent === 'Retry');
+    if (!retry) throw new Error('Missing settlement Retry');
+    await act(async () => { retry.click(); }); await settle();
+    await receiveSnapshot(); await resolveHistory(); await submit();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.scopeMode).toBe('empty'); expect(posts[0]?.sourceIds).toBeUndefined();
+  });
+  it('keeps a newly selected scope when the first Send navigates to its new chat', async () => {
+    await act(async () => { await router.navigate('/p/p1/chat'); }); await settle();
+    await act(async () => { chooseScope({ scopeMode: 'explicit', sourceIds: ['s1'] }); changeQuestion('First question'); });
+    deferReceipt = true;
+    await submit();
+    expect(posts[0]?.sourceIds).toEqual(['s1']);
+    await act(async () => { chooseScope({ scopeMode: 'explicit', sourceIds: ['s2'] }); });
+    await act(async () => { receiptReply(json({ turnId: posts[0]?.turnId })); }); await settle();
+    expect(router.state.location.pathname).toMatch(/\/chat\/[^/]+$/);
+    await receiveSnapshot(); await resolveHistory();
+    expect(currentScope).toEqual({ scopeMode: 'explicit', sourceIds: ['s2'] });
+  });
 });

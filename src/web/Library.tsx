@@ -209,6 +209,7 @@ function understandingTone(state: Source["distillState"]): string {
 }
 
 export function SourcesPane({ projectId, selection, onSelectionChange }: SourcesPaneProps) {
+  const client = useQueryClient();
   const headingId = useId();
   const dialogId = useId();
   const dialogHeadingId = useId();
@@ -244,6 +245,7 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
   const cursor = sourceQuery.data?.pages.at(-1)?.nextCursor ?? null;
   const failure = actionFailure || sourceQuery.error?.message || "";
   async function load() {
+    await client.cancelQueries({ queryKey: ["sources", projectId], exact: true });
     const result = await sourceQuery.refetch();
     setFailure(result.error?.message ?? "");
   }

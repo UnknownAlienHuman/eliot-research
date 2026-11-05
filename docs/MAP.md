@@ -138,6 +138,8 @@ its text preview, and Apply a new readable revision while retaining the original
 3. Browser batch UX sends **one file per request**, with at most two uploads in flight. The API accepts one file up to
    25 MiB, never a 100 MiB buffered multipart batch. Text and URL have separate JSON routes/shapes. IMPLEMENTATION §4.
    Text/URL forms allow one pending request each and retain edits made while waiting for its response.
+   Confirmed additions cancel older source-list reads before refreshing, so new sources become selectable even
+   while the project's first list load was pending.
 4. Hash, store original under an immutable R2 key, create pending rows and start deterministic
    `ingest-<revisionId>`. Exact duplicates are reported with Attach; never silently merged. Concurrent uploads or
    replacements cannot admit the same bytes for different live sources; deliberate reconversion within one source remains available.
@@ -260,6 +262,8 @@ An explicit repeat of an unconfirmed Send in the same composer reuses its ID, un
 a new question or a repeat after confirmation has a new ID. See IMPLEMENTATION §8 for the volatile-draft boundary.
 New-chat creation also retains its UUID/title for explicit replay. After reload, History opens a committed chat/result
 without resending; it does not reconstruct an unaccepted draft.
+The first HTTP or socket history restores the prior source scope before Send becomes ready. A slow or failed HTTP
+read cannot widen a socket-restored chat's scope; later reconnects preserve the owner's current selection.
 Missing citation/numeric-support spans remain API/eval diagnostics without frames in the owner answer. They do not
 change stream state. A completed generation can
 still fail the quality gate; diagnostics do not waive citation, expected-fact or owner-review requirements.
