@@ -46,6 +46,150 @@ beforeEach(() => {
     INSERT INTO chat_turn(chat_id,turn_id,model,scope_mode,scope_json,context_mode,state,created_at)
       VALUES('c1','t1','fixture','explicit','["r1"]','whole','completed',1),('c1','t2','fixture','explicit','["r1"]','whole','completed',2);`);
 });
+
+describe('New chat from an unconfirmed first Send', () => {
+  type Request = { url: string; body: Record<string, string> };
+  async function openDraft(reply: (request: Request) => Promise<Response>) {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | globalThis.Request, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'POST') return reply({ url, body: JSON.parse(String(init.body)) as Request['body'] });
+      if (url === '/api/models') return json({ models: [], warnings: [] });
+      if (url === '/api/projects/p1/chats') return json({ chats: [], nextCursor: null });
+      expect(url).toMatch(/^\/api\/projects\/p1\/chats\/[^/]+$/);
+      return json({ chat: { id: url.split('/').at(-1) }, turns: [], nextCursor: null, queued: null, stateVersion: 1 });
+    }));
+    function Subject() {
+      const { chatId } = useParams();
+      const [question, setQuestion] = useState('First question');
+      const [selection, setSelection] = useState<SourceSelection>({ scopeMode: 'explicit', sourceIds: ['s1'] });
+      return <ChatView projectId='p1' {...(chatId ? { chatId } : {})} selection={selection} question={question}
+        onQuestionChange={setQuestion} onSelectionChange={setSelection}
+        onNewChat={() => {}} onSavedPage={() => {}} />;
+    }
+    router = createMemoryRouter([{ path: '/p/:projectId/chat/:chatId?', element: <Subject /> }], { initialEntries: ['/p/p1/chat'] });
+    await act(async () => { root.render(<RouterProvider router={router} />); }); await settle();
+  }
+  const accepted = (request: Request) => request.url.endsWith('/chats')
+    ? json({ chat: { id: request.body.id, title: request.body.title, updatedAt: 1 } }, 201)
+    : json({ turnId: request.body.turnId }, 202);
+  function question() {
+    const field = host.querySelector<HTMLTextAreaElement>('textarea');
+    if (!field) throw new Error('Missing question field');
+    return field;
+  }
+  function sendButton() {
+    const button = host.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (!button) throw new Error('Missing Send button');
+    return button;
+  }
+  async function press(text: string) {
+    const button = [...host.querySelectorAll('button')].find(button => button.textContent === text);
+    if (!button) throw new Error('Missing action ' + text);
+    await act(async () => { button.click(); }); await settle();
+  }
+  async function typeQuestion(value: string) {
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      if (!setter) throw new Error('Missing textarea setter');
+      setter.call(question(), value);
+      question().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  it('confirms before clearing an unsent draft on the blank route', async () => {
+    const post = vi.fn(async () => { throw new Error('New chat must not write or send'); });
+    await openDraft(post);
+    vi.mocked(window.confirm).mockReturnValue(false);
+    await press('New chat');
+    expect(question().value).toBe('First question');
+    expect(router.state.location.pathname).toBe('/p/p1/chat');
+    vi.mocked(window.confirm).mockReturnValue(true);
+    await press('New chat');
+    expect(window.confirm).toHaveBeenCalledTimes(2);
+    expect(question().value).toBe('');
+    expect(router.state.location.pathname).toBe('/p/p1/chat');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it.each(['create', 'turn'])('starts a distinct conversation after a lost %s receipt, while cancelling keeps safe replay', async stage => {
+    const requests: Request[] = [];
+    const failed: Request[] = [];
+    let fail = true;
+    await openDraft(async request => {
+      requests.push(request);
+      if (fail && request.url.endsWith(stage === 'create' ? '/chats' : '/turns')) {
+        failed.push(request); throw new TypeError('Accepted reply lost');
+      }
+      return accepted(request);
+    });
+    await press('Send');
+    expect(host.textContent).toContain('Accepted reply lost');
+    vi.mocked(window.confirm).mockReturnValue(false);
+    const key = router.state.location.key;
+    await press('New chat');
+    expect(window.confirm).toHaveBeenCalledWith('Discard your question draft and start a new chat?');
+    expect(question().value).toBe('First question');
+    expect(router.state.location.key).toBe(key);
+    await press('Send');
+    expect(failed[1]).toEqual(failed[0]); // Declining New chat must not turn safe replay into another admission.
+    vi.mocked(window.confirm).mockReturnValue(true);
+    await press('New chat');
+    expect(question().value).toBe('');
+    expect(host.textContent).not.toContain('Accepted reply lost');
+    expect(host.textContent).toContain('Sources: 1 selected');
+    const oldCreation = requests.find(request => request.url.endsWith('/chats'));
+    if (!oldCreation) throw new Error('Missing old creation');
+    fail = false;
+    await typeQuestion('First question'); // Even identical text is a new explicit conversation.
+    await press('Send');
+    const newCreation = requests.filter(request => request.url.endsWith('/chats')).at(-1);
+    if (!newCreation) throw new Error('Missing new creation');
+    expect(newCreation.body.id).not.toBe(oldCreation.body.id);
+    expect(requests.at(-1)?.url).toBe('/api/projects/p1/chats/' + newCreation.body.id + '/turns');
+    if (stage === 'turn') expect(requests.at(-1)?.body.turnId).not.toBe(failed[0]?.body.turnId);
+    expect(router.state.location.pathname).toBe('/p/p1/chat/' + newCreation.body.id);
+  });
+
+  it.each(['create', 'turn'])('releases the composer and ignores a late %s receipt after New chat', async stage => {
+    const requests: Request[] = [], held: Array<{ request: Request; resolve: (response: Response) => void }> = [];
+    let firstHeld = false;
+    await openDraft(async request => {
+      requests.push(request);
+      if ((!firstHeld && request.url.endsWith(stage === 'create' ? '/chats' : '/turns')) || firstHeld) {
+        firstHeld = true;
+        return new Promise<Response>(resolve => held.push({ request, resolve }));
+      }
+      return accepted(request);
+    });
+    await press('Send');
+    expect(held).toHaveLength(1);
+    expect(sendButton().disabled).toBe(true);
+    await press('New chat');
+    expect(question().value).toBe('');
+    await typeQuestion('New conversation');
+    expect(sendButton().disabled).toBe(false);
+    await press('Send');
+    expect(held).toHaveLength(2);
+    const old = held[0], fresh = held[1];
+    if (!old || !fresh) throw new Error('Missing held creations');
+    expect(fresh.request.url).toBe('/api/projects/p1/chats');
+    expect(fresh.request.body.id).not.toBe(requests[0]?.body.id);
+    await act(async () => { old.resolve(accepted(old.request)); }); await settle();
+    expect(held).toHaveLength(2); // A late creation reply cannot admit its abandoned question.
+    expect(router.state.location.pathname).toBe('/p/p1/chat');
+    expect(question().value).toBe('New conversation');
+    expect(sendButton().disabled).toBe(true); // Nor can its finally release the newer Send.
+    await act(async () => { fresh.resolve(accepted(fresh.request)); }); await settle();
+    expect(held).toHaveLength(3);
+    const freshTurn = held[2];
+    if (!freshTurn) throw new Error('Missing fresh turn');
+    expect(freshTurn.request.url).toBe('/api/projects/p1/chats/' + fresh.request.body.id + '/turns');
+    await act(async () => { freshTurn.resolve(accepted(freshTurn.request)); }); await settle();
+    expect(router.state.location.pathname).toBe('/p/p1/chat/' + fresh.request.body.id);
+    expect(question().value).toBe('');
+  });
+});
 afterEach(async () => { await act(async () => root.unmount()); router?.dispose(); host.remove(); db.close(); vi.unstubAllGlobals(); });
 
 function storage(): Env {

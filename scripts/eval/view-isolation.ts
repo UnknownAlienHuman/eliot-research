@@ -131,6 +131,65 @@ try {
       await expect(page.getByText('Parallel history unavailable', { exact: true })).toHaveCount(0);
     }
     await page.unroute(scopeHistoryUrl);
+    // New chat is an explicit new identity even before the first Send has
+    // navigated away from the blank route. Native creation stays storage-only.
+    const createUrl = origin + '/api/projects/' + project + '/chats';
+    await page.goto(origin + chatPath()); await question.fill('Unconfirmed first question');
+    const failedCreation = await hold(createUrl);
+    await send.click(); await failedCreation.waiting;
+    const failedTurn = await hold(turnsUrl(failedCreation.body().id));
+    await failedCreation.release(await api('/api/projects/' + project + '/chats', failedCreation.body()));
+    await failedTurn.waiting; interceptedTurns++;
+    await failedTurn.release({ error: { message: 'First question reply unavailable' } }, 503);
+    await expect(page.getByRole('alert')).toContainText('First question reply unavailable');
+    await page.getByText('History', { exact: true }).click();
+    page.once('dialog', dialog => dialog.dismiss());
+    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await expect(question).toHaveValue('Unconfirmed first question');
+    // Cancel keeps History open. Close its overlay before reaching the composer,
+    // especially on phone after the desktop journey has added more saved chats.
+    await expect(page.locator('.er-chat__history')).toHaveJSProperty('open', true);
+    await page.getByText('History', { exact: true }).click();
+    await expect(page.locator('.er-chat__history')).toHaveJSProperty('open', false);
+    await expect(send).toBeEnabled();
+    const safeReplay = await hold(turnsUrl(failedCreation.body().id));
+    await send.click(); await safeReplay.waiting; interceptedTurns++;
+    assert.deepEqual(safeReplay.body(), failedTurn.body());
+    await safeReplay.release({ error: { message: 'First question reply unavailable' } }, 503);
+    await expect(page.getByRole('alert')).toContainText('First question reply unavailable');
+    await page.getByText('History', { exact: true }).click();
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await expect(question).toHaveValue('');
+    await expect(page.getByText('First question reply unavailable', { exact: true })).toHaveCount(0);
+    await question.fill('Fresh conversation');
+    const freshCreation = await hold(createUrl);
+    await send.click(); await freshCreation.waiting;
+    assert.notEqual(freshCreation.body().id, failedCreation.body().id);
+    const freshTurn = await hold(turnsUrl(freshCreation.body().id));
+    await freshCreation.release(await api('/api/projects/' + project + '/chats', freshCreation.body()));
+    await freshTurn.waiting; interceptedTurns++;
+    assert.notEqual(freshTurn.body().turnId, failedTurn.body().turnId);
+    await freshTurn.release(); await expect(page).toHaveURL(origin + chatPath(freshCreation.body().id));
+    // A late creation response cannot dispatch its abandoned question or release
+    // a newer Send that is still waiting for its own receipt.
+    await page.goto(origin + chatPath()); await question.fill('Pending abandoned creation');
+    const abandonedCreation = await hold(createUrl);
+    await send.click(); await abandonedCreation.waiting;
+    await page.getByText('History', { exact: true }).click();
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await expect(question).toHaveValue(''); await question.fill('New pending conversation');
+    const nextCreation = await hold(createUrl);
+    await send.click(); await nextCreation.waiting;
+    assert.notEqual(nextCreation.body().id, abandonedCreation.body().id);
+    await abandonedCreation.release(await api('/api/projects/' + project + '/chats', abandonedCreation.body()));
+    await expect(page).toHaveURL(origin + chatPath()); await expect(question).toHaveValue('New pending conversation');
+    await expect(page.getByRole('button', { name: 'Sending…', exact: true })).toBeDisabled();
+    const nextTurn = await hold(turnsUrl(nextCreation.body().id));
+    await nextCreation.release(await api('/api/projects/' + project + '/chats', nextCreation.body()));
+    await nextTurn.waiting; interceptedTurns++; await nextTurn.release();
+    await expect(page).toHaveURL(origin + chatPath(nextCreation.body().id));
     // A first-page read started before chat creation must not erase the new row.
     const oldHead = await api('/api/projects/' + historyProject + '/chats');
     let heads = [];

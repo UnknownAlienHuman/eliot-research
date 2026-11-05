@@ -238,6 +238,7 @@ stop/reconnect, reopen chat and save an answer as a page.
    without creating a chat or sending a question. Switching to another project confirms discarding a nonblank draft;
    cancelling or closing the picker preserves the current draft and source scope.
    History and New chat also confirm before discarding a nonblank draft; cancellation preserves the current chat and scope.
+   New chat retires an unconfirmed first Send even on the unchanged blank route, without letting its late reply reuse the old chat or block the new composer.
    Persist the native usage choice (included quota or standard Cloudflare billing) without starting a job or changing
    models. An unverified included-only cap pauses native requests; it must never silently enable paid overage.
 7. Add label/context/cost cases and `pnpm eval k2`.

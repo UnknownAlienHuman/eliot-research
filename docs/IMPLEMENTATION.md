@@ -813,6 +813,9 @@ The mounted composer retains one unconfirmed Send ID, its normalized question/sc
 and any acknowledged chat ID. An explicit Send with identical input reuses them after a lost or unreadable response;
 only a matching turn-ID acknowledgement consumes the attempt in its visible view. Sources/overview navigation retains
 it with the draft. Changed input has a new turn ID in the same known chat; changing chats or unmounting discards the draft and attempt.
+New chat confirms discarding any nonblank draft and retires the pending attempt even while the first Send still uses
+the blank chat route. It releases that composer's Send lock; an older creation or turn reply cannot admit a question,
+clear a new draft, navigate or release a newer Send. Cancelling the confirmation preserves the original retry identity.
 No read or timer sends it again, and an empty history read does not prove rejection.
 For a new conversation the same attempt retains its creation UUID and original title before POST `/chats`. The optional
 caller ID uses the existing chat primary key: insert returns 201; matching project/title and an unarchived chat return
@@ -1353,7 +1356,7 @@ On phone, one Sources and model disclosure shows the current scope and model sum
 stay mounted. Opening it exposes scope navigation and the same picker; collapsing keeps draft/selection/provider
 state and leaves model errors, pending status and data-use warnings visible. Desktop controls remain expanded.
 History and New chat confirm before discarding a nonblank question draft. Cancel preserves the open menu, chat, draft
-and source scope. Choosing the current chat, remaining in a new chat or using a modified link leaves its draft intact
+and source scope. Choosing the current chat or using a modified link leaves its draft intact
 without confirmation; blank drafts follow the existing navigation. This applies to these controls, not browser Back/Forward.
 Settings keeps human provider names and known quota values on compact rows,
 with provider addresses and Gateway routing in connection dialogs. Both owner billing and data-use choices remain.

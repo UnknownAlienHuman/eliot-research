@@ -263,16 +263,27 @@ try {
     await expect(history).toBeHidden();
 
     await question.fill('Already composing a new chat.');
+    confirmSwitch = false;
     await openHistory();
     await historyToggle.locator('..').getByRole('button', { name: 'New chat', exact: true }).click();
+    await expect.poll(() => confirmations.length).toBe(projectPrompts + 5);
+    await expect(page).toHaveURL(origin + '/p/' + first.id + '/chat');
+    await expect(history).toBeVisible();
     await expect(question).toHaveValue('Already composing a new chat.');
-    assert.equal(confirmations.length, projectPrompts + 4, 'Staying in a new chat must preserve its draft without confirmation.');
+    await expect(scope).not.toBeChecked();
+    confirmSwitch = true;
+    await historyToggle.locator('..').getByRole('button', { name: 'New chat', exact: true }).click();
+    await expect.poll(() => confirmations.length).toBe(projectPrompts + 6);
+    await expect(page).toHaveURL(origin + '/p/' + first.id + '/chat');
+    await expect(question).toHaveValue('');
+    await expect(history).toBeHidden();
+    await expect(scope).not.toBeChecked();
     await question.fill('  \n  ');
     await openHistory();
     await chatLink(chats[0]).click();
     await expect(page).toHaveURL(origin + chatPath(chats[0]));
     await expect(question).toHaveValue('');
-    assert.equal(confirmations.length, projectPrompts + 4, 'Whitespace-only questions need no confirmation.');
+    assert.equal(confirmations.length, projectPrompts + 6, 'Whitespace-only questions need no confirmation.');
     for (let index = 0; index < chats.length; index++) {
       const after = await api('/api/projects/' + first.id + '/chats/' + chats[index].id);
       assert.deepEqual(after.chat, chatBefore[index].chat);
@@ -284,7 +295,7 @@ try {
       paging: true, initialAndPageRetry: true, escapePreservesDraft: true, delayedCloseAndReopen: true,
       projectAndSettingsNavigation: true, draftSwitch: { cancelPreservesDraftAndScope: true, confirmNavigates: true,
         currentAndBlankSkipConfirmation: true, prompts: projectPrompts },
-      chatDraft: { historyCancelAndConfirm: true, newChatCancelAndConfirm: true, currentAndBlankKeepBehavior: true,
+      chatDraft: { historyCancelAndConfirm: true, newChatCancelAndConfirm: true, newBlankChatCancelAndConfirm: true, currentChatAndWhitespaceKeepBehavior: true,
         modifiedClickPreservesDraft: true, retainedStoredChats: true, prompts: confirmations.length - projectPrompts }, unexpectedWrites: writes, newModelCalls: 0 }));
     await context.close();
   }
