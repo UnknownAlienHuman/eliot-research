@@ -79,6 +79,11 @@ only owner accepts. Local bypass requires `ELIOT_LOCAL_DEV=1` and localhost; a d
 
 K0 configuration uses `ELIOT_ACCESS_TEAM_DOMAIN` (bare `<team>.cloudflareaccess.com`), `ELIOT_ACCESS_AUD`,
 `ELIOT_OWNER_EMAIL`, `ELIOT_OWNER_SERVICE_TOKEN` (the signed `common_name`, not a client secret), and `ELIOT_ORIGIN`.
+`ELIOT_MCP_ACCESS_AUD` optionally selects a separate Access application's audience for `/mcp` only. When blank or
+absent it uses `ELIOT_ACCESS_AUD`, preserving a shared-application setup. When set, each route accepts only its own
+audience, including owner assertions; MCP assertions are not accepted by UI/API/chat. The existing legacy hostname
+and `/mcp` Access applications have different audiences, so replacement configuration must set both without changing
+their policies. Cloudflare assigns an audience per application ([JWT validation](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), checked 2026-11-05).
 `exp` is mandatory; only RS256 assertions are accepted. Local bypass runs before production configuration validation,
 accepts only `localhost`, `127.0.0.1` or `[::1]`, and rejects Cloudflare edge requests carrying `cf-ray`. It never exempts
 mutations or WebSocket upgrades from exact Origin checks. All static assets use `run_worker_first: true` and private,
@@ -1049,8 +1054,10 @@ Initial monthly owner guard leaves included-tier headroom: 4.5M ingestion tokens
 Use the installed Agents SDK `createMcpHandler` path verified by generated types, a fresh MCP SDK v2 server/request and
 stateless Streamable HTTP at `POST /mcp`. Allow exact hostnames only. Register §7 tools; no K7 web tools before K7 and no
 large upload through MCP.
-`ELIOT_MCP_ORIGIN` selects that endpoint's exact origin. The UI and MCP hostnames use an Access application audience
-that covers both configured hosts; signed service tokens become read/propose agents only on MCP, never on UI APIs.
+`ELIOT_MCP_ORIGIN` selects that endpoint's exact origin. Separate UI/MCP Access applications use `ELIOT_ACCESS_AUD`
+and `ELIOT_MCP_ACCESS_AUD`; a shared application leaves the latter blank. Signed service tokens become read/propose
+agents only on MCP, never on UI APIs. `pnpm eval k4 --signed-agent-miniflare` uses distinct test audiences, rejects
+cross-application owner assertions in both directions, and exercises the real MCP proposal/owner-acceptance path.
 Migration `0009_agents.sql` adds the proposal base to existing page revisions and maintains current-claim FTS.
 Checked-output recovery publishes its guarded head before claim upserts, so FTS insert/update and head maintenance
 are all used. No claim-delete trigger is needed before lifecycle deletion has a caller. Headless proposals are omitted

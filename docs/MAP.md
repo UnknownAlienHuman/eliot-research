@@ -444,6 +444,8 @@ page that the owner can accept or reject.
 2. Implement the shared product tools as `(env, actor, input) → compact Markdown` with hard output caps.
 3. Expose them through stateless Streamable HTTP MCP on a separate Access-protected hostname. Agent service-token actors
    may read and propose; only owner accepts.
+   A separate MCP Access audience is selected only on `/mcp`; UI/API/chat retain their own audience. The signed local
+   K4 eval rejects cross-application owner assertions and retains the agent proposal/owner-acceptance checks.
    Catalogue refresh and source-understanding tools use the existing owner-authorized functions; agent actors cannot invoke these side effects.
 4. Move the proposals inbox and add `pnpm eval k4` using a real MCP client.
    Opening a proposal citation releases the review dialog and focuses its exact source passage; reopening review

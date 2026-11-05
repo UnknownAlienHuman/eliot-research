@@ -25,7 +25,8 @@ export async function authenticate(request: Request, env: Env, allowAgent = fals
   }
 
   const team = env.ELIOT_ACCESS_TEAM_DOMAIN.trim();
-  const audience = env.ELIOT_ACCESS_AUD.trim();
+  // The route chooses one application's audience, never a union of UI and MCP audiences.
+  const audience = (allowAgent && env.ELIOT_MCP_ACCESS_AUD?.trim()) || env.ELIOT_ACCESS_AUD.trim();
   const ownerEmail = env.ELIOT_OWNER_EMAIL.trim();
   const ownerToken = env.ELIOT_OWNER_SERVICE_TOKEN.trim();
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com$/.test(team)
