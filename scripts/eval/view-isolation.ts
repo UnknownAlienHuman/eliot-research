@@ -76,9 +76,15 @@ try {
     };
     // A socket may restore readable history while the parallel HTTP head is still pending.
     // Send must already use the saved source scope, including an intentionally empty scope.
-    let scopeSocket: WebSocketRoute | undefined;
-    await page.routeWebSocket(url => url.pathname === '/agents/chat-agent/' + scopeChat,
-      socket => { scopeSocket = socket; });
+    const scopeSockets = new Set<WebSocketRoute>();
+    let scopeSnapshot: string | undefined;
+    await page.routeWebSocket(url => url.pathname === '/agents/chat-agent/' + scopeChat, socket => {
+      scopeSockets.add(socket);
+      socket.onClose(() => { scopeSockets.delete(socket); });
+      // Like the actual ChatAgent, replay its current snapshot to each connection.
+      // StrictMode may retire the first socket before the fixture is released.
+      if (scopeSnapshot !== undefined) socket.send(scopeSnapshot);
+    });
     const scopeHistoryUrl = origin + '/api/projects/' + project + '/chats/' + scopeChat;
     let scopeHeads: Route[] = [], scopeHistoryFailure: string | undefined;
     const failScopeHistory = async (message: string) => {
@@ -98,11 +104,11 @@ try {
     for (const journey of ['explicit', 'empty', 'retry empty']) {
       const scopeMode = journey === 'explicit' ? 'explicit' : 'empty';
       const storedScopeMode = journey === 'retry empty' ? 'explicit' : scopeMode;
-      scopeSocket = undefined;
+      scopeSockets.clear(); scopeSnapshot = undefined;
       scopeHeads = []; scopeHistoryFailure = undefined;
       await page.goto(origin + chatPath(scopeChat));
       await expect.poll(() => scopeHeads.length, { message: journey + ': initial history requested' }).toBeGreaterThan(0);
-      await expect.poll(() => scopeSocket !== undefined).toBe(true);
+      await expect.poll(() => scopeSockets.size).toBeGreaterThan(0);
       if (journey === 'retry empty') {
         await failScopeHistory('Initial history unavailable');
         const retry = page.getByRole('button', { name: 'Retry', exact: true });
@@ -117,10 +123,16 @@ try {
         await expect.poll(() => scopeHeads.length, { message: 'Explicit Retry requested history' }).toBeGreaterThan(0);
       }
       const sourceIds = storedScopeMode === 'explicit' ? [sources[0].source.id] : [];
-      scopeSocket!.send(JSON.stringify({ type: 'snapshot', nextCursor: null, queued: null, stateVersion: 1,
+      // Deterministically exercise the gap between a retired socket and its
+      // replacement, rather than relying on StrictMode scheduling to expose it.
+      if (journey === 'explicit') {
+        for (const socket of [...scopeSockets]) { await socket.close(); scopeSockets.delete(socket); }
+      }
+      scopeSnapshot = JSON.stringify({ type: 'snapshot', nextCursor: null, queued: null, stateVersion: 1,
         turns: [{ turnId: 'scope-fixture', question: 'Scoped saved question', answer: 'Scoped saved answer', state: 'completed',
           createdAt: 1, historyVersion: 1, model: 'fixture', scopeMode: storedScopeMode, sourceIds, revisionIds: [], citations: [], invalidLabels: 0,
-          inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0, firstTokenMs: null, totalMs: 0, error: null }] }));
+          inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0, firstTokenMs: null, totalMs: 0, error: null }] });
+      for (const socket of scopeSockets) socket.send(scopeSnapshot);
       await expect(page.getByText('Scoped saved answer', { exact: true })).toBeVisible();
       await question.fill('Follow up before HTTP');
       const scopedSend = await hold(turnsUrl(scopeChat)); await send.click(); await scopedSend.waiting; interceptedTurns++;

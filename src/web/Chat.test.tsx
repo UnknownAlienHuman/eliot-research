@@ -380,6 +380,18 @@ describe('Chat snapshot source selection', () => {
     router = createMemoryRouter([{ path: '/p/:projectId/chat/:chatId?', element: <Subject /> }], { initialEntries: ['/p/p1/chat/c1'] });
     await act(async () => { root.render(<StrictMode><RouterProvider router={router} /></StrictMode>); }); await settle();
   });
+  it('ignores a retired StrictMode socket and restores from its replacement', async () => {
+    expect(sockets).toHaveLength(2);
+    await act(async () => { sockets[0]?.onmessage?.({ data: JSON.stringify({ type: 'snapshot', ...snapshot() }) }); });
+    expect(host.textContent).not.toContain('Saved evidence');
+    expect(host.textContent).toContain('Loading this conversation');
+    await receiveSnapshot();
+    expect(host.textContent).toContain('Saved evidence');
+    expect(currentScope).toEqual({ scopeMode: 'explicit', sourceIds: ['s1'] });
+    await submit();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.sourceIds).toEqual(['s1']);
+  });
   it('retries the active history read after StrictMode aborts the first request', async () => {
     expect(historyReads).toHaveLength(2);
     expect(historyReads[0]?.signal?.aborted).toBe(true);
