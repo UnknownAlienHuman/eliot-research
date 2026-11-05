@@ -183,6 +183,7 @@ export function ChatView({
   const sendAttempt = useRef<{ projectId: string; chatId: string | undefined; input: string; turnId: string; createdChat: ChatRow | undefined;
     creation: { id: string; title: string } | undefined } | null>(null);
   const sendSequence = useRef(0), saveSequence = useRef(0);
+  const saveMutations = useRef(new Map<string, { mutationId: string }>());
   const sentNavigation = useRef<{ projectId: string; chatId: string; path: string } | null>(null);
   const turnsRoute = useRef<{ projectId: string; chatId?: string } | null>(null);
   const olderRequest = useRef(0);
@@ -557,8 +558,11 @@ export function ChatView({
 
   async function saveTurn(turn: TurnView): Promise<void> {
     if (chatId === undefined || savingId !== '') return;
+    const key = projectId + ':' + chatId + ':' + turn.turnId;
+    const attempt = { mutationId: saveMutations.current.get(key)?.mutationId ?? crypto.randomUUID() };
+    saveMutations.current.set(key, attempt);
     const owner = actionView.current, request = ++saveSequence.current;
-    const current = () => mounted.current && actionView.current === owner;
+    const current = () => mounted.current && actionView.current === owner && saveSequence.current === request;
     setSavingId(turn.turnId);
     setSaveNote('');
     try {
@@ -569,9 +573,10 @@ export function ChatView({
           chatId,
           turnId: turn.turnId,
           title: turn.question.slice(0, 120) || 'Saved answer',
-          mutationId: crypto.randomUUID(),
+          mutationId: attempt.mutationId,
         }),
       });
+      if (saveMutations.current.get(key) === attempt) saveMutations.current.delete(key);
       if (mounted.current && projectRef.current === projectId) onSavedPage();
       if (!current()) return;
       setSaveNote('Saved.');

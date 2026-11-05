@@ -250,7 +250,8 @@ frozen-scope validation; unknown identities and shorthand remain failures.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
 canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
 never retried automatically. Save preserves a partial answer's recorded reason, distinguishing interrupted generation
-from rejected source references.
+from rejected source references. An explicit repeat of an unconfirmed Save in the mounted workspace reuses its
+mutation UUID and returns the committed page rather than duplicating it; confirmed saves remain distinct copies.
 Stream checkpoints also flush a received tail during provider pauses; readers see stored text, with no automatic continuation after restart.
 For a nonstandard provider finish normalized to `other`, the stored failure includes a bounded safe provider code.
 An explicit repeat of an unconfirmed Send in the same composer reuses its ID, unchanged input and known chat target;
