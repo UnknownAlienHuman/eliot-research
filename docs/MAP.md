@@ -589,3 +589,11 @@ acceptance remove old applications, packages, crates, migrations and Cloudflare 
 | completed research outputs | report pages when output exists |
 | chats | none: legacy did not retain a usable transcript |
 | agent grants/connections/backups | do not copy blindly; reauthorise or separately archive |
+
+The first K10 preparation slice is `pnpm legacy:export --database /private/core.sqlite --objects /private/r2
+--output /private/export` (one line). It reads an existing offline SQLite/R2 snapshot only, preserves project/source/
+membership metadata and exports every LIVE revision's verified manifest and exact readable bytes. Empty original
+references are reported as `not_recorded`, never reconstructed or asserted to exist. The synthetic 8-project,
+15-source, 17-LIVE-revision fixture checks this shape, including immutable old revisions and integrity failures.
+This is not a production inventory verification, full legacy export or target import; artifact/wiki/research output,
+owner comparison, reauthorisation and retirement remain open. No live data, schema or deployment is changed.
