@@ -5,12 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as ai from "ai";
 import type { RunTurnInput, TurnView } from "./shared/api";
 import type { ContextInput, ContextMessage, ContextResult } from "./context";
+import type * as ContextModule from "./context";
 import type { Actor } from "./auth";
 import type * as CostModule from "./cost";
 import type * as ModelsModule from "./models";
 
 interface WireAgentState { active: string | null; queued: RunTurnInput | null; stopRequested: boolean }
-interface WireAgentCtx { database: DatabaseSync; waitUntil: (task: Promise<unknown>) => void }
+interface WireAgentCtx { database: DatabaseSync; storage: { sql: SqlStorage }; waitUntil: (task: Promise<unknown>) => void }
 interface WireSentMessage { role: string; content?: unknown; reasoning_content?: unknown; reasoning?: unknown; reasoning_details?: unknown; [key: string]: unknown }
 interface WireSentBody { messages?: WireSentMessage[]; model?: unknown; [key: string]: unknown }
 
@@ -27,12 +28,20 @@ vi.mock("agents", () => ({
     ctx: WireAgentCtx;
     env: Env;
     constructor(ctx: { database: DatabaseSync }, env: Env) {
-      this.ctx = { database: ctx.database, waitUntil: (task: Promise<unknown>) => { task.catch(() => undefined); } };
+      this.ctx = { database: ctx.database, waitUntil: (task: Promise<unknown>) => { task.catch(() => undefined); },
+        storage: { sql: { exec(query: string, ...values: SQLInputValue[]) {
+          const statement = ctx.database.prepare(query);
+          const rows = statement.columns().length ? statement.all(...values) : (statement.run(...values), []);
+          historyReadBytes += rows.reduce((sum, row) => sum + Object.values(row).reduce<number>((bytes, value) => bytes + (typeof value === "string" ? Buffer.byteLength(value) : 0), 0), 0);
+          return { toArray: () => rows, one: () => rows[0], [Symbol.iterator]: () => rows.values() };
+        } } as unknown as SqlStorage } };
       this.env = env;
     }
     sql<T>(strings: TemplateStringsArray, ...values: SQLInputValue[]): T[] {
       const statement = this.ctx.database.prepare(strings.join("?"));
-      return (statement.columns().length ? statement.all(...values) : (statement.run(...values), [])) as T[];
+      const rows = statement.columns().length ? statement.all(...values) : (statement.run(...values), []);
+      historyReadBytes += rows.reduce((sum, row) => sum + (typeof row.payload === "string" ? Buffer.byteLength(row.payload) : 0), 0);
+      return rows as T[];
     }
     readonly broadcast = vi.fn<(payload: string) => void>();
     setState(state: WireAgentState) { this.state = state; }
@@ -79,13 +88,26 @@ vi.mock("./model-quota", async () => ({
   assertProviderAllowance: vi.fn(async () => {}),
 }));
 
-vi.mock("./context", async () => ({
+vi.mock("./context", async (importOriginal) => {
+  const actual = await importOriginal<typeof ContextModule>();
+  return { ...actual,
   buildContext: vi.fn(async (_env: unknown, _actor: Actor, input: ContextInput) => {
     const messages: ContextMessage[] = [
       { role: "system", content: "sys" },
       { role: "user", content: "frozen [S1:1] source" },
     ];
-    for (const turn of input.history ?? []) {
+    const history = [...(input.history ?? [])];
+    if (input.historyReader) {
+      const reader = input.historyReader(new Set(["r1"]), { used: 0, blocks: new Map(), rangeReads: 0 });
+      const exchanges = [];
+      for (;;) {
+        const step = reader.next();
+        if (step.kind === "end" || step.kind === "limited") break;
+        if (step.kind === "candidate") exchanges.unshift(step.candidate.load());
+      }
+      for (const exchange of exchanges) history.push(exchange.user, ...(exchange.assistant ? [exchange.assistant] : []));
+    }
+    for (const turn of history) {
       if (turn.role === "user") messages.push({ role: "user", content: turn.content });
       else messages.push({ role: "assistant", content: turn.content, ...(turn.turnId ? { turnId: turn.turnId } : {}) });
     }
@@ -97,7 +119,7 @@ vi.mock("./context", async () => ({
       estimatedInputTokens: 10,
     } satisfies ContextResult;
   }),
-}));
+}; });
 
 import { ChatAgent } from "./chat";
 import { getAgentByName } from "agents";
@@ -114,6 +136,7 @@ const chatId = "wire-chat";
 
 const sentBodies: WireSentBody[] = [];
 let fetchCalls = 0;
+let historyReadBytes = 0;
 let nextSSE: string | ReadableStream<Uint8Array> | null = null;
 const executedSql: string[] = [];
 const TOKEN_BOUND = 1048576 + 8192;
@@ -168,6 +191,7 @@ function makeHarness(quote = "A source", instructions = "") {
           },
           bind: (..._args: SQLInputValue[]) => ({
             first: async (): Promise<unknown> => {
+              if (sql.includes("SELECT id FROM project WHERE id=")) return { id: projectId };
               if (sql.includes("FROM chat WHERE id=")) return { project_id: projectId };
               if (sql.includes("COALESCE(p.answer_model")) return { model: "gateway:command-code/native-beam", instructions };
               if (sql.includes("model_providers_json")) return { providers: JSON.stringify([{ id: "workers-ai", type: "workers-ai", gatewaySlug: null, gatewayPath: "", baseUrl: null, enabled: true }, { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1", baseUrl: "https://openrouter.ai/api/v1", enabled: true }, { id: "command-code", type: "openai-compatible", gatewaySlug: "custom-command-code", gatewayPath: "v1", baseUrl: "https://api.commandcode.ai/provider/v1", enabled: true }]) };
@@ -207,6 +231,7 @@ beforeEach(() => {
   sentBodies.length = 0;
   executedSql.length = 0;
   fetchCalls = 0;
+  historyReadBytes = 0;
   nextSSE = null;
   vi.clearAllMocks();
 });
@@ -485,6 +510,41 @@ describe("ChatAgent older history", () => {
       expect(receipt).toEqual((await h.agent.getTurns(projectId)).find((item) => item.turnId === input.turnId));
     } finally { h.db.close(); h.d1.close(); }
   });
+  it.each([0, 49])("uses the model budget beyond the UI page after %i recent failed turns", async (failed) => {
+    const h = makeHarness();
+    const actual = await vi.importActual<typeof ContextModule>("./context");
+    vi.mocked(buildContext).mockImplementationOnce(actual.buildContext);
+    try {
+      await h.agent.onStart(); seed(h.db, 120);
+      for (let n = 121 - failed; n <= 120; n++) h.db.prepare("UPDATE turns SET payload=? WHERE id=?")
+        .run(JSON.stringify({ ...turn(n), state: "failed" }), turn(n).turnId);
+      nextSSE = sse([chunk({ content: "Done." }, "stop", { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 })]);
+      const result = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: "budget-history", question: "Continue.", scopeMode: "empty", model: "gateway:openrouter/test-model" }, true));
+      expect(result.state).toBe("completed");
+      const messages = vi.mocked(ai.streamText).mock.calls.at(-1)?.[0].messages ?? [];
+      expect(messages.filter(message => message.role === "assistant")).toHaveLength(120 - failed);
+      expect(JSON.stringify(messages)).toContain("Answer 1");
+      expect(result.historyNotice).toBeUndefined();
+      expect((await h.agent.getSnapshot(projectId)).turns).toHaveLength(50);
+      expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("bounds raw history reads before loading a page of large failed answers", async () => {
+    const h = makeHarness();
+    const actual = await vi.importActual<typeof ContextModule>("./context");
+    vi.mocked(buildContext).mockImplementationOnce(actual.buildContext);
+    try {
+      await h.agent.onStart(); seed(h.db, 120);
+      for (let n = 72; n <= 120; n++) h.db.prepare("UPDATE turns SET payload=? WHERE id=?")
+        .run(JSON.stringify({ ...turn(n), state: "failed", answer: "x".repeat(1024 * 1024) }), turn(n).turnId);
+      historyReadBytes = 0;
+      nextSSE = sse([chunk({ content: "Done." }, "stop")]);
+      const result = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: "oversized-history", question: "Continue.", scopeMode: "empty", model: "gateway:openrouter/test-model" }, true));
+      expect(result.state).toBe("failed");
+      expect(historyReadBytes).toBeLessThan(16 * 1024 * 1024);
+      expect(fetchCalls).toBe(0);
+    } finally { h.db.close(); h.d1.close(); }
+  });
   it("pages all equal-timestamp ties without gaps/duplicates, while model history stays latest 50", async () => {
     const h = makeHarness(); try {
       await h.agent.onStart(); seed(h.db, 163);
@@ -533,7 +593,7 @@ describe("ChatAgent older history", () => {
       expect(payload.createdAt).toBeUndefined(); expect(payload.historyVersion).toBeUndefined();
     } finally { h.db.close(); h.d1.close(); }
   });
-  it("browsing older pages does not widen the next explicit turn's existing latest-50 model history", async () => {
+  it("browsing older UI pages does not change model-budget history selection", async () => {
     const h = makeHarness(); try {
       await h.agent.onStart(); seed(h.db, 120);
       let cursor = (await h.agent.getTurnPage(projectId)).nextCursor;
@@ -541,9 +601,12 @@ describe("ChatAgent older history", () => {
       expect(fetchCalls).toBe(0);
       nextSSE = sse([chunk({ content: "Bounded answer [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 })]);
       await h.agent.submitTurn({ projectId, chatId, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-999999999999", question: "New explicit send", scopeMode: "empty", model: "gateway:openrouter/test-model" }, true);
-      const history = vi.mocked(buildContext).mock.calls.at(-1)?.[2].history ?? [];
-      const questions = history.filter((item) => item.role === "user").map((item) => item.content);
-      expect(questions).toEqual(Array.from({ length: 49 }, (_, n) => "Question " + (n + 72)));
+      const contextInput = vi.mocked(buildContext).mock.calls.at(-1)?.[2];
+      expect(contextInput?.historyReader).toBeDefined();
+      expect(contextInput?.earlierHistoryExists).toBeUndefined();
+      const messages = vi.mocked(ai.streamText).mock.calls.at(-1)?.[0].messages ?? [];
+      const questions = messages.filter(item => item.role === "user").map(item => item.content);
+      expect(questions).toEqual(["frozen [S1:1] source", ...Array.from({ length: 120 }, (_, n) => "Question " + (n + 1)), "New explicit send"]);
       expect(fetchCalls).toBe(1); // The existing in-process fake stream, never a provider call.
     } finally { h.db.close(); h.d1.close(); }
   });
@@ -1820,6 +1883,7 @@ describe("chat-stream K2 wire regression", () => {
       nextSSE = sse([chunk({ content: "Second [S1:1]" }, null), usageOnly({ prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
       const t2 = "bbbbbbbb-bbbb-4bbb-8bbb-000000000022";
       const r2 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t2, question: "Q2", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:openrouter/test-model" }, true));
+      expect(vi.mocked(buildContext).mock.calls.at(-1)?.[2].earlierHistoryExists).toBeUndefined();
       expect(r2.state).toBe("completed");
       const body = sentBodies[0];
       if (!body) throw new Error("expected outgoing openrouter body");
@@ -1828,6 +1892,34 @@ describe("chat-stream K2 wire regression", () => {
       expect(texts).toContain("First [S1:1]");
       expect(r2.tokenLimit).toBe(TOKEN_BOUND);
       expect(fetchCalls).toBe(2);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+  it("persists a history omission notice through stream, reconnect and Save without changing completion or dispatch count", async () => {
+    const h = makeHarness();
+    const notice = "Older exchanges were omitted from this answer's context.";
+    const build = vi.mocked(buildContext).getMockImplementation();
+    if (!build) throw new Error("Missing context fixture");
+    vi.mocked(buildContext).mockImplementationOnce(async (...args) => {
+      const result = await build(...args);
+      return { ...result, historyNotice: notice, messages: [{ role: "system", content: notice }, ...result.messages] };
+    });
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "Supported finding [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+      const turnId = "aaaaaaaa-aaaa-4aaa-8aaa-000000000098";
+      const result = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId, question: "Follow up", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:openrouter/test-model" }, true));
+      expect(result).toMatchObject({ state: "completed", error: null, historyNotice: notice });
+      expect(result.answer).toBe("Supported finding [S1:1].");
+      expect((await h.agent.getSnapshot(projectId)).turns[0]?.historyNotice).toBe(notice);
+      expect(vi.mocked(h.agent.broadcast).mock.calls.some(([frame]) => {
+        const parsed = JSON.parse(String(frame)) as { turn?: TurnView };
+        return parsed.turn?.turnId === turnId && parsed.turn.historyNotice === notice;
+      })).toBe(true);
+      const saved = await h.agent.getStoredTurn(projectId, turnId);
+      expect(saved.answer).toBe(notice + "\n\nSupported finding [Rr1:1].");
+      expect(saved.citations).toEqual(result.citations.map(citation => ({ ...citation, label: "[Rr1:1]" })));
+      expect(JSON.stringify(sentBodies[0])).toContain(notice);
+      expect(fetchCalls).toBe(1);
     } finally { h.db.close(); h.d1.close(); }
   });
   it("undispatched oversized scope settles tokenLimit 0 with zeroed counts and no model call", async () => {

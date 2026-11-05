@@ -25,6 +25,7 @@ export interface ContextHistoryTurn {
   revisionIds?: string[];
   /** Previously server-resolved citations, kept in memory only to select reusable history labels. */
   citations?: Citation[];
+  partial?: boolean;
 }
 export interface ContextInput {
   projectId: string;
@@ -32,6 +33,9 @@ export interface ContextInput {
   sourceIds?: string[];
   model: ContextModel;
   history?: ContextHistoryTurn[];
+  historyReader?: ContextHistoryReader;
+  /** The already-read history page has an older cursor; do not fetch it automatically. */
+  earlierHistoryExists?: boolean;
   /** Caller-owned tail text the owner appends at dispatch (question + project instructions). Reserved in every budget check below; never stored, labeled, or cited here. */
   question?: string;
   instructions?: string;
@@ -40,6 +44,7 @@ export interface ContextMessage {
   role: "system" | "user" | "assistant";
   content: string;
   turnId?: string;
+  partial?: boolean;
 }
 export interface ContextResult {
   mode: "whole" | "claims" | "none";
@@ -47,13 +52,14 @@ export interface ContextResult {
   sources: LabelSource[];
   messages: ContextMessage[];
   estimatedInputTokens: number;
+  historyNotice?: string;
 }
 
 const READABLE = new Set(["readable", "readable_with_warnings"]);
 const DISTILLED = new Set(["done", "partial"]);
 // Per assembly, not a Worker limit. Count retained bytes and conservative allocation
 // charges monotonically, including discarded attempts; leave the isolate room for SDKs.
-const MATERIALIZATION_BYTES = 16 * 1024 * 1024;
+export const MATERIALIZATION_BYTES = 16 * 1024 * 1024;
 const MAX_SOURCES = 1024;
 const MAX_CLAIMS = 256;
 const MAX_GUIDE_RANGES = 256;
@@ -134,6 +140,9 @@ const NARROW_SCOPE = "Narrow the source selection so the answer fits.";
 const NEEDS_UNDERSTANDING = "Narrow the selection: some sources are still being understood.";
 const CLAIMS_ORIENTATION_HEADER = "Derived claim orientation only; these statements and conditions are not source evidence. Verify facts against the labelled original excerpts above, including their actual experiment conditions.\n\n";
 const GUIDE_MISSING = "A selected source is still being understood. Narrow the selection or wait for understanding to finish.";
+const PARTIAL_HISTORY_NOTICE = "An earlier assistant answer was partial. Its unfinished text and omissions are not conclusions; ground this answer in the current frozen evidence.";
+const HISTORY_NOTICE = "Older exchanges were omitted from this answer's context.";
+const HISTORY_TOO_LARGE = "This question, selected sources and the latest conversation exchange do not fit. Choose a larger-context model, narrow sources or start a new chat.";
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const bomDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
@@ -283,46 +292,138 @@ async function freezeProjectDefault(env: Env, projectId: string, assembly: Mater
   return retainFrozen(assembly, result.results.map((row) => ({ ...row, sourceId: row.id, reportKey: row.reportKey ?? null, attemptId: row.attemptId ?? null })));
 }
 
-function selectHistory(
-  history: ContextHistoryTurn[] | undefined,
-  frozen: Set<string>,
-  budget: number,
-  sources: LabelSource[],
-  assembly: Materialization,
-): { messages: ContextMessage[]; tokens: number } {
-  const picked: ContextMessage[] = [];
-  const orderedFrozen = [...frozen];
-  const turns = history ?? [];
-  let used = 0, contentTokens = 0;
+export interface HistoryExchange { user: ContextHistoryTurn; assistant: ContextHistoryTurn | undefined }
+export interface HistoryCandidate {
+  tokens: number;
+  bytes: number;
+  partial: boolean;
+  load(): HistoryExchange;
+}
+export type HistoryStep = { kind: "end" | "ignored" | "omitted" | "limited" } | { kind: "candidate"; candidate: HistoryCandidate };
+export type ContextHistoryReader = (frozen: ReadonlySet<string>, assembly: Materialization) => { next(): HistoryStep };
+function planHistory(input: Pick<ContextInput, "history" | "earlierHistoryExists" | "historyReader">, frozen: Set<string>, assembly: Materialization) {
+  const exchanges: Array<HistoryExchange | HistoryCandidate> = [], turns = input.history ?? [];
+  let omitted = input.earlierHistoryExists ?? false;
   for (let i = turns.length - 1; i >= 0;) {
-    const tail = turns[i--];
-    const assistant = tail?.role === "assistant" ? tail : undefined;
+    const tail = turns[i--], assistant = tail?.role === "assistant" ? tail : undefined;
     const user = assistant ? turns[i] : tail;
-    if (!user || user.role !== "user") continue;
+    if (!user || user.role !== "user") { omitted = true; continue; }
     if (assistant) i--;
-    if (assistant && (assistant.revisionIds ?? []).some((id) => !frozen.has(id))) continue;
-    // Do not copy a raw exchange above the full history reserve merely to strip
-    // labels. Visit newest first; older candidates stop once the suffix is full.
-    if (estimateTokens(user.content) > budget || (assistant && estimateTokens(assistant.content) > budget)) break;
-    reserve(assembly, 4 * (user.content.length + (assistant?.content.length ?? 0)));
+    if (assistant && (assistant.revisionIds ?? []).some(id => !frozen.has(id))) { omitted = true; continue; }
+    exchanges.push({ user, assistant });
+  }
+  const reader = input.historyReader?.(frozen, assembly);
+  return { exchanges, omitted, reader, done: reader === undefined, limited: false };
+}
+function historyAt(plan: ReturnType<typeof planHistory>, index: number): HistoryExchange | HistoryCandidate | undefined {
+  while (index >= plan.exchanges.length && !plan.done) {
+    const step = plan.reader?.next();
+    if (!step || step.kind === "end") plan.done = true;
+    else if (step.kind === "candidate") plan.exchanges.push(step.candidate);
+    else if (step.kind === "omitted") plan.omitted = true;
+    else if (step.kind === "limited") { plan.done = true; plan.limited = true; plan.omitted = true; }
+  }
+  return plan.exchanges[index];
+}
+
+function selectHistory(
+  plan: ReturnType<typeof planHistory>, frozen: Set<string>, budget: number, sources: LabelSource[], assembly: Materialization,
+): { messages: ContextMessage[]; tokens: number; omitted: boolean; latestUnfit: boolean } {
+  const picked: ContextMessage[] = [], orderedFrozen = [...frozen];
+  let used = 0, contentTokens = 0, omitted = plan.omitted;
+  let latestUnfit: boolean;
+  for (let index = 0; ; index++) {
+    const item = historyAt(plan, index);
+    omitted ||= plan.omitted;
+    if (!item) { latestUnfit = plan.limited && picked.length === 0; break; }
+    if ("load" in item && item.bytes > MATERIALIZATION_BYTES - assembly.used) {
+      omitted = true; latestUnfit = picked.length === 0; break;
+    }
+    const { user, assistant } = "load" in item ? item.load() : item;
+    // Only normalize a candidate after evidence leaves room for it. Optional
+    // older text must not consume the assembly allowance before source loading.
+    // Raw citation labels can disappear or change aliases. Only normalized
+    // messages decide token fit; raw sizes bound allocation, not retention.
+    const bytes = 4 * (user.content.length + (assistant?.content.length ?? 0));
+    if (bytes > MATERIALIZATION_BYTES - assembly.used) {
+      omitted = true; latestUnfit = picked.length === 0; break;
+    }
+    reserve(assembly, bytes);
     const userContent = stripLabels(user.content).trim();
-    if (!userContent) continue;
+    if (!userContent) { omitted = true; continue; }
     const messages: ContextMessage[] = [{ role: "user", content: userContent }];
     let tokens = estimateTokens(userContent);
     if (assistant) {
       const prefixOk = isScopePrefix(user.revisionIds, orderedFrozen);
       const content = (prefixOk ? retainAssistantLabels(assistant.content, assistant.citations, sources) : stripLabels(assistant.content)).trim();
-      if (!content) continue;
-      messages.push({ role: "assistant", content, ...(assistant.turnId ? { turnId: assistant.turnId } : {}) });
+      if (!content) { omitted = true; continue; }
+      messages.push({ role: "assistant", content, ...(assistant.turnId ? { turnId: assistant.turnId } : {}), ...(assistant.partial ? { partial: true } : {}) });
       tokens += estimateTokens(content);
     }
     const serializedTokens = messages.reduce((sum, message) => sum + estimateHistoryMessage(message), 0);
-    if (used + serializedTokens > budget) break;
-    used += serializedTokens;
-    contentTokens += tokens;
+    if (used + serializedTokens > budget) { omitted = true; latestUnfit = picked.length === 0; break; }
+    used += serializedTokens; contentTokens += tokens;
     picked.unshift(...messages);
   }
-  return { messages: picked, tokens: contentTokens };
+  return { messages: picked, tokens: contentTokens, omitted, latestUnfit };
+}
+
+function latestExchangeStart(messages: ContextMessage[]): number {
+  return Math.max(0, messages.length - (messages.at(-1)?.role === "assistant" ? 2 : 1));
+}
+
+function newestHistoryTokens(plan: ReturnType<typeof planHistory>): number {
+  const latest = historyAt(plan, 0);
+  if (!latest) {
+    if (plan.limited) throw new LibraryError("invalid", "Conversation history exceeds the safe read budget. Start a new chat.", 400);
+    return 0;
+  }
+  const partial = "load" in latest ? latest.partial : latest.assistant?.partial;
+  return ("load" in latest ? latest.tokens : estimateHistoryMessage(latest.user) + (latest.assistant ? estimateHistoryMessage(latest.assistant) : 0))
+    + (partial ? estimateTokens(PARTIAL_HISTORY_NOTICE) : 0);
+}
+
+// Evidence and the newest selected exchange stay intact. Only whole older
+// exchanges may yield capacity. Partial/omission notices describe retained input.
+function fitHistory(history: ReturnType<typeof selectHistory>, evidence: ContextMessage[],
+  caller: Pick<ContextInput, "question" | "instructions">, cap: number,
+): (ReturnType<typeof selectHistory> & { historyNotice?: string }) | undefined {
+  if (history.latestUnfit) return undefined;
+  let partials = history.messages.filter(message => message.partial).length;
+  let omitted = history.omitted;
+  const notices = (): ContextMessage[] => [
+    ...(omitted ? [{ role: "system" as const, content: HISTORY_NOTICE }] : []),
+    ...(partials ? [{ role: "system" as const, content: PARTIAL_HISTORY_NOTICE }] : []),
+  ];
+  const finish = (start: number, tokens: number) => {
+    const notice = notices(), messages = [...notice, ...history.messages.slice(start)];
+    return { ...history, messages, tokens: tokens + notice.reduce((sum, message) => sum + estimateTokens(message.content), 0),
+      ...(omitted ? { historyNotice: HISTORY_NOTICE } : {}) };
+  };
+  if (requestTokens([...evidence, ...notices(), ...history.messages], caller) <= cap) return finish(0, history.tokens);
+  omitted = true;
+  const latest = latestExchangeStart(history.messages);
+  let cost = history.messages.reduce((sum, message) => sum + estimateHistoryMessage(message), 0);
+  let start = 0, tokens = history.tokens;
+  // Only the presence of a partial notice can change while dropping old pairs.
+  const budgets = new Map<boolean, number>();
+  const budget = () => {
+    const key = partials > 0;
+    if (!budgets.has(key)) budgets.set(key, cap - requestTokens([...evidence, ...notices()], caller));
+    return budgets.get(key) ?? 0;
+  };
+  while (start < latest && cost > budget()) {
+    const end = start + (history.messages[start + 1]?.role === "assistant" ? 2 : 1);
+    for (; start < end; start++) {
+      const message = history.messages[start];
+      if (message) {
+        cost -= estimateHistoryMessage(message); tokens -= estimateTokens(message.content);
+        if (message.partial) partials--;
+      }
+    }
+  }
+  const result = finish(start, tokens);
+  return requestTokens([...evidence, ...result.messages], caller) <= cap ? result : undefined;
 }
 
 async function loadBlocks(env: Env, revisionId: string, assembly: Materialization): Promise<Block[]> {
@@ -511,9 +612,8 @@ async function buildMixedContext(
   env: Env,
   assembly: Materialization,
   frozen: Frozen[],
-  rawHistory: ContextHistoryTurn[] | undefined,
+  historyPlan: ReturnType<typeof planHistory>,
   frozenSet: Set<string>,
-  historyBudget: number,
   systemTokens: number,
   callerTokens: number,
   cap: number,
@@ -530,10 +630,8 @@ async function buildMixedContext(
   let projectedTokens = wholePrefitTokens;
   if (preloadedWhole) {
     const sections = wholeParts.map((part) => part?.section ?? "");
-    const sources = wholeParts.flatMap((part) => part ? [part.source] : []);
-    const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources, assembly);
     projectedTokens = systemTokens + estimateTokens(joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]))
-      + history.tokens + callerTokens;
+      + callerTokens;
   } else {
     projectedTokens += estimateTokens(SOURCES_HEADER) + Math.max(0, frozen.length - 1) * estimateTokens("\n\n");
     for (let i = 0; i < frozen.length; i++) {
@@ -541,6 +639,8 @@ async function buildMixedContext(
       if (entry) projectedTokens += estimateTokens(sourceHeader("S" + (i + 1), entry.title));
     }
   }
+  // Routing estimate only; final normalized messages still pass the exact cap.
+  if (preloadedWhole) projectedTokens += newestHistoryTokens(historyPlan);
   const candidates = compactParts.flatMap((part, index) => {
     if (!part) return [];
     const compactTokens = estimateTokens(part.section) + estimateTokens(part.orientation);
@@ -562,6 +662,7 @@ async function buildMixedContext(
     if (compressed.size === 1) projectedTokens += orientationHeaderTokens;
   }
   const needsUnderstanding = compactParts.some((part) => part === undefined);
+  let historyBlocked = false;
   const assemble = async (): Promise<ContextResult | undefined> => {
     const sections: string[] = [];
     const sources: LabelSource[] = [];
@@ -578,11 +679,14 @@ async function buildMixedContext(
     }
     const sourcesText = joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]);
     const claimOrientation = orientations.length ? joinContext(assembly, [CLAIMS_ORIENTATION_HEADER, joinContext(assembly, orientations, "\n\n")]) : "";
-    const history = selectHistory(rawHistory, frozenSet, Math.max(0, historyBudget), sources, assembly);
+    const evidence: ContextMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: sourcesText },
+      ...(claimOrientation ? [{ role: "user" as const, content: claimOrientation }] : [])];
+    const historyBudget = cap - requestTokens(evidence, caller);
+    const history = fitHistory(selectHistory(historyPlan, frozenSet, historyBudget, sources, assembly), evidence, caller, cap);
+    if (!history) { historyBlocked = historyBudget >= 0; return undefined; }
     const estimatedInputTokens = systemTokens + estimateTokens(sourcesText)
       + (claimOrientation ? estimateTokens(claimOrientation) : 0) + history.tokens;
-    const messages: ContextMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: sourcesText },
-      ...(claimOrientation ? [{ role: "user" as const, content: claimOrientation }] : []), ...history.messages];
+    const messages: ContextMessage[] = [...evidence, ...history.messages];
     if (requestTokens(messages, caller) > cap) return undefined;
     return {
       mode: compressed.size ? "claims" : "whole",
@@ -590,6 +694,7 @@ async function buildMixedContext(
       sources,
       messages,
       estimatedInputTokens,
+      ...(history.historyNotice ? { historyNotice: history.historyNotice } : {}),
     };
   };
 
@@ -606,7 +711,7 @@ async function buildMixedContext(
     result = await assemble();
     if (result) return result;
   }
-  throw new LibraryError("invalid", needsUnderstanding ? NEEDS_UNDERSTANDING : NARROW_SCOPE, 400);
+  throw new LibraryError("invalid", historyBlocked ? HISTORY_TOO_LARGE : needsUnderstanding ? NEEDS_UNDERSTANDING : NARROW_SCOPE, 400);
 }
 
 export async function buildContext(env: Env, _actor: Actor, input: ContextInput): Promise<ContextResult> {
@@ -641,18 +746,19 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     throw new LibraryError("invalid", NARROW_SCOPE, 400);
   }
   const frozenSet = new Set(frozen.map((entry) => entry.revisionId));
-  const historyBudget = Math.min(Math.floor(contextTokens * 0.1), cap - requestTokens(baseMessages, input));
-  const history = selectHistory(input.history, frozenSet, Math.max(0, historyBudget), [], assembly);
+  const historyPlan = planHistory(input, frozenSet, assembly);
   let knownBytes = 0;
   for (const entry of frozen) {
     if (typeof entry.readableSize === "number" && Number.isSafeInteger(entry.readableSize) && entry.readableSize >= 0) {
       knownBytes = Math.min(Number.MAX_SAFE_INTEGER, knownBytes + entry.readableSize);
     }
   }
-  const wholePrefitTokens = Math.ceil(knownBytes / 3) + systemTokens + history.tokens + callerTokens;
+  const wholePrefitTokens = Math.ceil(knownBytes / 3) + systemTokens + newestHistoryTokens(historyPlan) + callerTokens;
   const wholePrefit = wholePrefitTokens <= cap;
 
   if (frozen.length === 0) {
+    const history = fitHistory(selectHistory(historyPlan, frozenSet, cap - requestTokens(baseMessages, input), [], assembly), baseMessages, input, cap);
+    if (!history) throw new LibraryError("invalid", HISTORY_TOO_LARGE, 400);
     const messages = [...baseMessages, ...history.messages];
     if (requestTokens(messages, input) > cap) throw new LibraryError("invalid", NARROW_SCOPE, 400);
     return {
@@ -661,6 +767,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
       sources: [],
       messages,
       estimatedInputTokens: systemTokens + scopePolicyTokens + history.tokens,
+      ...(history.historyNotice ? { historyNotice: history.historyNotice } : {}),
     };
   }
 
@@ -678,10 +785,10 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
     }
     const sourcesText = joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]);
     const sourceTokens = estimateTokens(sourcesText);
-    const historyFinal = selectHistory(input.history, frozenSet, Math.max(0, historyBudget), sources, assembly);
-    const estimatedInputTokens = systemTokens + sourceTokens + historyFinal.tokens;
-    const wholeMessages: ContextMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: sourcesText }, ...historyFinal.messages];
-    if (requestTokens(wholeMessages, input) <= cap) {
+    const evidence: ContextMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: sourcesText }];
+    const historyFinal = fitHistory(selectHistory(historyPlan, frozenSet, cap - requestTokens(evidence, input), sources, assembly), evidence, input, cap);
+    if (historyFinal) {
+      const estimatedInputTokens = systemTokens + sourceTokens + historyFinal.tokens;
       let orientation: ContextMessage[] = [];
       let orientationTokens = 0;
       const guideLines: string[] = [];
@@ -692,8 +799,13 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
         if (!summary) continue;
         guideLines.push(sourceHeader("S" + (i + 1), stripLabels(summary)));
       }
-      if (guideLines.length > 0) {
-        const guideText = joinContext(assembly, ["Derived orientation only; facts and citations must come from original labelled blocks.\n\n", joinContext(assembly, guideLines, "\n")]);
+      const guideHeader = "Derived orientation only; facts and citations must come from original labelled blocks.\n\n";
+      const guideLength = guideLines.reduce((sum, line) => sum + line.length, 0) + Math.max(0, guideLines.length - 1);
+      // Derived orientation is optional and already yields to history on token
+      // capacity. Check both joins before allocating, so it also yields on memory.
+      const guideBytes = 2 * guideLength + 2 * (guideHeader.length + guideLength);
+      if (guideLines.length > 0 && guideBytes <= MATERIALIZATION_BYTES - assembly.used) {
+        const guideText = joinContext(assembly, [guideHeader, joinContext(assembly, guideLines, "\n")]);
         const guideTokens = estimateTokens(guideText);
         if (requestTokens([{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: sourcesText }, { role: "user", content: guideText }, ...historyFinal.messages], input) <= cap) {
           orientationTokens = guideTokens;
@@ -711,10 +823,11 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
           ...historyFinal.messages,
         ],
         estimatedInputTokens: estimatedInputTokens + orientationTokens,
+        ...(historyFinal.historyNotice ? { historyNotice: historyFinal.historyNotice } : {}),
       };
     }
   }
-  return buildMixedContext(env, assembly, frozen, input.history, frozenSet, historyBudget, systemTokens, callerTokens,
+  return buildMixedContext(env, assembly, frozen, historyPlan, frozenSet, systemTokens, callerTokens,
     cap, wholePrefitTokens, input, wholePrefit ? wholeParts : undefined);
 }
 
