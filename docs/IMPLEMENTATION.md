@@ -1239,6 +1239,8 @@ refreshes Studio through the existing storage-only page API.
 The source Reader highlights a citation's exact UTF-8 range inside the complete canonical text and focuses/scrolls
 to it on passage navigation. The surrounding text and the pre's complete text content stay unchanged. Copy link
 handles selections within or across the mark; invalid ranges retain full text with an error and Clear passage.
+Clear passage retains the explicit revision from the URL even before it appears in the loaded metadata. It removes
+only the passage selection; a pending/failed historical metadata read cannot redirect it to the current revision.
 Add sources keeps text and URL drafts independent. Each form allows one pending submission while its fields remain
 editable. Success clears only the unchanged submitted draft; later edits, failures and duplicate responses keep it.
 Closing and reopening the dialog does not cancel the write or discard newer input. Drafts stay local to the mounted

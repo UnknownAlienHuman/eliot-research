@@ -16,6 +16,7 @@ let root: Root, host: HTMLDivElement;
 let router: ReturnType<typeof createMemoryRouter>;
 let requests: string[];
 let respond: (url: URL) => Promise<Response>;
+let sourceResponse: ((url: URL) => Promise<Response>) | undefined;
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 const failure = (part: string) => json({ error: { message: `Temporary ${part} failure.` } }, 503);
 function success(url: URL) {
@@ -42,13 +43,14 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   HTMLElement.prototype.scrollIntoView = vi.fn();
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-  requests = []; respond = async url => success(url);
+  requests = []; respond = async url => success(url); sourceResponse = undefined;
   vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     expect(init?.method ?? "GET").toBe("GET");
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
     requests.push(url.pathname);
     const match = url.pathname.match(/^\/api\/sources\/(s[12])$/);
     if (match) {
+      if (sourceResponse) return sourceResponse(url);
       const id = match[1], current = id === "s1" ? "r1" : "r3";
       return json({ source: { id, title: "Source " + id, kind: "text", currentRevisionId: current, revisionId: current, readableState: "readable", distillState: "none", originalFilename: null, error: null },
         revisions: (id === "s1" ? ["r1", "r2"] : ["r3"]).map((id, index) => ({ id, revisionNo: index + 1, readableState: "readable", createdAt: 0, error: null })) });
@@ -114,5 +116,48 @@ describe("Reader failed citation recovery", () => {
     expect(host.querySelector("pre")?.textContent).toBe(TEXT + " " + target);
     expect(host.querySelector("mark")?.textContent).toBe(selected);
     expect(host.textContent).not.toContain("Temporary text failure.");
+  });
+});
+
+describe("Reader historical passage navigation", () => {
+  it.each(["pending", "failed"])("keeps the cited revision when clearing a passage during a %s metadata read", async state => {
+    await open();
+    const historical = "d795f9c9-10d0-435c-8e3e-c244aca85ded";
+    let release: ((response: Response) => void) | undefined;
+    const historicalSource = () => json({
+      source: { id: "s1", title: "Source s1", kind: "text", currentRevisionId: "r1", revisionId: "r1", readableState: "readable", error: null },
+      revisions: ["r1", "r2", historical].map((id, index) => ({ id, revisionNo: index + 1, readableState: "readable", createdAt: 0, error: null })),
+    });
+    sourceResponse = async () => state === "pending"
+      ? new Promise(resolve => { release = resolve; }) : failure("source status");
+    // A Studio citation may target a revision outside the Reader's cached history page.
+    await navigate("s1", historical);
+    const clear = [...host.querySelectorAll("a")].find(link => link.textContent === "Clear passage");
+    expect(clear).toBeDefined();
+    expect(clear?.getAttribute("href")).toBe(`/p/p1/source/s1?revisionId=${historical}`);
+    const readsBeforeClear = requests.filter(url => url === "/api/revisions/r1/text").length;
+    await act(async () => { clear?.click(); }); await settle();
+    expect(router.state.location.search).toBe(`?revisionId=${historical}`);
+    expect(host.querySelector("mark")).toBeNull();
+    expect(host.querySelector("pre")?.textContent).toBe("");
+    if (state === "pending") {
+      await act(async () => { release?.(historicalSource()); }); await settle();
+    } else {
+      sourceResponse = async () => historicalSource();
+      const retry = [...host.querySelectorAll("button")].find(button => button.textContent === "Retry source status");
+      expect(retry).toBeDefined();
+      if (retry) await click(retry);
+    }
+    expect(host.querySelector("pre")?.textContent).toBe(TEXT + " " + historical);
+    expect(host.querySelector("mark")).toBeNull();
+    expect(requests.filter(url => url === "/api/revisions/r1/text")).toHaveLength(readsBeforeClear);
+    sourceResponse = async () => historicalSource();
+    await act(async () => { await router.navigate(-1); }); await settle();
+    expect(router.state.location.search).toBe(`?revisionId=${historical}&start=9&end=28`);
+    expect(host.querySelector("mark")?.textContent).toBe(selected);
+    await act(async () => { await router.navigate(1); }); await settle();
+    expect(router.state.location.search).toBe(`?revisionId=${historical}`);
+    expect(host.querySelector("mark")).toBeNull();
+    expect(host.querySelector("pre")?.textContent).toBe(TEXT + " " + historical);
   });
 });

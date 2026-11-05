@@ -783,6 +783,39 @@ try {
   const curRev = revLoc.searchParams.get('revisionId') as string;
   const otherRev = revIds.find((id) => id !== curRev) as string;
   assert(otherRev, 'A second immutable revision must exist.');
+  // Model the bounded revision-list page: the historical citation is not in the
+  // cached current metadata, while all text/range reads use real stored bytes.
+  const sourceApi = origin + '/api/sources/' + revSid;
+  const currentMeta = sourceApi + '?revisionId=' + otherRev;
+  const oldMeta = sourceApi + '?revisionId=' + revisionId;
+  await page.goto(copied);
+  await expect(page.locator('.er-lib__text mark')).toHaveText('Точный русский текст');
+  await page.route(currentMeta, async route => {
+    const response = await route.fetch(), body = await response.json();
+    body.revisions = body.revisions.filter((revision: any) => revision.id !== revisionId);
+    await route.fulfill({ response, json: body });
+  });
+  await page.locator('.er-lib__facts summary').click();
+  await page.locator('#er-lib-revision').selectOption(otherRev);
+  await expect(page.locator('.er-lib__text')).toContainText('Новая ревизия');
+  await expect(page.locator('#er-lib-revision option[value="' + revisionId + '"]')).toHaveCount(0);
+  let releaseMetadata!: () => void, metadataRequested = false;
+  const metadataGate = new Promise<void>(resolve => { releaseMetadata = resolve; });
+  await page.route(oldMeta, async route => { metadataRequested = true; await metadataGate; await route.continue(); });
+  try {
+    await page.goBack();
+    await expect.poll(() => metadataRequested).toBe(true);
+    const clear = page.getByRole('link', { name: 'Clear passage', exact: true });
+    await expect(clear).toHaveAttribute('href', reader.pathname + '?revisionId=' + revisionId);
+    await clear.click();
+    assert.equal(new URL(page.url()).search, '?revisionId=' + revisionId, 'Clear must retain the requested historical revision before metadata arrives.');
+  } finally { releaseMetadata(); }
+  await expect.poll(() => page.locator('.er-lib__text').textContent()).toBe(canonical);
+  await expect(page.locator('.er-lib__text mark')).toHaveCount(0);
+  await page.unroute(currentMeta); await page.unroute(oldMeta);
+  await page.goBack(); await expect(page.locator('.er-lib__text mark')).toHaveText('Точный русский текст');
+  await page.goForward(); await expect(page.locator('.er-lib__text mark')).toHaveCount(0);
+  assert.equal(await page.locator('.er-lib__text').textContent(), canonical, 'Back/Forward must not retarget a cleared historical passage to current text.');
   const undGets: string[] = [];
   const undPosts: string[] = [];
   page.on('request', (request) => {
