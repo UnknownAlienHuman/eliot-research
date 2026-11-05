@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
-import { act, useState } from 'react';
+import { act, StrictMode, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider, useParams } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -161,6 +161,7 @@ it.each(['before', 'after'])('retains the pending mutation when an old success a
 
 describe('Chat snapshot source selection', () => {
   let historyReply: { resolve(response: Response): void; reject(error: Error): void };
+  const historyReads: Array<typeof historyReply & { signal: AbortSignal | null | undefined }> = [];
   const sockets: Array<{ onmessage?: (event: { data: string }) => void }> = [];
   let chooseScope: (scope: SourceSelection) => void;
   let changeQuestion: (question: string) => void;
@@ -194,7 +195,7 @@ describe('Chat snapshot source selection', () => {
   }
   beforeEach(async () => {
     vi.stubGlobal('WebSocket', class { constructor() { sockets.push(this); } close() {} onmessage?: (event: { data: string }) => void; });
-    stored = { ...turn('t1'), createdAt: 1, historyVersion: 2 }; posts = []; sockets.length = 0; deferReceipt = false;
+    stored = { ...turn('t1'), createdAt: 1, historyVersion: 2 }; posts = []; sockets.length = 0; historyReads.length = 0; deferReceipt = false;
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (url === '/api/models') return json({ models: [], warnings: [] });
@@ -209,10 +210,31 @@ describe('Chat snapshot source selection', () => {
         return json({ turnId: body.turnId });
       }
       expect(url).toMatch(/^\/api\/projects\/p1\/chats\/[^/]+$/);
-      return new Promise<Response>((resolve, reject) => { historyReply = { resolve, reject }; });
+      return new Promise<Response>((resolve, reject) => {
+        historyReply = { resolve, reject }; historyReads.push({ ...historyReply, signal: init?.signal });
+      });
     }));
     router = createMemoryRouter([{ path: '/p/:projectId/chat/:chatId?', element: <Subject /> }], { initialEntries: ['/p/p1/chat/c1'] });
-    await act(async () => { root.render(<RouterProvider router={router} />); }); await settle();
+    await act(async () => { root.render(<StrictMode><RouterProvider router={router} /></StrictMode>); }); await settle();
+  });
+  it('retries the active history read after StrictMode aborts the first request', async () => {
+    expect(historyReads).toHaveLength(2);
+    expect(historyReads[0]?.signal?.aborted).toBe(true);
+    expect(historyReads[1]?.signal?.aborted).toBe(false);
+    // The browser fixture must fail every pending GET, not just the aborted first one.
+    await act(async () => {
+      for (const read of historyReads) read.resolve(json({ error: { message: 'Initial history unavailable' } }, 503));
+    }); await settle();
+    const retry = [...host.querySelectorAll('button')].find(button => button.textContent === 'Retry');
+    expect(host.textContent).toContain('Initial history unavailable');
+    if (!retry) throw new Error('Missing history Retry');
+    await act(async () => { retry.click(); }); await settle();
+    expect(historyReads).toHaveLength(3);
+    expect(historyReads[2]?.signal?.aborted).toBe(false);
+    expect(posts).toHaveLength(0);
+    await receiveSnapshot(); await resolveHistory(); await submit();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.sourceIds).toEqual(['s1']);
   });
   it.each(['explicit', 'empty'] as const)('restores %s scope before Send when the socket precedes HTTP', async scopeMode => {
     stored = { ...stored, scopeMode, sourceIds: scopeMode === 'explicit' ? ['s1'] : [],

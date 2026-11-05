@@ -1,6 +1,6 @@
 // Actual reused workspace against the local Worker. Model POSTs are intercepted before dispatch.
 import assert from 'node:assert/strict';
-import { chromium, expect, type WebSocketRoute } from '@playwright/test';
+import { chromium, expect, type Route, type WebSocketRoute } from '@playwright/test';
 import { assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 
 assert(process.env.ELIOT_K2_MODEL !== '1', 'View isolation forbids model opt-in.');
@@ -79,21 +79,42 @@ try {
     let scopeSocket: WebSocketRoute | undefined;
     await page.routeWebSocket(url => url.pathname === '/agents/chat-agent/' + scopeChat,
       socket => { scopeSocket = socket; });
+    const scopeHistoryUrl = origin + '/api/projects/' + project + '/chats/' + scopeChat;
+    let scopeHeads: Route[] = [], scopeHistoryFailure: string | undefined;
+    const failScopeHistory = async (message: string) => {
+      scopeHistoryFailure = message;
+      await Promise.all(scopeHeads.splice(0).map(route => route.fulfill({ status: 503,
+        json: { error: { message } } }).catch(() => {})));
+      await settle();
+    };
+    // StrictMode can abort the first GET and issue another. Hold every head read;
+    // a fallback 200 would hide the deliberate failure and leave no Retry action.
+    await page.route(scopeHistoryUrl, route => {
+      if (route.request().method() !== 'GET') return route.continue();
+      if (scopeHistoryFailure) return route.fulfill({ status: 503,
+        json: { error: { message: scopeHistoryFailure } } }).catch(() => {});
+      scopeHeads.push(route);
+    });
     for (const journey of ['explicit', 'empty', 'retry empty']) {
       const scopeMode = journey === 'explicit' ? 'explicit' : 'empty';
       const storedScopeMode = journey === 'retry empty' ? 'explicit' : scopeMode;
       scopeSocket = undefined;
-      let scopeHead = await hold(origin + '/api/projects/' + project + '/chats/' + scopeChat, 'GET');
-      await page.goto(origin + chatPath(scopeChat)); await scopeHead.waiting;
+      scopeHeads = []; scopeHistoryFailure = undefined;
+      await page.goto(origin + chatPath(scopeChat));
+      await expect.poll(() => scopeHeads.length, { message: journey + ': initial history requested' }).toBeGreaterThan(0);
       await expect.poll(() => scopeSocket !== undefined).toBe(true);
       if (journey === 'retry empty') {
-        await scopeHead.release({ error: { message: 'Initial history unavailable' } }, 503);
+        await failScopeHistory('Initial history unavailable');
+        const retry = page.getByRole('button', { name: 'Retry', exact: true });
+        await expect(retry).toBeVisible();
         await navigate('/p/' + project + '/sources');
         for (const title of ['Source A', 'Source B'])
           await page.getByRole('checkbox', { name: 'Include ' + title + ' in the current source selection', exact: true }).uncheck();
         await navigate(chatPath(scopeChat));
-        scopeHead = await hold(origin + '/api/projects/' + project + '/chats/' + scopeChat, 'GET');
-        await page.getByRole('button', { name: 'Retry', exact: true }).click(); await scopeHead.waiting;
+        await expect(retry).toBeVisible();
+        scopeHeads = []; scopeHistoryFailure = undefined;
+        await retry.click();
+        await expect.poll(() => scopeHeads.length, { message: 'Explicit Retry requested history' }).toBeGreaterThan(0);
       }
       const sourceIds = storedScopeMode === 'explicit' ? [sources[0].source.id] : [];
       scopeSocket!.send(JSON.stringify({ type: 'snapshot', nextCursor: null, queued: null, stateVersion: 1,
@@ -106,9 +127,10 @@ try {
       assert.equal(scopedSend.body().scopeMode, scopeMode);
       assert.deepEqual(scopedSend.body().sourceIds, scopeMode === 'explicit' ? sourceIds : undefined);
       await scopedSend.release();
-      await scopeHead.release({ error: { message: 'Parallel history unavailable' } }, 503);
+      await failScopeHistory('Parallel history unavailable');
       await expect(page.getByText('Parallel history unavailable', { exact: true })).toHaveCount(0);
     }
+    await page.unroute(scopeHistoryUrl);
     // A first-page read started before chat creation must not erase the new row.
     const oldHead = await api('/api/projects/' + historyProject + '/chats');
     let heads = [];
