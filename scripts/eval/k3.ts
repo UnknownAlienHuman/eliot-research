@@ -1013,7 +1013,7 @@ if (nativeOnly) {
             if (rbU.state === 'partial') await pwexpect(page.getByText(/Partially understood|Partial understanding/i).first()).toBeVisible({ timeout: 15000 });
             const understandingRegion = page.getByRole('region', { name: 'Understanding', exact: true });
             await pwexpect(understandingRegion.locator('details.er-und__details')).toHaveCount(0);
-            await pwexpect(understandingRegion.getByRole('heading', { name: 'Verified claims', exact: true })).toBeVisible();
+            await pwexpect(understandingRegion.getByRole('heading', { name: 'Claims and source excerpts', exact: true })).toBeVisible();
             if (typeof rbU.error === 'string' && rbU.error !== '')
               await pwexpect(understandingRegion.getByRole('alert').filter({ hasText: rbU.error })).toBeVisible();
             if (rbU.canRecover === true)

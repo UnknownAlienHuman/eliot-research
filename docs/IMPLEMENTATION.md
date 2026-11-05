@@ -626,7 +626,8 @@ state; a lost D1 reply reconciles that same stored result without overwriting it
 write that finds an existing artifact must verify equal content; different content is a conflict. Digest paragraphs
 are checked one authored sentence at a time with the same declared evidence, retaining supported sentences and
 rejecting unsupported numbers without rewriting them. Guide/digest links resolve against the immutable block map,
-while claim cards open their exact original quote ranges.
+while claim cards open their exact original quote ranges. The reader labels these cards “Claims and source excerpts”,
+not “Verified claims”: matching quote bytes and numeric literals does not establish the generated claim's meaning.
 
 If both bounded calls finished, the owner can explicitly **Save available output** after failure or **Recheck saved
 output** after a verifier correction. `POST /api/sources/:id/understanding` with `saveAvailable:true` validates the
