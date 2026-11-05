@@ -942,8 +942,11 @@ The materialization bound below is implemented by the current repair slice; chat
   more than 50 missed turns resets only the pagination boundary to that snapshot: explicit Load earlier messages fills
   the middle gap, deduplicates through retained rows and continues older. No automatic full-history fetch runs.
   Only a newer head window may move that boundary; a delayed older first socket snapshot cannot replace a newer HTTP
-  boundary. Initial scope restoration uses the merged latest turn and respects manual selection. A successful
-  authorized socket snapshot makes chat ready; a later failed parallel initial HTTP read cannot disable Send.
+  boundary. The first HTTP or socket head restores scope once from the merged latest turn before enabling Send.
+  Manual selection and a newly acknowledged chat's current selection take precedence; later HTTP/reconnect heads
+  do not restore it again. Retrying history within the same chat does not reset that initial selection guard.
+  A successful authorized socket snapshot makes chat ready even when the parallel initial HTTP read is pending or
+  fails, without widening selected or empty scope to project defaults.
   An older request's success/error/finally is scoped to its initiating project/chat and request generation; obsolete
   reads are aborted. Older pages never restore selection, queue or composer state. Page merging preserves a visible
   turn element's offset in the conversation scrollport, rather than using total height growth: middle-gap insertion
@@ -1256,6 +1259,8 @@ Clear passage retains the explicit revision from the URL even before it appears 
 only the passage selection; a pending/failed historical metadata read cannot redirect it to the current revision.
 Add sources keeps text and URL drafts independent. Each form allows one pending submission while its fields remain
 editable. Success clears only the unchanged submitted draft; later edits, failures and duplicate responses keep it.
+After text/URL/file additions or Attach, cancel the older project source-list read before refreshing; a late empty
+first-page response cannot hide the confirmed source. The refresh retains loaded pages and source selection.
 Closing and reopening the dialog does not cancel the write or discard newer input. Drafts stay local to the mounted
 project workspace; no automatic retry or browser persistence is added.
 Projects exposes Show archived projects and Unarchive. Each list view owns its query/cursor; switching views aborts
@@ -1287,6 +1292,9 @@ Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
 Every screen has loading, empty and actionable error states plus stale/paused where relevant. Use one Markdown renderer
 with raw HTML disabled and resolved citation chips. Do not cache private text in localStorage or a service worker.
+An exact registered compact/persistent citation token keeps its resolved Reader target even when Markdown has a
+reference definition for that token. Adjacent registered tokens remain separate citations even if Markdown parses
+them as one full-reference link. Explicit URLs, ordinary full-reference links and non-exact or unregistered spellings stay unchanged.
 The web renderer uses `remark-math` and `rehype-katex` for `\(...\)`, `\[...\]` and `$$...$$` as native MathML, without
 KaTeX styles or font assets. Only the TeX compatibility path adds a standard GFM Markdown AST pass to preserve code, links
 and other literal nodes. Single `$` stays literal for currency; unfinished expressions stay readable and display formulas

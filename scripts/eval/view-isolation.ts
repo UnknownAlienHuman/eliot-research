@@ -1,6 +1,6 @@
 // Actual reused workspace against the local Worker. Model POSTs are intercepted before dispatch.
 import assert from 'node:assert/strict';
-import { chromium, expect } from '@playwright/test';
+import { chromium, expect, type Route, type WebSocketRoute } from '@playwright/test';
 import { assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 
 assert(process.env.ELIOT_K2_MODEL !== '1', 'View isolation forbids model opt-in.');
@@ -17,6 +17,7 @@ const replacementReceipt = async request => {
 const project = (await api('/api/projects', { title: 'View isolation ' + crypto.randomUUID() })).project.id;
 const other = (await api('/api/projects', { title: 'Other view isolation ' + crypto.randomUUID() })).project.id;
 const chats = await Promise.all(['A', 'B'].map(async title => (await api('/api/projects/' + project + '/chats', { title })).chat.id));
+const scopeChat = (await api('/api/projects/' + project + '/chats', { title: 'Socket scope recovery' })).chat.id;
 const sources = [];
 for (const title of ['Source A', 'Source B']) {
   const created = await api('/api/projects/' + project + '/sources/text', { title, text: '# ' + title + '\n\nImmutable native text ' + crypto.randomUUID() });
@@ -73,6 +74,63 @@ try {
           await page.unroute(url, handler); await settle();
         } };
     };
+    // A socket may restore readable history while the parallel HTTP head is still pending.
+    // Send must already use the saved source scope, including an intentionally empty scope.
+    let scopeSocket: WebSocketRoute | undefined;
+    await page.routeWebSocket(url => url.pathname === '/agents/chat-agent/' + scopeChat,
+      socket => { scopeSocket = socket; });
+    const scopeHistoryUrl = origin + '/api/projects/' + project + '/chats/' + scopeChat;
+    let scopeHeads: Route[] = [], scopeHistoryFailure: string | undefined;
+    const failScopeHistory = async (message: string) => {
+      scopeHistoryFailure = message;
+      await Promise.all(scopeHeads.splice(0).map(route => route.fulfill({ status: 503,
+        json: { error: { message } } }).catch(() => {})));
+      await settle();
+    };
+    // StrictMode can abort the first GET and issue another. Hold every head read;
+    // a fallback 200 would hide the deliberate failure and leave no Retry action.
+    await page.route(scopeHistoryUrl, route => {
+      if (route.request().method() !== 'GET') return route.continue();
+      if (scopeHistoryFailure) return route.fulfill({ status: 503,
+        json: { error: { message: scopeHistoryFailure } } }).catch(() => {});
+      scopeHeads.push(route);
+    });
+    for (const journey of ['explicit', 'empty', 'retry empty']) {
+      const scopeMode = journey === 'explicit' ? 'explicit' : 'empty';
+      const storedScopeMode = journey === 'retry empty' ? 'explicit' : scopeMode;
+      scopeSocket = undefined;
+      scopeHeads = []; scopeHistoryFailure = undefined;
+      await page.goto(origin + chatPath(scopeChat));
+      await expect.poll(() => scopeHeads.length, { message: journey + ': initial history requested' }).toBeGreaterThan(0);
+      await expect.poll(() => scopeSocket !== undefined).toBe(true);
+      if (journey === 'retry empty') {
+        await failScopeHistory('Initial history unavailable');
+        const retry = page.getByRole('button', { name: 'Retry', exact: true });
+        await expect(retry).toBeVisible();
+        await navigate('/p/' + project + '/sources');
+        for (const title of ['Source A', 'Source B'])
+          await page.getByRole('checkbox', { name: 'Include ' + title + ' in the current source selection', exact: true }).uncheck();
+        await navigate(chatPath(scopeChat));
+        await expect(retry).toBeVisible();
+        scopeHeads = []; scopeHistoryFailure = undefined;
+        await retry.click();
+        await expect.poll(() => scopeHeads.length, { message: 'Explicit Retry requested history' }).toBeGreaterThan(0);
+      }
+      const sourceIds = storedScopeMode === 'explicit' ? [sources[0].source.id] : [];
+      scopeSocket!.send(JSON.stringify({ type: 'snapshot', nextCursor: null, queued: null, stateVersion: 1,
+        turns: [{ turnId: 'scope-fixture', question: 'Scoped saved question', answer: 'Scoped saved answer', state: 'completed',
+          createdAt: 1, historyVersion: 1, model: 'fixture', scopeMode: storedScopeMode, sourceIds, revisionIds: [], citations: [], invalidLabels: 0,
+          inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0, firstTokenMs: null, totalMs: 0, error: null }] }));
+      await expect(page.getByText('Scoped saved answer', { exact: true })).toBeVisible();
+      await question.fill('Follow up before HTTP');
+      const scopedSend = await hold(turnsUrl(scopeChat)); await send.click(); await scopedSend.waiting; interceptedTurns++;
+      assert.equal(scopedSend.body().scopeMode, scopeMode);
+      assert.deepEqual(scopedSend.body().sourceIds, scopeMode === 'explicit' ? sourceIds : undefined);
+      await scopedSend.release();
+      await failScopeHistory('Parallel history unavailable');
+      await expect(page.getByText('Parallel history unavailable', { exact: true })).toHaveCount(0);
+    }
+    await page.unroute(scopeHistoryUrl);
     // A first-page read started before chat creation must not erase the new row.
     const oldHead = await api('/api/projects/' + historyProject + '/chats');
     let heads = [];
