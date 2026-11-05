@@ -132,7 +132,13 @@ export function resolveCitations(answer: string, sources: LabelSource[]): Resolv
   const fences = fencedRanges(answer);
   const inline = inlineCodeRanges(answer, fences);
   const code = [...fences, ...inline].sort((a, b) => a.start - b.start);
-  const inside = (at: number): boolean => code.some((range) => at >= range.start && at < range.end);
+  // Label matches advance monotonically; each sorted code range is visited once.
+  let codeIndex = 0;
+  const inside = (at: number): boolean => {
+    while ((code[codeIndex]?.end ?? Infinity) <= at) codeIndex++;
+    const range = code[codeIndex];
+    return range !== undefined && at >= range.start;
+  };
   const seen = new Map<string, string>();
   const citations: Citation[] = [];
   const parts: string[] = [];
