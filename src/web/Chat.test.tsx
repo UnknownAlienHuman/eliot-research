@@ -97,6 +97,21 @@ describe('New chat from an unconfirmed first Send', () => {
     });
   }
 
+  it('confirms before clearing an unsent draft on the blank route', async () => {
+    const post = vi.fn(async () => { throw new Error('New chat must not write or send'); });
+    await openDraft(post);
+    vi.mocked(window.confirm).mockReturnValue(false);
+    await press('New chat');
+    expect(question().value).toBe('First question');
+    expect(router.state.location.pathname).toBe('/p/p1/chat');
+    vi.mocked(window.confirm).mockReturnValue(true);
+    await press('New chat');
+    expect(window.confirm).toHaveBeenCalledTimes(2);
+    expect(question().value).toBe('');
+    expect(router.state.location.pathname).toBe('/p/p1/chat');
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it.each(['create', 'turn'])('starts a distinct conversation after a lost %s receipt, while cancelling keeps safe replay', async stage => {
     const requests: Request[] = [];
     const failed: Request[] = [];
