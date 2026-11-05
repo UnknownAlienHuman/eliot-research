@@ -121,9 +121,11 @@ D1/R2: authenticated ChatAgent RPC and WebSocket 101 through the alias, forged-O
 the built owner HTML/JS assets, MCP reads/proposals and zero model calls. The same production probe runs in fast-ci
 after default-build browser checks. This is local evidence, not deployed Access acceptance.
 
-Provision a separate **working** library D1/R2 under `eliot-research-library`, not a staging copy. The all-zero UUID is
-a non-resource placeholder until the new D1 ID is returned. Apply all active `migrations/*.sql` there, including
-`0013` and excluding archived `0004`. Keep both legacy databases, all legacy buckets and the old Workflow intact;
+The separate **working** library D1/R2 `eliot-research-library` was provisioned on 2026-11-05, not as a staging copy.
+The production D1 binding names that dedicated database. All 12 active `migrations/*.sql` through `0013` were applied
+with Wrangler, excluding archived `0004`; the migration ledger matches, `quick_check` returns `ok`, foreign-key check
+returns no violations, and project/source/revision counts remain zero. R2 is Standard storage with public access
+disabled and no custom domain. Keep both legacy databases, all legacy buckets and the old Workflow intact;
 never apply replacement SQL to the legacy schema or delete its data. Existing legacy data remains retained but is
 not automatically visible in the replacement; verified K10 import is a separate operation.
 
@@ -143,7 +145,8 @@ Rollback must restore the old code **and its bindings/triggers/consumers** while
 The alias makes no DO lifecycle change, but new chat data is not promised compatible with old ResearchSession code;
 the old app must continue using its old D1 mappings. Do not delete resources or treat Worker rollback as a data restore
 ([rollback limits](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)). All deployment,
-remote provisioning, queue changes and live acceptance remain NOT_RUN by these local preparation commands.
+queue changes and live acceptance remain NOT_RUN. Library provisioning/schema preparation does not switch traffic;
+local dry-run and Miniflare commands themselves never provision or deploy remote resources.
 
 ## 3. Data and immutable writes
 

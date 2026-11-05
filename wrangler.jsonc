@@ -51,8 +51,8 @@
       "queues": { "producers": [], "consumers": [] },
       "d1_databases": [{
         "binding": "DB", "database_name": "eliot-research-library",
-        // Replace with the new library database UUID. Never use either legacy D1 ID.
-        "database_id": "00000000-0000-0000-0000-000000000000",
+        // Dedicated replacement library. Never use either legacy D1 ID.
+        "database_id": "3a35ce23-cd1a-476f-b1c0-2a534f2de7de",
         "migrations_dir": "migrations", "remote": false
       }],
       "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "eliot-research-library", "remote": false }],
