@@ -251,6 +251,8 @@ Markdown reference definitions cannot redirect exact registered citation tokens 
 adjacent tokens parsed as one link; ordinary explicit links and unregistered labels retain their Markdown behavior.
 Groups of fully specified labels may normalize to separate inline references after every member passes the same
 frozen-scope validation; unknown identities and shorthand remain failures.
+Inline citations use compact passage numbers; full titles remain available to assistive technology and on hover.
+Keyboard and pointer activation keep the same immutable Reader target.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
 canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
 never retried automatically. Save preserves a partial answer's recorded reason, distinguishing interrupted generation
