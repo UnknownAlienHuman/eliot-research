@@ -463,7 +463,15 @@ export class ChatAgent extends Agent<Env, ChatState> {
         if (checkpointTimer !== undefined) clearTimeout(checkpointTimer);
         checkpointTimer = undefined;
         if (controller.signal.aborted) return;
-        try { this.writeTurn(turn); lastWrite = Date.now(); }
+        try {
+          // Persist usable citation targets with the streamed text, so restart can
+          // retain them without reconstructing the frozen scope or rereading sources.
+          // Keep the raw accumulator intact: the next chunk may finish a label or code span.
+          const resolved = resolveCitations(turn.answer, labelSources);
+          this.writeTurn({ ...turn, answer: resolved.text, citations: resolved.citations, invalidLabels: resolved.invalidLabels,
+            ...(resolved.invalidLabelExamples ? { invalidLabelExamples: resolved.invalidLabelExamples } : {}) });
+          lastWrite = Date.now();
+        }
         catch { checkpointFailed = true; controller.abort(); }
       };
       for await (const text of result.textStream) {
