@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import { assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 // K1 Read eval: exact API transport only, no fallbacks.
 // H (Origin + owner credentials) goes only to ELIOT_URL. External PDF downloads send no headers.
@@ -575,7 +575,16 @@ try {
   await page.goto(origin);
   await page.getByLabel('New project', { exact: true }).fill(name);
   await page.getByRole('button', { name: 'Create', exact: true }).click();
+  const createdProjectPath = await page.getByRole('link', { name, exact: true }).getAttribute('href');
+  assert(createdProjectPath, 'The created project must have a workspace link.');
+  const initialSourcesUrl = origin + '/api/projects/' + createdProjectPath.split('/')[2] + '/sources';
+  let delayedSources: Route | undefined;
+  await page.route(initialSourcesUrl, route => {
+    if (route.request().method() === 'GET' && !delayedSources) { delayedSources = route; return; }
+    return route.continue();
+  });
   await page.getByRole('link', { name, exact: true }).click();
+  await expect.poll(() => delayedSources !== undefined).toBe(true);
   let activeUploads = 0, peakUploads = 0;
   page.on('request', (request) => { if (request.method() === 'POST' && request.url().endsWith('/sources/file')) peakUploads = Math.max(peakUploads, ++activeUploads); });
   page.on('response', (response) => { if (response.request().method() === 'POST' && response.url().endsWith('/sources/file')) activeUploads--; });
@@ -590,6 +599,12 @@ try {
   let addDialog = await openAddSources(page);
   await addDialog.getByLabel('Choose files', { exact: true }).setInputFiles(batchFiles);
   await addDialog.getByRole('button', { name: 'Close', exact: true }).click();
+  // Upload progress remains in the closed native dialog and is hidden from normal role queries.
+  const uploadProgress = page.getByRole('dialog', { name: 'Add sources', exact: true, includeHidden: true });
+  await expect(uploadProgress.locator('.er-lib__progress li').filter({ hasText: / — Uploaded$/ })).toHaveCount(batchFiles.length);
+  // A pre-upload first page must not hide the confirmed files or stop conversion polling.
+  await delayedSources?.fulfill({ json: { sources: [], nextCursor: null } }).catch(() => {});
+  await page.unroute(initialSourcesUrl);
   await page.getByRole('link', { name: name + '-0.md', exact: true }).click({ timeout: 10000 });
   await expect(page.locator('.er-lib__text')).toContainText('Точный русский текст', { timeout: 10000 });
   const reader = new URL(page.url()), revisionId = reader.searchParams.get('revisionId');
@@ -651,11 +666,17 @@ try {
   const fixtureApi = '/api/projects/' + readerProject + '/chats/' + fixtureChat;
   const emptyChat = (await apiJson(fixtureApi)).body;
   const citationBlocks = [passageBlock, longBlock];
+  const citationTitle = 'BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding';
+  const citationAnswer = '[S1:' + tableBlock.id + ']: https://example.test/hidden-definition\n\n'
+    + 'Read both passages [S1:' + passageBlock.id + '][S1:' + longBlock.id
+    + '], then revisit the first [R' + revisionId + ':' + passageBlock.id + '].\n\n'
+    + '[S1:' + passageBlock.id + ']: https://example.test/not-the-source';
+  const fixtureTurnId = crypto.randomUUID();
   // Control only the history GET; citation rendering and all Reader byte APIs remain real. No Send.
   await page.route(origin + fixtureApi, route => route.request().method() !== 'GET' ? route.continue() : route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...emptyChat, turns: [{
-    turnId: crypto.randomUUID(), question: 'Read the cited passages.', answer: citationBlocks.map((b: any) => '[S1:' + b.id + ']').join('\n\n'), state: 'completed', error: null, model: 'workers-ai:@cf/zai-org/glm-5.3-flash', createdAt: Date.now(),
+    turnId: fixtureTurnId, question: 'Read the cited passages.', answer: citationAnswer, state: 'completed', error: null, model: 'workers-ai:@cf/zai-org/glm-5.3-flash', createdAt: Date.now(),
     scopeMode: 'explicit', sourceIds: [readerSource], revisionIds: [revisionId], contextMode: 'whole', firstTokenMs: 0, totalMs: 0, inputTokens: null, outputTokens: null, cachedTokens: null, invalidLabels: 0, settlementPending: false,
-    citations: citationBlocks.map((b: any) => ({ sourceId: readerSource, revisionId, block: b.id, start: b.start, end: b.end, label: '[S1:' + b.id + ']', sourceTitle: name + '-0.md', deleted: false })),
+    citations: [tableBlock, ...citationBlocks].map((b: any) => ({ sourceId: readerSource, revisionId, block: b.id, start: b.start, end: b.end, label: '[S1:' + b.id + ']', sourceTitle: citationTitle, deleted: false })),
   }] }) }));
   const openCitation = async (index: number) => {
     await page.goto(origin + '/p/' + readerProject + '/chat/' + fixtureChat);
@@ -693,7 +714,36 @@ try {
   const unavailable = (await apiJson('/api/projects/' + readerProject + '/sources/file', { method: 'POST', body: unavailableForm })).body;
   await expect.poll(async () => (await apiJson('/api/sources/' + unavailable.sourceId)).body.source.readableState).toBe('failed');
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
-    await page.setViewportSize(viewport); await openCitation(0);
+    await page.setViewportSize(viewport);
+    await page.goto(origin + '/p/' + readerProject + '/chat/' + fixtureChat);
+    const inlineCitations = page.locator('.er-chat__answer a.er-citation--inline');
+    await expect(inlineCitations).toHaveText(['1', '2', '1']);
+    for (const [index, block] of [passageBlock, longBlock, passageBlock].entries()) {
+      const link = inlineCitations.nth(index), number = index === 1 ? 2 : 1;
+      await expect(link).toHaveAccessibleName('Citation ' + number + ': ' + citationTitle + ' · ' + block.id);
+      await expect(link).toHaveAttribute('title', citationTitle + ' · ' + block.id);
+      await expect(link).toHaveAttribute('href', '/p/' + readerProject + '/source/' + readerSource
+        + '?revisionId=' + revisionId + '&start=' + block.start + '&end=' + block.end);
+      const box = await link.boundingBox();
+      assert(box && box.width >= 24 && box.width <= 40 && box.height >= 24 && box.height <= 28,
+        'Inline citations must remain compact without shrinking below a 24px target.');
+    }
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Compact citations must not overflow the phone viewport.');
+    const firstBox = await inlineCitations.nth(0).boundingBox(), secondBox = await inlineCitations.nth(1).boundingBox();
+    assert(firstBox && secondBox && (secondBox.y >= firstBox.y + firstBox.height || secondBox.x >= firstBox.x + firstBox.width),
+      'Adjacent citation targets must not overlap.');
+    await inlineCitations.nth(0).hover(); await expect(inlineCitations.nth(0)).toHaveCSS('text-decoration-line', 'underline');
+    await inlineCitations.nth(0).focus(); await page.keyboard.press('Tab');
+    await expect(inlineCitations.nth(1)).toBeFocused();
+    assert(await inlineCitations.nth(1).evaluate(el => el.matches(':focus-visible') && getComputedStyle(el).outlineStyle !== 'none'
+      && parseFloat(getComputedStyle(el).outlineWidth) >= 2), 'Keyboard focus must remain visible.');
+    await page.screenshot({ path: outDir + '/' + (viewport.width === 1440 ? 'desktop' : 'phone') + '-compact-citations.png' });
+    await expect(inlineCitations.nth(1)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(origin + '/p/' + readerProject + '/source/' + readerSource
+      + '?revisionId=' + revisionId + '&start=' + longBlock.start + '&end=' + longBlock.end);
+    await expect.poll(() => page.locator('.er-lib__text mark').textContent()).toBe(whole.bytes.subarray(longBlock.start, longBlock.end).toString('utf8'));
+    await openCitation(0);
     const mark = page.locator('.er-lib__text mark');
     assert(await mark.evaluate(el => document.activeElement === el), 'Citation navigation must focus the actual mark.');
     assert(await mark.evaluate(el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }), 'Short passage must be inside the viewport.');

@@ -269,3 +269,77 @@ describe("Reader replacement source list", () => {
     client.clear();
   });
 });
+
+describe("Sources added during the first list read", () => {
+  it.each(["text", "url", "file", "attach"])("makes a confirmed %s source selectable without a page reload", async mode => {
+    let added = false, reads = 0, writes = 0, releaseInitial: (() => void) | undefined;
+    let initialSignal: AbortSignal | null | undefined;
+    const source = { id: "new-source", title: "Added evidence", kind: "text", enabled: true, currentRevisionId: "new-revision",
+      revisionId: "new-revision", readableState: "readable", distillState: "none", claimCount: 0, originalFilename: null, error: null };
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (init?.method === "POST") {
+        expect(url.pathname).toBe("/api/projects/p1/sources/" + mode);
+        writes++; added = true;
+        return json({ sourceId: source.id, revisionId: source.revisionId }, 201);
+      }
+      expect(init?.method ?? "GET").toBe("GET");
+      if (url.pathname.endsWith("/sources/available")) return json({ sources: [source], nextCursor: null });
+      expect(url.pathname).toBe("/api/projects/p1/sources");
+      reads++;
+      if (reads === 1) {
+        initialSignal = init?.signal;
+        const response = json({ sources: [], nextCursor: null });
+        return new Promise<Response>(resolve => { releaseInitial = () => resolve(response); });
+      }
+      return json({ sources: added ? [source] : [], nextCursor: null });
+    }));
+    HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+    const changed = vi.fn();
+    router = createMemoryRouter([{ path: "*", element: <SourcesPane projectId="p1"
+      selection={{ scopeMode: "explicit", sourceIds: [] }} onSelectionChange={changed} /> }], { initialEntries: ["/p/p1/sources"] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    await act(async () => { root.render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>); }); await settle();
+    const button = (text: string) => {
+      const found = [...host.querySelectorAll("button")].find(item => item.textContent === text);
+      if (!found) throw new Error("Missing action: " + text);
+      return found;
+    };
+    await click(button("Add"));
+    expect(host.querySelector("dialog")?.open).toBe(true);
+    async function fill(label: string, value: string) {
+      const id = [...host.querySelectorAll("label")].find(item => item.textContent === label)?.htmlFor;
+      const input = id ? document.getElementById(id) : null;
+      if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) throw new Error("Missing field: " + label);
+      const prototype = input instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    if (mode === "text") {
+      await fill("Pasted text title", source.title); await fill("Text", "Evidence for the next question.");
+      await click(button("Add text"));
+    } else if (mode === "url") {
+      await fill("Page URL (https only)", "https://example.com/evidence"); await click(button("Add URL"));
+    } else if (mode === "file") {
+      const input = host.querySelector<HTMLInputElement>('input[type="file"]');
+      if (!input) throw new Error("Missing file input");
+      Object.defineProperty(input, "files", { configurable: true, value: [new File(["Evidence"], "evidence.md", { type: "text/markdown" })] });
+      await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); }); await settle();
+    } else {
+      await click(button("Browse Library")); await click(button("Attach"));
+    }
+    expect(writes).toBe(1);
+    await act(async () => { releaseInitial?.(); }); await settle(); await settle();
+    const link = host.querySelector<HTMLAnchorElement>(".er-sources-pane__row-title");
+    expect(link?.getAttribute("href")).toBe("/p/p1/source/new-source?revisionId=new-revision");
+    const checkbox = host.querySelector<HTMLInputElement>(".er-sources-pane__checkbox input");
+    expect(checkbox?.disabled).toBe(false);
+    if (!checkbox) throw new Error("The added source cannot be selected");
+    await act(async () => { checkbox.click(); });
+    expect(changed).toHaveBeenCalledWith({ scopeMode: "explicit", sourceIds: [source.id] });
+    expect(initialSignal?.aborted).toBe(true); expect(reads).toBe(2); expect(writes).toBe(1);
+    client.clear();
+  });
+});

@@ -1,4 +1,7 @@
 .er-citation { display: inline-flex; align-items: center; max-inline-size: 100%; min-block-size: var(--eliot-size-control); padding-inline: var(--eliot-space-block-control); border-radius: var(--eliot-shape-full); background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-size: var(--eliot-type-label-medium-size); line-height: var(--eliot-type-label-medium-line-height); overflow-wrap: anywhere; text-decoration: none; }
+.er-citation--inline { justify-content: center; box-sizing: border-box; min-inline-size: 24px; min-block-size: 24px; padding-inline: var(--eliot-space-tight); margin-inline: var(--eliot-space-hairline); font-weight: 600; font-variant-numeric: tabular-nums; vertical-align: baseline; white-space: nowrap; overflow-wrap: normal; }
+.er-citation--inline:hover { text-decoration: underline; }
+.er-citation--inline:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
 .er-math-block { min-inline-size: 0; max-inline-size: 100%; }
 .er-math-scroll { max-inline-size: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: var(--md-sys-color-outline) transparent; }
 .er-math-scroll:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }

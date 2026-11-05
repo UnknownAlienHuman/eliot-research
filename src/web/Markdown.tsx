@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import ReactMarkdown, { type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -26,6 +26,7 @@ interface MarkdownNode {
   value?: string;
   properties?: object;
   children?: MarkdownNode[];
+  position?: ReturnType<typeof fromMarkdown>['position'];
 }
 interface SourceNode {
   type: string;
@@ -83,7 +84,32 @@ function MathSpan({ node, children, ...props }: ComponentProps<'span'> & ExtraPr
     ? <DisplayMath>{span}</DisplayMath> : span;
 }
 
+// Keep the component identity stable so snapshots do not replace focused anchors.
+const MarkdownLinks = createContext({
+  targets: new Map<string, { label: string }>(), numbers: new Map<string, number>(),
+});
+function MarkdownLink({ href, children, title, node }: ComponentProps<'a'> & ExtraProps) {
+  const { targets, numbers } = useContext(MarkdownLinks);
+  const target = href === undefined ? undefined : targets.get(href);
+  if (target && node?.properties.dataCitation) {
+    const key = href ?? '', number = numbers.get(key) ?? numbers.size + 1;
+    numbers.set(key, number);
+    return <Link className='er-citation er-citation--inline' to={key} title={target.label}
+      aria-label={'Citation ' + number + ': ' + target.label}>{number}</Link>;
+  }
+  return target ? <Link to={href ?? ''} title={title}>{children}</Link> : <a href={href} title={title}>{children}</a>;
+}
+
 export function Markdown({ text, references = [] }: { readonly text: string; readonly references?: readonly MarkdownReference[] }) {
+  const markdown = mathDelimiters(text);
+  // Micromark omits exactly one leading BOM from its source offsets.
+  const sourceOffset = markdown.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const targets = new Map<string, { label: string }>();
+  for (const ref of references) if (ref.text && !targets.has(ref.href))
+    targets.set(ref.href, { label: ref.label ?? ref.text });
+  // Number rendered citations, not hidden definitions or unused reference metadata.
+  // Repeated compact/persistent aliases share the same exact passage URL.
+  const numbers = new Map<string, number>();
   function linkify(value: string): MarkdownNode[] {
     const hits = references.filter((ref) => ref.text !== '').flatMap((ref) => {
       const found: { at: number; ref: MarkdownReference }[] = [];
@@ -96,7 +122,7 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
     for (const { at, ref } of hits) {
       if (at < pos) continue;
       parts.push({ type: 'text', value: value.slice(pos, at) }, {
-        type: 'element', tagName: 'a', properties: { href: ref.href },
+        type: 'element', tagName: 'a', properties: { href: ref.href, dataCitation: true },
         children: [{ type: 'text', value: ref.label ?? ref.text }],
       });
       pos = at + ref.text.length;
@@ -105,22 +131,30 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
     return parts;
   }
   // Transform text nodes at every prose depth, before React components render.
-  // Code and existing links are literal boundaries, including their descendants.
+  // Code and explicit links are literal boundaries, including their descendants.
+  // A definition must not redirect exact registered citation atoms, even when
+  // adjacent atoms parse as one full-reference link.
   function citationLinks() {
     function visit(node: MarkdownNode): void {
       if (!node.children || node.tagName === 'code' || node.tagName === 'pre' || node.tagName === 'a') return;
       node.children = node.children.flatMap((child) => {
         if (child.type === 'text' && child.value !== undefined) return linkify(child.value);
+        if (child.tagName === 'a') {
+          const start = child.position?.start.offset, end = child.position?.end.offset;
+          const source = start === undefined || end === undefined ? '' : markdown.slice(start + sourceOffset, end + sourceOffset);
+          const labels = source.match(/\[(?:S\d+|R[\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}):\d+\]/g);
+          if (labels?.join('') === source && labels.every(label => references.some(ref => ref.text === label))) {
+            return labels.flatMap(linkify);
+          }
+        }
         visit(child);
         return [child];
       });
     }
     return visit;
   }
-  return <ReactMarkdown skipHtml remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[citationLinks, [rehypeKatex, { output: 'mathml', trust: false, errorColor: 'currentColor' }]]} components={{ img: () => null,
+  return <MarkdownLinks.Provider value={{ targets, numbers }}><ReactMarkdown skipHtml remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[citationLinks, [rehypeKatex, { output: 'mathml', trust: false, errorColor: 'currentColor' }]]} components={{ img: () => null,
     span: MathSpan,
-    a: ({ href, children, title }) => references.some((ref) => ref.href === href)
-      ? <Link className='er-citation' to={href ?? ''} title={title}>{children}</Link>
-      : <a href={href} title={title}>{children}</a>,
-  }}>{mathDelimiters(text)}</ReactMarkdown>;
+    a: MarkdownLink,
+  }}>{markdown}</ReactMarkdown></MarkdownLinks.Provider>;
 }

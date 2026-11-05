@@ -237,6 +237,62 @@ beforeEach(() => {
 });
 
 describe("ChatAgent stream checkpoints", () => {
+  it("retains exact citation targets when a real streamed checkpoint survives restart", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    let stream!: ReadableStreamDefaultController<Uint8Array>, pending: Promise<SubmitResult> | undefined;
+    const encoder = new TextEncoder(), id = "aaaaaaaa-aaaa-4aaa-8aaa-123456789005";
+    nextSSE = new ReadableStream({ start(controller) { stream = controller; } });
+    try {
+      await h.agent.onStart();
+      pending = h.agent.submitTurn({ projectId, chatId, turnId: id, question: "Recovery", scopeMode: "explicit", sourceIds: ["s1"] }, true);
+      for (let i = 0; i < 50 && fetchCalls === 0; i++) await vi.advanceTimersByTimeAsync(10);
+      stream.enqueue(encoder.encode("data: " + chunk({ content: "Retained evidence [S1:1]." }, null) + "\n\n"));
+      await vi.advanceTimersByTimeAsync(0);
+      const checkpoint = (await h.agent.getSnapshot(projectId)).turns[0];
+      expect(checkpoint?.answer).toBe("Retained evidence [S1:1].");
+      // Only the durable SQLite checkpoint and SDK state survive a process restart.
+      const restarted = new ChatAgent({ database: h.db } as unknown as ConstructorParameters<typeof ChatAgent>[0], h.env);
+      restarted.setState(structuredClone(h.agent.state));
+      await restarted.onStart();
+      const recovered = (await restarted.getSnapshot(projectId)).turns[0];
+      expect(recovered).toMatchObject({ state: "partial", answer: checkpoint?.answer, error: expect.stringContaining("interrupted"),
+        citations: [{ revisionId: "r1", sourceId: "s1", block: 1, start: 0, end: 8, sourceTitle: "Paper", deleted: false, label: "[S1:1]" }] });
+      const saved = await restarted.getStoredTurn(projectId, id);
+      expect(saved.answer).toContain("Retained evidence [Rr1:1].");
+      expect(saved.citations).toEqual(recovered?.citations.map(citation => ({ ...citation, label: "[Rr1:1]" })));
+      expect(fetchCalls).toBe(1); expect(buildContext).toHaveBeenCalledTimes(1);
+    } finally {
+      stream.error(new Error("Release abandoned fixture process")); await vi.advanceTimersByTimeAsync(0); await pending;
+      h.db.close(); h.d1.close(); vi.useRealTimers();
+    }
+  });
+  it("keeps raw split labels and unfinished code intact while checkpointing resolved text", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    nextSSE = new ReadableStream({ start(controller) { stream = controller; } });
+    try {
+      await h.agent.onStart();
+      const pending = h.agent.submitTurn({ projectId, chatId, turnId: "aaaaaaaa-aaaa-4aaa-8aaa-123456789006", question: "Split", scopeMode: "explicit", sourceIds: ["s1"] }, true);
+      for (let i = 0; i < 50 && fetchCalls === 0; i++) await vi.advanceTimersByTimeAsync(10);
+      const emit = async (text: string) => { stream.enqueue(encoder.encode("data: " + chunk({ content: text }, null) + "\n\n")); await vi.advanceTimersByTimeAsync(0); };
+      await emit("Literal `[S9:9]");
+      expect((await h.agent.getTurns(projectId))[0]).toMatchObject({ answer: "Literal `", citations: [], invalidLabels: 1 });
+      await emit("` ends. Evidence [S1:"); await vi.advanceTimersByTimeAsync(1000);
+      expect((await h.agent.getTurns(projectId))[0]).toMatchObject({ answer: "Literal `[S9:9]` ends. Evidence [S1:", citations: [], invalidLabels: 0 });
+      await emit("1]."); await vi.advanceTimersByTimeAsync(1000);
+      const checkpoint = (await h.agent.getSnapshot(projectId)).turns[0];
+      expect(checkpoint?.answer).toBe("Literal `[S9:9]` ends. Evidence [S1:1].");
+      expect(checkpoint?.citations).toHaveLength(1); expect(checkpoint?.invalidLabels).toBe(0);
+      stream.enqueue(encoder.encode("data: " + chunk({}, "stop", { prompt_tokens: 8, completion_tokens: 12 }) + "\n\ndata: [DONE]\n\n")); stream.close();
+      await vi.advanceTimersByTimeAsync(0);
+      const terminal = requireTurn(await pending);
+      expect(terminal).toMatchObject({ state: "completed", answer: checkpoint?.answer, citations: checkpoint?.citations, invalidLabels: 0 });
+      expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); h.d1.close(); vi.useRealTimers(); }
+  });
   it("flushes a received tail during provider silence without recurring idle writes", async () => {
     vi.useFakeTimers();
     const h = makeHarness();

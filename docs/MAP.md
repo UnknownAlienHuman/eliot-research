@@ -138,6 +138,8 @@ its text preview, and Apply a new readable revision while retaining the original
 3. Browser batch UX sends **one file per request**, with at most two uploads in flight. The API accepts one file up to
    25 MiB, never a 100 MiB buffered multipart batch. Text and URL have separate JSON routes/shapes. IMPLEMENTATION §4.
    Text/URL forms allow one pending request each and retain edits made while waiting for its response.
+   Confirmed additions cancel older source-list reads before refreshing, so new sources become selectable even
+   while the project's first list load was pending.
 4. Hash, store original under an immutable R2 key, create pending rows and start deterministic
    `ingest-<revisionId>`. Exact duplicates are reported with Attach; never silently merged. Concurrent uploads or
    replacements cannot admit the same bytes for different live sources; deliberate reconversion within one source remains available.
@@ -245,14 +247,18 @@ metadata. Context reserve is separate from the published generation maximum; unk
 Admission has its own claim; a missing numeric capacity never permits another call for the same turn.
 Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
 across corpora, with no fixed-paper coaching or JSON sentence/label enum. The server resolves labels and byte ranges.
+Markdown reference definitions cannot redirect exact registered citation tokens in chat or saved answers, including
+adjacent tokens parsed as one link; ordinary explicit links and unregistered labels retain their Markdown behavior.
 Groups of fully specified labels may normalize to separate inline references after every member passes the same
 frozen-scope validation; unknown identities and shorthand remain failures.
+Inline citations use compact passage numbers; full titles remain available to assistive technology and on hover.
+Keyboard and pointer activation keep the same immutable Reader target.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
 canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
 never retried automatically. Save preserves a partial answer's recorded reason, distinguishing interrupted generation
 from rejected source references. An explicit repeat of an unconfirmed Save in the mounted workspace reuses its
 mutation UUID and returns the committed page rather than duplicating it; confirmed saves remain distinct copies.
-Stream checkpoints also flush a received tail during provider pauses; readers see stored text, with no automatic continuation after restart.
+Stream checkpoints also flush a received tail during provider pauses. Stored text retains resolved citation targets through restart and Save, with no source reread or automatic model continuation.
 For a nonstandard provider finish normalized to `other`, the stored failure includes a bounded safe provider code.
 An explicit repeat of an unconfirmed Send in the same composer reuses its ID, unchanged input and known chat target;
 a new question or a repeat after confirmation has a new ID. See IMPLEMENTATION §8 for the volatile-draft boundary.
@@ -262,6 +268,8 @@ Model history is selected independently of the UI's 50-row page, with SQL payloa
 Failed turns do not displace usable history; exhausted safe reads are disclosed or rejected before inference.
 New-chat creation also retains its UUID/title for explicit replay. After reload, History opens a committed chat/result
 without resending; it does not reconstruct an unaccepted draft.
+The first HTTP or socket history restores the prior source scope before Send becomes ready. A slow or failed HTTP
+read cannot widen a socket-restored chat's scope; later reconnects preserve the owner's current selection.
 Missing citation/numeric-support spans remain API/eval diagnostics without frames in the owner answer. They do not
 change stream state. A completed generation can
 still fail the quality gate; diagnostics do not waive citation, expected-fact or owner-review requirements.
