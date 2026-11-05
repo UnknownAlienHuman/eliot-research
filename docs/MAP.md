@@ -260,6 +260,8 @@ An explicit repeat of an unconfirmed Send in the same composer reuses its ID, un
 a new question or a repeat after confirmation has a new ID. See IMPLEMENTATION §8 for the volatile-draft boundary.
 New-chat creation also retains its UUID/title for explicit replay. After reload, History opens a committed chat/result
 without resending; it does not reconstruct an unaccepted draft.
+The first HTTP or socket history restores the prior source scope before Send becomes ready. A slow or failed HTTP
+read cannot widen a socket-restored chat's scope; later reconnects preserve the owner's current selection.
 Missing citation/numeric-support spans remain API/eval diagnostics without frames in the owner answer. They do not
 change stream state. A completed generation can
 still fail the quality gate; diagnostics do not waive citation, expected-fact or owner-review requirements.

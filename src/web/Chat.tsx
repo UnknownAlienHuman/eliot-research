@@ -168,6 +168,7 @@ export function ChatView({
   const historySeq = useRef(0);
   const selectionRef = useRef(selection);
   const selectionChangeSeq = useRef(0);
+  const restoreSelectionSeq = useRef(-1);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const projectRef = useRef(projectId);
   const chatRef = useRef(chatId);
@@ -221,6 +222,12 @@ export function ChatView({
       headWindow.current = advance.head;
     }
     mergeTurns(page.turns);
+    const restoreSequence = restoreSelectionSeq.current;
+    restoreSelectionSeq.current = -1;
+    const last = turnsRef.current.at(-1);
+    if (last !== undefined && selectionChangeSeq.current === restoreSequence) {
+      onSelectionChangeRef.current({ scopeMode: last.scopeMode, sourceIds: [...last.sourceIds] });
+    }
   }
 
   if (selectionRef.current !== selection) {
@@ -304,7 +311,6 @@ export function ChatView({
     const intended = sentNavigation.current;
     const keepSelection = intended?.projectId === projectId && intended.chatId === chatId && intended.path === location.pathname;
     if (keepSelection) sentNavigation.current = null;
-    const requestSelectionSequence = keepSelection ? -1 : selectionChangeSeq.current;
     const requestProject = projectId;
     const requestChat = chatId;
     const requestHead = headSequence.current;
@@ -317,6 +323,7 @@ export function ChatView({
     setOlderBusy(false);
     setOlderError('');
     if (!sameRoute) {
+      restoreSelectionSeq.current = keepSelection ? -1 : selectionChangeSeq.current;
       setQueued(null);
       setTurns([]);
       turnsRef.current = [];
@@ -336,10 +343,6 @@ export function ChatView({
           if (!live || historySeq.current !== sequence || projectRef.current !== requestProject || chatRef.current !== requestChat) return;
           mergeHead(data);
           mergeSnapshotState(data);
-          const last = turnsRef.current.at(-1);
-          if (last !== undefined && selectionChangeSeq.current === requestSelectionSequence) {
-            onSelectionChangeRef.current({ scopeMode: last.scopeMode, sourceIds: [...last.sourceIds] });
-          }
           setChatReady(true);
         })
         .catch((error: unknown) => {
