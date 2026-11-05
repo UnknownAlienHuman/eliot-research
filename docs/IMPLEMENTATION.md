@@ -1241,6 +1241,10 @@ citation. The selected draft remains available when review reopens; modified lin
 The source Reader highlights a citation's exact UTF-8 range inside the complete canonical text and focuses/scrolls
 to it on passage navigation. The surrounding text and the pre's complete text content stay unchanged. Copy link
 handles selections within or across the mark; invalid ranges retain full text with an error and Clear passage.
+A confirmed file replacement cancels in-flight source-list reads before invalidating their caches because a source is
+shared across projects. Late pre-replacement responses cannot overwrite a new project's first list read. Only active
+lists refetch; their paging/selection and immutable citation links remain while current-source links follow the new head.
+A failed list refresh offers Retry even when all pages were loaded; it retries those pages rather than fetching a next page.
 Clear passage retains the explicit revision from the URL even before it appears in the loaded metadata. It removes
 only the passage selection; a pending/failed historical metadata read cannot redirect it to the current revision.
 Add sources keeps text and URL drafts independent. Each form allows one pending submission while its fields remain

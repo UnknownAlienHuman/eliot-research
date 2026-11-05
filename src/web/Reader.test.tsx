@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, RouterProvider, useParams } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Reader } from "./Library";
+import { Reader, SourcesPane } from "./Library";
+import type { SourceSelection } from "../shared/api";
 
 vi.mock("./Understanding", () => ({ SourceUnderstanding: () => null }));
 vi.mock("./Ocr", () => ({ SourceOcr: () => null }));
@@ -42,6 +43,7 @@ async function navigate(source: string, revision: string) { await act(async () =
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   HTMLElement.prototype.scrollIntoView = vi.fn();
+  HTMLDialogElement.prototype.close = vi.fn();
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   requests = []; respond = async url => success(url); sourceResponse = undefined;
   vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -159,5 +161,111 @@ describe("Reader historical passage navigation", () => {
     expect(router.state.location.search).toBe(`?revisionId=${historical}`);
     expect(host.querySelector("mark")).toBeNull();
     expect(host.querySelector("pre")?.textContent).toBe(TEXT + " " + historical);
+  });
+});
+
+
+describe("Reader replacement source list", () => {
+  it.each(["current", "departed", "other project", "loading project", "failed refresh"])("refreshes the current source link after a confirmed replacement in a %s Reader", async view => {
+    let currentRevision = "r1", release: (() => void) | undefined, listReads = 0;
+    let releaseList: (() => void) | undefined, staleListSignal: AbortSignal | null | undefined;
+    let refreshFailure = view === "failed refresh";
+    const stayed = view === "current" || view === "failed refresh";
+    const row = (id: string) => ({ id, title: "Source " + id, kind: "text", enabled: true, currentRevisionId: id === "s1" ? currentRevision : "r3",
+      revisionId: id === "s1" ? currentRevision : "r3", readableState: "readable", distillState: id === "s1" && currentRevision === "r1" ? "done" : "none",
+      claimCount: id === "s1" && currentRevision === "r1" ? 2 : 0, originalFilename: null, error: null });
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input), "http://localhost");
+      if (init?.method === "POST") {
+        expect(url.pathname).toBe("/api/projects/p1/sources/file");
+        const form = init.body as FormData;
+        expect(form.get("sourceId")).toBe("s1");
+        const revisionId = String(form.get("revisionId"));
+        return new Promise<Response>(resolve => { release = () => {
+          currentRevision = revisionId; resolve(json({ sourceId: "s1", revisionId }));
+        }; });
+      }
+      expect(init?.method ?? "GET").toBe("GET");
+      if (/^\/api\/projects\/p[12]\/sources$/.test(url.pathname)) {
+        listReads++;
+        if (currentRevision !== "r1" && refreshFailure) { refreshFailure = false; return failure("sources"); }
+        const response = json(url.searchParams.has("cursor") ? { sources: [row("s2")], nextCursor: null } : { sources: [row("s1")], nextCursor: "second" });
+        if (view === "loading project" && url.pathname === "/api/projects/p2/sources" && !releaseList) {
+          staleListSignal = init?.signal;
+          return new Promise<Response>(resolve => { releaseList = () => resolve(response); });
+        }
+        return response;
+      }
+      if (url.pathname.startsWith("/api/sources/")) {
+        const id = url.pathname.split("/")[3] ?? "";
+        return json({ source: row(id), revisions: (id === "s1" ? [...new Set(["r1", currentRevision])] : ["r3"])
+          .map((id, index) => ({ id, revisionNo: index + 1, readableState: "readable", createdAt: 0, error: null })) });
+      }
+      expect(url.pathname).toMatch(/^\/api\/revisions\/[^/]+\/(?:text|outline)$/);
+      return success(url);
+    }));
+    function Workspace() {
+      const { projectId = "p1" } = useParams();
+      const [selection, setSelection] = useState<SourceSelection>({ scopeMode: "explicit", sourceIds: ["s1", "s2"] });
+      return <><SourcesPane projectId={projectId} selection={selection} onSelectionChange={setSelection} />
+        <Reader replacingSources={new Set()} beginReplacement={() => true} endReplacement={() => {}} onUseQuestion={() => {}} /></>;
+    }
+    router = createMemoryRouter([{ path: "/p/:projectId/source/:sourceId", element: <Workspace /> }], { initialEntries: [path()] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    await act(async () => { root.render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>); }); await settle();
+    const more = [...host.querySelectorAll("button")].find(button => button.textContent === "Load more sources");
+    if (!more) throw new Error("Missing source pagination");
+    await click(more); await settle();
+    expect(host.querySelectorAll(".er-sources-pane__row")).toHaveLength(2);
+    expect(host.querySelector(".er-sources-pane__row")?.textContent).toContain("Ready · 2 claims");
+    const sourceLink = () => host.querySelector<HTMLAnchorElement>(".er-sources-pane__row-title");
+    expect(sourceLink()?.getAttribute("href")).toBe("/p/p1/source/s1?revisionId=r1");
+    const fileInput = host.querySelector<HTMLInputElement>("#er-lib-replace");
+    if (!fileInput) throw new Error("Missing replacement input");
+    Object.defineProperty(fileInput, "files", { configurable: true, value: [new File(["New source text"], "replacement.md", { type: "text/markdown" })] });
+    await act(async () => { fileInput.dispatchEvent(new Event("change", { bubbles: true })); });
+    const upload = [...host.querySelectorAll("button")].find(button => button.textContent === "Upload new revision");
+    if (!upload) throw new Error("Missing upload action");
+    await click(upload);
+    expect(release).toBeDefined();
+    if (view === "departed") await navigate("s2", "r3");
+    if (view === "other project" || view === "loading project") {
+      await act(async () => { await router.navigate(path("s2", "r3").replace("/p/p1/", "/p/p2/")); }); await settle();
+      const nextPage = [...host.querySelectorAll("button")].find(button => button.textContent === "Load more sources");
+      if (view === "other project") {
+        if (!nextPage) throw new Error("Missing other-project pagination");
+        await click(nextPage); await settle();
+      } else {
+        expect(releaseList).toBeDefined();
+        expect(sourceLink()).toBeNull();
+      }
+    }
+    const project = view === "other project" || view === "loading project" ? "p2" : "p1";
+    const readsBefore = listReads;
+    await act(async () => { release?.(); }); await settle(); await settle();
+    if (releaseList) { await act(async () => { releaseList?.(); }); await settle(); }
+    if (view === "failed refresh") {
+      expect(host.textContent).toContain("Temporary sources failure.");
+      expect(host.querySelector("pre")?.textContent).toBe(TEXT + " " + currentRevision);
+      expect(host.querySelectorAll(".er-sources-pane__row")).toHaveLength(2);
+      const retryList = [...host.querySelectorAll(".er-sources-pane button")].find(button => button.textContent === "Retry");
+      expect(retryList, "A failed refresh must be recoverable even when all pages were loaded").toBeDefined();
+      if (!(retryList instanceof HTMLButtonElement)) throw new Error("Missing source-list retry");
+      await click(retryList); await settle();
+      expect(host.textContent).not.toContain("Temporary sources failure.");
+    }
+    expect(sourceLink()?.getAttribute("href")).toBe("/p/" + project + "/source/s1?revisionId=" + currentRevision);
+    expect(host.querySelector(".er-sources-pane__original")?.getAttribute("href")).toBe("/api/revisions/" + currentRevision + "/original");
+    expect(host.querySelector(".er-sources-pane__row")?.textContent).toContain("Not analyzed");
+    expect(host.querySelectorAll(".er-sources-pane__row")).toHaveLength(view === "loading project" ? 1 : 2);
+    expect([...host.querySelectorAll<HTMLInputElement>(".er-sources-pane__checkbox input")].every(input => input.checked)).toBe(true);
+    expect(listReads - readsBefore).toBe(view === "loading project" ? 1 : view === "failed refresh" ? 3 : 2);
+    if (releaseList) expect(staleListSignal?.aborted).toBe(true);
+    expect(router.state.location.pathname).toBe("/p/" + project + "/source/" + (stayed ? "s1" : "s2"));
+    expect(host.querySelector("pre")?.textContent).toBe(TEXT + " " + (stayed ? currentRevision : "r3"));
+    await act(async () => { await router.navigate(path("s1", "r1")); }); await settle();
+    expect(host.querySelector("mark")?.textContent).toBe(selected);
+    expect(host.querySelector("pre")?.textContent).toBe(TEXT + " r1");
+    client.clear();
   });
 });

@@ -142,6 +142,8 @@ its text preview, and Apply a new readable revision while retaining the original
    `ingest-<revisionId>`. Exact duplicates are reported with Attach; never silently merged. Concurrent uploads or
    replacements cannot admit the same bytes for different live sources; deliberate reconversion within one source remains available.
    A replacement whose response was lost can explicitly repeat its revision ID without admitting another ingest.
+   A confirmed replacement refreshes active source lists even after Reader/project navigation, retaining loaded
+   source pages and selection while updating current-text/original links and understanding availability.
 5. Convert native UTF-8 text locally. Use cached `env.AI.toMarkdown().supported()` only for document formats that
    require it. Ordinary ingest never invokes OCR; scans retain the original and show
    `needs_conversion`. Write canonical `text.md`, exact `blocks.json`, state/warnings and current readable revision.
