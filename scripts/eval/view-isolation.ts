@@ -146,10 +146,18 @@ try {
     page.once('dialog', dialog => dialog.dismiss());
     await page.getByRole('button', { name: 'New chat', exact: true }).click();
     await expect(question).toHaveValue('Unconfirmed first question');
+    // Cancel keeps History open. Close its overlay before reaching the composer,
+    // especially on phone after the desktop journey has added more saved chats.
+    await expect(page.locator('.er-chat__history')).toHaveJSProperty('open', true);
+    await page.getByText('History', { exact: true }).click();
+    await expect(page.locator('.er-chat__history')).toHaveJSProperty('open', false);
+    await expect(send).toBeEnabled();
     const safeReplay = await hold(turnsUrl(failedCreation.body().id));
     await send.click(); await safeReplay.waiting; interceptedTurns++;
     assert.deepEqual(safeReplay.body(), failedTurn.body());
     await safeReplay.release({ error: { message: 'First question reply unavailable' } }, 503);
+    await expect(page.getByRole('alert')).toContainText('First question reply unavailable');
+    await page.getByText('History', { exact: true }).click();
     page.once('dialog', dialog => dialog.accept());
     await page.getByRole('button', { name: 'New chat', exact: true }).click();
     await expect(question).toHaveValue('');

@@ -144,6 +144,8 @@ export interface TurnView {
   model: string;
   scopeMode: "project_default" | "explicit" | "empty";
   contextMode?: "whole" | "claims" | "none";
+  /** Storage-backed disclosure when older exchanges yielded room to sources and the latest exchange. */
+  historyNotice?: string;
   revisionIds: string[];
   sourceIds: string[];
   citations: Citation[];

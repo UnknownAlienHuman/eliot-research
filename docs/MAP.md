@@ -252,15 +252,21 @@ Markdown reference definitions cannot redirect exact registered citation tokens 
 adjacent tokens parsed as one link; ordinary explicit links and unregistered labels retain their Markdown behavior.
 Groups of fully specified labels may normalize to separate inline references after every member passes the same
 frozen-scope validation; unknown identities and shorthand remain failures.
+Inline citations use compact passage numbers; full titles remain available to assistive technology and on hover.
+Keyboard and pointer activation keep the same immutable Reader target.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
 canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
 never retried automatically. Save preserves a partial answer's recorded reason, distinguishing interrupted generation
 from rejected source references. An explicit repeat of an unconfirmed Save in the mounted workspace reuses its
 mutation UUID and returns the committed page rather than duplicating it; confirmed saves remain distinct copies.
-Stream checkpoints also flush a received tail during provider pauses; readers see stored text, with no automatic continuation after restart.
+Stream checkpoints also flush a received tail during provider pauses. Stored text retains resolved citation targets through restart and Save, with no source reread or automatic model continuation.
 For a nonstandard provider finish normalized to `other`, the stored failure includes a bounded safe provider code.
 An explicit repeat of an unconfirmed Send in the same composer reuses its ID, unchanged input and known chat target;
 a new question or a repeat after confirmation has a new ID. See IMPLEMENTATION §8 for the volatile-draft boundary.
+Follow-ups may omit whole older exchanges to fit the selected evidence while keeping the latest reusable exchange.
+The answer and saved page disclose that omission; a latest exchange that cannot fit is not shortened to force a call.
+Model history is selected independently of the UI's 50-row page, with SQL payload/scan checks before transfer.
+Failed turns do not displace usable history; exhausted safe reads are disclosed or rejected before inference.
 New-chat creation also retains its UUID/title for explicit replay. After reload, History opens a committed chat/result
 without resending; it does not reconstruct an unaccepted draft.
 The first HTTP or socket history restores the prior source scope before Send becomes ready. A slow or failed HTTP

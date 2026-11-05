@@ -4,6 +4,8 @@ import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { scanBlocks } from '../../src/blocks.ts';
+import { resolveCitations } from '../../src/citations.ts';
+import { estimateModelInput } from '../../src/model-input.ts';
 assert(process.env.ELIOT_K2_MODEL !== '1', 'Context query fixture forbids model calls.');
 const r2DelayMs = Number(process.env.ELIOT_CONTEXT_R2_DELAY_MS ?? 0);
 assert(Number.isFinite(r2DelayMs) && r2DelayMs >= 0 && r2DelayMs <= 250, 'R2 test delay must be between 0 and 250 ms.');
@@ -125,6 +127,56 @@ try {
   assert(aboveCap.context.estimatedInputTokens > 400000);
   assert.deepEqual(aboveCap.context.revisionIds, [revisions[0]]);
   assert.deepEqual(aboveCap.context.sources[0].blocks, largeBlocks);
+  // A reachable third question must not fail merely because older optional
+  // history consumes the room needed by unchanged evidence and the latest Q/A.
+  const followText = Array(150).fill('Canonical source evidence describes the method, its conditions and limitations. '.repeat(50)).join('\n\n').slice(0, 555000);
+  const followBlocks = scanBlocks(followText);
+  await bucket.put('source/' + revisions[0] + '/text.md', followText);
+  await bucket.put('source/' + revisions[0] + '/blocks.json', JSON.stringify(followBlocks));
+  await db.prepare('UPDATE source_revision SET readable_size=? WHERE id=?').bind(followText.length, revisions[0]).run();
+  const model = { contextTokens: 192000, contextWindowTokens: 256000, maxOutputTokens: 128000, outputReserveTokens: 8192 };
+  const firstQuestion = 'Summarize the method.', nextQuestion = 'Explain the study design.', finalQuestion = 'Explain its limitations.';
+  const first = await invoke([ids[0]], { model, question: firstQuestion });
+  assert.equal(first.error, undefined); assert.equal(first.context.mode, 'whole');
+  const answer = 'The study describes its method and limitations. '.repeat(21) + '[S1:1]';
+  const citations = resolveCitations('[S1:1]', first.context.sources).citations;
+  const exchange = (question, turnId) => [{ role: 'user', content: question, revisionIds: [revisions[0]] },
+    { role: 'assistant', content: answer, turnId, revisionIds: [revisions[0]], citations }];
+  const older = exchange(firstQuestion, 'older'), latest = exchange(nextQuestion, 'latest');
+  const second = await invoke([ids[0]], { model, question: nextQuestion, history: older });
+  assert.equal(second.error, undefined); assert.equal(second.context.historyNotice, undefined);
+  const third = await invoke([ids[0]], { model, question: finalQuestion, history: [...older, ...latest] });
+  assert.equal(third.error, undefined); assert.equal(third.context.mode, 'whole');
+  assert.deepEqual(third.context.sources, first.context.sources);
+  assert.deepEqual(third.context.messages.filter(message => message.turnId), [{ role: 'assistant', content: answer, turnId: 'latest' }]);
+  assert(third.context.historyNotice.includes('Older exchanges were omitted'));
+  assert(third.context.messages.some(message => message.role === 'system' && message.content === third.context.historyNotice));
+  const thirdEstimate = estimateModelInput({ instructions: third.context.messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n'),
+    messages: [...third.context.messages.filter(message => message.role !== 'system').map(({ role, content }) => ({ role, content })), { role: 'user', content: finalQuestion }] });
+  assert(thirdEstimate <= model.contextTokens);
+  assert.equal(third.r2Reads, first.r2Reads); assert.equal(third.d1Reads, first.d1Reads);
+  // The latest complete answer can exceed the former 10% quota while still
+  // fitting the real input limit. No model or extra source/page fetch is needed.
+  const smallModel = { contextTokens: 10000, maxOutputTokens: 100 };
+  const largeHistory = [{ role: 'user', content: 'Earlier question', revisionIds: [revisions[2]] },
+    { role: 'assistant', content: 'A'.repeat(6000), revisionIds: [revisions[2]], turnId: 'large-latest' }];
+  const retained = await invoke([ids[2]], { model: smallModel, question: 'Continue.', history: largeHistory });
+  assert.equal(retained.error, undefined);
+  assert.deepEqual(retained.context.messages.at(-1), { role: 'assistant', content: 'A'.repeat(6000), turnId: 'large-latest' });
+  assert.equal(retained.context.historyNotice, undefined);
+  assert.equal(retained.d1Reads, 2); assert.equal(retained.r2Reads, 2);
+  const historyEstimate = estimateModelInput({ instructions: retained.context.messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n'),
+    messages: [...retained.context.messages.filter(message => message.role !== 'system').map(({ role, content }) => ({ role, content })), { role: 'user', content: 'Continue.' }] });
+  assert(historyEstimate <= smallModel.contextTokens);
+  const excludedPage = await invoke([ids[2]], { model: smallModel, question: 'Continue.', history: largeHistory, earlierHistoryExists: true });
+  assert.equal(excludedPage.error, undefined);
+  assert(excludedPage.context.historyNotice);
+  assert.equal(excludedPage.d1Reads, 2); assert.equal(excludedPage.r2Reads, 2);
+  assert.deepEqual(excludedPage.context.messages.at(-1), retained.context.messages.at(-1));
+  const cannotRetain = await invoke([ids[2]], { model: smallModel, question: 'Continue.',
+    history: [largeHistory[0], { ...largeHistory[1], content: 'A'.repeat(30000) }] });
+  assert.equal(cannotRetain.error.status, 400);
+  assert(cannotRetain.error.message.includes('latest conversation exchange do not fit'));
   const limit = 16 * 1024 * 1024, textKey = 'source/' + revisions[1] + '/text.md', mapKey = 'source/' + revisions[1] + '/blocks.json';
   await bucket.put(textKey, text);
   await db.prepare('UPDATE source_revision SET readable_size=1 WHERE id=?').bind(revisions[1]).run();
@@ -154,5 +206,10 @@ try {
     orderDuplicatesDisabledMembership: true, missingDeletedAndRawCap: true, canonicalUnicodeRanges: true,
     boundedMetadataBytes: bounded.metadataBytes, aboveFormerCap: { bytes: largeText.length, blocks: largeBlocks.length, inputEstimate: aboveCap.context.estimatedInputTokens },
     pairedGetsOnly: true, serialBodyReaders: true, failedMapCancelsUnreadText: true, understatedSizeBounded: true,
+    followupHistory: { bytes: followText.length, latestExchangeRetained: true, noticeStoredInContext: true, finalInputEstimate: thirdEstimate },
+    sharedHistoryBudget: { latestAnswerCharacters: 6000, inputEstimate: historyEstimate, overBudgetLatestRejected: true, olderPageDisclosedWithoutReads: true },
     modelCalls: 0, fullK2Accepted: false }));
 } finally { await mf.dispose(); }
+
+// The same storage-only contour also validates the independent model-history reader.
+await import("./k2-history.ts");

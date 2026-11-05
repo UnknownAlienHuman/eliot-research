@@ -88,6 +88,7 @@ jobs:
           path: |
             dist
             eval/out/k0
+            eval/out/k1/*-compact-citations.png
             !dist/**/.dev.vars*
             !dist/**/.env*
           if-no-files-found: error

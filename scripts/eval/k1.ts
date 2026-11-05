@@ -666,11 +666,17 @@ try {
   const fixtureApi = '/api/projects/' + readerProject + '/chats/' + fixtureChat;
   const emptyChat = (await apiJson(fixtureApi)).body;
   const citationBlocks = [passageBlock, longBlock];
+  const citationTitle = 'BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding';
+  const citationAnswer = '[S1:' + tableBlock.id + ']: https://example.test/hidden-definition\n\n'
+    + 'Read both passages [S1:' + passageBlock.id + '][S1:' + longBlock.id
+    + '], then revisit the first [R' + revisionId + ':' + passageBlock.id + '].\n\n'
+    + '[S1:' + passageBlock.id + ']: https://example.test/not-the-source';
+  const fixtureTurnId = crypto.randomUUID();
   // Control only the history GET; citation rendering and all Reader byte APIs remain real. No Send.
   await page.route(origin + fixtureApi, route => route.request().method() !== 'GET' ? route.continue() : route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...emptyChat, turns: [{
-    turnId: crypto.randomUUID(), question: 'Read the cited passages.', answer: citationBlocks.map((b: any) => '[S1:' + b.id + ']').join('\n\n'), state: 'completed', error: null, model: 'workers-ai:@cf/zai-org/glm-5.3-flash', createdAt: Date.now(),
+    turnId: fixtureTurnId, question: 'Read the cited passages.', answer: citationAnswer, state: 'completed', error: null, model: 'workers-ai:@cf/zai-org/glm-5.3-flash', createdAt: Date.now(),
     scopeMode: 'explicit', sourceIds: [readerSource], revisionIds: [revisionId], contextMode: 'whole', firstTokenMs: 0, totalMs: 0, inputTokens: null, outputTokens: null, cachedTokens: null, invalidLabels: 0, settlementPending: false,
-    citations: citationBlocks.map((b: any) => ({ sourceId: readerSource, revisionId, block: b.id, start: b.start, end: b.end, label: '[S1:' + b.id + ']', sourceTitle: name + '-0.md', deleted: false })),
+    citations: [tableBlock, ...citationBlocks].map((b: any) => ({ sourceId: readerSource, revisionId, block: b.id, start: b.start, end: b.end, label: '[S1:' + b.id + ']', sourceTitle: citationTitle, deleted: false })),
   }] }) }));
   const openCitation = async (index: number) => {
     await page.goto(origin + '/p/' + readerProject + '/chat/' + fixtureChat);
@@ -708,7 +714,36 @@ try {
   const unavailable = (await apiJson('/api/projects/' + readerProject + '/sources/file', { method: 'POST', body: unavailableForm })).body;
   await expect.poll(async () => (await apiJson('/api/sources/' + unavailable.sourceId)).body.source.readableState).toBe('failed');
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
-    await page.setViewportSize(viewport); await openCitation(0);
+    await page.setViewportSize(viewport);
+    await page.goto(origin + '/p/' + readerProject + '/chat/' + fixtureChat);
+    const inlineCitations = page.locator('.er-chat__answer a.er-citation--inline');
+    await expect(inlineCitations).toHaveText(['1', '2', '1']);
+    for (const [index, block] of [passageBlock, longBlock, passageBlock].entries()) {
+      const link = inlineCitations.nth(index), number = index === 1 ? 2 : 1;
+      await expect(link).toHaveAccessibleName('Citation ' + number + ': ' + citationTitle + ' · ' + block.id);
+      await expect(link).toHaveAttribute('title', citationTitle + ' · ' + block.id);
+      await expect(link).toHaveAttribute('href', '/p/' + readerProject + '/source/' + readerSource
+        + '?revisionId=' + revisionId + '&start=' + block.start + '&end=' + block.end);
+      const box = await link.boundingBox();
+      assert(box && box.width >= 24 && box.width <= 40 && box.height >= 24 && box.height <= 28,
+        'Inline citations must remain compact without shrinking below a 24px target.');
+    }
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Compact citations must not overflow the phone viewport.');
+    const firstBox = await inlineCitations.nth(0).boundingBox(), secondBox = await inlineCitations.nth(1).boundingBox();
+    assert(firstBox && secondBox && (secondBox.y >= firstBox.y + firstBox.height || secondBox.x >= firstBox.x + firstBox.width),
+      'Adjacent citation targets must not overlap.');
+    await inlineCitations.nth(0).hover(); await expect(inlineCitations.nth(0)).toHaveCSS('text-decoration-line', 'underline');
+    await inlineCitations.nth(0).focus(); await page.keyboard.press('Tab');
+    await expect(inlineCitations.nth(1)).toBeFocused();
+    assert(await inlineCitations.nth(1).evaluate(el => el.matches(':focus-visible') && getComputedStyle(el).outlineStyle !== 'none'
+      && parseFloat(getComputedStyle(el).outlineWidth) >= 2), 'Keyboard focus must remain visible.');
+    await page.screenshot({ path: outDir + '/' + (viewport.width === 1440 ? 'desktop' : 'phone') + '-compact-citations.png' });
+    await expect(inlineCitations.nth(1)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(origin + '/p/' + readerProject + '/source/' + readerSource
+      + '?revisionId=' + revisionId + '&start=' + longBlock.start + '&end=' + longBlock.end);
+    await expect.poll(() => page.locator('.er-lib__text mark').textContent()).toBe(whole.bytes.subarray(longBlock.start, longBlock.end).toString('utf8'));
+    await openCitation(0);
     const mark = page.locator('.er-lib__text mark');
     assert(await mark.evaluate(el => document.activeElement === el), 'Citation navigation must focus the actual mark.');
     assert(await mark.evaluate(el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }), 'Short passage must be inside the viewport.');

@@ -36,17 +36,18 @@ export function fencedRanges(text: string): CodeRange[] {
   return fencedCodeRanges(text).map(({ start, end }) => ({ start, end }));
 }
 
-/** Exact backtick runs outside fences; unmatched openers remain literal prose. */
+/** Exact backtick runs outside ordered fences; unmatched openers remain literal prose. */
 export function inlineCodeRanges(text: string, fences: readonly CodeRange[]): CodeRange[] {
   const ranges: CodeRange[] = [];
-  let i = 0;
+  let i = 0, fenceIndex = 0;
   while (i < text.length) {
-    const fence = fences.find(range => i >= range.start && i < range.end);
-    if (fence !== undefined) { i = fence.end; continue; }
+    while ((fences[fenceIndex]?.end ?? Infinity) <= i) fenceIndex++;
+    const fence = fences[fenceIndex];
+    if (fence !== undefined && i >= fence.start) { i = fence.end; continue; }
     if (text[i] !== "`") { i += 1; continue; }
     let openLength = 1;
     while (text[i + openLength] === "`") openLength += 1;
-    const limit = fences.find(range => range.start > i)?.start ?? text.length;
+    const limit = fence?.start ?? text.length;
     let j = i + openLength;
     let closeStart = -1;
     while (j < limit) {

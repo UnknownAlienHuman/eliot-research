@@ -115,7 +115,7 @@ describe("provider input budget and request estimate", () => {
     expect(estimateModelInput(request)).toBe(Math.ceil(new TextEncoder().encode(JSON.stringify(request)).byteLength / 3) + request.messages.length * 32 + 1024);
     const first = request.messages[0];
     if (!first) throw new Error("Missing message fixture.");
-    expect(estimateHistoryMessage(first)).toBe(Math.ceil(new TextEncoder().encode(JSON.stringify(first)).byteLength / 3) + 32);
+    expect(estimateHistoryMessage(first)).toBe(Math.ceil(new TextEncoder().encode(JSON.stringify(first) + ",").byteLength / 3) + 32);
   });
 });
 

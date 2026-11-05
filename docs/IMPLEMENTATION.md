@@ -746,8 +746,10 @@ Assembly and dispatch use the same estimate without copying the full source JSON
 token upper bound or proof that a provider will accept the request. Unknown output defaults can also exceed the reserved
 headroom (the pinned Anthropic Claude adapter can serialize `max_tokens=128000` when Eliot omits the option); capacity
 and accounting stay unknown rather than adopting that default as published metadata. `estimatedInputTokens` retains
-its content-only API meaning. Include newest in-scope history
-up to 10% of context, charging JSON escaping and message framing during selection while retaining content-only totals. Public assistant history retains
+its content-only API meaning. Select newest in-scope exchanges through the model-only bounded SQL reader using the
+remaining input budget after the current question, instructions and source evidence. Neither a percentage quota nor
+the UI's 50-row page limits model history. Charge JSON escaping, each separating array comma and message framing during
+selection while retaining content-only totals. Public assistant history retains
 a citation only when the prior full ordered scope is a prefix of the current scope and its stored source, revision,
 block and exact range match a currently supplied passage. Render that citation with its current compact alias;
 strip unverified, stale and unavailable references. Prior assistant prose remains conversation context, not evidence.
@@ -755,13 +757,48 @@ The Command Code adapter sends the current question and frozen source context wi
 It does not capture or synthesize private reasoning fields. Existing private wire records remain untouched; the
 ordinary chat path uses public text and verified labels only. A partial prior answer is identified as incomplete.
 
+Older history may be excluded only as whole question/answer pairs, newest first, within the remaining input and
+assembly-memory allowances. Preserve the latest reusable exchange intact; use the existing compact-source path or
+fail explicitly if that exchange and required input cannot fit. The same omission notice is included in the bounded
+model input, stored on the turn, shown beside its answer and retained by Save whenever history is excluded by capacity,
+scope eligibility or a bounded history scan. UI history pages are not loaded for inference, and only this chat and the
+current frozen source scope contribute. A scan that exhausts its safe allowance before finding a reusable newest
+exchange fails before inference rather than silently answering without that conversation.
+Scope and citation eligibility remain unchanged. History normalization occurs after evidence assembly, so optional
+older text cannot consume the memory allowance before source loading; raw newest-exchange estimates guide preflight
+without copying its text. The 16 MiB cumulative assembly guard remains in force. Optional whole-source derived
+orientation yields to retained history on both token and assembly-memory capacity; it must not reject an otherwise
+fitting evidence-and-history request merely to materialize its guide text.
+There is still one model call per Send, no summarization or automatic retry. More retained history can increase billed
+input tokens substantially, up to the model's existing input limit; removing the quota is not a cost-neutral change.
+The estimate is not provider billing or tokenization.
+
+`model-history.ts` advances by immutable `(created_at,id)` key with LIMIT 1 as a read batch, not a retention cap.
+Ordering uses the physical indexed columns rather than the checked-ID output alias, including timestamp ties.
+It probes `octet_length(payload)` before JSON work, then reads scalar state, citation-scope and serialized-size metadata.
+Failed/current/uncited-partial rows cannot consume a fixed history slot. No SQL eligibility predicate or unbounded
+window aggregation can hide a scan behind LIMIT. Cumulative raw JSON inspection/fragment reads are bounded by the
+existing 16 MiB allowance, and per-query metadata plus fragment transfer/parse allocations are charged to the shared
+assembly allowance before each query. There is no new fixed turn count or independent 4 MiB payload cap.
+The newest candidate's scalar sizes guide source preflight; actual public question/answer, prior scope and citations
+load only after evidence leaves room. Raw `->` JSON fragments preserve NUL and lone surrogates through JSON.parse;
+SQL TEXT extraction is not used for hydration. Reads pin ID, creation key and history_version across source awaits;
+a changed or deleted candidate fails safely instead of widening a stale allocation estimate. Parsed candidates are
+cached across whole/compact retries, while citation normalization uses each attempt's final passage inventory.
+A partial-history instruction is included only while a selected exchange is partial, with its full cost reserved.
+`pnpm eval k2 --context-only` also runs the model-history acceptance against pinned Workerd/DO SQLite, reporting actual
+SQL queries, cursor rowsRead, transferred string bytes and serialized input estimates, without provider calls.
+
 Resolve one `ModelSpec` for each turn and freeze it across admission, context limits, request bounds and settlement.
 The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, record the token bound after
 provider admission, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
 citation, token, timing, invalid-label and terminal-state fields. Historical currency columns remain unchanged.
 First nonblank text and terminal/Stop results persist immediately. Intermediate full-turn checkpoints are throttled
 to once per second; one pending timeout flushes accumulated text during provider silence. Each checkpoint is stored
-before broadcast. Finalization clears the timeout; a checkpoint write failure aborts the stream and uses the existing
+before broadcast, with citation targets resolved against the same in-memory frozen block maps. Only the stored copy
+is normalized; the raw stream accumulator remains intact for labels and code spans split across chunks. A restarted
+partial answer therefore retains its citation links and Save targets without reconstructing context or rereading sources.
+Finalization clears the timeout; a checkpoint write failure aborts the stream and uses the existing
 terminal-save path, without retrying inference. Runtime stalls or storage failure can delay persistence; restart retains
 the last stored checkpoint and never continues the model automatically.
 WebSocket frames and reconnect expose state snapshots and never enqueue or dispatch paid work. An authorised history
@@ -876,8 +913,10 @@ The materialization bound below is implemented by the current repair slice; chat
   Lengths use `length(CAST(field AS BLOB))`, including NUL tails. Window sums include IDs and suppress oversized
   aggregate metadata before transfer.
   Claim queries similarly suppress oversized fields and reject more than **256** rows, without using a partial list.
-  History is selected newest-first before copying older exchanges. Raw exchanges above the existing history-token
-  reserve stop older-history selection before label normalization; UTF-8 token estimation no longer allocates encoded copies.
+  History is selected newest-first after evidence assembly. Raw allocation sizes are checked before loading and
+  normalizing text; token fit uses the normalized messages because stale/reordered citation labels can disappear.
+  An older exchange that cannot fit is omitted with notice; the latest reusable exchange is never silently discarded
+  to meet either allowance. UTF-8 token estimation does not allocate encoded copies.
   Caller and output reserves remain unchanged.
   Metadata still chooses eligible whole/compact representations before body reads. `readable_size` is only a
   preflight estimate, not an exact token count or a lower bound on projected citable text: fitting marker-heavy
@@ -924,7 +963,8 @@ The materialization bound below is implemented by the current repair slice; chat
   timestamp ties without depending on the anchor row's continued existence. A covering DO index supports the range;
   one ID-only lookahead detects more rows without loading a 51st answer. Authorization and bounded storage-only
   recovery still run before reading payloads. Initial HTTP/WebSocket snapshots retain their latest-50 window and also
-  return a next cursor; model-history `getTurns` remains latest-50 regardless of how much the owner browses.
+  return a next cursor. These owner-visible reads retain their 50-row paging contract. Model history uses the independent
+  budgeted reader described above, regardless of how much the owner browses; Send does not materialize a UI page first.
   `writeTurn` preserves `created_at` on conflict and increments the same row's `history_version`. Startup adds that
   column with legacy default zero and the ordering index, without rewriting old payloads. Read and stream projections
   carry `createdAt`/`historyVersion`; neither is duplicated inside payload JSON or used as model context. UI merges by
@@ -1291,7 +1331,12 @@ heads on explicit Send; historical Reader questions stay read-only. Prefill crea
 Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:sourceId?start=&end=`; K2
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
 Every screen has loading, empty and actionable error states plus stale/paused where relevant. Use one Markdown renderer
-with raw HTML disabled and resolved citation chips. Do not cache private text in localStorage or a service worker.
+with raw HTML disabled and resolved citation chips. Inline citations show one compact number per distinct passage
+URL in visible occurrence order; compact/persistent aliases share that number, while hidden definitions and unused metadata consume none. Their accessible names and hover titles
+retain the full source title and block, with 24px minimum targets and visible keyboard focus. Snapshot and streaming
+rerenders retain existing link elements and their keyboard focus. Full source lists retain
+their title labels. This changes presentation only, never the immutable revision or byte-range destination.
+Do not cache private text in localStorage or a service worker.
 An exact registered compact/persistent citation token keeps its resolved Reader target even when Markdown has a
 reference definition for that token. Adjacent registered tokens remain separate citations even if Markdown parses
 them as one full-reference link. Explicit URLs, ordinary full-reference links and non-exact or unregistered spellings stay unchanged.

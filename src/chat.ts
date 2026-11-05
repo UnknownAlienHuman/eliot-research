@@ -3,6 +3,7 @@ import type { Connection, ConnectionContext } from "agents";
 import { streamText } from "ai";
 import type { LanguageModelUsage } from "ai";
 import { buildContext } from "./context";
+import { createModelHistoryReader } from "./model-history";
 import { answerWarnings, numericCitationLabels, persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn } from "./cost";
@@ -41,7 +42,6 @@ function parseStoredTurn(payload: string): TurnView {
 function publicTurn(turn: TurnView): TurnView {
   return turn.tokenLimitKind === undefined && turn.tokenLimit !== null ? { ...turn, tokenLimitKind: "legacy" } : turn;
 }
-const PARTIAL_HISTORY_NOTICE = "An earlier assistant answer was partial. Its unfinished text and omissions are not conclusions; ground this answer in the current frozen evidence.";
 function sameTurnRequest(a: RunTurnInput, b: RunTurnInput): boolean {
   return a.projectId === b.projectId && a.chatId === b.chatId && a.turnId === b.turnId
     && a.question === b.question && a.scopeMode === b.scopeMode && (a.model ?? null) === (b.model ?? null)
@@ -311,7 +311,8 @@ export class ChatAgent extends Agent<Env, ChatState> {
       : "";
     const partialNote = turn.state === "partial"
       ? `Partial answer — ${(turn.error ?? "This answer needs review.").replace(/[\\`*_{}[\]()<>#+.!|~-]/g, "\\$&")}\n\n` : "";
-    return { answer: partialNote + warningNote + saved.text,
+    const historyNote = turn.historyNotice ? turn.historyNotice + "\n\n" : "";
+    return { answer: partialNote + historyNote + warningNote + saved.text,
       citations: saved.citations, revisionIds: turn.revisionIds, state: turn.state };
   }
   private startTurn(input: RunTurnInput): Promise<TurnView> {
@@ -420,29 +421,25 @@ export class ChatAgent extends Agent<Env, ChatState> {
       turn.tokenLimit = await admitTurn(this.env, this.name, turn.turnId, model);
       turn.tokenLimitKind = turn.tokenLimit === null ? "unknown" : "published";
       this.writeTurn(turn);
-      const priorTurns = (await this.getTurns(input.projectId)).filter((item) => item.turnId !== turn.turnId
-        && (item.state === "completed" || (item.state === "partial" && item.citations.length > 0)));
-      const partialTurnIds = new Set(priorTurns.filter((item) => item.state === "partial").map((item) => item.turnId));
-      // Command Code uses question plus current frozen context without prior conversation history.
-      const history = commandCode ? [] : priorTurns.flatMap((item) => {
-        return [{ role: "user" as const, content: item.question, revisionIds: item.revisionIds },
-          { role: "assistant" as const, content: item.answer, turnId: item.turnId,
-            revisionIds: [...new Set(item.citations.map((citation) => citation.revisionId))],
-            citations: item.citations }];
-      });
+      await this.ensureProject(input.projectId);
+      this.requireRecoveredHandoff();
+      await this.recoverFinishedTurn();
+      // Model history has its own bounded reader. UI page size never limits
+      // eligible exchanges, and no answer body is loaded before context budget checks.
       const context = await buildContext(this.env, { type: "owner", id: "owner", authentication: "access" }, {
-        projectId: input.projectId, scopeMode: input.scopeMode, model, history, question: input.question,
-        instructions: [settings.instructions, ...(partialTurnIds.size ? [PARTIAL_HISTORY_NOTICE] : [])].filter(Boolean).join("\n\n"),
+        projectId: input.projectId, scopeMode: input.scopeMode, model, question: input.question,
+        instructions: settings.instructions,
+        ...(!commandCode ? { historyReader: createModelHistoryReader(this.ctx.storage.sql, turn.turnId) } : {}),
         ...(input.sourceIds === undefined ? {} : { sourceIds: input.sourceIds }),
       });
       turn.revisionIds = context.revisionIds;
       turn.contextMode = context.mode;
+      if (context.historyNotice) turn.historyNotice = context.historyNotice;
       turn.sourceIds = context.sources.map((source) => source.sourceId);
       labelSources = context.sources; sourceMode = context.mode;
       const transport = await resolveModelTransport(this.env, model, this.name);
-      const partialHistory = context.messages.some((message) => message.role === "assistant" && message.turnId !== undefined && partialTurnIds.has(message.turnId));
-      const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions,
-        ...(partialHistory ? [PARTIAL_HISTORY_NOTICE] : [])].filter(Boolean).join("\n\n");
+      const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions]
+        .filter(Boolean).join("\n\n");
       const messages = context.messages.filter((message) => message.role !== "system")
         .map(({ role, content }) => ({ role: role as "user" | "assistant", content }));
       messages.push({ role: "user", content: input.question });
@@ -463,7 +460,15 @@ export class ChatAgent extends Agent<Env, ChatState> {
         if (checkpointTimer !== undefined) clearTimeout(checkpointTimer);
         checkpointTimer = undefined;
         if (controller.signal.aborted) return;
-        try { this.writeTurn(turn); lastWrite = Date.now(); }
+        try {
+          // Persist usable citation targets with the streamed text, so restart can
+          // retain them without reconstructing the frozen scope or rereading sources.
+          // Keep the raw accumulator intact: the next chunk may finish a label or code span.
+          const resolved = resolveCitations(turn.answer, labelSources);
+          this.writeTurn({ ...turn, answer: resolved.text, citations: resolved.citations, invalidLabels: resolved.invalidLabels,
+            ...(resolved.invalidLabelExamples ? { invalidLabelExamples: resolved.invalidLabelExamples } : {}) });
+          lastWrite = Date.now();
+        }
         catch { checkpointFailed = true; controller.abort(); }
       };
       for await (const text of result.textStream) {

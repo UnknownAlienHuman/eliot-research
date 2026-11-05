@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveCitations, persistentResolvedAnswer } from "./citations.js";
 import { cleanDistillText } from "./quotes.js";
 import { sliceUtf8 } from "./blocks.js";
-import { fencedCodeRanges, fencedRanges } from "./code-ranges.js";
+import { fencedCodeRanges, fencedRanges, inlineCodeRanges } from "./code-ranges.js";
 
 const revisionId = "123e4567-e89b-12d3-a456-426614174000";
 const first = "Доказательство 🌍.", second = "Second passage.";
@@ -16,6 +16,21 @@ const sources = [{ sourceId: "source", revisionId, title: "Evidence", alias: "S1
 const outside = "Outside [S1:1] bad [S9:9].";
 
 describe("shared code boundaries retain separate reference policies", () => {
+  it("walks many ordered fences without repeatedly searching earlier ranges", () => {
+    const text = ("Text `inline` [S1:1].\n~~~\n[S9:9]\n~~~\n").repeat(500);
+    let accesses = 0;
+    const fences = fencedRanges(text).map(range => ({
+      get start() { accesses++; return range.start; },
+      get end() { accesses++; return range.end; },
+    }));
+    const inline = inlineCodeRanges(text, fences);
+    expect(inline).toHaveLength(500);
+    expect(inline.every(range => text.slice(range.start, range.end) === "`inline`")).toBe(true);
+    expect(accesses).toBeLessThan(text.length * 4);
+    const resolved = resolveCitations(text, sources);
+    expect(resolved.text).toBe(text); expect(resolved.citations.map(citation => citation.block)).toEqual([1]);
+    expect(resolved.invalidLabels).toBe(0);
+  });
   it("exposes fence bodies without changing citation boundaries", () => {
     const text = "before\n~~~js\n++\n~~~~\nafter\n```\n//";
     const ranges = fencedCodeRanges(text);
