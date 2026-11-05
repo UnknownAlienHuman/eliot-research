@@ -52,6 +52,51 @@ describe('Markdown citation rendering', () => {
     expect(html).toContain('<math');
   });
 
+  it.each(['chat', 'saved'].flatMap(kind => [false, true].map(defineBoth => ({ kind, defineBoth }))))(
+    'restores adjacent registered $kind citations with defineBoth=$defineBoth', ({ kind, defineBoth }) => {
+    const revisionId = '11111111-1111-4111-8111-111111111111';
+    const text = '\uFEFF😀 Claim [S1:14][S1:15].\r\n\r\n'
+      + (defineBoth ? '[S1:14]: https://example.com/wrong-one\r\n' : '')
+      + '[S1:15]: https://example.com/wrong-two';
+    const resolved = resolveCitations(text, [{ sourceId: 's1', revisionId, title: 'Paper A', alias: 'S1', blocks: [
+      { id: 14, type: 'paragraph', start: 42, end: 87, heading: null },
+      { id: 15, type: 'paragraph', start: 87, end: 120, heading: null },
+    ] }]);
+    expect(resolved.invalidLabels).toBe(0);
+    expect(resolved.citations).toHaveLength(2);
+    const answer = kind === 'saved' ? persistentResolvedAnswer(resolved.text, resolved.citations) : resolved;
+    const refs = answer.citations.map(citation => ({ text: citation.label,
+      href: citationHref('p1', citation), label: citationLabel(citation) }));
+    const html = render(answer.text, refs);
+    expect(html.match(/class="er-citation"/g)).toHaveLength(2);
+    expect(html).toContain(`revisionId=${revisionId}&amp;start=42&amp;end=87`);
+    expect(html).toContain(`revisionId=${revisionId}&amp;start=87&amp;end=120`);
+    expect(html).toContain('>Paper A · 14</a>');
+    expect(html).toContain('>Paper A · 15</a>');
+    expect(html).not.toContain('https://example.com/wrong-');
+  });
+
+  it('keeps adjacent citations and their repeated persistent alias as separate targets', () => {
+    const second = '[S1:15]', secondHref = href.replace('start=42&end=87', 'start=87&end=120');
+    const refs = [...references, { text: second, href: secondHref }];
+    const html = render(`${compact}${second} repeated ${persistent}.\n\n`
+      + `${compact}: https://example.com/wrong-one\n${second}: https://example.com/wrong-two\n`
+      + `${persistent}: https://example.com/wrong-alias`, refs);
+    expect(html.match(/class="er-citation"/g)).toHaveLength(3);
+    expect(html.match(/start=42&amp;end=87/g)).toHaveLength(2);
+    expect(html.match(/start=87&amp;end=120/g)).toHaveLength(1);
+    expect(html).not.toContain('https://example.com/wrong-');
+  });
+
+  it.each(['[visible][S1:15]', '[S1:14][ordinary]', '[S9:14][S1:15]', '[S1:14][S9:15]',
+    String.raw`[S1\:14][S1:15]`, '[S1&#58;14][S1:15]', '[s1:14][S1:15]', '[**S1:14**][S1:15]'])(
+    'preserves the ordinary full-reference link %s', (link) => {
+    const html = render(`${link}\n\n[S1:15]: https://example.com/reference\n[ordinary]: https://example.com/reference\n`
+      + '[S9:15]: https://example.com/reference', [...references, { text: '[S1:15]', href: href + '#second' }]);
+    expect(html).toContain('href="https://example.com/reference"');
+    expect(html).not.toContain('class="er-citation"');
+  });
+
   it('leaves explicit links, code, images and unregistered reference labels unchanged', () => {
     const html = render(`${compact}\n\n`
       + `[S1:14](https://example.com/inline) [S1:14][] [visible][S1:14]\n\n`

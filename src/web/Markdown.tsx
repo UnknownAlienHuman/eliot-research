@@ -110,23 +110,21 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
   }
   // Transform text nodes at every prose depth, before React components render.
   // Code and explicit links are literal boundaries, including their descendants.
-  // A definition must not redirect a registered, exact shortcut citation label.
+  // A definition must not redirect exact registered citation atoms, even when
+  // adjacent atoms parse as one full-reference link.
   function citationLinks() {
     function visit(node: MarkdownNode): void {
-      if (!node.children || node.tagName === 'code' || node.tagName === 'pre') return;
-      if (node.tagName === 'a') {
-        const start = node.position?.start.offset, end = node.position?.end.offset;
-        const source = start === undefined || end === undefined ? '' : markdown.slice(start + sourceOffset, end + sourceOffset);
-        const ref = /^\[(?:S\d+|R[\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}):\d+\]$/.test(source)
-          ? references.find((candidate) => candidate.text === source) : undefined;
-        if (ref) {
-          node.properties = { href: ref.href };
-          node.children = [{ type: 'text', value: ref.label ?? ref.text }];
-        }
-        return;
-      }
+      if (!node.children || node.tagName === 'code' || node.tagName === 'pre' || node.tagName === 'a') return;
       node.children = node.children.flatMap((child) => {
         if (child.type === 'text' && child.value !== undefined) return linkify(child.value);
+        if (child.tagName === 'a') {
+          const start = child.position?.start.offset, end = child.position?.end.offset;
+          const source = start === undefined || end === undefined ? '' : markdown.slice(start + sourceOffset, end + sourceOffset);
+          const labels = source.match(/\[(?:S\d+|R[\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}):\d+\]/g);
+          if (labels?.join('') === source && labels.every(label => references.some(ref => ref.text === label))) {
+            return labels.flatMap(linkify);
+          }
+        }
         visit(child);
         return [child];
       });

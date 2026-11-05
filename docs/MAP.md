@@ -245,8 +245,8 @@ metadata. Context reserve is separate from the published generation maximum; unk
 Admission has its own claim; a missing numeric capacity never permits another call for the same turn.
 Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
 across corpora, with no fixed-paper coaching or JSON sentence/label enum. The server resolves labels and byte ranges.
-Markdown reference definitions cannot redirect exact registered citation tokens in chat or saved answers; explicit
-links and unregistered reference labels retain their ordinary Markdown behavior.
+Markdown reference definitions cannot redirect exact registered citation tokens in chat or saved answers, including
+adjacent tokens parsed as one link; ordinary explicit links and unregistered labels retain their Markdown behavior.
 Groups of fully specified labels may normalize to separate inline references after every member passes the same
 frozen-scope validation; unknown identities and shorthand remain failures.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
