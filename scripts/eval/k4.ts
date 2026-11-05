@@ -32,6 +32,7 @@ type LocalMcpRuntime = {
   uiOrigin: string;
   agentHeaders: Record<string, string>;
   ownerHeaders: Record<string, string>;
+  audienceChecks: { uiOwnerOnMcp: number; mcpOwnerOnUi: number; uiAgentOnUi: number };
   expiresAt: string;
   fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   dispose: () => Promise<void>;
@@ -66,13 +67,15 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
   const kid = "k4-" + randomUUID();
   const jwk = { ...await exportJWK(publicKey), kid, alg: "RS256", use: "sig", key_ops: ["verify"] };
   const team = "k4-" + randomUUID().replaceAll("-", "").slice(0, 20) + ".cloudflareaccess.com";
-  const issuer = "https://" + team, audience = "k4-test-" + randomUUID(), ownerEmail = "k4-owner@example.test";
+  const issuer = "https://" + team, audience = "k4-test-" + randomUUID(), mcpAudience = "k4-mcp-" + randomUUID(), ownerEmail = "k4-owner@example.test";
   const expiresAt = Math.floor(Date.now() / 1000) + (serveSignedAgentMode ? 1800 : 300);
-  const sign = (claims: Record<string, unknown>) => new SignJWT({ type: "app", ...claims })
-    .setProtectedHeader({ alg: "RS256", kid, typ: "JWT" }).setIssuer(issuer).setAudience(audience)
+  const sign = (claims: Record<string, unknown>, aud = audience) => new SignJWT({ type: "app", ...claims })
+    .setProtectedHeader({ alg: "RS256", kid, typ: "JWT" }).setIssuer(issuer).setAudience(aud)
     .setIssuedAt().setExpirationTime(serveSignedAgentMode ? expiresAt : "5m").sign(privateKey);
-  const [agentJwt, ownerJwt] = await Promise.all([
-    sign({ sub: "", common_name: "k4-test-agent" }), sign({ sub: "k4-test-owner", email: ownerEmail }),
+  const [agentJwt, ownerJwt, mcpOwnerJwt, uiAgentJwt] = await Promise.all([
+    sign({ sub: "", common_name: "k4-test-agent" }, mcpAudience), sign({ sub: "k4-test-owner", email: ownerEmail }),
+    sign({ sub: "k4-test-owner", email: ownerEmail }, mcpAudience),
+    sign({ sub: "", common_name: "k4-test-agent" }),
   ]);
   const jwksUrl = issuer + "/cdn-cgi/access/certs", jwksBody = JSON.stringify({ keys: [jwk] });
   const egressScript = `const expected=${JSON.stringify(jwksUrl)},body=${JSON.stringify(jwksBody)};` +
@@ -107,7 +110,7 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
         assets: { directory: path.resolve(workerDir, config.assets.directory), binding: "ASSETS",
           routerConfig: { has_user_worker: true }, assetConfig: { not_found_handling: config.assets.not_found_handling } },
         bindings: { ...config.vars, ELIOT_LOCAL_DEV: "0", ELIOT_ACCESS_TEAM_DOMAIN: team,
-          ELIOT_ACCESS_AUD: audience, ELIOT_OWNER_EMAIL: ownerEmail, ELIOT_OWNER_SERVICE_TOKEN: "",
+          ELIOT_ACCESS_AUD: audience, ELIOT_MCP_ACCESS_AUD: mcpAudience, ELIOT_OWNER_EMAIL: ownerEmail, ELIOT_OWNER_SERVICE_TOKEN: "",
           ELIOT_ORIGIN: uiOrigin, ELIOT_MCP_ORIGIN: mcpOrigin, ELIOT_CF_ACCOUNT_ID: "" },
       },
       { name: "k4-test-jwks-egress", modules: true, script: egressScript },
@@ -117,6 +120,20 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
   const mf = new Miniflare(options);
   try {
     await mf.ready;
+    const audienceChecks = { uiOwnerOnMcp: 0, mcpOwnerOnUi: 0, uiAgentOnUi: 0 };
+    for (const [name, url, jwt] of [
+      ["uiOwnerOnMcp", new URL("/mcp", mcpOrigin), ownerJwt],
+      ["mcpOwnerOnUi", new URL("/api/me", uiOrigin), mcpOwnerJwt],
+    ] as const) {
+      const response = await mf.dispatchFetch(url, { headers: { "cf-access-jwt-assertion": jwt } });
+      audienceChecks[name] = response.status;
+      assert.equal(response.status, 403, `${name}: another Access application's owner JWT must be rejected.`);
+      assert((await response.text()).includes("This sign-in session is invalid."), `${name}: reject the audience before actor or MCP protocol handling.`);
+    }
+    const uiAgentResponse = await mf.dispatchFetch(new URL("/api/me", uiOrigin), { headers: { "cf-access-jwt-assertion": uiAgentJwt } });
+    audienceChecks.uiAgentOnUi = uiAgentResponse.status;
+    assert.equal(uiAgentResponse.status, 403, "A valid UI-audience agent must still be denied owner APIs.");
+    assert((await uiAgentResponse.text()).includes("This account is not the Eliot owner."), "The role gate must reject an agent even after UI audience verification.");
     const db = await mf.getD1Database("DB", "eliot-k4-test");
     for (const file of migrationFiles) {
       const sql = await readFile(path.join(migrationsDir, file), "utf8");
@@ -124,7 +141,7 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
       catch (error) { throw new Error("Miniflare D1 migration " + file + " failed: " + (error instanceof Error ? error.message : String(error)), { cause: error }); }
     }
     return {
-      mcpOrigin, uiOrigin, expiresAt: new Date(expiresAt * 1000).toISOString(),
+      mcpOrigin, uiOrigin, audienceChecks, expiresAt: new Date(expiresAt * 1000).toISOString(),
       agentHeaders: { "cf-access-jwt-assertion": agentJwt },
       ownerHeaders: { "cf-access-jwt-assertion": ownerJwt },
       fetch: (input, init) => mf.dispatchFetch(input, init),
@@ -1131,6 +1148,7 @@ async function runSignedAgent(): Promise<void> {
   let outlineMinimumRetry: { advertisedTokens: number; firstBlockId: number; nextCursor: number } | null = null;
   let multiBlockRead: { sourceBytes: number; segments: number; labeledSegments: number } | null = null;
   if (localRuntime) {
+    report.accessAudienceProbe = localRuntime.audienceChecks;
     const forgedOrigin = await localRuntime.fetch(new URL("/mcp", localRuntime.uiOrigin), {
       method: "POST",
       headers: {
@@ -1334,6 +1352,7 @@ function markdown(): string {
     `- MCP origin: ${report.endpoint.origin}`,
     `- Mode: ${report.mode}; signed-agent=${report.signedAgent.status}; owner-simulation=${report.ownerSimulation.status}`,
     `- Signed-agent boundary: API=${report.signedAgent.apiDeniedStatus ?? "NOT_RUN"}; decision=${report.signedAgent.proposalDecisionDeniedStatus ?? "NOT_RUN"}; propose_page HTTP=${report.signedAgent.proposePageHttpStatus ?? "NOT_RUN"}; reason=${report.signedAgent.reason ?? "none"}`,
+    `- Access audience/role probes: UI owner on MCP=${report.accessAudienceProbe?.uiOwnerOnMcp ?? "NOT_RUN"}; MCP owner on UI=${report.accessAudienceProbe?.mcpOwnerOnUi ?? "NOT_RUN"}; UI-audience agent on UI=${report.accessAudienceProbe?.uiAgentOnUi ?? "NOT_RUN"}`,
     `- Search cursor parse: guide=${report.cursorParsing?.guidePrefixAccepted ?? false}; claim=${report.cursorParsing?.claimPrefixAccepted ?? false}; UUID entity cursors unchanged=${report.cursorParsing?.otherUuidCursorUnchanged ?? false}`,
     `- Client: ${report.client.package} ${report.client.version} with ${report.client.transport}; SDK protocol defaults` ,
     `- Scope: LOCAL_REAL_MCP_PROTOCOL=${report.scope.LOCAL_REAL_MCP_PROTOCOL}; LIVE_ACCESS_NOT_RUN=${report.scope.LIVE_ACCESS_NOT_RUN}`,

@@ -89,6 +89,31 @@ describe("Access JWT and owner resolution", () => {
 
 describe("explicit agent Access", () => {
   const agent = { type: "app", common_name: "research-agent.access", sub: "" };
+  const mcpAudience = "eliot-mcp";
+  it("accepts the separate MCP application's audience without changing the owner API audience", async () => {
+    const vars = env({ ELIOT_MCP_ACCESS_AUD: mcpAudience });
+    const jwt = await token(agent, { audience: mcpAudience });
+    expect(await authenticate(request(jwt, `${ORIGIN}/mcp`), vars, true)).toEqual({
+      type: "agent", id: agent.common_name, authentication: "service-token",
+    });
+    expect((await authenticate(request(await token()), vars)).type).toBe("owner");
+  });
+  it("does not accept an owner identity from the wrong application's audience", async () => {
+    const vars = env({ ELIOT_MCP_ACCESS_AUD: mcpAudience });
+    for (const claims of [{ email: OWNER }, { type: "app", common_name: TOKEN_NAME, sub: "" }]) {
+      await denied(await token(claims, { audience: mcpAudience }), vars);
+      await denied(await token(claims), vars, true);
+      expect((await authenticate(request(await token(claims, { audience: mcpAudience })), vars, true)).type).toBe("owner");
+    }
+  });
+  it("rejects a UI-audience agent token on MCP when a separate audience is configured", async () => {
+    await denied(await token(agent), env({ ELIOT_MCP_ACCESS_AUD: mcpAudience }), true);
+  });
+  it.each([undefined, "", "   "])("preserves shared-application verification when the MCP audience is %j", async (audience) => {
+    const vars = env(audience === undefined ? {} : { ELIOT_MCP_ACCESS_AUD: audience });
+    expect((await authenticate(request(await token(agent)), vars, true)).type).toBe("agent");
+    await denied(await token(agent, { audience: mcpAudience }), vars, true);
+  });
   it("requires caller opt-in for a valid signed agent assertion", async () => {
     const jwt = await token(agent);
     await denied(jwt);
