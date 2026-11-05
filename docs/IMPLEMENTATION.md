@@ -1311,7 +1311,7 @@ On phone, one Sources and model disclosure shows the current scope and model sum
 stay mounted. Opening it exposes scope navigation and the same picker; collapsing keeps draft/selection/provider
 state and leaves model errors, pending status and data-use warnings visible. Desktop controls remain expanded.
 History and New chat confirm before discarding a nonblank question draft. Cancel preserves the open menu, chat, draft
-and source scope. Choosing the current chat, remaining in a new chat or using a modified link leaves its draft intact
+and source scope. Choosing the current chat or using a modified link leaves its draft intact
 without confirmation; blank drafts follow the existing navigation. This applies to these controls, not browser Back/Forward.
 Settings keeps human provider names and known quota values on compact rows,
 with provider addresses and Gateway routing in connection dialogs. Both owner billing and data-use choices remain.
