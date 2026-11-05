@@ -25,6 +25,8 @@ const outDir = fileURLToPath(new URL("../../eval/out/k4/", import.meta.url));
 const now = new Date();
 const runId = now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
 const localMiniflareMode = process.argv.includes("--signed-agent-miniflare");
+const productionBuild = process.argv.includes("--production-build");
+assert(!productionBuild || localMiniflareMode, "--production-build requires the isolated --signed-agent-miniflare runtime.");
 const serveSignedAgentMode = process.argv.includes("--serve-signed-agent");
 
 type LocalMcpRuntime = {
@@ -49,9 +51,24 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
     "Serve origins must be http://127.0.0.1:<positive-port> and http://localhost:<same-port> without a path, query or fragment.");
   }
   const root = fileURLToPath(new URL("../../", import.meta.url));
-  const workerDir = path.join(root, "dist", "eliot_research");
+  const redirect = JSON.parse(await readFile(path.join(root, ".wrangler", "deploy", "config.json"), "utf8"));
+  const workerDir = path.dirname(path.resolve(root, ".wrangler", "deploy", redirect.configPath));
   const config = JSON.parse(await readFile(path.join(workerDir, "wrangler.json"), "utf8"));
-  assert.equal(config.name, "eliot-research"); assert.equal(config.main, "index.js");
+  assert.equal(config.name, productionBuild ? "eliotr-core" : "eliot-research"); assert.equal(config.main, "index.js");
+  const chatClass = productionBuild ? "ResearchSession" : "ChatAgent";
+  assert.deepEqual(config.durable_objects.bindings, [{ name: "CHAT", class_name: chatClass }]);
+  if (productionBuild) {
+    assert.deepEqual(config.exports, { ResearchSession: { type: "durable-object", storage: "sqlite" } });
+    assert.deepEqual(config.migrations, []);
+    assert.equal(config.assets.binding, "ASSETS");
+    assert.equal(config.assets.not_found_handling, "single-page-application");
+    assert.equal(config.assets.run_worker_first, true);
+    assert.deepEqual(config.triggers.crons, ["*/5 * * * *"]);
+    assert.deepEqual(config.queues, { producers: [], consumers: [] });
+    assert.equal(config.d1_databases[0].database_name, "eliot-research-library");
+    assert.equal(config.r2_buckets[0].bucket_name, "eliot-research-library");
+    assert.equal(config.vars.ELIOT_LOCAL_DEV, "0");
+  }
   const migrationConfig = config.d1_databases?.find((entry: any) => entry.binding === "DB");
   assert(migrationConfig && typeof migrationConfig.migrations_dir === "string");
   const migrationsDir = path.resolve(workerDir, migrationConfig.migrations_dir);
@@ -106,7 +123,7 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
         compatibilityDate: config.compatibility_date, compatibilityFlags: config.compatibility_flags,
         outboundService: { name: "k4-test-jwks-egress" },
         d1Databases: { DB: tag + "-db" }, r2Buckets: { BUCKET: tag + "-r2" },
-        durableObjects: { CHAT: { className: "ChatAgent", useSQLite: true } }, workflows,
+        durableObjects: { CHAT: { className: chatClass, useSQLite: true } }, workflows,
         assets: { directory: path.resolve(workerDir, config.assets.directory), binding: "ASSETS",
           routerConfig: { has_user_worker: true }, assetConfig: { not_found_handling: config.assets.not_found_handling } },
         bindings: { ...config.vars, ELIOT_LOCAL_DEV: "0", ELIOT_ACCESS_TEAM_DOMAIN: team,
@@ -466,6 +483,35 @@ async function seedLocalSignedProject(): Promise<{ projectId: string; projectTit
   const created = await apiJson("/api/projects", "POST", { title: projectTitle, description: "Ephemeral local signed-MCP transport fixture." }, localRuntime.ownerHeaders);
   const projectId = created.project?.id;
   assert(UUID_RE.test(projectId), "Local owner JWT did not create the transport project.");
+  if (productionBuild) {
+    const shell = await localRuntime.fetch(new URL("/", localRuntime.uiOrigin), { headers: localRuntime.ownerHeaders });
+    assert.equal(shell.status, 200, "The production entrypoint must serve the built owner UI.");
+    assert.match(shell.headers.get("content-type") ?? "", /text\/html/u);
+    const html = await shell.text();
+    assert(html.includes("<title>Eliot Research</title>"));
+    const script = html.match(/<script[^>]+src="([^"]+)"/u)?.[1];
+    assert(script?.startsWith("/assets/"), "The production UI must reference a built static asset.");
+    const asset = await localRuntime.fetch(new URL(script, localRuntime.uiOrigin), { headers: localRuntime.ownerHeaders });
+    assert.equal(asset.status, 200, "The production asset binding must serve the built UI module.");
+    assert.match(asset.headers.get("content-type") ?? "", /javascript/u);
+    await asset.body?.cancel();
+    const chat = await apiJson(`/api/projects/${projectId}/chats`, "POST", { title: "Production alias probe" }, localRuntime.ownerHeaders);
+    const chatId = chat.chat?.id;
+    assert(UUID_RE.test(chatId));
+    const snapshot = await apiJson(`/api/projects/${projectId}/chats/${chatId}`, "GET", undefined, localRuntime.ownerHeaders);
+    assert.equal(snapshot.chat.id, chatId, "The existing export alias must support ChatAgent RPC.");
+    const url = new URL(`/agents/chat-agent/${chatId}?projectId=${projectId}`, localRuntime.uiOrigin);
+    const wrongOrigin = await localRuntime.fetch(url, { headers: { ...localRuntime.ownerHeaders, Upgrade: "websocket", Origin: "https://wrong.example" } });
+    assert.equal(wrongOrigin.status, 403);
+    await wrongOrigin.body?.cancel();
+    const connected: any = await localRuntime.fetch(url, { headers: { ...localRuntime.ownerHeaders, Upgrade: "websocket", Origin: localRuntime.uiOrigin } });
+    assert.equal(connected.status, 101, "The signed owner must open the existing logical chat route through the export alias.");
+    assert(connected.webSocket);
+    connected.webSocket.accept();
+    connected.webSocket.close(1000, "Alias probe complete");
+    report.productionBuildProbe = { worker: "eliotr-core", durableObjectExport: "ResearchSession",
+      ownerHtml: 200, ownerModule: 200, rpcSnapshot: "PASS", signedOwnerWebSocket: 101, forgedOriginWebSocket: 403, modelCalls: 0 };
+  }
   const seedText = buildSeedText(runId), seedBytes = encoder.encode(seedText).byteLength;
   const added = await apiJson("/api/projects/" + projectId + "/sources/text", "POST", { title: "K4 authored transport source " + runId, text: seedText }, localRuntime.ownerHeaders);
   const sourceId = added.sourceId, revisionId = added.revisionId;
@@ -1353,6 +1399,7 @@ function markdown(): string {
     `- Mode: ${report.mode}; signed-agent=${report.signedAgent.status}; owner-simulation=${report.ownerSimulation.status}`,
     `- Signed-agent boundary: API=${report.signedAgent.apiDeniedStatus ?? "NOT_RUN"}; decision=${report.signedAgent.proposalDecisionDeniedStatus ?? "NOT_RUN"}; propose_page HTTP=${report.signedAgent.proposePageHttpStatus ?? "NOT_RUN"}; reason=${report.signedAgent.reason ?? "none"}`,
     `- Access audience/role probes: UI owner on MCP=${report.accessAudienceProbe?.uiOwnerOnMcp ?? "NOT_RUN"}; MCP owner on UI=${report.accessAudienceProbe?.mcpOwnerOnUi ?? "NOT_RUN"}; UI-audience agent on UI=${report.accessAudienceProbe?.uiAgentOnUi ?? "NOT_RUN"}`,
+    `- Existing Worker build alias: ${report.productionBuildProbe ? JSON.stringify(report.productionBuildProbe) : "NOT_RUN (default local build)"}`,
     `- Search cursor parse: guide=${report.cursorParsing?.guidePrefixAccepted ?? false}; claim=${report.cursorParsing?.claimPrefixAccepted ?? false}; UUID entity cursors unchanged=${report.cursorParsing?.otherUuidCursorUnchanged ?? false}`,
     `- Client: ${report.client.package} ${report.client.version} with ${report.client.transport}; SDK protocol defaults` ,
     `- Scope: LOCAL_REAL_MCP_PROTOCOL=${report.scope.LOCAL_REAL_MCP_PROTOCOL}; LIVE_ACCESS_NOT_RUN=${report.scope.LIVE_ACCESS_NOT_RUN}`,

@@ -81,6 +81,10 @@ jobs:
           pnpm eval k3 --overview-browser
           pnpm eval k3 --question-browser
           pnpm eval k3 --understanding-browser
+      - name: Exercise existing Worker build and Durable Object alias locally
+        run: |
+          pnpm cf:production-dry-run
+          pnpm eval k4 --signed-agent-miniflare --production-build
       - name: Upload checked build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

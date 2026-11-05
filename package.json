@@ -17,8 +17,9 @@
     "eval": "node scripts/eval/run.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "legacy:export": "node scripts/legacy-export.mjs",
-    "cf:types": "wrangler types src/worker-configuration.d.ts --include-runtime false --strict-vars false",
-    "cf:dry-run": "pnpm build && wrangler deploy --dry-run --outdir dist/worker"
+    "cf:types": "wrangler types src/worker-configuration.d.ts --env production --include-runtime false --strict-vars false",
+    "cf:dry-run": "pnpm build && wrangler deploy --dry-run --outdir dist/worker",
+    "cf:production-dry-run": "ELIOT_REMOTE_BINDINGS=0 CLOUDFLARE_ENV=production pnpm build && wrangler deploy --dry-run --outdir dist/production-worker"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.91",

@@ -41,6 +41,8 @@ quotas.
 - K4 is implemented in main. Its signed-agent read, proposal and owner-decision path is verified locally with test
   JWKS; deployed Access remains unverified. K6 is frozen until K2/K3 acceptance.
 - The existing `eliotr-core.kleymor-metal.workers.dev` address is retained per owner decision; the replacement is not deployed over it.
+- Existing-address replacement is prepared locally via `env.production` and the retained `ResearchSession` export
+  alias. Its signed Workerd RPC/WebSocket/MCP probe is local-only; remote deployment and K10 import remain pending (§2).
 - Legacy `apps/`, `packages/`, `crates/` and `infra/` are donor/import material, not implementation instructions.
 - PR #417 is the authoritative replacement-documentation history and supersedes the stacked plan in PR #416.
 
