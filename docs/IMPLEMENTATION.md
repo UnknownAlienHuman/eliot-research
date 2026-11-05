@@ -1256,6 +1256,8 @@ Clear passage retains the explicit revision from the URL even before it appears 
 only the passage selection; a pending/failed historical metadata read cannot redirect it to the current revision.
 Add sources keeps text and URL drafts independent. Each form allows one pending submission while its fields remain
 editable. Success clears only the unchanged submitted draft; later edits, failures and duplicate responses keep it.
+After text/URL/file additions or Attach, cancel the older project source-list read before refreshing; a late empty
+first-page response cannot hide the confirmed source. The refresh retains loaded pages and source selection.
 Closing and reopening the dialog does not cancel the write or discard newer input. Drafts stay local to the mounted
 project workspace; no automatic retry or browser persistence is added.
 Projects exposes Show archived projects and Unarchive. Each list view owns its query/cursor; switching views aborts
