@@ -1459,6 +1459,41 @@ marks deleted immediately, then removes R2/search objects synchronously or in da
 identified and citations never retarget. Replacement/deletion marks pages stale from full revision IDs. Export streams
 a ZIP of originals, `text.md`, claims, pages/citations and a checksum manifest.
 
+### K10 local legacy preparation
+
+`pnpm legacy:export --database /private/core.sqlite --objects /private/r2 --output /private/export` reads a
+completed, offline SQLite snapshot through `node:sqlite` with `readOnly: true`; it makes no HTTP, Cloudflare, model or
+shell call. Supply a closed/checkpointed SQLite backup, not a live database or SQL dump. Object files must already be
+materialized below the supplied directory using their exact R2 keys. Obtaining production snapshots is a separate,
+authorised operation. Use a private directory outside the checkout; the export contains private document bytes and
+metadata and must not be committed or uploaded implicitly.
+
+The CLI preserves projects, sources, all membership rows and revision metadata from one SQLite read transaction.
+Only `LIVE` revisions have bodies exported. The complete pinned strict legacy manifest schema is validated,
+including required original metadata (not proof of original bytes), optional fields and ownership-cutover rules.
+It binds the manifest to the source namespace/owner/generation, source
+and immutable revision/view identities, hashes its exact bytes, and derives its canonical manifest key. Each object's
+residency digest contains that object's own checksum: `content.md` is **not** a sibling of `manifest.json`. It separately
+checks the content residency digest against D1, derives the content key, verifies the content checksum against both
+D1 and manifest, and checks UTF-8 without changing bytes. The exact legacy manifest is retained beside `text.md`.
+Manifest reads are capped at 512 KiB; content and any recorded original at 25 MiB each, processed one revision at a time.
+Missing objects, malformed UTF-8, identity/checksum mismatches, symlink/non-regular paths and broken metadata references fail closed. Nonblocking object opens also prevent FIFO
+replacement from hanging the verifier.
+
+An empty/null `original_r2_key` produces `original_status: not_recorded` and no original file, even when the manifest
+names an original or records its digest. This says nothing about originals elsewhere. A recorded original reference
+must resolve and match `source.original_sha256` before `original_status: verified` is emitted. Non-LIVE bodies, ancillary
+normalized files, artifact/wiki revisions, research outputs, credentials and grants are not copied. This is preparation
+for K10, not a complete backup or import into the replacement. No D1 migration or production state changes are involved.
+
+The output must be a new directory separate from the inputs, with an existing parent. Files use private permissions
+where supported. Each exported file has its original key, byte count and SHA-256 in `export.json`; stdout prints counts
+and the report checksum. `export.json` is atomically renamed into place last and is the completion marker. On failure the command exits 1;
+a partial directory can remain and must not be treated as an export. Rerun into a new directory, never overwrite inputs
+or a previous export. The report explicitly says `local_snapshot_only`: it cannot prove live R2 metadata, current
+production completeness, or a coherent production capture. `pnpm test` exercises the CLI and synthetic snapshot,
+including the 8/15/17 shape, non-LIVE exclusion, exact bytes, missing originals and corruption; no production data is used.
+
 ## 15. Platform facts and open checks
 
 Checked against official Cloudflare documentation on 2026-10-24. Recheck before implementation or merge.

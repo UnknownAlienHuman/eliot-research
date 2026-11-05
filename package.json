@@ -13,9 +13,10 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit --pretty false",
     "lint": "eslint src vite.config.ts",
-    "test": "vitest run --config vitest.k0.config.ts && node --test scripts/eval/origin.test.mjs",
+    "test": "vitest run --config vitest.k0.config.ts && node --test scripts/eval/origin.test.mjs scripts/legacy-export.test.mjs",
     "eval": "node scripts/eval/run.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "legacy:export": "node scripts/legacy-export.mjs",
     "cf:types": "wrangler types src/worker-configuration.d.ts --include-runtime false --strict-vars false",
     "cf:dry-run": "pnpm build && wrangler deploy --dry-run --outdir dist/worker"
   },

@@ -204,3 +204,18 @@ until the first actual copy requires it.
 - Graph databases and Cloudflare Agent Memory as source truth: unnecessary/lossy for the required product.
 - AI Search public MCP/generation endpoints: Eliot keeps auth, scope, hydration and citations in its own Worker.
 - Firecrawl/SearXNG as mandatory infrastructure: use Cloudflare/static fetch first; revisit only for a demonstrated gap.
+
+### K10 local preparation wire format
+
+`scripts/legacy-export.mjs` reimplements only the immutable normalized-key/residency serialization and read-side
+identity checks inspected at `0b38c7cd821c1505319c9d93efa7e01642012f65` (MIT):
+`packages/platform-cloudflare/src/r2.ts` (`canonicalNormalizedBundleKey`),
+`packages/domain/src/residency.ts` (`serializeObjectResidencyKey`),
+`packages/cloudflare-evidence/src/exhaustive-manifest.ts` and
+`packages/contracts/src/normalized-bundle.ts`. `scripts/lib/legacy-manifest.mjs` adapts that complete strict
+manifest schema, its `common.ts` identifier/checksum/date constraints and `source.ts` ownership enum using the
+already-installed Zod dependency. The existing schema at
+`infra/d1/core/migrations/0001_initial.sql` supplies the local snapshot field names and synthetic test database.
+The read-only CLI is the caller; `scripts/legacy-export.test.mjs` is its acceptance check. No legacy runtime,
+admission/receipt framework, Cloudflare adapter, package dependency or migration is imported into the replacement.
+The CLI checks local bytes/key identity, not live R2 metadata or production authority settlement.
