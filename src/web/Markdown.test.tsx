@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { Markdown, citationHref, citationLabel, type MarkdownReference } from './Markdown';
+import { persistentResolvedAnswer, resolveCitations } from '../citations';
 
 const compact = '[S1:14]';
 const persistent = '[R11111111-1111-4111-8111-111111111111:14]';
@@ -13,6 +14,77 @@ function render(text: string, refs: readonly MarkdownReference[] = references) {
 }
 
 describe('Markdown citation rendering', () => {
+  it.each(['chat', 'saved'].flatMap(kind => [
+    { format: 'plain', prefix: 'Claim ' },
+    { format: 'leading BOM', prefix: '\uFEFF\n\n' },
+    { format: 'BOM, CRLF and Unicode', prefix: '\uFEFF\r\n\r\n😀 Кириллица é ' },
+    { format: 'two leading BOMs', prefix: '\uFEFF\uFEFF\r\n\r\n😀 ' },
+    { format: 'non-leading BOM', prefix: '\n\uFEFF\n\n😀 ' },
+  ].map(input => ({ kind, ...input }))))('keeps $kind citation authority with $format and a Markdown reference', ({ kind, prefix, format }) => {
+    const revisionId = '11111111-1111-4111-8111-111111111111';
+    const resolved = resolveCitations(prefix + '[S1:1].\n\n[S1:1]: https://example.com/not-the-source', [{
+      sourceId: 's1', revisionId, title: 'Paper A', alias: 'S1',
+      blocks: [{ id: 1, type: 'paragraph', start: 0, end: 10, heading: null }],
+    }]);
+    expect(resolved.invalidLabels).toBe(0);
+    expect(resolved.citations).toHaveLength(1);
+    const answer = kind === 'saved' ? persistentResolvedAnswer(resolved.text, resolved.citations) : resolved;
+    const refs = answer.citations.map((citation) => ({ text: citation.label,
+      href: citationHref('p1', citation), label: citationLabel(citation) }));
+    const html = render(answer.text, refs);
+    expect(html.match(/class="er-citation"/g)).toHaveLength(1);
+    expect(html).toContain(`/p/p1/source/s1?revisionId=${revisionId}&amp;start=0&amp;end=10`);
+    expect(html).toContain('>Paper A · 1</a>');
+    expect(html).not.toContain('href="https://example.com/not-the-source"');
+    if (prefix.includes('😀')) expect(html).toContain('😀');
+    if (format === 'BOM, CRLF and Unicode') expect(html).toContain('Кириллица é');
+    if (format === 'two leading BOMs' || format === 'non-leading BOM') expect(html).toContain('<p>\uFEFF</p>');
+  });
+
+  it.each([compact, persistent].flatMap(token => ['', '\uFEFF'].map(prefix => ({ token, prefix }))))(
+    'preserves exact $token references at prose depths after TeX adaptation ($prefix)', ({ token, prefix }) => {
+    const html = render(prefix + String.raw`\[x^2\]` + `\n\nParagraph ${token}\n\n- List ${token}\n\n> Quote **${token}**\n\n`
+      + `| Evidence |\n| --- |\n| ${token} |\n\n${token}: https://example.com/not-the-source "Untrusted title"`);
+    expect(html.match(/class="er-citation"/g)).toHaveLength(4);
+    expect(html.match(/start=42&amp;end=87/g)).toHaveLength(4);
+    expect(html).not.toContain('not-the-source');
+    expect(html).not.toContain('Untrusted title');
+    expect(html).toContain('<math');
+  });
+
+  it('leaves explicit links, code, images and unregistered reference labels unchanged', () => {
+    const html = render(`${compact}\n\n`
+      + `[S1:14](https://example.com/inline) [S1:14][] [visible][S1:14]\n\n`
+      + '[ordinary] [S9:99] [R22222222-2222-4222-8222-222222222222:14]\n\n'
+      + `\`${compact}\`\n\n\`\`\`\n${compact}\n\`\`\`\n\n    ${compact}\n\n!${compact}\n\n`
+      + `${compact}: https://example.com/reference\n[ordinary]: https://example.com/ordinary\n`
+      + '[S9:99]: https://example.com/unknown\n[R22222222-2222-4222-8222-222222222222:14]: https://example.com/unknown-revision');
+    expect(html.match(/class="er-citation"/g)).toHaveLength(1);
+    expect(html).toContain('<a href="https://example.com/inline">S1:14</a>');
+    expect(html).toContain('<a href="https://example.com/reference">S1:14</a>');
+    expect(html).toContain('<a href="https://example.com/reference">visible</a>');
+    expect(render('[[S1:14]](https://example.com/nested)')).toContain('<a href="https://example.com/nested">[S1:14]</a>');
+    expect(html).toContain('<a href="https://example.com/ordinary">ordinary</a>');
+    expect(html).toContain('<a href="https://example.com/unknown">S9:99</a>');
+    expect(html).toContain('href="https://example.com/unknown-revision"');
+    expect(html).toContain(`<code>${compact}</code>`);
+    expect(html.match(/<pre><code>\[S1:14\]\n<\/code><\/pre>/g)).toHaveLength(2);
+    expect(html).not.toContain('<img');
+    expect(render(`${compact}\n\n${compact}: https://example.com/unregistered`, [])).toContain('href="https://example.com/unregistered"');
+  });
+
+  it.each([String.raw`[S1\:14]`, '[S1&#58;14]', '[s1:14]'])('does not promote non-exact reference spelling %s', (token) => {
+    const html = render(`${token}\n\n${token}: https://example.com/reference`);
+    expect(html).toContain('href="https://example.com/reference"');
+    expect(html).not.toContain('class="er-citation"');
+  });
+
+  it('does not promote arbitrary registered text to a citation reference', () => {
+    const html = render('[ordinary]\n\n[ordinary]: https://example.com/ordinary', [{ text: '[ordinary]', href }]);
+    expect(html).toContain('<a href="https://example.com/ordinary">ordinary</a>');
+    expect(html).not.toContain('class="er-citation"');
+  });
+
   it('renders the saved C4 TeX delimiters with accessible math and an unchanged evidence link', () => {
     // Exact public Transformer formula syntax from the saved C4 rendering failure.
     const formula = String.raw`\[

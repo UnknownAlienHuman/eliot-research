@@ -1284,6 +1284,8 @@ Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
 Every screen has loading, empty and actionable error states plus stale/paused where relevant. Use one Markdown renderer
 with raw HTML disabled and resolved citation chips. Do not cache private text in localStorage or a service worker.
+An exact registered compact/persistent citation token keeps its resolved Reader target even when Markdown has a
+reference definition for that token. Explicit links and non-exact or unregistered reference spellings stay unchanged.
 The web renderer uses `remark-math` and `rehype-katex` for `\(...\)`, `\[...\]` and `$$...$$` as native MathML, without
 KaTeX styles or font assets. Only the TeX compatibility path adds a standard GFM Markdown AST pass to preserve code, links
 and other literal nodes. Single `$` stays literal for currency; unfinished expressions stay readable and display formulas

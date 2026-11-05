@@ -26,6 +26,7 @@ interface MarkdownNode {
   value?: string;
   properties?: object;
   children?: MarkdownNode[];
+  position?: ReturnType<typeof fromMarkdown>['position'];
 }
 interface SourceNode {
   type: string;
@@ -84,6 +85,9 @@ function MathSpan({ node, children, ...props }: ComponentProps<'span'> & ExtraPr
 }
 
 export function Markdown({ text, references = [] }: { readonly text: string; readonly references?: readonly MarkdownReference[] }) {
+  const markdown = mathDelimiters(text);
+  // Micromark omits exactly one leading BOM from its source offsets.
+  const sourceOffset = markdown.charCodeAt(0) === 0xfeff ? 1 : 0;
   function linkify(value: string): MarkdownNode[] {
     const hits = references.filter((ref) => ref.text !== '').flatMap((ref) => {
       const found: { at: number; ref: MarkdownReference }[] = [];
@@ -105,10 +109,22 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
     return parts;
   }
   // Transform text nodes at every prose depth, before React components render.
-  // Code and existing links are literal boundaries, including their descendants.
+  // Code and explicit links are literal boundaries, including their descendants.
+  // A definition must not redirect a registered, exact shortcut citation label.
   function citationLinks() {
     function visit(node: MarkdownNode): void {
-      if (!node.children || node.tagName === 'code' || node.tagName === 'pre' || node.tagName === 'a') return;
+      if (!node.children || node.tagName === 'code' || node.tagName === 'pre') return;
+      if (node.tagName === 'a') {
+        const start = node.position?.start.offset, end = node.position?.end.offset;
+        const source = start === undefined || end === undefined ? '' : markdown.slice(start + sourceOffset, end + sourceOffset);
+        const ref = /^\[(?:S\d+|R[\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}):\d+\]$/.test(source)
+          ? references.find((candidate) => candidate.text === source) : undefined;
+        if (ref) {
+          node.properties = { href: ref.href };
+          node.children = [{ type: 'text', value: ref.label ?? ref.text }];
+        }
+        return;
+      }
       node.children = node.children.flatMap((child) => {
         if (child.type === 'text' && child.value !== undefined) return linkify(child.value);
         visit(child);
@@ -122,5 +138,5 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
     a: ({ href, children, title }) => references.some((ref) => ref.href === href)
       ? <Link className='er-citation' to={href ?? ''} title={title}>{children}</Link>
       : <a href={href} title={title}>{children}</a>,
-  }}>{mathDelimiters(text)}</ReactMarkdown>;
+  }}>{markdown}</ReactMarkdown>;
 }
