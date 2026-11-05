@@ -430,6 +430,8 @@ page that the owner can accept or reject.
    may read and propose; only owner accepts.
    Catalogue refresh and source-understanding tools use the existing owner-authorized functions; agent actors cannot invoke these side effects.
 4. Move the proposals inbox and add `pnpm eval k4` using a real MCP client.
+   Opening a proposal citation releases the review dialog and focuses its exact source passage; reopening review
+   retains the selected draft. The K1 browser journey covers both inline and listed citations without accepting it.
 
 **Hard acceptance.** Every tool respects scope/size and labels resolve. A connected agent answers O2/O5 using only Eliot
 tools, proposes a page, and all citations remain valid after owner acceptance.

@@ -676,6 +676,18 @@ try {
     range.setStart(start.node, start.offset); range.setEnd(end.node, end.offset);
     const selected = window.getSelection(); selected?.removeAllRanges(); selected?.addRange(range);
   }, [start, end]);
+  const proposalId = crypto.randomUUID(), proposalLabel = '[R' + revisionId + ':' + passageBlock.id + ']';
+  const proposal = { revisionId: proposalId, pageId: crypto.randomUUID(), title: 'Reader proposal citation fixture', kind: 'note',
+    status: 'proposed', actor: 'reader-fixture', createdAt: Date.now(), headRevisionId: null, baseRevisionId: null,
+    body: 'Inspect the original source. ' + proposalLabel, revisionIds: [revisionId],
+    citations: [{ sourceId: readerSource, revisionId, block: passageBlock.id, start: passageBlock.start, end: passageBlock.end,
+      label: proposalLabel, sourceTitle: name + '-0.md', deleted: false }] };
+  const proposalApi = origin + '/api/projects/' + readerProject + '/proposals';
+  // Only proposal GETs are controlled; its citation target and all Reader bytes remain real.
+  await page.route(proposalApi, route => route.fulfill({ json: { proposals: [proposal], nextCursor: null } }));
+  await page.route(proposalApi + '/' + proposalId, route => route.fulfill({ json: { proposal } }));
+  const proposalDecisions: string[] = [];
+  page.on('request', request => { if (request.method() !== 'GET' && request.url().startsWith(proposalApi)) proposalDecisions.push(request.url()); });
   const unavailableForm = new FormData();
   unavailableForm.set('file', new File([Buffer.from([255]), Buffer.from(name)], 'reader-unavailable.md', { type: 'text/markdown' }));
   const unavailable = (await apiJson('/api/projects/' + readerProject + '/sources/file', { method: 'POST', body: unavailableForm })).body;
@@ -730,6 +742,21 @@ try {
     assert(await mark.evaluate(el => { const first = document.createRange(); first.setStart(el.firstChild!, 0); first.setEnd(el.firstChild!, 1); const r = first.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }), 'Citation navigation must show the beginning of a long passage.');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Reader must not overflow horizontally.');
     if (viewport.width === 390) await page.screenshot({ path: outDir + '/phone-reader.png' });
+    for (const citationSelector of ['.er-proposals__markdown a.er-citation', 'details a.er-citation']) {
+      await page.getByRole('navigation', { name: 'Primary', exact: true }).getByRole('link', { name: 'Studio', exact: true }).click();
+      await page.getByRole('button', { name: 'Agent proposals (1)', exact: true }).click();
+      const review = page.getByRole('dialog', { name: 'Agent proposals', exact: true });
+      if (await review.locator('.er-proposals__markdown').count() === 0) await review.locator('.er-proposals__open').click();
+      await expect(review.locator('.er-proposals__markdown')).toContainText('Inspect the original source.');
+      if (citationSelector.startsWith('details')) await review.getByText('Source citations', { exact: true }).click();
+      await review.locator(citationSelector).click();
+      await expect(review).not.toBeVisible();
+      assert.equal(new URL(page.url()).search, '?revisionId=' + revisionId + '&start=' + passageBlock.start + '&end=' + passageBlock.end);
+      await expect.poll(() => mark.textContent()).toBe(whole.bytes.subarray(passageBlock.start, passageBlock.end).toString('utf8'));
+      assert(await mark.evaluate(el => document.activeElement === el), 'Opening proposal evidence must release the modal before Reader focuses the passage.');
+      assert.equal(await page.locator('.er-lib__text').textContent(), canonical);
+    }
+    assert.deepEqual(proposalDecisions, [], 'Inspecting proposal evidence must not accept or reject the draft.');
   }
   await page.setViewportSize({ width: 390, height: 844 }); await page.goto(copied);
   const replacement = '# Новая версия\n\nНовая ревизия без старого текста.\n' + name;

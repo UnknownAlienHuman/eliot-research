@@ -1,6 +1,6 @@
 // Owner inbox for immutable agent proposal revisions.
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Link } from 'react-router';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router';
 import type { Citation } from '../citations';
 import type { ProposalSummary, ProposalView } from '../shared/api';
 import { Markdown, citationHref, citationLabel } from './Markdown';
@@ -39,6 +39,7 @@ const dateTimeValue = (timestamp: number) => {
 
 export function ProposalsInbox({ projectId, onAccepted }: { readonly projectId: string; readonly onAccepted?: (pageId: string) => void }) {
   const id = useId();
+  const location = useLocation();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const dialogTitleRef = useRef<HTMLHeadingElement | null>(null);
   const [proposals, setProposals] = useState<ProposalSummary[] | null>(null);
@@ -54,6 +55,8 @@ export function ProposalsInbox({ projectId, onAccepted }: { readonly projectId: 
   const [decisionError, setDecisionError] = useState('');
   const [notice, setNotice] = useState('');
   const listSeq = useRef(0), detailSeq = useRef(0), decisionLock = useRef(false), mounted = useRef(false);
+  // Release the modal before the Reader focuses its cited passage.
+  useLayoutEffect(() => { dialogRef.current?.close(); }, [location]);
 
   const loadList = useCallback(async (cursor: string | null = null, append = false): Promise<void> => {
     if (!projectId) return;
