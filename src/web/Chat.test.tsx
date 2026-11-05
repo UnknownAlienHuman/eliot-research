@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -10,6 +10,8 @@ import type { TurnView } from '../shared/api';
 import { ChatView } from './Chat';
 
 vi.mock('./ModelPicker', () => ({ ModelPicker: () => null }));
+// Node 22.18 omits sqlite from builtinModules; load the real host module outside the jsdom transform.
+const sqlite = process.getBuiltinModule('node:sqlite') as { DatabaseSync: typeof DatabaseSync };
 const citation = { revisionId: 'r1', sourceId: 's1', block: 1, start: 0, end: 20, sourceTitle: 'Evidence', deleted: false, label: '[Rr1:1]' };
 const turn = (id: string): TurnView => ({ turnId: id, question: 'Question ' + id, answer: 'Saved evidence [Rr1:1]', state: 'completed',
   model: 'fixture', scopeMode: 'explicit', revisionIds: ['r1'], sourceIds: ['s1'], citations: [citation], invalidLabels: 0,
@@ -33,7 +35,7 @@ beforeEach(() => {
   });
   vi.stubGlobal('WebSocket', class { close() {} });
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
-  db = new DatabaseSync(':memory:');
+  db = new sqlite.DatabaseSync(':memory:');
   for (const file of readdirSync('migrations').filter(s => /^\d+.*\.sql$/.test(s)).sort())
     db.exec(readFileSync('migrations/' + file, 'utf8'));
   db.exec(`INSERT INTO project(id,title,created_at,updated_at) VALUES('p1','Project',1,1);
