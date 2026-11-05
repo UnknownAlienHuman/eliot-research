@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { resolveCitations, persistentResolvedAnswer } from "./citations.js";
 import { cleanDistillText } from "./quotes.js";
 import { sliceUtf8 } from "./blocks.js";
@@ -16,6 +17,43 @@ const sources = [{ sourceId: "source", revisionId, title: "Evidence", alias: "S1
 const outside = "Outside [S1:1] bad [S9:9].";
 
 describe("shared code boundaries retain separate reference policies", () => {
+  it.each([0, 1, 2, 3, 4, 5])("matches Markdown escape parity for %i backslashes before a backtick", (count) => {
+    const text = "Пролог 🌍 " + "\\".repeat(count) + "`literal [S1:1]` after [S1:2].";
+    const parsed = fromMarkdown(text).children.flatMap(node => node.type === "paragraph"
+      ? node.children.filter(child => child.type === "inlineCode").map(child => ({
+        start: child.position?.start.offset, end: child.position?.end.offset,
+      })) : []);
+    expect(inlineCodeRanges(text, [])).toEqual(parsed);
+    const result = resolveCitations(text, sources);
+    expect(result.citations.map(c => c.block)).toEqual(count % 2 ? [1, 2] : [2]);
+    expect(result.text).toBe(text);
+  });
+
+  it("escapes only the first tick of a run and treats backslashes inside code literally", () => {
+    for (const text of ["\\``[S1:1]`", "`[S1:1]\\` then [S1:2]", "``[S1:1]\\`` then [S1:2]"]) {
+      const parsed = fromMarkdown(text).children.flatMap(node => node.type === "paragraph"
+        ? node.children.filter(child => child.type === "inlineCode").map(child => ({
+          start: child.position?.start.offset, end: child.position?.end.offset,
+        })) : []);
+      expect(inlineCodeRanges(text, [])).toEqual(parsed);
+      expect(resolveCitations(text, sources).citations.map(c => c.block)).toEqual(text.includes("[S1:2]") ? [2] : []);
+    }
+  });
+
+  it("validates and persists prose references between escaped backticks, including unknown labels", () => {
+    const text = "Пролог 🌍 \\` [S1:1] [S9:9] \\` suffix.";
+    const resolved = resolveCitations(text, sources);
+    expect(resolved.invalidLabels).toBe(1);
+    expect(resolved.citations.map(c => c.block)).toEqual([1]);
+    expect(resolved.text).toBe(text.replace("[S9:9]", ""));
+    const saved = persistentResolvedAnswer(resolved.text, resolved.citations);
+    expect(saved.text).toBe(resolved.text.replace("[S1:1]", `[R${revisionId}:1]`));
+    expect(saved.citations[0]).toMatchObject({ revisionId, start: 0, end: bytes(first) });
+    expect(cleanDistillText(text, ["[S1:1]"], revisionId)).toEqual({
+      text: text.replace("[S1:1]", ""), invalidReferences: 1,
+    });
+  });
+
   it("walks many ordered fences without repeatedly searching earlier ranges", () => {
     const text = ("Text `inline` [S1:1].\n~~~\n[S9:9]\n~~~\n").repeat(500);
     let accesses = 0;

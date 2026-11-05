@@ -412,6 +412,10 @@ if (staticSelftest) {
   const wrappedCitation = { label: '[S1:1]', revisionId: '123e4567-e89b-12d3-a456-426614174000',
     sourceId: '223e4567-e89b-12d3-a456-426614174000', block: 1, start: 0, end: 10,
     sourceTitle: 'Static fixture', deleted: false };
+  const escaped = 'Delimiter ' + BACKSLASH + BT + ' value 512 [S1:1] ' + BACKSLASH + BT + ' stays prose.';
+  assert.equal(uncitedStatements(escaped, [wrappedCitation]), 0);
+  assert.equal(unsupportedNumericStatements(escaped, [wrappedCitation], new Map([['[S1:1]', '512 dimensions']])), 0);
+  assert.equal(unsupportedNumericStatements(escaped, [wrappedCitation], new Map([['[S1:1]', '8 heads']])), 1);
   const wrapped = '- Размер 🌍 равен 512\n  измерениям [S1:1].';
   assert.equal(uncitedStatements(wrapped, [wrappedCitation]), 0);
   assert.equal(unsupportedNumericStatements(wrapped, [wrappedCitation], new Map([['[S1:1]', '512 dimensions']])), 0);
