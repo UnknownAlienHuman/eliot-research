@@ -1288,7 +1288,11 @@ heads on explicit Send; historical Reader questions stay read-only. Prefill crea
 Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:sourceId?start=&end=`; K2
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
 Every screen has loading, empty and actionable error states plus stale/paused where relevant. Use one Markdown renderer
-with raw HTML disabled and resolved citation chips. Do not cache private text in localStorage or a service worker.
+with raw HTML disabled and resolved citation chips. Inline citations show one compact number per distinct passage
+URL in visible occurrence order; compact/persistent aliases share that number, while hidden definitions and unused metadata consume none. Their accessible names and hover titles
+retain the full source title and block, with 24px minimum targets and visible keyboard focus. Full source lists retain
+their title labels. This changes presentation only, never the immutable revision or byte-range destination.
+Do not cache private text in localStorage or a service worker.
 An exact registered compact/persistent citation token keeps its resolved Reader target even when Markdown has a
 reference definition for that token. Adjacent registered tokens remain separate citations even if Markdown parses
 them as one full-reference link. Explicit URLs, ordinary full-reference links and non-exact or unregistered spellings stay unchanged.

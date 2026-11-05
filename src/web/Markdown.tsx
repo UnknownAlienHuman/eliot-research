@@ -88,6 +88,12 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
   const markdown = mathDelimiters(text);
   // Micromark omits exactly one leading BOM from its source offsets.
   const sourceOffset = markdown.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const targets = new Map<string, { label: string }>();
+  for (const ref of references) if (ref.text && !targets.has(ref.href))
+    targets.set(ref.href, { label: ref.label ?? ref.text });
+  // Number rendered citations, not hidden definitions or unused reference metadata.
+  // Repeated compact/persistent aliases share the same exact passage URL.
+  const numbers = new Map<string, number>();
   function linkify(value: string): MarkdownNode[] {
     const hits = references.filter((ref) => ref.text !== '').flatMap((ref) => {
       const found: { at: number; ref: MarkdownReference }[] = [];
@@ -100,7 +106,7 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
     for (const { at, ref } of hits) {
       if (at < pos) continue;
       parts.push({ type: 'text', value: value.slice(pos, at) }, {
-        type: 'element', tagName: 'a', properties: { href: ref.href },
+        type: 'element', tagName: 'a', properties: { href: ref.href, dataCitation: true },
         children: [{ type: 'text', value: ref.label ?? ref.text }],
       });
       pos = at + ref.text.length;
@@ -133,8 +139,15 @@ export function Markdown({ text, references = [] }: { readonly text: string; rea
   }
   return <ReactMarkdown skipHtml remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[citationLinks, [rehypeKatex, { output: 'mathml', trust: false, errorColor: 'currentColor' }]]} components={{ img: () => null,
     span: MathSpan,
-    a: ({ href, children, title }) => references.some((ref) => ref.href === href)
-      ? <Link className='er-citation' to={href ?? ''} title={title}>{children}</Link>
-      : <a href={href} title={title}>{children}</a>,
+    a: ({ href, children, title, node }) => {
+      const target = href === undefined ? undefined : targets.get(href);
+      if (target && node?.properties.dataCitation) {
+        const key = href ?? '', number = numbers.get(key) ?? numbers.size + 1;
+        numbers.set(key, number);
+        return <Link className='er-citation er-citation--inline' to={key} title={target.label}
+          aria-label={'Citation ' + number + ': ' + target.label}>{number}</Link>;
+      }
+      return target ? <Link to={href ?? ''} title={title}>{children}</Link> : <a href={href} title={title}>{children}</a>;
+    },
   }}>{markdown}</ReactMarkdown>;
 }

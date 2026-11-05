@@ -32,9 +32,11 @@ describe('Markdown citation rendering', () => {
     const refs = answer.citations.map((citation) => ({ text: citation.label,
       href: citationHref('p1', citation), label: citationLabel(citation) }));
     const html = render(answer.text, refs);
-    expect(html.match(/class="er-citation"/g)).toHaveLength(1);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(1);
     expect(html).toContain(`/p/p1/source/s1?revisionId=${revisionId}&amp;start=0&amp;end=10`);
-    expect(html).toContain('>Paper A · 1</a>');
+    expect(html).toContain('title="Paper A · 1"');
+    expect(html).toContain('aria-label="Citation 1: Paper A · 1"');
+    expect(html).toContain('>1</a>');
     expect(html).not.toContain('href="https://example.com/not-the-source"');
     if (prefix.includes('😀')) expect(html).toContain('😀');
     if (format === 'BOM, CRLF and Unicode') expect(html).toContain('Кириллица é');
@@ -45,7 +47,7 @@ describe('Markdown citation rendering', () => {
     'preserves exact $token references at prose depths after TeX adaptation ($prefix)', ({ token, prefix }) => {
     const html = render(prefix + String.raw`\[x^2\]` + `\n\nParagraph ${token}\n\n- List ${token}\n\n> Quote **${token}**\n\n`
       + `| Evidence |\n| --- |\n| ${token} |\n\n${token}: https://example.com/not-the-source "Untrusted title"`);
-    expect(html.match(/class="er-citation"/g)).toHaveLength(4);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(4);
     expect(html.match(/start=42&amp;end=87/g)).toHaveLength(4);
     expect(html).not.toContain('not-the-source');
     expect(html).not.toContain('Untrusted title');
@@ -68,11 +70,15 @@ describe('Markdown citation rendering', () => {
     const refs = answer.citations.map(citation => ({ text: citation.label,
       href: citationHref('p1', citation), label: citationLabel(citation) }));
     const html = render(answer.text, refs);
-    expect(html.match(/class="er-citation"/g)).toHaveLength(2);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(2);
     expect(html).toContain(`revisionId=${revisionId}&amp;start=42&amp;end=87`);
     expect(html).toContain(`revisionId=${revisionId}&amp;start=87&amp;end=120`);
-    expect(html).toContain('>Paper A · 14</a>');
-    expect(html).toContain('>Paper A · 15</a>');
+    expect(html).toContain('aria-label="Citation 1: Paper A · 14"');
+    expect(html).toContain('title="Paper A · 14"');
+    expect(html).toContain('>1</a>');
+    expect(html).toContain('aria-label="Citation 2: Paper A · 15"');
+    expect(html).toContain('title="Paper A · 15"');
+    expect(html).toContain('>2</a>');
     expect(html).not.toContain('https://example.com/wrong-');
   });
 
@@ -82,7 +88,7 @@ describe('Markdown citation rendering', () => {
     const html = render(`${compact}${second} repeated ${persistent}.\n\n`
       + `${compact}: https://example.com/wrong-one\n${second}: https://example.com/wrong-two\n`
       + `${persistent}: https://example.com/wrong-alias`, refs);
-    expect(html.match(/class="er-citation"/g)).toHaveLength(3);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(3);
     expect(html.match(/start=42&amp;end=87/g)).toHaveLength(2);
     expect(html.match(/start=87&amp;end=120/g)).toHaveLength(1);
     expect(html).not.toContain('https://example.com/wrong-');
@@ -94,7 +100,7 @@ describe('Markdown citation rendering', () => {
     const html = render(`${link}\n\n[S1:15]: https://example.com/reference\n[ordinary]: https://example.com/reference\n`
       + '[S9:15]: https://example.com/reference', [...references, { text: '[S1:15]', href: href + '#second' }]);
     expect(html).toContain('href="https://example.com/reference"');
-    expect(html).not.toContain('class="er-citation"');
+    expect(html).not.toContain('class="er-citation er-citation--inline"');
   });
 
   it('leaves explicit links, code, images and unregistered reference labels unchanged', () => {
@@ -104,7 +110,7 @@ describe('Markdown citation rendering', () => {
       + `\`${compact}\`\n\n\`\`\`\n${compact}\n\`\`\`\n\n    ${compact}\n\n!${compact}\n\n`
       + `${compact}: https://example.com/reference\n[ordinary]: https://example.com/ordinary\n`
       + '[S9:99]: https://example.com/unknown\n[R22222222-2222-4222-8222-222222222222:14]: https://example.com/unknown-revision');
-    expect(html.match(/class="er-citation"/g)).toHaveLength(1);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(1);
     expect(html).toContain('<a href="https://example.com/inline">S1:14</a>');
     expect(html).toContain('<a href="https://example.com/reference">S1:14</a>');
     expect(html).toContain('<a href="https://example.com/reference">visible</a>');
@@ -121,13 +127,13 @@ describe('Markdown citation rendering', () => {
   it.each([String.raw`[S1\:14]`, '[S1&#58;14]', '[s1:14]'])('does not promote non-exact reference spelling %s', (token) => {
     const html = render(`${token}\n\n${token}: https://example.com/reference`);
     expect(html).toContain('href="https://example.com/reference"');
-    expect(html).not.toContain('class="er-citation"');
+    expect(html).not.toContain('class="er-citation er-citation--inline"');
   });
 
   it('does not promote arbitrary registered text to a citation reference', () => {
     const html = render('[ordinary]\n\n[ordinary]: https://example.com/ordinary', [{ text: '[ordinary]', href }]);
     expect(html).toContain('<a href="https://example.com/ordinary">ordinary</a>');
-    expect(html).not.toContain('class="er-citation"');
+    expect(html).not.toContain('class="er-citation er-citation--inline"');
   });
 
   it('renders the saved C4 TeX delimiters with accessible math and an unchanged evidence link', () => {
@@ -141,7 +147,7 @@ PE_{(pos,2i+1)} = \cos\!\left(pos/10000^{2i/d_{\text{model}}}\right),
     expect(html.match(/display="block"/g)).toHaveLength(1);
     expect(html).toContain('encoding="application/x-tex"');
     expect(html).not.toContain('katex-html');
-    expect(html.match(/class="er-citation"/g)).toHaveLength(1);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(1);
     expect(html).toContain('start=42&amp;end=87');
     expect(html).not.toContain('katex-error');
   });
@@ -150,7 +156,7 @@ PE_{(pos,2i+1)} = \cos\!\left(pos/10000^{2i/d_{\text{model}}}\right),
     const literal = String.raw`\(x_1\) \[y^2\] $z$ ` + compact;
     const html = render(String.raw`Prose \(x\) ` + compact + '\n\n`' + literal + '`\n\n```tex\n' + literal + '\n```');
     expect(html.match(/<math /g)).toHaveLength(1);
-    expect(html.match(/class="er-citation"/g)).toHaveLength(1);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(1);
     expect(html).toContain('<code>' + literal + '</code>');
     expect(html).toContain('<pre><code class="language-tex">' + literal + '\n</code></pre>');
   });
@@ -200,7 +206,9 @@ PE_{(pos,2i+1)} = \cos\!\left(pos/10000^{2i/d_{\text{model}}}\right),
     expect(target).toBe('/p/project%2F%D1%8F%3F/source/source%2F%F0%9F%98%80%3F?revisionId=old%2F%23%26&start=42&end=87');
     expect(citationLabel(citation)).toBe('Бумага <&> · 14');
     const html = render(compact, [{ text: compact, href: target, label: citationLabel({ ...citation, deleted: true }) }]);
-    expect(html).toContain('Бумага &lt;&amp;&gt; · 14 (deleted)</a>');
+    expect(html).toContain('aria-label="Citation 1: Бумага &lt;&amp;&gt; · 14 (deleted)"');
+    expect(html).toContain('title="Бумага &lt;&amp;&gt; · 14 (deleted)"');
+    expect(html).toContain('>1</a>');
     expect(html).toContain('revisionId=old%2F%23%26&amp;start=42&amp;end=87');
   });
 
@@ -208,10 +216,10 @@ PE_{(pos,2i+1)} = \cos\!\left(pos/10000^{2i/d_{\text{model}}}\right),
     const html = render(`Paragraph ${compact}\n\n- Tight list ${compact}\n- Saved label ${persistent}\n\n| Evidence ${compact} | Value |\n| --- | --- |\n| Table cell ${persistent} | **Emphasis ${compact}** |`);
     expect(html.match(/<a /g)).toHaveLength(6);
     expect(html.match(/href="\/p\/project\/source\/source\?revisionId=11111111-1111-4111-8111-111111111111&amp;start=42&amp;end=87"/g)).toHaveLength(6);
-    expect(html).toContain('<li>Tight list <a class="er-citation"');
-    expect(html).toContain('<th>Evidence <a class="er-citation"');
-    expect(html).toContain('<td>Table cell <a class="er-citation"');
-    expect(html).toContain('<strong>Emphasis <a class="er-citation"');
+    expect(html).toContain('<li>Tight list <a class="er-citation er-citation--inline"');
+    expect(html).toContain('<th>Evidence <a class="er-citation er-citation--inline"');
+    expect(html).toContain('<td>Table cell <a class="er-citation er-citation--inline"');
+    expect(html).toContain('<strong>Emphasis <a class="er-citation er-citation--inline"');
   });
 
   it('keeps citation-looking labels in inline and fenced code literal', () => {
@@ -222,15 +230,55 @@ PE_{(pos,2i+1)} = \cos\!\left(pos/10000^{2i/d_{\text{model}}}\right),
     expect(html).toContain(`<pre><code class="language-text">${compact} ${persistent}\n</code></pre>`);
   });
 
-  it('renders an optional title label while keeping the exact token literal inside code', () => {
+  it('keeps the full title accessible while using a compact visible number and literal code', () => {
     const displayLabel = 'Paper title · 14';
     const labelled: MarkdownReference[] = [{ text: persistent, label: displayLabel, href }];
     const html = render(`${persistent} and inline \`${persistent}\`.\n\n\`\`\`text\n${persistent}\n\`\`\``, labelled);
     expect(html.match(/<a /g)).toHaveLength(1);
-    expect(html).toContain('class="er-citation"');
-    expect(html).toContain(`>${displayLabel}</a>`);
+    expect(html).toContain('class="er-citation er-citation--inline"');
+    expect(html).toContain(`aria-label="Citation 1: ${displayLabel}"`);
+    expect(html).toContain(`title="${displayLabel}"`);
+    expect(html).toContain('>1</a>');
     expect(html).toContain(`<code>${persistent}</code>`);
     expect(html).toContain(`<pre><code class="language-text">${persistent}\n</code></pre>`);
+  });
+
+  it.each(['chat', 'saved'])('numbers only visible %s citations and preserves numbers when streamed text appends', kind => {
+    const revisionId = '11111111-1111-4111-8111-111111111111';
+    const sources = [{ sourceId: 's1', revisionId, title: 'Paper A', alias: 'S1', blocks: [
+      { id: 1, type: 'paragraph' as const, start: 0, end: 10, heading: null },
+      { id: 2, type: 'paragraph' as const, start: 10, end: 20, heading: null },
+    ] }];
+    const text = '[S1:1]: https://example.test/hidden-definition\n\nVisible [S1:2].';
+    for (const appended of ['', ' Again [R' + revisionId + ':2] and earlier [S1:1].']) {
+      const resolved = resolveCitations(text + appended, sources);
+      const answer = kind === 'saved' ? persistentResolvedAnswer(resolved.text, resolved.citations) : resolved;
+      const html = render(answer.text, answer.citations.map(citation => ({ text: citation.label,
+        href: citationHref('p1', citation), label: citationLabel(citation) })));
+      expect([...html.matchAll(/>(\d+)<\/a>/g)].map(match => match[1])).toEqual(appended ? ['1', '1', '2'] : ['1']);
+      expect(html).toContain('aria-label="Citation 1: Paper A · 2"');
+      expect(html).toContain('start=10&amp;end=20');
+      expect(html).not.toContain('href="https://example.test/hidden-definition"');
+      if (appended) expect(html).toContain('aria-label="Citation 2: Paper A · 1"');
+    }
+  });
+
+  it('numbers distinct passage targets and shares the number between compact and persistent aliases', () => {
+    const second = href.replace('start=42&end=87', 'start=90&end=120');
+    const refs = [...references.map(ref => ({ ...ref, label: 'BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding · 14' })),
+      { text: '[S1:15]', href: second, label: 'BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding · 15' },
+      { text: '[S2:14]', href: href.replace('/source/source?', '/source/source-two?').replace('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'), label: 'Attention Is All You Need · 14' }];
+    const html = render(`${compact}[S1:15] another source [S2:14] repeated ${persistent}.\n\n${compact}: https://example.test/wrong-one\n`
+      + `[S1:15]: https://example.test/wrong-two\n${persistent}: https://example.test/wrong-alias`, refs);
+    expect([...html.matchAll(/>(\d+)<\/a>/g)].map(match => match[1])).toEqual(['1', '2', '3', '1']);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(4);
+    expect(html).toContain('aria-label="Citation 2: BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding · 15"');
+    expect(html).toContain('start=90&amp;end=120');
+    expect(html).toContain('aria-label="Citation 3: Attention Is All You Need · 14"');
+    expect(html).toContain('/source/source-two?revisionId=22222222-2222-4222-8222-222222222222&amp;start=42&amp;end=87');
+    expect(html).not.toContain('https://example.test/wrong-');
+    expect(render(`[Read the passage](${href})`, refs)).toContain('>Read the passage</a>');
+    expect(render(`[Read the passage](${href})`, refs)).not.toContain('class="er-citation er-citation--inline"');
   });
 
   it('suppresses HTML and images, keeps unknown labels plain and avoids nested links', () => {
