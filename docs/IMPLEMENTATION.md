@@ -761,7 +761,10 @@ provider admission, assemble frozen context, dispatch one streaming model call, 
 citation, token, timing, invalid-label and terminal-state fields. Historical currency columns remain unchanged.
 First nonblank text and terminal/Stop results persist immediately. Intermediate full-turn checkpoints are throttled
 to once per second; one pending timeout flushes accumulated text during provider silence. Each checkpoint is stored
-before broadcast. Finalization clears the timeout; a checkpoint write failure aborts the stream and uses the existing
+before broadcast, with citation targets resolved against the same in-memory frozen block maps. Only the stored copy
+is normalized; the raw stream accumulator remains intact for labels and code spans split across chunks. A restarted
+partial answer therefore retains its citation links and Save targets without reconstructing context or rereading sources.
+Finalization clears the timeout; a checkpoint write failure aborts the stream and uses the existing
 terminal-save path, without retrying inference. Runtime stalls or storage failure can delay persistence; restart retains
 the last stored checkpoint and never continues the model automatically.
 WebSocket frames and reconnect expose state snapshots and never enqueue or dispatch paid work. An authorised history
