@@ -765,6 +765,11 @@ try {
   await expect(page).not.toHaveURL(new RegExp(revisionId));
   await expect(page.locator('.er-lib__text')).not.toContainText('Точный русский текст');
   await expect(page.locator('.er-lib__text')).toContainText('Новая ревизия', { timeout: 10000 });
+  const replacementRevision = new URL(page.url()).searchParams.get('revisionId');
+  await expect(page.getByRole('link', { name: name + '-0.md', exact: true, includeHidden: true }))
+    .toHaveAttribute('href', reader.pathname + '?revisionId=' + replacementRevision, { timeout: 10000 });
+  await expect(page.getByRole('link', { name: 'Download original: ' + name + '-0.md', exact: true, includeHidden: true }))
+    .toHaveAttribute('href', '/api/revisions/' + replacementRevision + '/original');
   await page.locator('.er-lib__facts summary').click();
   // Revision choice stays (Revision N select) but visible UUIDs/bytes/tokens/ms must be gone.
   {

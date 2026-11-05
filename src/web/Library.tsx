@@ -437,7 +437,7 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
         ) : null}
       </header>
       <div className="er-sources-pane__scroll" aria-busy={sources === undefined}>
-        {sources !== undefined && failure ? <p className="er-lib__error" role="alert">{failure}{cursor ? <button className="er-button er-button--text" type="button" onClick={() => void loadMore()}>Retry</button> : null}</p> : null}
+        {sources !== undefined && failure ? <p className="er-lib__error" role="alert">{failure}{sourceQuery.error ? <button className="er-button er-button--text" type="button" onClick={() => sourceQuery.isFetchNextPageError ? void loadMore() : void load()}>Retry</button> : null}</p> : null}
         {sources === undefined ? (
           <div className="er-sources-pane__load">
             {failure ? <p className="er-lib__error" role="alert">{failure}</p> : <p className="er-sources-pane__empty" role="status">Loading sources…</p>}
@@ -662,6 +662,8 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
       const body = (await res.json()) as { sourceId?: string; revisionId?: string } | null;
       if (body?.sourceId !== targetSource || body.revisionId !== attempt.revisionId)
         throw new Error("Could not confirm that this replacement was received. Upload again to check the same revision.");
+      await queryClient.cancelQueries({ queryKey: ["sources"] });
+      void queryClient.invalidateQueries({ queryKey: ["sources"] });
       if (!current()) return;
       if (replaceAttempt.current === attempt) replaceAttempt.current = null;
       setReplace(null);
