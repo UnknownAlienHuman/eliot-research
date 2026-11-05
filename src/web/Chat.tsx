@@ -109,6 +109,7 @@ const TurnContent = memo(function TurnContent({ projectId, turn, models, visible
         : <Markdown text={turn.answer} references={collectRefs(projectId, turn.citations)} />}
     </div>
     {turn.error ? <p className='er-chat__hint' role='status'>{turn.error}</p> : null}
+    {turn.historyNotice ? <p className='er-chat__hint' role='status'>{turn.historyNotice}</p> : null}
     {turn.settlementError ? <p className='er-chat__hint' role='status'>{turn.settlementError}</p> : null}
     <p className='er-chat__meta'>
       <span>{stateLabel(turn.state)}</span>

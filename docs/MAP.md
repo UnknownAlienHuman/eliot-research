@@ -262,6 +262,10 @@ Stream checkpoints also flush a received tail during provider pauses. Stored tex
 For a nonstandard provider finish normalized to `other`, the stored failure includes a bounded safe provider code.
 An explicit repeat of an unconfirmed Send in the same composer reuses its ID, unchanged input and known chat target;
 a new question or a repeat after confirmation has a new ID. See IMPLEMENTATION §8 for the volatile-draft boundary.
+Follow-ups may omit whole older exchanges to fit the selected evidence while keeping the latest reusable exchange.
+The answer and saved page disclose that omission; a latest exchange that cannot fit is not shortened to force a call.
+Model history is selected independently of the UI's 50-row page, with SQL payload/scan checks before transfer.
+Failed turns do not displace usable history; exhausted safe reads are disclosed or rejected before inference.
 New-chat creation also retains its UUID/title for explicit replay. After reload, History opens a committed chat/result
 without resending; it does not reconstruct an unaccepted draft.
 The first HTTP or socket history restores the prior source scope before Send becomes ready. A slow or failed HTTP

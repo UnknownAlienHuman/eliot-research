@@ -23,5 +23,7 @@ export function estimateModelInput(request: { instructions: string; messages: Re
 }
 
 export function estimateHistoryMessage(message: { role: string; content: string }): number {
-  return Math.ceil((20 + stringBytes(message.role) + stringBytes(message.content)) / 3) + 32;
+  // Every history message precedes the current question in the JSON array,
+  // so its incremental request cost includes the separating comma.
+  return Math.ceil((21 + stringBytes(message.role) + stringBytes(message.content)) / 3) + 32;
 }

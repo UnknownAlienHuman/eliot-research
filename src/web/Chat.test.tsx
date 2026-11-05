@@ -64,6 +64,25 @@ function storage(): Env {
   }, CHAT: { getByName: () => ({ getStoredTurn: async (_project: string, id: string) => turn(id) }) } } as unknown as Env;
 }
 
+it('shows a stored history omission beside an otherwise completed answer', async () => {
+  const notice = "Older exchanges were omitted from this answer's context.";
+  vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === '/api/models') return json({ models: [], warnings: [] });
+    if (url === '/api/projects/p1/chats') return json({ chats: [], nextCursor: null });
+    expect(url).toBe('/api/projects/p1/chats/c1');
+    return json({ chat: { id: 'c1' }, turns: [{ ...turn('t1'), historyNotice: notice }], nextCursor: null, queued: null, stateVersion: 1 });
+  }));
+  router = createMemoryRouter([{ path: '*', element: <ChatView projectId='p1' chatId='c1' selection={{ scopeMode: 'explicit', sourceIds: ['s1'] }}
+    question='' onQuestionChange={() => {}} onSelectionChange={() => {}} onNewChat={() => {}} onSavedPage={() => {}} /> }], { initialEntries: ['/p/p1/chat/c1'] });
+  await act(async () => { root.render(<RouterProvider router={router} />); }); await settle();
+  expect([...host.querySelectorAll('[role="status"]')].map(node => node.textContent)).toContain(notice);
+  expect(host.querySelector('[data-turn-id="t1"]')?.getAttribute('data-state')).toBe('completed');
+  expect(host.textContent).toContain('Saved evidence');
+  expect(host.querySelector('[data-turn-id="t1"] a')?.getAttribute('href')).toBe('/p/p1/source/s1?revisionId=r1&start=0&end=20');
+  expect(host.textContent).toContain('Save as page');
+});
+
 describe('Save answer retry', () => {
   it.each(['network', 'http', 'json'])('reuses the committed page after a lost %s response, without blocking other saves', async failure => {
     const env = storage();
