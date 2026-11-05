@@ -241,7 +241,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
         <Questions questions={view.report?.questions ?? []} onUse={historical ? undefined : onUseQuestion} />
         {view.digest !== null && view.digest !== '' ? (<div className='er-und__guide'><h3>Digest</h3><div className='er-und__answer'><Markdown text={view.digest} references={references} /></div></div>) : null}
         {view.glossary.length > 0 ? (<div className='er-und__guide'><h3>Glossary</h3><dl className='er-card er-und__glossary'>{view.glossary.map((g, i) => (<div key={g.en + ':' + g.ru + ':' + i}><dt>{g.en} — {g.ru}</dt><dd><Markdown text={g.definition + '\n\n' + g.labels.join(' ')} references={references} /></dd></div>))}</dl></div>) : null}
-        <div className='er-und__guide'><h3>Verified claims</h3>{view.claims.length === 0 ? <p className='er-und__hint'>No verified claims stored for this revision.</p> : (<ul className='er-und__claims'>{view.claims.map((c) => (
+        <div className='er-und__guide'><h3>Claims and source excerpts</h3>{view.claims.length === 0 ? <p className='er-und__hint'>No claims stored for this revision.</p> : (<ul className='er-und__claims'>{view.claims.map((c) => (
           <li key={c.id} className='er-card er-und__claim'>
             <p className='er-und__meta'><span>{c.kind}</span>{c.ambiguous ? <span className='er-chip er-und__badge'>ambiguous match</span> : null}</p>
             <p className='er-und__statement'>{c.statement}</p>

@@ -325,7 +325,8 @@ re-distilled automatically.
    membership/heads. Each row opens the immutable revision whose summary was shown.
 6. Add claim context mode. Preserve whole originals where the shared budget permits; compress eligible sources only
    as needed, retaining the complete frozen scope and aliases. The same answer prompt and citation resolver are used.
-7. Add reader guide/claims UI, quote cases and `pnpm eval k3`. Reader metadata shows availability and verification
+7. Add reader guide/claims UI, quote cases and `pnpm eval k3`. Claim cards show statements beside exact source excerpts,
+   without a semantic-verification label. Reader metadata shows availability and verification
    caveats; quote links retain exact identities without displaying UUIDs or call/token/time/reservation counters.
    Stored questions in the overview and current Reader prepare an editable chat draft with only that source visibly
    selected. Replacing an existing draft requires confirmation; historical Reader questions remain read-only.
