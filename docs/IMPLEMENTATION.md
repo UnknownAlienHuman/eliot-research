@@ -1235,7 +1235,11 @@ bottom bar. Pane contents scroll independently; the composer is the final Chat r
 sources. Sources start with readable-source checkboxes and current understanding availability. One Add action opens
 the existing file/text/URL forms in a native dialog. History is a menu and project settings a dialog. Opening a source
 passage temporarily replaces the center reader without dropping the selected chat or source scope. Saved output
-refreshes Studio through the existing storage-only page API.
+refreshes Studio through the existing storage-only page API. An explicit repeat of an unconfirmed Save retains its
+mutation UUID per chat/turn in the mounted workspace, so a lost reply cannot duplicate a committed page. Other saves
+remain independent; only the latest request for that chat/turn can clear its pending UUID. A late success still refreshes
+Studio, but cannot retire a newer pending retry. A confirmed Save permits a later new copy. No automatic retry or browser
+persistence is added.
 Proposal review closes its modal before route navigation focuses the Reader, including repeated clicks on the same
 citation. The selected draft remains available when review reopens; modified links leave the current review open.
 The source Reader highlights a citation's exact UTF-8 range inside the complete canonical text and focuses/scrolls

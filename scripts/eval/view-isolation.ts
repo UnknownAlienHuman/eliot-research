@@ -174,12 +174,23 @@ try {
     await expect(page.getByRole('button', { name: 'Save as page', exact: true })).toBeVisible();
     if (viewport.width > 1000) await expect(includeA).not.toBeChecked();
     await page.unroute(chatUrl);
+    // Explicit retry after an unreadable/lost response keeps the existing page mutation identity.
+    const saveUrl = origin + '/api/projects/' + project + '/pages/from-turn';
+    const lostSave = await hold(saveUrl);
+    await page.getByRole('button', { name: 'Save as page', exact: true }).click(); await lostSave.waiting;
+    await lostSave.release({ error: { message: 'Save reply lost' } }, 503);
+    await expect(page.getByText('Save reply lost', { exact: true })).toBeVisible();
+    const retriedSave = await hold(saveUrl);
+    await page.getByRole('button', { name: 'Save as page', exact: true }).click(); await retriedSave.waiting;
+    assert.deepEqual(retriedSave.body(), lostSave.body()); await retriedSave.release();
+    await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
     // Save has a project-wide inventory effect, but its local notice belongs only to its original view.
     let pageReads = 0;
     const pagesUrl = origin + '/api/projects/' + project + '/pages';
     await page.route(pagesUrl, route => { pageReads++; return route.continue(); });
-    const saved = await hold(origin + '/api/projects/' + project + '/pages/from-turn');
+    const saved = await hold(saveUrl);
     await page.getByRole('button', { name: 'Save as page', exact: true }).click(); await saved.waiting;
+    assert.notEqual(saved.body().mutationId, lostSave.body().mutationId, 'A Save after confirmation remains a new copy.');
     await navigate(chatPath(chats[1])); const readsBefore = pageReads; await saved.release();
     await expect.poll(() => pageReads).toBeGreaterThan(readsBefore); await expect(page.getByText('Saved.', { exact: true })).toHaveCount(0); await page.unroute(pagesUrl);
     await navigate(chatPath(chats[0])); await question.fill('Before unmount');
