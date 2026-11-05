@@ -485,7 +485,16 @@ export function ChatView({
   }
 
   function startNewChat(): void {
-    if (chatId !== undefined && question.trim() !== '' && !window.confirm('Discard your question draft and start a new chat?')) return;
+    if (question.trim() !== '' && !window.confirm('Discard your question draft and start a new chat?')) return;
+    // An unconfirmed first Send still owns the blank chat route. New chat must
+    // retire that attempt even when navigation does not change the chat ID.
+    sendSequence.current++;
+    sendAttempt.current = null;
+    sentNavigation.current = null;
+    sendLock.current = false;
+    setBusy(false); setSendError(''); setSaveNote('');
+    draftSequence.current++;
+    setQuestion('');
     onNewChat();
     if (historyRef.current !== null) historyRef.current.open = false;
     navigate('/p/' + encodeURIComponent(projectId) + '/chat');
@@ -495,7 +504,7 @@ export function ChatView({
     const nextQuestion = question.trim();
     if (nextQuestion === '' || sendLock.current || !chatReady || queued !== null || modelSelectionPending) return;
     const owner = actionView.current, draft = draftSequence.current, request = ++sendSequence.current;
-    const current = () => mounted.current && actionView.current === owner;
+    const current = () => mounted.current && actionView.current === owner && sendSequence.current === request;
     const input = {
       question: nextQuestion, scopeMode: selection.scopeMode,
       ...(selection.scopeMode === 'explicit' ? { sourceIds: [...selection.sourceIds] } : {}), ...(modelRoute !== '' ? { model: modelRoute } : {}),
