@@ -494,10 +494,15 @@ export function ChatView({
     sentNavigation.current = null;
     sendLock.current = false;
     setBusy(false); setSendError(''); setSaveNote('');
+    setSavingId('');
     draftSequence.current++;
     setQuestion('');
     onNewChat();
     if (historyRef.current !== null) historyRef.current.open = false;
+    // The route-reset effect runs after the new composer is visible. Mark this
+    // intended destination before navigation so it cannot clear input entered
+    // immediately after the synchronous New chat reset.
+    routeRef.current = { projectId, chatId: undefined };
     navigate('/p/' + encodeURIComponent(projectId) + '/chat');
   }
 

@@ -112,6 +112,35 @@ describe('New chat from an unconfirmed first Send', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
+  it('does not erase a new draft while the New chat route reset is pending', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | globalThis.Request) => {
+      const url = String(input);
+      if (url === '/api/models') return json({ models: [], warnings: [] });
+      if (url === '/api/projects/p1/chats') return json({ chats: [], nextCursor: null });
+      return json({ chat: { id: 'c1' }, turns: [], nextCursor: null, queued: null, stateVersion: 1 });
+    }));
+    function Subject() {
+      const { chatId: routeChatId } = useParams();
+      const [lastChatId, setLastChatId] = useState<string | undefined>(routeChatId);
+      const [question, setQuestion] = useState('Draft to discard');
+      const [selection, setSelection] = useState<SourceSelection>({ scopeMode: 'explicit', sourceIds: ['s1'] });
+      const chatId = routeChatId ?? lastChatId;
+      return <ChatView projectId='p1' {...(chatId ? { chatId } : {})} selection={selection} question={question}
+        onQuestionChange={setQuestion} onSelectionChange={setSelection}
+        onNewChat={() => {
+          setLastChatId(undefined);
+          // Model a parent-owned composer update before the passive route-reset effect can settle.
+          queueMicrotask(() => setQuestion('Fresh draft entered during the route reset.'));
+        }} onSavedPage={() => {}} />;
+    }
+    router = createMemoryRouter([{ path: '/p/:projectId/chat/:chatId?', element: <Subject /> }], { initialEntries: ['/p/p1/chat/c1'] });
+    await act(async () => { root.render(<RouterProvider router={router} />); }); await settle();
+    await press('New chat');
+    expect(router.state.location.pathname).toBe('/p/p1/chat');
+    expect(question().value).toBe('Fresh draft entered during the route reset.');
+  });
+
   it.each(['create', 'turn'])('starts a distinct conversation after a lost %s receipt, while cancelling keeps safe replay', async stage => {
     const requests: Request[] = [];
     const failed: Request[] = [];
