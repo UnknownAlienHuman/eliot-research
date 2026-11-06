@@ -101,14 +101,14 @@ const TurnContent = memo(function TurnContent({ projectId, turn, models, visible
   }
   return <>
     <p className='er-chat__question'>{turn.question}</p>
-    <div className='er-chat__answer'>
+    {turn.answer !== '' || !turn.error ? <div className='er-chat__answer'>
       {turn.answer === ''
         ? (turn.state === 'started'
           ? <p className='er-chat__hint' role='status'>Preparing your answer…</p>
           : <p className='er-chat__hint'>No answer available.</p>)
         : <Markdown text={turn.answer} references={collectRefs(projectId, turn.citations)} />}
-    </div>
-    {turn.error ? <p className='er-chat__hint' role='status'>{turn.error}</p> : null}
+    </div> : null}
+    {turn.error ? <p className='er-chat__error' role='status'>{turn.error}</p> : null}
     {turn.historyNotice ? <p className='er-chat__hint' role='status'>{turn.historyNotice}</p> : null}
     {turn.settlementError ? <p className='er-chat__hint' role='status'>{turn.settlementError}</p> : null}
     <p className='er-chat__meta'>
@@ -728,6 +728,7 @@ export function ChatView({
         <div className='er-chat__options' data-expanded={controlsExpanded}>
           <button className='er-button er-button--text er-chat__options-toggle' type='button'
             aria-label={'Sources and model: ' + scopeSummary + ' · ' + modelSummary}
+            title={scopeSummary + ' · ' + modelSummary}
             aria-expanded={controlsExpanded} aria-controls={controlsId} onClick={() => setControlsExpanded(value => !value)}>
             <span className='er-chat__options-summary'>{scopeSummary} · {modelSummary}</span>
             <span aria-hidden='true'>{controlsExpanded ? 'Hide' : 'Change'}</span>

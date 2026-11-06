@@ -145,6 +145,22 @@ async function runPickerOnlyProof() {
     };
     await choose(first);
     if (eligible.length > 1) await choose(second);
+    const controls = page.getByRole('button', { name: /^Sources and model:/ });
+    for (const viewport of [{ width: 1180, height: 757 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await question.fill('Keep this draft while changing controls');
+      await controls.click();
+      await expect(controls).toBeFocused(); await expect(provider).toBeHidden();
+      await expect(question).toHaveValue('Keep this draft while changing controls');
+      await controls.press('Enter');
+      await expect(provider).toHaveValue(providerOf(second.route)); await expect(model).toHaveValue(second.route);
+      await provider.selectOption('');
+      await provider.selectOption(providerOf(first.route));
+      await controls.click();
+      await expect(page.getByRole('status').filter({ hasText: 'Choose a model from this provider to use it.' })).toBeVisible();
+      await expect(send).toBeDisabled();
+      await controls.press('Enter'); await choose(second);
+    }
     await question.fill('Picker payload proof ' + randomUUID()); await send.click();
     await expect.poll(() => turnPayloads.length).toBe(1);
     assert.equal(turnPayloads[0].model, second.route, 'Send must carry the selected live catalogue route.');
@@ -933,6 +949,7 @@ if (process.argv.includes('--models-only')) {
       await inheritedPage.getByRole('textbox', { name: 'Question', exact: true }).fill('Unavailable inherited model check');
       await expect(inheritedPage.getByRole('alert').filter({ hasText: 'Inherited default model is unavailable:' })).toBeVisible();
       await expect(inheritedPage.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+      await inheritedPage.getByRole('button', { name: /^Sources and model:/ }).click();
       await inheritedPage.getByRole('combobox', { name: 'Model: provider', exact: true }).selectOption('workers-ai');
       await inheritedPage.getByRole('combobox', { name: 'Model', exact: true }).selectOption(nativeChoice.route);
       await expect(inheritedPage.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();

@@ -221,6 +221,27 @@ describe('New chat from an unconfirmed first Send', () => {
 });
 afterEach(async () => { await act(async () => root.unmount()); router?.dispose(); host.remove(); db.close(); vi.unstubAllGlobals(); });
 
+it.each(['', 'Retained partial text'])('shows the full failure reason without a redundant empty-answer placeholder: %s', async answer => {
+  const reason = 'The selected model could not run. The included allowance could not be verified. Choose an available provider or check its settings; no automatic retry was started.';
+  vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === '/api/models') return json({ models: [], warnings: [] });
+    if (url === '/api/projects/p1/chats') return json({ chats: [], nextCursor: null });
+    expect(url).toBe('/api/projects/p1/chats/c1');
+    return json({ chat: { id: 'c1' }, turns: [{ ...turn('t1'), answer, error: reason, state: answer ? 'partial' : 'failed' }],
+      nextCursor: null, queued: null, stateVersion: 1 });
+  }));
+  router = createMemoryRouter([{ path: '*', element: <ChatView projectId='p1' chatId='c1' selection={{ scopeMode: 'empty', sourceIds: [] }}
+    question='' onQuestionChange={() => {}} onSelectionChange={() => {}} onNewChat={() => {}} onSavedPage={() => {}} /> }],
+  { initialEntries: ['/p/p1/chat/c1'] });
+  await act(async () => { root.render(<RouterProvider router={router} />); }); await settle();
+  const item = host.querySelector('[data-turn-id="t1"]');
+  expect(item?.querySelector('.er-chat__error')?.textContent).toBe(reason);
+  expect(item?.textContent?.split(reason)).toHaveLength(2);
+  expect(item?.textContent).not.toContain('No answer available.');
+  expect(item?.querySelector('.er-chat__answer')?.textContent ?? '').toBe(answer);
+});
+
 function storage(): Env {
   const prepare = (sql: string): Statement => ({ sql, args: [], bind(...args) { return { ...this, args }; },
     async first() { return db.prepare(this.sql).get(...this.args) ?? null; },
