@@ -150,7 +150,8 @@
 }
 
 .er-chat__history-link:hover,
-.er-chat__history-link:focus-visible {
+.er-chat__history-link:focus-visible,
+.er-chat__resume:focus-visible {
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
 }
@@ -182,6 +183,12 @@
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding-inline-end: var(--eliot-space-tight);
+}
+
+.er-chat__start {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  min-inline-size: 0;
 }
 
 .er-chat__model {

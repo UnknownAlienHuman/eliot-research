@@ -2,6 +2,7 @@
 // source selection, active chat routing, and the three-pane workspace. This file
 // owns only chat/history presentation and the storage-backed K2 interactions.
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
 import { apiJson } from './api';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { Markdown, citationHref, citationLabel } from './Markdown';
@@ -554,6 +555,15 @@ export function ChatView({
     }
   }
 
+  function openChat(event: MouseEvent<HTMLAnchorElement>, nextChatId: string): void {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (nextChatId !== chatId && question.trim() !== '' && !window.confirm('Discard your question draft and switch chats?')) {
+      event.preventDefault();
+      return;
+    }
+    if (historyRef.current !== null) historyRef.current.open = false;
+  }
+
   function startNewChat(): void {
     if (question.trim() !== '' && !window.confirm('Discard your question draft and start a new chat?')) return;
     // An unconfirmed first Send still owns the blank chat route. New chat must
@@ -674,6 +684,12 @@ export function ChatView({
     }
   }
 
+  const recentChat = chats?.[0];
+  const chatHistoryError = chatsError !== '' ? (
+    <p className='er-chat__error' role='alert'>{chatsError}{chatsCursor === null
+      ? <button className='er-button er-button--text' type='button' disabled={chatsBusy} onClick={() => void moreChats()}>Retry chat history</button> : null}</p>
+  ) : null;
+
   return (
     <section className='er-chat' aria-label='Chat'>
       <header className='er-chat__head'>
@@ -688,10 +704,7 @@ export function ChatView({
             <summary className='er-button er-button--tonal er-chat__history-trigger'>History</summary>
             <div className='er-chat__history-menu'>
               <nav aria-label='Chat history'>
-                {chatsError !== '' ? (
-                  <p className='er-chat__error' role='alert'>{chatsError}{chatsCursor === null
-                    ? <button className='er-button er-button--text' type='button' disabled={chatsBusy} onClick={() => void moreChats()}>Retry chat history</button> : null}</p>
-                ) : null}
+                {chatHistoryError}
                 {chats === undefined && chatsError === '' ? (
                   <p className='er-chat__hint' role='status'>Loading chat history…</p>
                 ) : chats === undefined ? null : chats.length === 0 ? (
@@ -704,15 +717,7 @@ export function ChatView({
                           className='er-chat__history-link'
                           to={'/p/' + encodeURIComponent(projectId) + '/chat/' + encodeURIComponent(chat.id)}
                           aria-current={chat.id === chatId ? 'page' : undefined}
-                          onClick={event => {
-                            if (chat.id !== chatId && question.trim() !== '' && event.button === 0
-                              && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
-                              && !window.confirm('Discard your question draft and switch chats?')) {
-                              event.preventDefault();
-                              return;
-                            }
-                            if (historyRef.current !== null) historyRef.current.open = false;
-                          }}
+                          onClick={event => openChat(event, chat.id)}
                         >
                           {chat.title === '' ? 'Untitled chat' : chat.title}
                         </Link>
@@ -769,9 +774,20 @@ export function ChatView({
         {chatId !== undefined && !chatReady && turnsError === ''
           ? <p className='er-chat__hint' role='status'>Loading this conversation…</p>
           : null}
-        {turns.length === 0 && chatReady && turnsError === ''
-          ? <p className='er-chat__hint'>Ask a question to start this conversation.</p>
-          : null}
+        {turns.length === 0 && chatReady && turnsError === '' ? chatId === undefined ? (
+          <div className='er-chat__start'>
+            <p className='er-chat__hint'>{recentChat
+              ? 'Reopen a recent conversation, or ask a question to start a new one.'
+              : 'Ask a question to start a new conversation.'}</p>
+            {recentChat ? (
+              <Link className='er-card er-chat__resume'
+                to={'/p/' + encodeURIComponent(projectId) + '/chat/' + encodeURIComponent(recentChat.id)}
+                onClick={event => openChat(event, recentChat.id)}>
+                Continue: {recentChat.title === '' ? 'Untitled chat' : recentChat.title}
+              </Link>
+            ) : chats === undefined ? chatHistoryError ?? <p className='er-chat__hint' role='status'>Loading chat history…</p> : null}
+          </div>
+        ) : <p className='er-chat__hint'>Ask a question to start this conversation.</p> : null}
         <ol className='er-chat__turns' ref={turnListRef}>
           {turns.map((turn) => (
             <li key={turn.turnId} className='er-chat__turn' data-state={turn.state} data-turn-id={turn.turnId} tabIndex={-1}>
