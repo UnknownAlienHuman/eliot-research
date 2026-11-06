@@ -683,24 +683,13 @@ if (process.argv.includes('--models-only')) {
   assert.equal(emptyDistill.status, 400, 'An empty distillModel must fail before mutation (no truthiness bypass).');
   const afterEmpty = await apiJson('/api/settings');
   assert.deepEqual(afterEmpty.body.settings, before.body.settings, 'Rejected empty distillModel must leave global settings unchanged.');
-  const originalMode = before.body.settings.nativeUsageMode;
-  assert(originalMode === 'included' || originalMode === 'standard', 'Native usage mode must be a saved included/standard choice.');
+  assert(!Object.hasOwn(before.body.settings, 'nativeUsageMode'), 'Retired native usage mode must not be exposed.');
   const settingsBase = { answerModel: before.body.settings.answerModel, distillModel: before.body.settings.distillModel };
-  const putNativeUsageMode = (nativeUsageMode) => apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...settingsBase, nativeUsageMode }) });
-  try {
-    for (const mode of ['included', 'standard']) {
-      const saved = await putNativeUsageMode(mode);
-      assert.equal(saved.status, 200, 'Saving the native usage choice must succeed without inference.');
-      const persisted = await apiJson('/api/settings');
-      assert.equal(persisted.body.settings.nativeUsageMode, mode, 'Native usage choice must persist on GET.');
-      assert.equal(persisted.body.settings.answerModel, settingsBase.answerModel);
-      assert.equal(persisted.body.settings.distillModel, settingsBase.distillModel);
-    }
-    const beforeInvalidMode = await apiJson('/api/settings');
-    assert.equal((await putNativeUsageMode('metered')).status, 400, 'An invalid mode must fail before mutation.');
-    assert.deepEqual((await apiJson('/api/settings')).body.settings, beforeInvalidMode.body.settings, 'Rejected native mode must leave all saved settings unchanged.');
-  } finally {
-    assert.equal((await putNativeUsageMode(originalMode)).status, 200, 'Restore the original native usage choice.');
+  for (const nativeUsageMode of ['included', 'standard', 'metered', null]) {
+    const rejected = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...settingsBase, nativeUsageMode }) });
+    assert.equal(rejected.status, 400, 'A stale native usage field must fail before mutation.');
+    assert(JSON.stringify(rejected.body).includes('Reload Settings'), 'A stale client must be told to reload.');
+    assert.deepEqual((await apiJson('/api/settings')).body.settings, before.body.settings, 'Retired mode writes must leave all saved settings unchanged.');
   }
   const project = await apiJson('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'External model admission ' + Date.now() }) });
   assert.equal(project.status, 201);
@@ -806,6 +795,8 @@ if (process.argv.includes('--models-only')) {
       await Promise.all([page.goto(browserOrigin + '/settings'), ...reads]);
       const modelsRegion = page.getByRole('region', { name: 'Models', exact: true });
       await expect(modelsRegion).toBeVisible();
+      await expect(modelsRegion.getByText('Workers AI uses your existing Cloudflare plan.', { exact: false })).toBeVisible();
+      await expect(modelsRegion.locator('input[name="er-native-usage"]')).toHaveCount(0);
       await expect(page.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
       const answersRadio = page.locator('input[type="radio"][value="answer"]');
       const understandingRadio = page.locator('input[type="radio"][value="distill"]');
@@ -1180,7 +1171,6 @@ if (process.argv.includes('--models-only')) {
       assert.equal(settingsAfterPolicy.status, 200);
       assert.equal(settingsAfterPolicy.body.settings.answerModel, settingsBeforePolicy.body.settings.answerModel, 'Policy-only save must keep the answer default unchanged.');
       assert.equal(settingsAfterPolicy.body.settings.distillModel, settingsBeforePolicy.body.settings.distillModel, 'Policy-only save must keep the understanding default unchanged.');
-      assert.equal(settingsAfterPolicy.body.settings.nativeUsageMode, settingsBeforePolicy.body.settings.nativeUsageMode, 'Policy-only save must keep native billing unchanged.');
       await ppage.reload();
       await expect(ppage.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
       const openRouterReloaded = providerItems.filter({ has: ppage.getByRole('heading', { name: 'OpenRouter', exact: true }) });
@@ -1237,14 +1227,13 @@ if (process.argv.includes('--models-only')) {
   const after = await apiJson('/api/settings');
   assert.equal(after.body.settings.answerModel, before.body.settings.answerModel, 'Answer default must be unchanged.');
   assert.equal(after.body.settings.distillModel, before.body.settings.distillModel, 'Understanding default must be unchanged.');
-  assert.equal(after.body.settings.nativeUsageMode, originalMode, 'Native usage mode must be restored.');
   assert.deepEqual(Object.keys(after.body.settings).sort(), Object.keys(before.body.settings).sort(), 'Settings shape must be unchanged (answerModel/distillModel/updatedAt).');
   assert(Number.isSafeInteger(after.body.settings.updatedAt) && after.body.settings.updatedAt > 0
     && after.body.settings.updatedAt >= before.body.settings.updatedAt, 'Intentional provider saves/restores must record a valid nondecreasing update time.');
   assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
   const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, fullK2Accepted: false, consentRejected: true, disconnectedTurnTokenLimit: turn.body.turn.tokenLimit ?? null,
     disconnectedTurnRows: { before: chatBeforeTurn.body.turns.length, after: chatAfterTurn.body.turns.length, persistedMatches: storedRejectedTurns.length },
-    nativeUsageMode: { original: originalMode, restored: after.body.settings.nativeUsageMode },
+    retiredNativeUsageMode: { absent: !Object.hasOwn(after.body.settings, 'nativeUsageMode'), staleWritesRejected: true },
     catalogue: { externalModels: externals.length, providers: [...new Set(nativePairs.map((pair) => pair[0]))],
       providerBrowserChecks: [...new Set(browserModelRoutes.map((route) => /^gateway:([^/]+)\/.+/.exec(route)?.[1]).filter(Boolean))],
       providerSettingsBrowserChecks: providersBefore.body.providers.map((provider) => provider.id),

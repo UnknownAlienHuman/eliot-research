@@ -1,7 +1,6 @@
 import type { ModelSpec } from "../models";
 import type { DistillState } from "../understanding";
 
-export type NativeUsageMode = "included" | "standard";
 export type DataCollectionPolicy = "deny" | "allow";
 
 export function isOpenRouterApiBase(value: string | null | undefined): boolean {

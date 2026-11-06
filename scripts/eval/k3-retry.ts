@@ -45,7 +45,7 @@ let server, browser;
 try {
   await mf.ready; const db = await mf.getD1Database('DB', 'retry'), bucket = await mf.getR2Bucket('BUCKET', 'retry');
   for (const file of (await readdir(path.join(root, 'migrations'))).filter(f => /^\d+_.+\.sql$/.test(f)).sort()) await db.batch(unstable_splitSqlQuery(await readFile(path.join(root, 'migrations', file), 'utf8')).map(sql => db.prepare(sql)));
-  await db.prepare("UPDATE settings SET native_usage_mode='standard',distill_model=? WHERE id=1").bind(model.route).run();
+  await db.prepare("UPDATE settings SET distill_model=? WHERE id=1").bind(model.route).run();
   await bucket.put('catalog/models.json', JSON.stringify({ updatedAt: '2026-11-04', warnings: [], models: [model] }));
   const source = crypto.randomUUID(), revision = crypto.randomUUID(), retryId = crypto.randomUUID(), prefix = 'source/' + revision + '/';
   const text = 'The method retains canonical evidence. The source describes normalization.';

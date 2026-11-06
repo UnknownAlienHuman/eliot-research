@@ -31,6 +31,21 @@ function fixture() {
 }
 
 describe("strict migrated model admission", () => {
+  it.each(["included", "standard"])("admits native GLM with legacy %s untouched and keeps one claim", async (mode) => {
+    const f = fixture();
+    const native = { ...model, route: "workers-ai:@cf/zai-org/glm-4.7-flash", id: "@cf/zai-org/glm-4.7-flash" };
+    try {
+      f.db.prepare("UPDATE settings SET native_usage_mode=? WHERE id=1").run(mode);
+      const settings = f.db.prepare("SELECT * FROM settings WHERE id=1").get();
+      const results = await Promise.allSettled([admitTurn(f.env, "c", "new", native), admitTurn(f.env, "c", "new", native)]);
+      expect(results.filter((r) => r.status === "fulfilled")).toEqual([{ status: "fulfilled", value: null }]);
+      expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+      expect(f.db.prepare("SELECT * FROM settings WHERE id=1").get()).toEqual(settings);
+      expect(f.db.prepare("SELECT token_limit,token_limit_kind,input_tokens,output_tokens FROM chat_turn WHERE turn_id='new'").get())
+        .toEqual({ token_limit: null, token_limit_kind: "unknown", input_tokens: null, output_tokens: null });
+    } finally { f.db.close(); }
+  });
+
   it("preserves legacy terminal values and only marks already admitted started rows", () => {
     const f = fixture();
     try {
