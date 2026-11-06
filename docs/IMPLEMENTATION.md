@@ -896,6 +896,11 @@ For a new conversation the same attempt retains its creation UUID and original t
 caller ID uses the existing chat primary key: insert returns 201; matching project/title and an unarchived chat return
 the stored row with 200. Foreign, archived or differently titled identities return 409 without updating metadata. Omitted IDs keep
 server-generated creation. Titles must be valid Unicode; the composer uses up to 80 complete code points.
+On the blank Chat route, the existing first history page also offers an explicit Continue link to its first
+newest-created chat. It is not a last-active lookup or automatic resume. The link shares History's nonblank-draft
+confirmation; modified/new-tab clicks retain the current draft. A late history read never navigates, changes source
+scope or clears the composer. Loading/read error and Retry remain visible on entry; an explicitly opened saved chat,
+even without turns, does not offer a different conversation. No additional background read, write, cache or model call is added.
 After reload, History can open a committed chat and any accepted turn through existing storage-only reads. No request
 is resumed automatically. If only creation committed, the full question is not recoverable from its truncated title;
 unaccepted draft text is not persisted in the URL, localStorage or another client cache.

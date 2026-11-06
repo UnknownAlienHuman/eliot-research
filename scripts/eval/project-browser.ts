@@ -17,10 +17,12 @@ const projects = [];
 for (let index = 0; index < 52; index++) projects.push((await api('/api/projects', { title: prefix + index })).project);
 const first = projects[0], target = projects.at(-1);
 assert(first && target);
-const chats = await Promise.all(['First chat', 'Second chat'].map(async title =>
+const chats = await Promise.all(['First conversation: ' + 'saved project evidence '.repeat(4), 'Second conversation: ' + 'recent source comparison '.repeat(4)].map(async title =>
   (await api('/api/projects/' + first.id + '/chats', { title })).chat));
 const chatPath = chat => '/p/' + first.id + '/chat/' + chat.id;
 const chatBefore = await Promise.all(chats.map(chat => api('/api/projects/' + first.id + '/chats/' + chat.id)));
+const recent = (await api('/api/projects/' + first.id + '/chats')).chats[0];
+assert(chats.some(chat => chat.id === recent.id));
 await api('/api/projects/' + projects[1].id, { archived: true }, 'PATCH');
 // Include pre-existing native eval projects, not just this fixture's 51 active rows.
 const expected = [];
@@ -81,8 +83,61 @@ try {
         await expect(list).toHaveAttribute('aria-busy', 'false');
       }
     };
-    await page.goto(origin + '/p/' + first.id + '/chat');
+    // The blank workspace exposes real saved work without navigating or sending
+    // when a late history read arrives. The composer remains usable throughout.
+    let chatFault = 'hold', heldChats;
+    await page.route(origin + '/api/projects/' + first.id + '/chats', route => {
+      if (chatFault === 'hold') { heldChats = route; return; }
+      if (chatFault === 'fail') return route.fulfill({ status: 503, json: { error: { message: 'Synthetic saved chats failure' } } });
+      return route.fallback();
+    });
+    const start = page.locator('.er-chat__start'), resume = start.getByRole('link', { name: 'Continue: ' + recent.title, exact: true });
+    const blankPath = origin + '/p/' + first.id + '/chat';
+    await page.goto(blankPath, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: first.title, exact: true })).toBeVisible();
+    await expect(start.getByRole('status')).toBeVisible();
+    await question.fill('Draft entered before saved chats arrive.');
+    await expect.poll(() => Boolean(heldChats)).toBe(true);
+    chatFault = ''; await heldChats.fallback();
+    await expect(resume).toBeVisible();
+    await expect(resume).toHaveAttribute('href', chatPath(recent));
+    await expect(page).toHaveURL(blankPath);
+    await expect(question).toHaveValue('Draft entered before saved chats arrive.');
+    assert.equal(confirmations.length, 0);
+    const openingRecent = context.waitForEvent('page');
+    await resume.click({ modifiers: ['Control'] });
+    const recentTab = await openingRecent;
+    await expect(recentTab).toHaveURL(origin + chatPath(recent));
+    await recentTab.close();
+    await expect(question).toHaveValue('Draft entered before saved chats arrive.');
+    assert.equal(confirmations.length, 0);
+    await resume.focus(); await page.keyboard.press('Enter');
+    await expect.poll(() => confirmations.length).toBe(1);
+    await expect(page).toHaveURL(blankPath);
+    await expect(question).toHaveValue('Draft entered before saved chats arrive.');
+    confirmSwitch = true;
+    await resume.click();
+    await expect(page).toHaveURL(origin + chatPath(recent));
+    await expect(question).toHaveValue('');
+    await expect(page.locator('.er-chat__resume')).toHaveCount(0);
+    assert.equal(confirmations.length, 2);
+    // A failed saved-chat read is visible on entry and retry performs only GETs.
+    chatFault = 'fail';
+    await page.goto(blankPath);
+    await expect(start.getByRole('alert')).toContainText('Synthetic saved chats failure');
+    await expect(page.locator('.er-chat__resume')).toHaveCount(0);
+    await question.fill('Draft survives saved-history retry.');
+    chatFault = '';
+    await start.getByRole('button', { name: 'Retry chat history', exact: true }).click();
+    await expect(resume).toBeVisible();
+    await expect(question).toHaveValue('Draft survives saved-history retry.');
+    await expect(page).toHaveURL(blankPath);
+    await page.evaluate(() => document.fonts.ready);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.screenshot({ path: 'eval/out/k2/project-recent-' + viewport.width + '.png' });
+    await question.fill('');
+    confirmations.length = 0; confirmSwitch = false;
+
     if (viewport.width <= 600) {
       await page.getByRole('navigation', { name: 'Primary', exact: true }).getByRole('link', { name: 'Sources', exact: true }).click();
     }
@@ -169,6 +224,7 @@ try {
     assert.equal(confirmations.length, 2);
     await expect(page).toHaveURL(origin + '/p/' + target.id + '/chat');
     await expect(page.getByRole('heading', { name: target.title, exact: true })).toBeVisible();
+    await expect(page.locator('.er-chat__resume')).toHaveCount(0);
     await expect(dialog).toHaveCount(0);
     await expect(question).toHaveValue('');
     await expect(page.getByRole('checkbox', { name: /^Project default/, includeHidden: true })).toBeChecked();
@@ -292,6 +348,7 @@ try {
     assert.equal(writes, 0);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ scope: 'K2_PROJECT_PICKER_BROWSER', viewport, projects: expected.length,
+      recentChatEntry: { nativeLatestLink: true, delayedHistoryKeepsDraft: true, modifiedClickPreservesDraft: true, cancelAndConfirm: true, retryPreservesDraft: true, emptySavedChatHasNoResume: true },
       paging: true, initialAndPageRetry: true, escapePreservesDraft: true, delayedCloseAndReopen: true,
       projectAndSettingsNavigation: true, draftSwitch: { cancelPreservesDraftAndScope: true, confirmNavigates: true,
         currentAndBlankSkipConfirmation: true, prompts: projectPrompts },

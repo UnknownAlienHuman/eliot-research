@@ -184,6 +184,12 @@
   padding-inline-end: var(--eliot-space-tight);
 }
 
+.er-chat__start {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  min-inline-size: 0;
+}
+
 .er-chat__model {
   grid-column: 1 / -1;
   inline-size: 100%;

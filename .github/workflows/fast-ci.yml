@@ -95,6 +95,7 @@ jobs:
             eval/out/k0
             eval/out/k1/*-compact-citations.png
             eval/out/k2/chat-*.png
+            eval/out/k2/project-recent-*.png
             !dist/**/.dev.vars*
             !dist/**/.env*
           if-no-files-found: error

@@ -221,6 +221,152 @@ describe('New chat from an unconfirmed first Send', () => {
 });
 afterEach(async () => { await act(async () => root.unmount()); router?.dispose(); host.remove(); db.close(); vi.unstubAllGlobals(); });
 
+describe('Recent conversation on project entry', () => {
+  const chats = [{ id: 'c2', title: 'Recent conversation', updatedAt: 2 }, { id: 'c1', title: 'Older conversation', updatedAt: 1 }];
+  let changeQuestion: (value: string) => void, chooseScope: (value: SourceSelection) => void, scope: SourceSelection;
+  const start = () => host.querySelector('.er-chat__start');
+  const draft = () => host.querySelector<HTMLTextAreaElement>('textarea')?.value;
+  function link(selector = '.er-chat__resume') {
+    const element = host.querySelector<HTMLAnchorElement>(selector);
+    if (!element) throw new Error('Missing chat link ' + selector);
+    return element;
+  }
+  async function open(history: () => Promise<Response>, path = '/p/p1/chat', savedTurns = [turn('t2')]) {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(init?.method ?? 'GET').toBe('GET'); // Entry, retry and reopening never create or send.
+      const url = String(input);
+      if (url === '/api/models') return json({ models: [], warnings: [] });
+      if (url === '/api/projects/p1/chats') return history();
+      expect(url).toMatch(/^\/api\/projects\/p1\/chats\/c[12]$/);
+      return json({ chat: { id: url.split('/').at(-1) }, turns: savedTurns, nextCursor: null, queued: null, stateVersion: 1 });
+    }));
+    function Subject() {
+      const { chatId } = useParams();
+      const [question, setQuestion] = useState('Unsent question');
+      const [selection, setSelection] = useState<SourceSelection>({ scopeMode: 'empty', sourceIds: [] });
+      changeQuestion = setQuestion; chooseScope = setSelection; scope = selection;
+      return <ChatView projectId='p1' {...(chatId ? { chatId } : {})} selection={selection} question={question}
+        onQuestionChange={setQuestion} onSelectionChange={setSelection} onNewChat={() => {}} onSavedPage={() => {}} />;
+    }
+    router = createMemoryRouter([{ path: '/p/:projectId/chat/:chatId?', element: <Subject /> }], { initialEntries: [path] });
+    await act(async () => { root.render(<RouterProvider router={router} />); }); await settle();
+  }
+
+  it('offers the first listed chat without navigating or changing a draft or scope when history arrives', async () => {
+    let reply: (response: Response) => void = () => {};
+    await open(() => new Promise<Response>(resolve => { reply = resolve; }));
+    expect(start()?.textContent).toContain('Loading chat history…');
+    expect(start()?.textContent).not.toContain('No saved chats');
+    expect(host.querySelector('.er-chat__resume')).toBeNull();
+    const key = router.state.location.key;
+    await act(async () => {
+      changeQuestion('Draft entered while waiting');
+      chooseScope({ scopeMode: 'explicit', sourceIds: ['s2'] });
+    });
+    await act(async () => reply(json({ chats, nextCursor: 'older' }))); await settle();
+    expect(link().textContent).toBe('Continue: Recent conversation');
+    expect(link().getAttribute('href')).toBe('/p/p1/chat/c2');
+    expect(start()?.textContent).not.toContain('Older conversation');
+    expect(start()?.textContent).not.toContain('Loading');
+    expect(router.state.location.key).toBe(key);
+    expect(draft()).toBe('Draft entered while waiting');
+    expect(scope).toEqual({ scopeMode: 'explicit', sourceIds: ['s2'] });
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url)).sort()).toEqual(['/api/models', '/api/projects/p1/chats']);
+  });
+
+  it.each(['.er-chat__resume', '.er-chat__history-list a'])('shares draft confirmation with %s and keeps New chat usable', async selector => {
+    await open(async () => json({ chats, nextCursor: null }));
+    const history = host.querySelector<HTMLDetailsElement>('.er-chat__history');
+    if (!history) throw new Error('Missing History');
+    history.open = true;
+    vi.mocked(window.confirm).mockReturnValue(false);
+    await act(async () => link(selector).click()); await settle();
+    expect(window.confirm).toHaveBeenCalledWith('Discard your question draft and switch chats?');
+    expect(router.state.location.pathname).toBe('/p/p1/chat');
+    expect(draft()).toBe('Unsent question');
+    expect(scope).toEqual({ scopeMode: 'empty', sourceIds: [] });
+    expect(history.open).toBe(true);
+    vi.mocked(window.confirm).mockReturnValue(true);
+    await act(async () => link(selector).click()); await settle();
+    expect(router.state.location.pathname).toBe('/p/p1/chat/c2');
+    expect(draft()).toBe('');
+    expect(host.textContent).toContain('Question t2');
+    expect(start()).toBeNull();
+    expect(history.open).toBe(false);
+    const newChat = [...host.querySelectorAll('button')].find(button => button.textContent === 'New chat');
+    if (!newChat) throw new Error('Missing New chat');
+    await act(async () => newChat.click()); await settle();
+    expect(router.state.location.pathname).toBe('/p/p1/chat');
+    expect(host.querySelector('[data-turn-id]')).toBeNull();
+    expect(link().getAttribute('href')).toBe('/p/p1/chat/c2');
+    expect(draft()).toBe('');
+    await act(async () => link().click()); await settle();
+    expect(router.state.location.pathname).toBe('/p/p1/chat/c2');
+    expect(window.confirm).toHaveBeenCalledTimes(2); // The blank draft needs no confirmation.
+  });
+
+  it('keeps modifier and middle clicks from discarding the draft or closing History', async () => {
+    await open(async () => json({ chats, nextCursor: null }));
+    const history = host.querySelector<HTMLDetailsElement>('.er-chat__history');
+    if (!history) throw new Error('Missing History');
+    history.open = true;
+    // Prevent jsdom's unsupported new-tab navigation after React handles the event.
+    const preventBrowserNavigation = (event: Event) => event.preventDefault();
+    document.addEventListener('click', preventBrowserNavigation);
+    try {
+      for (const selector of ['.er-chat__resume', '.er-chat__history-list a']) {
+        for (const options of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+          await act(async () => { link(selector).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...options })); });
+          expect(router.state.location.pathname).toBe('/p/p1/chat');
+          expect(draft()).toBe('Unsent question');
+          expect(scope).toEqual({ scopeMode: 'empty', sourceIds: [] });
+          expect(history.open).toBe(true);
+        }
+      }
+    } finally { document.removeEventListener('click', preventBrowserNavigation); }
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it('shows an initial history failure and retries explicitly without changing the composer', async () => {
+    const history = vi.fn()
+      .mockResolvedValueOnce(json({ error: { message: 'History unavailable' } }, 503))
+      .mockResolvedValueOnce(json({ chats: [{ ...chats[0], title: '' }], nextCursor: null }));
+    await open(history);
+    expect(start()?.textContent).toContain('History unavailable');
+    expect(start()?.textContent).not.toContain('Loading');
+    expect(start()?.textContent).not.toContain('No saved chats');
+    expect(host.querySelector('.er-chat__resume')).toBeNull();
+    const retry = start()?.querySelector('button');
+    expect(retry?.textContent).toBe('Retry chat history');
+    await act(async () => retry?.click()); await settle();
+    expect(history).toHaveBeenCalledTimes(2);
+    expect(link().textContent).toBe('Continue: Untitled chat');
+    expect(router.state.location.pathname).toBe('/p/p1/chat');
+    expect(draft()).toBe('Unsent question');
+    expect(scope).toEqual({ scopeMode: 'empty', sourceIds: [] });
+  });
+
+  it('keeps an empty project ready for a new conversation without a resume link', async () => {
+    await open(async () => json({ chats: [], nextCursor: null }));
+    expect(start()?.textContent).toBe('Ask a question to start a new conversation.');
+    expect(host.querySelector('.er-chat__resume')).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
+  });
+
+  it('does not offer another chat inside an explicitly opened empty saved chat, even when the list arrives later', async () => {
+    let reply: (response: Response) => void = () => {};
+    await open(() => new Promise<Response>(resolve => { reply = resolve; }), '/p/p1/chat/c1', []);
+    expect(host.textContent).toContain('Ask a question to start this conversation.');
+    expect(start()).toBeNull();
+    await act(async () => reply(json({ chats, nextCursor: null }))); await settle();
+    expect(start()).toBeNull();
+    expect(host.querySelector('.er-chat__resume')).toBeNull();
+    expect(router.state.location.pathname).toBe('/p/p1/chat/c1');
+    expect(draft()).toBe('Unsent question');
+  });
+});
+
 it.each(['', 'Retained partial text'])('shows the full failure reason without a redundant empty-answer placeholder: %s', async answer => {
   const reason = 'The selected model could not run. The included allowance could not be verified. Choose an available provider or check its settings; no automatic retry was started.';
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {

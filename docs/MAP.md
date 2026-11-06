@@ -245,6 +245,9 @@ stop/reconnect, reopen chat and save an answer as a page.
    without creating a chat or sending a question. Switching to another project confirms discarding a nonblank draft;
    cancelling or closing the picker preserves the current draft and source scope.
    History and New chat also confirm before discarding a nonblank draft; cancellation preserves the current chat and scope.
+   Blank Chat offers the first recent saved conversation from the existing newest-created-first history page.
+   Opening it is explicit, confirms discarding a nonblank draft, and never sends a question. Loading/error and Retry
+   remain visible beside the usable new-chat composer; late history never navigates or changes the draft/scope.
    Saved chat entry shows its latest messages once; Reader/Back, Retry and reconnect preserve deliberate history reading.
    Late font/control reflow keeps an already-bottom reader at the bottom without moving deliberate history reading.
    Latest returns to the end explicitly. `pnpm eval k2 --scroll-browser` covers this desktop/phone journey using stored
