@@ -670,6 +670,18 @@ describe("inline code literals", () => {
 });
 
 describe("answerWarnings", () => {
+  it("does not warn on the retained ViT spaced-minus compute range", () => {
+    const raw = "ViT uses ~2–4× less compute for the same performance [S1:1].";
+    const turn = resolveCitations(raw, makeSources());
+    const quote = "ViT uses approximately 2 − 4× less compute to attain the same\nperformance (average over 5 datasets).";
+    expect(answerWarnings(turn.text, turn.citations, new Map([["[S1:1]", quote]]))).toEqual([]);
+    const saved = persistentResolvedAnswer(turn.text, turn.citations);
+    expect(answerWarnings(saved.text, saved.citations, new Map(saved.citations.map(item => [item.label, quote])))).toEqual([]);
+    expect(turn.text).toBe(raw);
+    expect(answerWarnings(raw.replace("2–4", "2–6"), turn.citations, new Map([["[S1:1]", quote]])))
+      .toEqual([{ start: 0, end: raw.length, kind: "unsupported-number" }]);
+  });
+
   it.each(["- ", "* ", "+ ", "1. ", "2) "])("keeps wrapped sentences in %s list items", (marker) => {
     for (const newline of ["\n", "\r\n"]) {
       const raw = `${marker}Размер 🌍 равен 512${newline}  измерениям [S1:1].`;
