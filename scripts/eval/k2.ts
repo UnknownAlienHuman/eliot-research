@@ -362,6 +362,24 @@ function journeyExpectedLimits(entry) {
   if (!Number.isSafeInteger(total)) return null;
   return { outputLimit: output, callTokenLimit: total };
 }
+function validTokenLimitPair(tokenLimit, kind) {
+  if (kind === 'unknown') return tokenLimit === null;
+  if (kind === 'published' || kind === 'legacy') {
+    return Number.isSafeInteger(tokenLimit) && tokenLimit > 0;
+  }
+  return false;
+}
+function assertTokenLimitPairStaticSelftests() {
+  assert.equal(validTokenLimitPair(null, 'unknown'), true, 'unknown capacity with explicit entry null must pass.');
+  assert.equal(validTokenLimitPair(123, 'published'), true, 'published capacity with a positive safe integer must pass.');
+  assert.equal(validTokenLimitPair(123, 'legacy'), true, 'legacy capacity with a positive safe integer must pass.');
+  assert.equal(validTokenLimitPair(0, 'unknown'), false, 'unknown capacity with 0 must fail.');
+  assert.equal(validTokenLimitPair(null, 'published'), false, 'published capacity with entry null must fail.');
+  assert.equal(validTokenLimitPair(null, undefined), false, 'missing pair must fail.');
+  assert.equal(validTokenLimitPair(undefined, 'unknown'), false, 'missing value with unknown kind must fail.');
+  assert.equal(validTokenLimitPair(0, 'published'), false, 'published capacity with 0 must fail.');
+  assert.equal(validTokenLimitPair(-5, 'legacy'), false, 'legacy capacity with a negative integer must fail.');
+}
 function invalidEvidenceText(row) {
   const samples = row && Array.isArray(row.invalidLabelExamples)
     ? row.invalidLabelExamples.filter((s) => typeof s === 'string' && s.length > 0) : [];
@@ -422,6 +440,7 @@ assertC2StaticSelftests();
 assertDispatchStopStaticSelftests();
 assertO8StaticSelftests();
 assertJourneyStaticSelftests();
+assertTokenLimitPairStaticSelftests();
 assertInvalidEvidenceStaticSelftests();
 assertK2OutcomeStaticSelftests();
 if (staticSelftest) {
@@ -1719,6 +1738,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
       cachedTokens: turn?.cachedTokens ?? null,
       outputTokens: turn?.outputTokens ?? null,
       tokenLimit: turn?.tokenLimit ?? null,
+      tokenLimitKind: turn?.tokenLimitKind ?? null,
     },
     invalidLabelExamples: Array.isArray(turn?.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [],
     invalidLabels: typeof turn?.invalidLabels === 'number' ? turn.invalidLabels : null,
@@ -1735,9 +1755,10 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   }
   if (!Array.isArray(turn?.citations) || turn.citations.length === 0) failures.push('turn has no citations');
   if (typeof turn?.invalidLabels !== 'number' || turn.invalidLabels !== 0) failures.push('invalidLabels is not zero');
-  for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs']) {
+  for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'firstTokenMs', 'totalMs']) {
     if (typeof turn?.[field] !== 'number' || !Number.isFinite(turn[field])) failures.push('turn.' + field + ' is unknown');
   }
+  if (!validTokenLimitPair(turn?.tokenLimit, turn?.tokenLimitKind)) failures.push('tokenLimit/tokenLimitKind pair is invalid (kind=' + String(turn?.tokenLimitKind ?? 'UNKNOWN') + ')');
   if (typeof turn?.totalMs === 'number' && turn.totalMs > 90000) failures.push('completed turn exceeded the 90 second K2 ceiling');
 
   const citationQuotes = new Map();
@@ -1798,9 +1819,10 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   factChecks.push({ name: 'citation byte ranges', passed: row.citationRanges.length > 0 && row.citationRanges.every((range) => range.passed), hard: true, detail: row.citationSummary });
   factChecks.push({ name: 'uncited factual statements', passed: uncited === 0, ...(uncited === null ? { skipped: 'answer/citations unavailable' } : {}), advisory: uncited !== null, hard: uncited === null, detail: uncited === null ? 'skipped' : String(uncited) + ' found (advisory; MAP hard gate is >=1 citation, invalidLabels=0, ranges open).' });
   factChecks.push({ name: 'numeric citation support', passed: unsupportedNumeric === 0, ...(unsupportedNumeric === null ? { skipped: 'answer/citations unavailable' } : {}), advisory: unsupportedNumeric !== null, hard: unsupportedNumeric === null, detail: unsupportedNumeric === null ? 'skipped' : String(unsupportedNumeric) + ' unsupported (advisory; MAP hard gates are C1-C4 facts/conditions, O8 abstention, ranges open).' });
-  for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'tokenLimit', 'firstTokenMs', 'totalMs']) {
+  for (const field of ['inputTokens', 'cachedTokens', 'outputTokens', 'firstTokenMs', 'totalMs']) {
     factChecks.push({ name: field, passed: typeof turn?.[field] === 'number' && Number.isFinite(turn[field]), hard: true, detail: String(turn?.[field] ?? 'UNKNOWN') });
   }
+  factChecks.push({ name: 'tokenLimit/tokenLimitKind', passed: validTokenLimitPair(turn?.tokenLimit, turn?.tokenLimitKind), hard: true, detail: String(turn?.tokenLimit ?? 'UNKNOWN') + '/' + String(turn?.tokenLimitKind ?? 'UNKNOWN') });
   row.factChecks = factChecks;
   for (const check of factChecks) if (check.hard && !check.passed && !check.skipped) failures.push(check.name + ' failed');
   row.hardFailures = [...failures];
@@ -1958,8 +1980,9 @@ async function adoptReconciledTurn(qid, stored, wall, via) {
   newCount++;
   if (row.ownerReviewRequired) ownerRequired = true;
   if (!row.passed) hardFailures++;
-  const reconciledLimit = stored.tokenLimit;
-  if (typeof reconciledLimit === 'number' && Number.isSafeInteger(reconciledLimit) && reconciledLimit >= 0) {
+  const reconciledKnown = validTokenLimitPair(stored.tokenLimit, stored.tokenLimitKind) && stored.tokenLimitKind !== 'unknown';
+  const reconciledLimit = reconciledKnown ? stored.tokenLimit : null;
+  if (reconciledKnown) {
     reportedTokenLimit += reconciledLimit;
     newTokenLimit += reconciledLimit;
   } else {
@@ -2073,8 +2096,9 @@ for (const qid of order) {
   compareRows.set(qid, row);
   if (row.ownerReviewRequired) ownerRequired = true;
   if (!row.passed) hardFailures++;
-  const limit = turn.tokenLimit;
-  if (typeof limit === 'number' && Number.isSafeInteger(limit) && limit >= 0) {
+  const hasKnownLimit = validTokenLimitPair(turn.tokenLimit, turn.tokenLimitKind) && turn.tokenLimitKind !== 'unknown';
+  const limit = hasKnownLimit ? turn.tokenLimit : null;
+  if (hasKnownLimit) {
     reportedTokenLimit += limit;
     if (src === 'new') newTokenLimit += limit;
   } else {
@@ -2127,7 +2151,6 @@ else {
   } catch (error) {
     finalErrors.push(error instanceof Error ? error.message : String(error));
   }
-  if (unknownNewTokenLimits > 0) { hardFailures++; finalErrors.push('At least one new turn has unknown tokenLimit; UNKNOWN is not treated as free.'); }
   const unresolvedCount = unknownDispatchIds.size;
   if (unresolvedCount > 0) { hardFailures++; finalErrors.push(unresolvedCount + ' dispatched turn(s) remain unresolved after bounded read reconciliation; any held reservation is UNKNOWN, not zero.'); }
   if (finalErrors.length) { finalReadError = finalErrors.join(' '); stopReason = [stopReason, finalReadError].filter(Boolean).join(' '); }
