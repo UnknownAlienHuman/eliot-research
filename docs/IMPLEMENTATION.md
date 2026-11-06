@@ -1320,8 +1320,9 @@ uncaptured web result. Check stop/budget before every external call and preserve
 
 ## 13. Owner interface
 
-Reader's Find in source scans the loaded immutable text on explicit Next/Previous only, without API/model/search
-calls or a separate index. Matching uses original-string Unicode indices before UTF-8 conversion; literal punctuation
+Reader's Find in source scans the loaded immutable text on explicit Next/Previous only, without model/external-search
+calls or a separate index. Already revision-pinned navigation makes no API calls; pinning an unpinned Reader URL can
+refresh its source metadata. Matching uses original-string Unicode indices before UTF-8 conversion; literal punctuation
 is escaped, EN/RU case is ignored, and only the selected range is retained. Search does not alter canonical bytes.
 The existing URL/highlight/copy flow keeps historical revisions pinned and supports Back/Forward. Native K1 checks
 desktop/phone navigation, no-match retention, copied UTF-8 ranges and zero additional API calls.
