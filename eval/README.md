@@ -59,7 +59,7 @@ The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `
 | `pnpm eval k1 --native-only` | native-text ingest/reader/browser fixtures; PDF conversion not run |
 | `pnpm eval k1 --library-only` | strict Workerd/D1/R2 Library paging/attachment, archived-project restore, retained evidence and identity/commit-fault controls; synthetic Workflow counter, zero model/conversion calls |
 | `pnpm eval k1 --library-only --source-add-browser` | desktop/phone text/URL draft retention and pending-submit guards through native ingest; URL responses are bounded `text/plain` fixtures, with zero external/model calls |
-| `pnpm eval k1 --library-browser` | desktop/phone Add sources/Library paging, Retry/Refresh, native Attach/Reader and route isolation; zero model calls |
+| `pnpm eval k1 --library-browser` | desktop/phone source-title scanning, focus/active expansion, selection and immutable Reader/latest-original download; Add sources/Library paging, Retry/Refresh, native Attach/Reader and route isolation; zero model calls |
 | `pnpm eval k1 --projects-browser` | desktop/phone project pages, late reads/Retry, Archive/Rename/Unarchive, second-page Rename/Create, external refetch and late Save preserving the editor, restored source/history; native localhost setup, model calls blocked |
 | `pnpm eval k1` | full K1 corpus and browser checks; document conversion may use the live service |
 | `pnpm eval k2 --native-only` | limited reader/history smoke, zero model calls |

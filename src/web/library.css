@@ -210,13 +210,12 @@
 
 .er-sources-pane__row {
   display: grid;
-  grid-template-columns: var(--eliot-size-touch-target) minmax(0, 1fr) auto;
+  grid-template-columns: var(--eliot-size-touch-target) minmax(0, 1fr);
   align-items: start;
   gap: var(--eliot-space-tight);
   min-width: 0;
   min-height: var(--eliot-size-list-row);
   border-radius: var(--eliot-shape-medium);
-  padding-inline: var(--eliot-space-tight);
 }
 
 .er-sources-pane__checkbox {
@@ -255,13 +254,25 @@
   line-height: var(--eliot-type-body-large-line-height);
   text-decoration: none;
   word-break: normal;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
 .er-sources-pane__row-title:hover,
 .er-sources-pane__row-title:focus-visible { text-decoration: underline; }
+
+.er-sources-pane__row:has(:focus-visible) .er-sources-pane__row-title,
+.er-sources-pane__row-title[aria-current="page"] { -webkit-line-clamp: unset; }
+
+.er-sources-pane__row-meta {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-tight);
+  min-width: 0;
+}
 
 .er-sources-pane__row .er-chip {
   flex: 0 1 auto;
@@ -278,9 +289,8 @@
 }
 
 .er-sources-pane__original {
-  grid-column: 3;
-  justify-self: end;
-  align-self: start;
+  min-height: var(--eliot-size-touch-target);
+  padding-inline: var(--eliot-space-block-control);
   white-space: nowrap;
 }
 .er-sources-pane__empty {

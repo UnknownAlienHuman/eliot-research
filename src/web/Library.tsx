@@ -4,7 +4,7 @@
 // and owns routes/schema/shared/api. Ranges: UTF-8 bytes, end-exclusive.
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { apiErrorMessage, apiJson } from "./api";
-import { Link, useLocation, useParams, useSearchParams } from "react-router";
+import { Link, NavLink, useLocation, useParams, useSearchParams } from "react-router";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project, Revision, Source, SourceSelection } from "../shared/api";
 import { readableTextWarning } from "../ingest";
@@ -468,11 +468,13 @@ export function SourcesPane({ projectId, selection, onSelectionChange }: Sources
                     />
                   </label>
                   <div className="er-sources-pane__row-main">
-                    <Link className="er-sources-pane__row-title" title={source.title} to={"/p/" + encodeURIComponent(projectId) + "/source/" + encodeURIComponent(source.id) + "?revisionId=" + encodeURIComponent(readerRevisionId)}>{source.title}</Link>
-                    <span className="er-chip er-lib__badge" data-tone={status.tone}>{status.label}</span>
+                    <NavLink className="er-sources-pane__row-title" title={source.title} to={"/p/" + encodeURIComponent(projectId) + "/source/" + encodeURIComponent(source.id) + "?revisionId=" + encodeURIComponent(readerRevisionId)}>{source.title}</NavLink>
+                    <div className="er-sources-pane__row-meta">
+                      <span className="er-chip er-lib__badge" data-tone={status.tone}>{status.label}</span>
+                      <a className="er-button er-button--text er-sources-pane__original" href={"/api/revisions/" + encodeURIComponent(source.revisionId) + "/original"} download aria-label={"Download original: " + source.title}>Original</a>
+                    </div>
                     {status.latest ? <span className="er-sources-pane__latest">{status.latest}</span> : null}
                   </div>
-                  <a className="er-button er-button--text er-sources-pane__original" href={"/api/revisions/" + encodeURIComponent(source.revisionId) + "/original"} download aria-label={"Download original: " + source.title}>Original</a>
                 </li>
               );
             })}

@@ -1365,7 +1365,10 @@ cited passages; token counts, timings and context/verification counters stay in 
 understanding show useful availability, progress and actionable failures without model routes or workflow machinery.
 The project screen uses Sources, Chat and Studio panes on desktop and the same three destinations in the compact
 bottom bar. Pane contents scroll independently; the composer is the final Chat row, never a sticky overlay over
-sources. Sources start with readable-source checkboxes and current understanding availability. One Add action opens
+sources. Sources start with readable-source checkboxes and current understanding availability. Titles take the row's
+remaining width beside the full-size checkbox; Original sits below with status and retains its full touch target.
+The open source and keyboard-focused row expose the complete title. Reader links retain the immutable readable
+revision while Original downloads the latest revision, including a pending/failed replacement. One Add action opens
 the existing file/text/URL forms in a native dialog. History is a menu and project settings a dialog. Opening a source
 passage temporarily replaces the center reader without dropping the selected chat or source scope. Saved output
 refreshes Studio through the existing storage-only page API. An explicit repeat of an unconfirmed Save retains its
