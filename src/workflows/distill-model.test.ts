@@ -916,6 +916,22 @@ describe("DistillWorkflow admitted model snapshot", () => {
         expect(acceptsNull(firstClaim.properties?.[field], firstSchema), "call-one " + field + " must be nullable").toBe(true);
         expect(acceptsNull(additionalClaim.properties?.[field], secondSchema), "call-two " + field + " must be nullable").toBe(true);
       }
+      const resolve = (node: JsonSchemaNode | undefined, rootSchema: JsonSchemaNode, seen = new Set<string>()): JsonSchemaNode | undefined => {
+        if (!node?.$ref) return node;
+        const name = decodeURIComponent(node.$ref.split("/").at(-1) || "");
+        if (seen.has(name)) return undefined;
+        const next = new Set(seen); next.add(name);
+        return resolve(rootSchema.$defs?.[name] ?? rootSchema.definitions?.[name], rootSchema, next);
+      };
+      const guideItem = resolve(secondSchema.properties?.guide?.items, secondSchema);
+      const digestItem = resolve(secondSchema.properties?.digest?.items, secondSchema);
+      const glossaryItem = resolve(secondSchema.properties?.glossary?.items, secondSchema);
+      expect(Object.keys(guideItem?.properties ?? {})).toEqual(["labels", "text"]);
+      expect(Object.keys(digestItem?.properties ?? {})).toEqual(["labels", "text"]);
+      expect(Object.keys(glossaryItem?.properties ?? {})).toEqual(["labels", "en", "ru", "definition"]);
+      expect(guideItem?.required).toContain("labels");
+      expect(digestItem?.required).toContain("labels");
+      expect(glossaryItem?.required).toContain("labels");
     } finally { f.db.close(); }
 
     const cached = withBatch(fixture(snapshot.route, document));

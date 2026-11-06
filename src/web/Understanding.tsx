@@ -1,5 +1,7 @@
 // K3 source understanding and project overview. Only explicit Understand starts model work.
 import { useEffect, useRef, useState } from 'react';
+import { useIsFetching } from '@tanstack/react-query';
+import type { Source } from '../shared/api';
 import { apiJson } from './api';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
@@ -42,6 +44,7 @@ function Questions({ questions, onUse, showHint = true }: { readonly questions: 
 }
 export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTitle, onUseQuestion }: { readonly projectId: string; readonly sourceId: string; readonly revisionId: string; readonly sourceTitle: string; readonly onUseQuestion?: ((question: string) => void) | undefined }) {
   const queryClient = useQueryClient();
+  const sourcesFetching = useIsFetching({ queryKey: ['sources', projectId], exact: true });
   const pendingKey = 'understanding-retry:' + sourceId + ':' + revisionId;
   const [pendingRetry, setPendingRetry] = useState<PendingRetry | null>(() => storedRetry(pendingKey));
   const [historyAttempt, setHistoryAttempt] = useState('');
@@ -52,6 +55,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const statusKey = sourceId + ':' + revisionId + ':' + historyAttempt;
   const [statusReadKey, setStatusReadKey] = useState('');
   const mounted = useRef(false);
+  const sourcesSynced = useRef('');
   const [models, setModels] = useState<readonly ModelOption[]>([]);
   const [modelChoice, setModelChoice] = useState('');
   const [catalogueLoaded, setCatalogueLoaded] = useState(false);
@@ -104,6 +108,20 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     });
     return () => { live = false; };
   }, [statusKey, refetchUnderstanding]);
+  useEffect(() => {
+    if (!view || historyAttempt !== '' || projectId === '' || view.revisionId !== revisionId ||
+      view.attemptId !== view.currentAttemptId || sourcesFetching !== 0) return;
+    const sourceQuery = queryClient.getQueryState(['sources', projectId]);
+    const cached = queryClient.getQueryData<{ pages: ReadonlyArray<{ sources: Source[] }> }>(['sources', projectId]);
+    if (sourceQuery?.status !== 'success' || sourceQuery.fetchStatus !== 'idle' || !cached?.pages) return;
+    const source = cached.pages.flatMap(page => page.sources).find(item => item.id === sourceId);
+    if (!source || source.currentRevisionId !== revisionId) return;
+    const signature = JSON.stringify([statusKey, view.attemptId, view.currentAttemptId, view.state, view.claims.length]);
+    if (sourcesSynced.current === signature) return;
+    sourcesSynced.current = signature;
+    if (source.distillState !== view.state || source.claimCount !== view.claims.length)
+      void queryClient.invalidateQueries({ queryKey: ['sources', projectId], exact: true });
+  }, [view, historyAttempt, projectId, sourceId, revisionId, statusKey, sourcesFetching, queryClient]);
   useEffect(() => {
     let live = true;
     setCatalogueLoaded(false);

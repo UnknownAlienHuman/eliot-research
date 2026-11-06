@@ -1,10 +1,32 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+// @vitest-environment jsdom
+import { QueryClient, QueryClientProvider, useInfiniteQuery } from '@tanstack/react-query';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { verifyClaims } from '../quotes';
 import type { Understanding } from '../understanding';
 import { SourceUnderstanding } from './Understanding';
+
+afterEach(() => { vi.unstubAllGlobals(); });
+
+type BadgeSource = { id: string; currentRevisionId: string | null; distillState: string; claimCount: number };
+type SourcesPage = { sources: BadgeSource[]; nextCursor: string | null };
+function SourcesRead({ projectId }: { projectId: string }) {
+  useInfiniteQuery({
+    queryKey: ['sources', projectId],
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam, signal }) => {
+      const response = await fetch('/api/projects/' + encodeURIComponent(projectId) + '/sources'
+        + (pageParam ? '?cursor=' + encodeURIComponent(pageParam) : ''), { signal });
+      return await response.json() as SourcesPage;
+    },
+    getNextPageParam: page => page.nextCursor ?? undefined,
+    staleTime: Infinity,
+  });
+  return null;
+}
 
 describe('Source claim evidence presentation', () => {
   it('shows the exact excerpt without presenting literal checks as semantic verification', () => {
@@ -48,5 +70,114 @@ describe('Source claim evidence presentation', () => {
       expect(empty).toContain('No claims stored for this revision.');
       expect(empty).not.toContain('verified claims');
     } finally { client.clear(); }
+  });
+
+  it('refreshes the cached badge once reading the current revision becomes done', async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const claims = Array.from({ length: 10 }, (_, i) => ({
+      id: String(i), kind: 'other' as const, statement: 'Claim ' + i, quote: 'Quote ' + i,
+      block: 91, start: 0, end: 5, task: null, metric: null, dataset: null,
+      valueText: null, valueNumber: null, unit: null, conditions: null, ambiguous: false,
+    }));
+    const done: Understanding = {
+      sourceId: 's1', revisionId: 'r1', state: 'done', error: null, canRecover: false,
+      attemptId: 'attempt-1', currentAttemptId: 'attempt-1', authors: '', published: null,
+      recordedUsage: { tokenLimit: null, tokenLimitKind: 'unknown', calls: 0, inputTokens: null,
+        cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, pricingCheckedOn: null, startedAt: null, wallMs: null },
+      progress: { attempts: 0, limit: 2, maximumTokens: null, model: null, configuredModel: null },
+      guide: null, digest: null, glossary: [], report: null, claims, citations: [] };
+    const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+    const badge = (distillState: string, claimCount: number): BadgeSource => ({ id: 's1', currentRevisionId: 'r1', distillState, claimCount });
+    let sourceReads = 0;
+    let releaseInitialSources!: (response: Response) => void;
+    const initialSources = new Promise<Response>(resolve => { releaseInitialSources = resolve; });
+    let retryInProgress = false;
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input), 'http://localhost');
+      if (url.pathname === '/api/models') return json({ models: [] });
+      if (url.pathname === '/api/sources/s1/understanding') return json(done);
+      if (url.pathname === '/api/projects/p1/sources') {
+        sourceReads++;
+        if (sourceReads === 1) return initialSources;
+        return json({ sources: [badge(retryInProgress && sourceReads === 3 ? 'running' : 'done', 10)], nextCursor: null });
+      }
+      return json({});
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    try {
+      await act(async () => { root.render(<QueryClientProvider client={client}><MemoryRouter>
+        <><SourcesRead projectId='p1' /><SourceUnderstanding projectId='p1' sourceId='s1' revisionId='r1' sourceTitle='BERT' /></>
+      </MemoryRouter></QueryClientProvider>); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+      expect(sourceReads).toBe(1);
+      expect(client.getQueryState(['sources', 'p1'])?.fetchStatus).toBe('fetching');
+      await act(async () => {
+        releaseInitialSources(json({ sources: [badge('none', 0)], nextCursor: null }));
+        await new Promise(resolve => setTimeout(resolve, 10));
+      });
+      expect(sourceReads).toBe(2);
+      const cached = client.getQueryData<{ pages: { sources: { distillState: string; claimCount: number }[] }[] }>(['sources', 'p1']);
+      expect(cached?.pages[0]?.sources[0]?.distillState).toBe('done');
+      expect(cached?.pages[0]?.sources[0]?.claimCount).toBe(10);
+      retryInProgress = true;
+      await act(async () => { await client.invalidateQueries({ queryKey: ['sources', 'p1'], exact: true }); });
+      expect(sourceReads).toBe(3);
+      expect(client.getQueryData<{ pages: { sources: { distillState: string }[] }[] }>(['sources', 'p1'])?.pages[0]?.sources[0]?.distillState).toBe('running');
+      await act(async () => {
+        client.setQueryData(['understanding', 's1', 'r1', ''], { ...done, attemptId: 'attempt-2', currentAttemptId: 'attempt-2' });
+        await new Promise(resolve => setTimeout(resolve, 10));
+      });
+      expect(sourceReads).toBe(4);
+      expect(client.getQueryData<{ pages: { sources: { distillState: string; claimCount: number }[] }[] }>(['sources', 'p1'])?.pages[0]?.sources[0])
+        .toMatchObject({ distillState: 'done', claimCount: 10 });
+      expect(host.textContent).toContain('Understood');
+    } finally {
+      await act(async () => root.unmount());
+      host.remove(); client.clear(); vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([
+    { label: 'a different current revision', revisionId: 'r0', attemptId: 'r0', currentAttemptId: 'r0' },
+    { label: 'a historical attempt', revisionId: 'r1', attemptId: 'old', currentAttemptId: 'new' },
+  ])('does not replace the current badge for $label', async ({ revisionId, attemptId, currentAttemptId }) => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const historical: Understanding = {
+      sourceId: 's1', revisionId, state: 'done', error: null, canRecover: false,
+      attemptId, currentAttemptId, authors: '', published: null,
+      recordedUsage: { tokenLimit: null, tokenLimitKind: 'unknown', calls: 0, inputTokens: null,
+        cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, pricingCheckedOn: null, startedAt: null, wallMs: null },
+      progress: { attempts: 0, limit: 2, maximumTokens: null, model: null, configuredModel: null },
+      guide: null, digest: null, glossary: [], report: null, claims: [], citations: [] };
+    const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+    let sourceReads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input), 'http://localhost');
+      if (url.pathname === '/api/models') return json({ models: [] });
+      if (url.pathname === '/api/sources/s1/understanding') return json(historical);
+      if (url.pathname === '/api/projects/p1/sources') { sourceReads++; return new Response('{}', { headers: { 'Content-Type': 'application/json' } }); }
+      return json({});
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['sources', 'p1'], { pages: [{ sources: [{ id: 's1', currentRevisionId: 'r1', distillState: 'none', claimCount: 0 }], nextCursor: null }] });
+    try {
+      await act(async () => { root.render(<QueryClientProvider client={client}><MemoryRouter>
+        <SourceUnderstanding projectId='p1' sourceId='s1' revisionId={revisionId} sourceTitle='BERT' />
+      </MemoryRouter></QueryClientProvider>); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+      expect(sourceReads).toBe(0);
+      expect(client.getQueryState(['sources', 'p1'])?.isInvalidated).toBe(false);
+      const cached = client.getQueryData<{ pages: { sources: { distillState: string }[] }[] }>(['sources', 'p1']);
+      expect(cached?.pages[0]?.sources[0]?.distillState).toBe('none');
+    } finally {
+      await act(async () => root.unmount());
+      host.remove(); client.clear(); vi.unstubAllGlobals();
+    }
   });
 });

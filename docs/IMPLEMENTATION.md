@@ -557,6 +557,10 @@ per item, yielding at most five draft sentences; an early paragraph cannot consu
 candidate claims, with original excerpts as the sole evidence. The retained excerpt pool is exactly the union of
 declared claim `quoteBlock` selections and guide `labels`; code adds no inferred evidence bindings. Final guide and
 digest items also use `{ labels, text }` with 1–4 selected excerpts; glossary records likewise select labels first.
+Call two asks the model to reread only each guide/digest/glossary item's declared excerpts, check every factual clause
+against them, preserve their stated scope, conditions, comparisons and limitations, and omit items those excerpts do
+not fully support. Storage binds citations and numeric checks to those labels but does not prove semantic entailment;
+this item-local prompt review stays within call two and does not close the fresh-result quality gate.
 Historical cached synthesis rechecks do not consume `Verified.guide` or expand its frozen evidence pool, so this new
 producer shape does not rebind or rewrite old artifacts. Raw selections are retained in R2, stored labels use the full
 revision UUID, and a final user task explicitly states the English/Russian response language in both calls. These
@@ -1395,6 +1399,8 @@ citation. The selected draft remains available when review reopens; modified lin
 The source Reader highlights a citation's exact UTF-8 range inside the complete canonical text and focuses/scrolls
 to it on passage navigation. The surrounding text and the pre's complete text content stay unchanged. Copy link
 handles selections within or across the mark; invalid ranges retain full text with an error and Clear passage.
+Current-attempt reads refresh a stale Sources badge when its state or claim count changes, without a refetch loop;
+historical revisions and attempts never supply the badge.
 A confirmed file replacement cancels in-flight source-list reads before invalidating their caches because a source is
 shared across projects. Late pre-replacement responses cannot overwrite a new project's first list read. Only active
 lists refetch; their paging/selection and immutable citation links remain while current-source links follow the new head.

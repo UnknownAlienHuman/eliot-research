@@ -444,9 +444,13 @@ an unmatched backtick inside a fence cannot mask later prose references. Quote v
 bytes and folds only fallback slices; this reduces repeated work without changing evidence or quality gates.
 Repair defective PDF text only through the existing reviewed OCR/immutable Apply path; preserve old bytes and citations.
 For correct input, keep candidate statements atomic and complete, then review each against its own frozen evidence
-within the existing two calls. Guide/digest/glossary prose needs the same semantic scrutiny; adding a third verifier,
-paper-specific prompts or weakening anchors is not a remedy. Fix numeric-format regressions narrowly, without inferring
-units or conditions. [#430](https://github.com/UnknownAlienHuman/eliot-research/pull/430),
+within the existing two calls. The call-two producer prompt now directs guide/digest/glossary items to select labels
+before prose, reread only those excerpts, retain their source-stated scope, conditions, comparisons and limitations,
+and omit items unsupported by their labels. Code still binds citations and numeric checks to declared labels; the
+prompt review does not prove semantic support. Existing eval anchors are unchanged, and the fix adds no model call.
+Adding a third verifier, paper-specific prompts or weakening anchors is not a remedy.
+Fix numeric-format regressions narrowly, without inferring units or conditions.
+[#430](https://github.com/UnknownAlienHuman/eliot-research/pull/430),
 [#454](https://github.com/UnknownAlienHuman/eliot-research/pull/454) and
 [#459](https://github.com/UnknownAlienHuman/eliot-research/pull/459) are unaccepted attempts at the checked commit;
 reuse only applicable changes after reading their failed observations. K6 stays frozen. Reusing stored output must not
