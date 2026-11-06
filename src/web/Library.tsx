@@ -13,7 +13,7 @@ import { SourceUnderstanding } from "./Understanding";
 import type { SuggestedQuestion } from "./Understanding";
 import { SourceOcr } from "./Ocr";
 import { LibraryPicker } from "./LibraryPicker";
-import { splitReaderRange } from "./reader-range";
+import { findReaderRange, splitReaderRange } from "./reader-range";
 export interface OutlineItem { label: string; start: number; end: number; }
 const FILE_LIMIT = 25 * 1024 * 1024;
 const POLL_MS = 3000;
@@ -554,6 +554,9 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [failure, setFailure] = useState("");
   const [copied, setCopied] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findMessage, setFindMessage] = useState("");
+  const findId = useId(), findFocus = useRef(false);
   const [replace, setReplace] = useState<File | null>(null);
   const replaceInput = useRef<HTMLInputElement | null>(null);
   const replaceAttempt = useRef<{ file: File; revisionId: string } | null>(null);
@@ -579,6 +582,7 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   const readableWarning = useMemo(() => rev?.warningSummary ?? (textReady ? readableTextWarning(text) : null), [rev?.warningSummary, textReady, text]);
   const hasRange = sp !== null || ep !== null;
   const openingPassage = !textReady && !!activeRevision && ["pending", "readable", "readable_with_warnings"].includes(activeState) && !failure && !readFailure && !metaFailure;
+  useEffect(() => { setFindQuery(""); setFindMessage(""); }, [activeRevision]);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; metaSequence.current++; metaAbort.current?.abort(); };
@@ -633,13 +637,23 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
   }, [textReady, hasRange, text, rangeStart, rangeEnd]);
   useEffect(() => {
     if (!passage) return;
-    passageRef.current?.focus({ preventScroll: true });
-    passageRef.current?.scrollIntoView({ block: "start", inline: "nearest" });
+    if (!findFocus.current) passageRef.current?.focus({ preventScroll: true });
+    passageRef.current?.scrollIntoView({ block: findFocus.current ? "center" : "start", inline: "nearest" });
+    findFocus.current = false;
   }, [passage, activeRevision, location.key]);
+  function findPassage(backwards = false) {
+    if (!textReady) return;
+    const position = passage ? passage.before.length + (backwards ? 0 : passage.selected.length) : backwards ? text.length : 0;
+    const match = findReaderRange(text, findQuery, position, backwards);
+    setFindMessage(match ? "Match highlighted in the source." : "No matches in this revision.");
+    if (!match) return;
+    findFocus.current = true; setCopied(false);
+    setParams({ revisionId: activeRevision, start: String(match.start), end: String(match.end) });
+  }
   function copySelectionLink() {
     const pre = preRef.current;
     if (!pre || !activeRevision || !textReady) { setFailure("Open a readable revision before copying a passage link."); return; }
-    const sel = selectionBytes(pre, text);
+    const sel = selectionBytes(pre, text) ?? (passage ? { start: rangeStart, end: rangeEnd } : null);
     if (!sel) { setFailure("Select a passage in the text first, then copy its link."); return; }
     setFailure("");
     const next = new URLSearchParams(params);
@@ -712,6 +726,15 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
           {activeState === "pending" ? <p className="er-lib__hint" role="status">Converting…</p> : null}
           {activeState === "needs_conversion" ? <p className="er-lib__hint" role="note">The original is saved. Upload a readable Markdown file to read this source.</p> : null}
           {activeState === "failed" ? <p className="er-lib__error" role="alert">{rev?.error ?? source.error ?? "Conversion failed."}</p> : null}
+          <form className="er-card er-field er-lib__find" role="search" aria-label="Find in source" onSubmit={e => { e.preventDefault(); findPassage(); }}>
+            <label className="er-field__label" htmlFor={findId}>Find in source</label>
+            <input id={findId} type="search" value={findQuery} disabled={!textReady} maxLength={256} placeholder="Word, phrase or number" onChange={e => { setFindQuery(e.currentTarget.value); setFindMessage(""); }} />
+            <div className="er-lib__actions">
+              <button className="er-button er-button--text" type="button" aria-label="Previous match" title="Previous match" disabled={!textReady || !findQuery.trim()} onClick={() => findPassage(true)}><span aria-hidden="true">↑</span></button>
+              <button className="er-button er-button--tonal" type="submit" aria-label="Next match" title="Next match" disabled={!textReady || !findQuery.trim()}><span aria-hidden="true">↓</span></button>
+            </div>
+            <span className="er-lib__hint" role="status">{findMessage}</span>
+          </form>
           <pre className="er-card er-lib__text" ref={preRef} tabIndex={-1}>{passage ? <>{passage.before}<mark ref={passageRef} tabIndex={-1}>{passage.selected}</mark>{passage.after}</> : textReady ? text : ""}</pre>
         </div>
       </div>
