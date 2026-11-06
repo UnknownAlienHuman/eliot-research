@@ -504,6 +504,27 @@ describe("numbersSupported", () => {
     expect(numbersSupported("Value 1e-8", "Value 1e-7")).toBe(false);
   });
 
+  it("matches the retained ViT compute range without turning its endpoint negative", () => {
+    const quote = "ViT uses approximately 2 − 4× less compute to attain the same\nperformance (average over 5 datasets).";
+    expect(numbersSupported("ViT uses 2–4× less compute.", quote)).toBe(true);
+    const out = verifyClaims(quote, [blockFor(1, quote, quote)], [claim({ kind: "method", quote, block: 1,
+      statement: "ViT uses 2–4× less compute to attain the same performance (average over 5 datasets)." })]);
+    expect(out.dropped).toEqual([]);
+    expect(out.claims[0]).toMatchObject({ quote, start: 0, end: TE.encode(quote).byteLength });
+    expect(numbersSupported("−4", quote)).toBe(false);
+    expect(numbersSupported("2–6", quote)).toBe(false);
+  });
+
+  it.each(["2−4", "2 - 4", "2 − 4", "2\u00a0−\u20094"])("matches scalar endpoints across infix formatting: %s", range => {
+    expect(numbersSupported("2–4", range)).toBe(true);
+    expect(numbersSupported(range, "2–4")).toBe(true);
+    expect(numbersSupported("-4", range)).toBe(false);
+  });
+
+  it.each(["2 -4", "2 −4", "2\n− 4", "model2 − 4", "2e−4", "2 − −4"])("does not erase a unary, exponent or attached sign: %s", quote => {
+    expect(numbersSupported("4", quote)).toBe(false);
+  });
+
   it.each([
     ["50", "Training cost 0.50."],
     ["50", "Count 150."],
