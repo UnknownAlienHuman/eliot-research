@@ -164,7 +164,9 @@ its text preview, and Apply a new readable revision while retaining the original
    around that Clear action restores only the highlight, never a different revision.
 7. Move the project/source/import/reader UI features and replace legacy adapters with `src/shared/api.ts` +
    `src/web/api.ts`. Show filenames, readable states and human revision labels; keep immutable IDs and exact ranges in
-   links/API data, and conversion telemetry in eval output.
+   links/API data, and conversion telemetry in eval output. Source titles use the row width ahead of the secondary
+   Original action and expand for the open/focused row; the K1 Library browser journey checks scanning, keyboard
+   selection/navigation and immutable Reader versus latest-original identity at desktop/phone widths.
 8. Add block/range/URL-guard tests and `pnpm eval k1`.
 9. Add the owner-only PDF OCR path under `migrations/0010_source_ocr.sql` and IMPLEMENTATION §4: explicit
    create/upload/Start, serial pages with at most one call per page, selected model and bounded usage. Stop prevents

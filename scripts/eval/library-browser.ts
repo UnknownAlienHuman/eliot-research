@@ -1,7 +1,7 @@
 // Desktop/phone Add sources -> shared Library journey against the local Worker.
 // The shared-source GET is controlled for pagination races; POST attach and Reader GETs are real.
 import assert from 'node:assert/strict';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { chromium, expect } from '@playwright/test';
 import { assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 
@@ -33,6 +33,152 @@ try {
   assert.equal(sharedSource.conversionCalls, 0, 'Native text fixture must not call a converter.');
   const setupUnderstanding = await api(`/api/sources/${created.sourceId}/understanding?revisionId=${sharedSource.currentRevisionId}`);
   assert.equal(setupUnderstanding.state, 'none', 'Do not start understanding in browser fixture setup.');
+
+  // Regression: Original used to squeeze the title to 77px in a 235px Sources pane.
+  // Native fixtures retain real immutable Reader/original bytes; only list availability is controlled.
+  const scanProject = (await api('/api/projects', { title: 'Source title scanning' })).project.id;
+  const scanSources = [];
+  for (const title of [
+    'Atlas approved launch plan and operational handover for the November release',
+    'Atlas baseline review: исходные требования и результаты исследования за ноябрь',
+    'AtlasBaselineReleaseIdentifierWithoutWordBreaks0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  ]) {
+    const created = await api(`/api/projects/${scanProject}/sources/text`, { title, text: '# Source identity\n\n' + title + '\n' + crypto.randomUUID() });
+    let source;
+    await expect.poll(async () => {
+      source = (await api('/api/sources/' + created.sourceId)).source;
+      return source.readableState;
+    }).toBe('readable');
+    assert.equal(source.conversionCalls, 0);
+    scanSources.push(source);
+  }
+  const originalText = 'Latest original bytes ' + crypto.randomUUID();
+  const replacement = await api(`/api/projects/${scanProject}/sources/text`, {
+    sourceId: scanSources[0].id, title: scanSources[0].title, text: originalText,
+  });
+  await expect.poll(async () => (await api('/api/sources/' + scanSources[0].id)).source.currentRevisionId).toBe(replacement.revisionId);
+  const secondReplacement = await api(`/api/projects/${scanProject}/sources/text`, {
+    sourceId: scanSources[1].id, title: scanSources[1].title, text: 'Second latest original ' + crypto.randomUUID(),
+  });
+  await expect.poll(async () => (await api('/api/sources/' + scanSources[1].id)).source.currentRevisionId).toBe(secondReplacement.revisionId);
+  // A readable older head remains selectable while its latest replacement is pending/failed.
+  const scanRows = [
+    { ...scanSources[0], revisionId: replacement.revisionId, readableState: 'pending' },
+    { ...scanSources[1], revisionId: secondReplacement.revisionId, readableState: 'failed' },
+    scanSources[2],
+    { ...scanSources[2], id: crypto.randomUUID(), title: 'Pending source conversion', currentRevisionId: null, readableState: 'pending' },
+    { ...scanSources[2], id: crypto.randomUUID(), title: 'Failed source conversion', currentRevisionId: null, readableState: 'failed' },
+  ];
+  await writeFile('eval/out/k1/source-title-fixture.json', JSON.stringify({ scanProject, scanRows }));
+  const scanMeasurements = [];
+  for (const viewport of [{ width: 1212, height: 799 }, { width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    const context = await browser.newContext({ viewport });
+    await context.route('https://**', route => route.abort());
+    const page = await context.newPage();
+    const writes = [];
+    await page.route('**/api/**', route => {
+      if (!['GET', 'HEAD'].includes(route.request().method())) {
+        writes.push(route.request().url());
+        return route.abort('blockedbyclient');
+      }
+      if (new URL(route.request().url()).pathname === `/api/projects/${scanProject}/sources`) {
+        return route.fulfill({ json: { sources: scanRows, nextCursor: null } });
+      }
+      return route.fallback();
+    });
+    try {
+      const sourcesPath = `/p/${scanProject}/sources`;
+      await page.goto(origin + sourcesPath);
+      const rows = page.locator('.er-sources-pane__row');
+      await expect(rows).toHaveCount(5);
+      await page.evaluate(() => document.fonts.ready);
+      const title = index => rows.nth(index).locator('.er-sources-pane__row-title');
+      const checkbox = index => rows.nth(index).getByRole('checkbox', { includeHidden: true });
+      const original = rows.nth(0).getByRole('link', { name: 'Download original: ' + scanRows[0].title, exact: true });
+      await expect(title(0)).toHaveAccessibleName(scanRows[0].title);
+      await expect(checkbox(0)).toHaveAccessibleName('Include ' + scanRows[0].title + ' in the current source selection');
+      await expect(title(0)).toHaveAttribute('href', `/p/${scanProject}/source/${scanRows[0].id}?revisionId=${scanRows[0].currentRevisionId}`);
+      await expect(original).toHaveAttribute('href', `/api/revisions/${replacement.revisionId}/original`);
+      await expect(original).toHaveAttribute('download', '');
+      await expect(rows.nth(0)).toContainText('Latest version: Converting');
+      await expect(rows.nth(1)).toContainText('Latest version: Conversion failed');
+      await expect(checkbox(3)).toBeDisabled();
+      await expect(checkbox(4)).toBeDisabled();
+      await expect(rows.nth(3)).toContainText('Converting');
+      await expect(rows.nth(4)).toContainText('Conversion failed');
+      const geometry = await rows.nth(0).evaluate(row => {
+        const box = selector => { const r = row.querySelector(selector).getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, bottom: r.bottom }; };
+        return { pane: row.closest('.er-sources-pane').getBoundingClientRect().width,
+          title: box('.er-sources-pane__row-title'), checkbox: box('.er-sources-pane__checkbox'), original: box('.er-sources-pane__original') };
+      });
+      assert(geometry.title.width > geometry.pane * 0.65, 'Title must own most of the pane width.');
+      assert(geometry.original.y >= geometry.title.bottom, 'Original must not compete with the title.');
+      assert(geometry.checkbox.width >= 44 && geometry.checkbox.height >= 44 && geometry.original.height >= 44);
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await page.screenshot({ path: `eval/out/k1/source-titles-${viewport.width}.png` });
+      scanMeasurements.push({ viewport, ...geometry });
+      const pointerDownloadPromise = page.waitForEvent('download');
+      await original.click();
+      const pointerDownload = await pointerDownloadPromise;
+      assert.equal(await readFile(await pointerDownload.path(), 'utf8'), originalText);
+      await expect(page).toHaveURL(origin + sourcesPath);
+      await expect(checkbox(0)).toBeChecked();
+      // The label's entire target selects only, without opening Reader or starting a write.
+      await rows.nth(0).locator('.er-sources-pane__checkbox').click({ position: { x: 3, y: 3 } });
+      await expect(checkbox(0)).not.toBeChecked();
+      await expect(page).toHaveURL(origin + sourcesPath);
+      await checkbox(0).focus();
+      await page.keyboard.press('Tab');
+      await expect(title(0)).toBeFocused();
+      assert(await title(0).evaluate(el => el.scrollHeight <= el.clientHeight + 1), 'Focused title must be fully visible.');
+      assert.notEqual(await title(0).evaluate(el => getComputedStyle(el).outlineStyle), 'none');
+      await page.screenshot({ path: `eval/out/k1/source-titles-focused-${viewport.width}.png` });
+      const expandedHeight = (await title(0).boundingBox()).height;
+      await page.keyboard.press('Tab');
+      await expect(original).toBeFocused();
+      assert.equal((await title(0).boundingBox()).height, expandedHeight, 'Tab to Original must retain full-title geometry.');
+      await page.keyboard.press('Shift+Tab');
+      await expect(title(0)).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(origin + `/p/${scanProject}/source/${scanRows[0].id}?revisionId=${scanRows[0].currentRevisionId}`);
+      await expect(page.locator('.er-lib__text')).toContainText(scanRows[0].title);
+      await expect(title(0)).toHaveAttribute('aria-current', 'page');
+      await expect(checkbox(0)).not.toBeChecked();
+      if (viewport.width > 768) {
+        assert(await title(0).evaluate(el => el.scrollHeight <= el.clientHeight + 1), 'Open source remains expanded after Reader takes focus.');
+        await title(1).click();
+        await expect(title(1)).toHaveAttribute('aria-current', 'page');
+        await expect(title(0)).not.toHaveAttribute('aria-current', 'page');
+        await expect(page.locator('.er-lib__text')).toContainText(scanRows[1].title);
+        assert(await title(1).evaluate(el => el.scrollHeight <= el.clientHeight + 1), 'Active Cyrillic title must be fully visible.');
+        await page.screenshot({ path: `eval/out/k1/source-titles-reader-${viewport.width}.png` });
+        await page.goBack();
+        await expect(title(0)).toHaveAttribute('aria-current', 'page');
+        await expect(page.locator('.er-lib__text')).toContainText(scanRows[0].title);
+      }
+      await page.getByRole('navigation', { name: 'Primary', exact: true }).getByRole('link', { name: 'Sources', exact: true }).click();
+      await original.focus();
+      const downloadPromise = page.waitForEvent('download');
+      await page.keyboard.press('Enter');
+      const download = await downloadPromise;
+      assert.equal(download.url(), origin + `/api/revisions/${replacement.revisionId}/original`);
+      assert.equal(await readFile(await download.path(), 'utf8'), originalText);
+      await expect(page).toHaveURL(origin + sourcesPath);
+      await expect(checkbox(0)).not.toBeChecked();
+      // Container-width stress: no viewport breakpoint is needed for the secondary action to wrap.
+      if (viewport.width === 1212) {
+        await page.locator('.er-sources-pane').evaluate(el => { el.style.width = '192px'; });
+        await title(2).focus();
+        assert(await title(2).evaluate(el => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1));
+        assert(await page.locator('.er-sources-pane__scroll').evaluate(el => el.scrollWidth <= el.clientWidth));
+        scanMeasurements.push({ viewport, narrowPane: 192, title: await title(2).boundingBox() });
+        await page.screenshot({ path: 'eval/out/k1/source-titles-narrow-focused.png' });
+      }
+      assert.deepEqual(writes, [], 'Selection, Reader and original download must remain storage-only.');
+    } finally { await context.close(); }
+  }
+  await writeFile('eval/out/k1/source-title-geometry.json', JSON.stringify(scanMeasurements, null, 2));
+  console.log(JSON.stringify({ scope: 'K1_SOURCE_TITLE_SCANNING', measurements: scanMeasurements, newModelCalls: 0 }));
 
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     const targetTitle = 'Library target ' + viewport.width + ' ' + crypto.randomUUID();
