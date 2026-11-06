@@ -10,7 +10,7 @@ import { admitTurn } from "./cost";
 import { modelInputLimit, modelOutputLimit, requireAvailableModel } from "./models";
 import { chatModelMessages, estimateModelInput } from "./model-input";
 import type { ModelSpec } from "./models";
-import { modelFailure, resolveModelTransport } from "./model-transport";
+import { modelFailure, resolveModelTransport, safeEmptyCompletionLog } from "./model-transport";
 import { turnUsageProjection } from "./chat-usage";
 import { LibraryError } from "./library";
 import { readText } from "./read";
@@ -494,6 +494,10 @@ export class ChatAgent extends Agent<Env, ChatState> {
       if (!turn.answer.trim()) {
         turn.state = "failed";
         turn.error = streamError || `The model returned no answer text (finish: ${finishDetail}).`;
+        try {
+          const response = await Promise.resolve(result.response).catch(() => undefined);
+          console.warn("Chat empty completion", safeEmptyCompletionLog({ turnId: turn.turnId, model, finishReason: finish, response, usage }));
+        } catch { /* Diagnostics must never change the failed turn or its settlement. */ }
       }
     } catch (error) {
       const ownerStop = controller.signal.aborted && this.state.stopRequested;

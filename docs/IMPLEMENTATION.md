@@ -805,6 +805,14 @@ assembly is used for input estimation. A 2026-11-06 Crouton Alpha control return
 `system,user,user` in both streaming and non-streaming modes. Joining only those user parts returned the requested
 cited Atlas plan; restoring streaming and the original published output maximum also succeeded in one call.
 This is request formatting, not a model-specific fallback, changed source scope or permission to retry.
+Empty `stop` completions remain intermittent after this change; matching requests have also succeeded.
+Only an empty completed stream emits a best-effort diagnostic from existing SDK response metadata: turn UUID,
+selected route, normalized finish, bounded `gen-`/`chatcmpl-` response ID, matching response model, timestamp and numeric
+usage. Those ID prefixes follow OpenRouter's [generation](https://openrouter.ai/docs/api/api-reference/generations/get-generation)
+and [chat](https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request) examples, not an exhaustive
+ID contract; all other IDs are omitted with a presence flag. This retains no request body and reads no headers,
+response body, reasoning or provider metadata. Diagnostic failures do not change settlement. This is correlation
+instrumentation, not a proven cause or fix, and does not add a call, retry or response-stream consumer.
 
 Estimate the final instructions/messages JSON as UTF-8 bytes / 3 plus existing per-message and fixed framing overhead.
 Assembly and dispatch use the same estimate without copying the full source JSON. This is a heuristic, not a guaranteed

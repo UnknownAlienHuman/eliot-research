@@ -1,6 +1,6 @@
-import { streamText } from "ai";
+import { streamText, type LanguageModelUsage } from "ai";
 import { describe, expect, it, vi } from "vitest";
-import { resolveModelTransport } from "./model-transport";
+import { resolveModelTransport, safeEmptyCompletionLog } from "./model-transport";
 import { DEFAULT_MODEL, MODELS, modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, type ModelSpec } from "./models";
 import { chatModelMessages, estimateModelInput } from "./model-input";
 
@@ -140,5 +140,44 @@ describe.each([
       else expect(body[field]).toBe(expected);
       expect(model.maxOutputTokens).toBe(capacity);
     } finally { network.mockRestore(); }
+  });
+});
+
+
+describe("empty completion log projection", () => {
+  const base = { turnId: "aaaaaaaa-aaaa-4aaa-8aaa-000000000001", model: { id: "test-model", route: "gateway:openrouter/test-model" }, finishReason: "stop", usage: undefined };
+  it.each(["gen-1234567890", "gen-3bhGkxlo4XFrqiabUM7NDtwDzWwG", "chatcmpl-123"])("admits bounded opaque ID %s without claiming an exhaustive provider contract", (id) => {
+    expect(safeEmptyCompletionLog({ ...base, response: { id, modelId: "test-model", timestamp: new Date(1000) } }))
+      .toMatchObject({ responseId: id, responseIdPresent: true, responseModelId: "test-model", responseTimestamp: "1970-01-01T00:00:01.000Z" });
+  });
+  it.each(["INPUT_SECRET", "aitxt-generated", "gen-", "gen-SECRET\nINPUT", "gen-secret/key", "chatcmpl-<secret>", "gen-" + "x".repeat(125)])("omits unknown or malformed ID %s", (id) => {
+    const projection = safeEmptyCompletionLog({ ...base, response: { id } });
+    expect(projection.responseId).toBeNull(); expect(projection.responseIdPresent).toBe(true);
+    expect(JSON.stringify(projection)).not.toContain(id);
+  });
+  it.each(["INPUT_SECRET\nPRIVATE", "other-model"])("omits response model when selected ID contradicts its valid route", (id) => {
+    const projection = safeEmptyCompletionLog({ ...base, model: { ...base.model, id }, response: { modelId: id } });
+    expect(projection.modelRoute).toBe(base.model.route); expect(projection.responseModelId).toBeNull();
+    expect(JSON.stringify(projection)).not.toContain(id);
+  });
+  it("never reads private response fields or raw usage and rejects malformed scalar metadata", () => {
+    const forbidden = vi.fn(() => { throw new Error("PRIVATE_SECRET"); });
+    const response = { id: "INPUT_SECRET", modelId: "UPSTREAM_MODEL_SECRET", timestamp: new Date(NaN) };
+    for (const name of ["headers", "body", "messages", "reasoning", "providerMetadata"])
+      Object.defineProperty(response, name, { get: forbidden });
+    const usage = { inputTokens: -1, outputTokens: NaN, totalTokens: Infinity,
+      inputTokenDetails: { cacheReadTokens: "USAGE_SECRET" }, outputTokenDetails: { reasoningTokens: 1.5 } };
+    Object.defineProperty(usage, "raw", { get: forbidden });
+    const projection = safeEmptyCompletionLog({ ...base, response, usage: usage as unknown as LanguageModelUsage });
+    expect(projection).toMatchObject({ responseId: null, responseModelId: null, responseTimestamp: null, usagePresent: true,
+      usage: { inputTokens: null, cachedTokens: null, outputTokens: null, reasoningTokens: null, totalTokens: null } });
+    expect(forbidden).not.toHaveBeenCalled(); expect(JSON.stringify(projection)).not.toContain("SECRET");
+    expect(safeEmptyCompletionLog({ ...base, turnId: "TURN_SECRET", model: { id: "MODEL_SECRET", route: "ROUTE_SECRET" }, finishReason: "FINISH_SECRET", response: undefined }))
+      .toMatchObject({ turnId: null, modelRoute: null, finishReason: null, responseAvailable: false, responseIdPresent: false, responseId: null, usagePresent: false });
+  });
+  it.each([undefined, null, {}, { id: 123, timestamp: "TIMESTAMP_SECRET" }])("handles absent response metadata without inventing values", (response) => {
+    expect(safeEmptyCompletionLog({ ...base, response })).toMatchObject({ responseId: null, responseIdPresent: false,
+      responseModelId: null, responseTimestamp: null, usagePresent: false,
+      usage: { inputTokens: null, cachedTokens: null, outputTokens: null, reasoningTokens: null, totalTokens: null } });
   });
 });
