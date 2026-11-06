@@ -230,16 +230,23 @@ export async function proposePage(
   const now = Date.now();
   const bodyKey = "page/" + revisionId + "/body.md";
   const citationsKey = "page/" + revisionId + "/citations.json";
+  const createdKeys: string[] = [];
+  const discardCreated = async () => {
+    for (const key of createdKeys) await env.BUCKET.delete(key).catch(() => undefined);
+  };
   try {
     const bodyStored = await env.BUCKET.put(bodyKey, new TextEncoder().encode(body), {
       onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "text/markdown; charset=utf-8" },
     });
     if (!bodyStored) throw new Error("Proposal body key already exists.");
+    createdKeys.push(bodyKey);
     const citationsStored = await env.BUCKET.put(citationsKey, JSON.stringify(resolved.citations), {
       onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "application/json" },
     });
     if (!citationsStored) throw new Error("Proposal citations key already exists.");
+    createdKeys.push(citationsKey);
   } catch {
+    await discardCreated();
     throw proposalWriteUnavailable();
   }
   pageId ??= crypto.randomUUID();
@@ -257,6 +264,12 @@ export async function proposePage(
       ).bind(revisionId, pageId, revisionNo, "proposed", origin, actor.id, bodyKey, citationsKey, JSON.stringify(revisionIds), mutationId, base, now),
     ]);
   } catch (error) {
+    // A lost D1 reply may still have committed. Preserve bytes unless absence is proven.
+    let committed: { id: string } | null | undefined;
+    try {
+      committed = await env.DB.prepare("SELECT id FROM page_revision WHERE id=?").bind(revisionId).first<{ id: string }>();
+    } catch { committed = undefined; }
+    if (committed === null) await discardCreated();
     if (isMutationIdUniqueError(error)) {
       let winner: { pageId: string; revisionId: string } | null;
       try { winner = await mutationWinner(env, input.projectId, mutationId); }

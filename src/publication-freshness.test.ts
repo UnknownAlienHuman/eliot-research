@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { Actor } from "./auth";
 import { getPage, listPages, PAGE_FRESHNESS_SQL, saveAnswer } from "./pages";
-import { decideProposal } from "./proposals";
+import { decideProposal, proposePage } from "./proposals";
 import { commitRevision } from "./ingest-completion";
 import { applyOcrJob } from "./ocr";
 
@@ -246,5 +246,67 @@ describe("Studio stable page inventory", () => {
   it.each(["", "invalid", "[]", "null", '["project",null,-1,"id"]', '["project",null,1.5,"id"]', '["project",null,1,""]', "x".repeat(513)])("rejects invalid page cursor %s", async (cursor) => {
     const h = fixture(); try { await expect(listPages(h.env, owner, { projectId: "project", cursor })).rejects.toMatchObject({ code: "invalid", status: 400 }); }
     finally { h.db.close(); }
+  });
+});
+
+
+describe("proposal write cleanup", () => {
+  async function setup() {
+    const h = fixture(), revisionId = crypto.randomUUID();
+    h.db.prepare("INSERT INTO source_revision(id,source_id,revision_no,original_key,readable_state,readable_size,created_by,created_at) VALUES(?,'source',2,'original','readable',9,'owner',2)").run(revisionId);
+    await h.env.BUCKET.put(`source/${revisionId}/text.md`, "Evidence.");
+    await h.env.BUCKET.put(`source/${revisionId}/blocks.json`, JSON.stringify([{ id: 1, type: "paragraph", start: 0, end: 9, heading: null }]));
+    const input = { projectId: "project", title: "Proposal", body: `Evidence. [R${revisionId}:1]`, revisionIds: [revisionId], mutationId: crypto.randomUUID() };
+    return { ...h, input, send: () => proposePage(h.env, owner, input), pageKeys: () => [...h.objects.keys()].filter(key => key.startsWith("page/")) };
+  }
+  it.each(["citations", "batch"])("removes fresh objects after a known %s failure", async (fault) => {
+    const h = await setup();
+    try {
+      if (fault === "batch") h.control.failBatch = true;
+      else { const put = h.bucketPut.getMockImplementation(); if (!put) throw new Error("Missing fixture put"); h.bucketPut.mockImplementation(async (...args) => { if (args[0].endsWith("citations.json")) throw new Error("R2 unavailable"); return put(...args); }); }
+      await expect(h.send()).rejects.toMatchObject({ status: 503 });
+      expect(h.pageKeys()).toEqual([]);
+      expect(h.db.prepare("SELECT COUNT(*) AS n FROM page_revision").get()?.n).toBe(0);
+    } finally { h.db.close(); }
+  });
+  it("does not delete an existing object when conditional create loses", async () => {
+    const h = await setup();
+    try {
+      const put = h.bucketPut.getMockImplementation(); if (!put) throw new Error("Missing fixture put");
+      h.bucketPut.mockImplementation(async (...args) => {
+        if (args[0].endsWith("citations.json")) h.objects.set(args[0], { bytes: new TextEncoder().encode("existing"), etag: "existing", size: 8 });
+        return put(...args);
+      });
+      await expect(h.send()).rejects.toMatchObject({ status: 503 });
+      expect(h.pageKeys()).toHaveLength(1);
+      expect(h.pageKeys()[0]).toMatch(/citations.json$/);
+      expect(new TextDecoder().decode(h.objects.get(h.pageKeys()[0] ?? "")?.bytes)).toBe("existing");
+    } finally { h.db.close(); }
+  });
+  it("cleans a duplicate mutation loser while leaving the winner readable", async () => {
+    const h = await setup();
+    try {
+      h.control.beforeBatch = async () => { await h.send(); };
+      const result = await h.send();
+      expect(result.body).toBe(h.input.body);
+      expect(h.pageKeys().sort()).toEqual([`page/${result.revisionId}/body.md`, `page/${result.revisionId}/citations.json`]);
+    } finally { h.db.close(); }
+  });
+  it.each(["committed", "unknown"])("preserves objects when D1 outcome is %s", async (outcome) => {
+    const h = await setup();
+    try {
+      if (outcome === "committed") h.control.loseReply = true;
+      else {
+        h.control.failBatch = true;
+        const prepare = h.env.DB.prepare.bind(h.env.DB);
+        vi.spyOn(h.env.DB, "prepare").mockImplementation(sql => {
+          if (sql === "SELECT id FROM page_revision WHERE id=?") throw new Error("D1 read unavailable");
+          return prepare(sql);
+        });
+      }
+      await expect(h.send()).rejects.toMatchObject({ status: 503 });
+      expect(h.pageKeys()).toHaveLength(2);
+      if (outcome === "committed") expect((await h.send()).body).toBe(h.input.body);
+    } finally { h.db.close(); }
   });
 });
