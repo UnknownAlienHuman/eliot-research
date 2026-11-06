@@ -35,7 +35,7 @@ for (let index = 0; index < 54; index++) await api('/api/projects/' + historyPro
 const browser = await chromium.launch();
 let interceptedTurns = 0, interceptedUploads = 0, nativeUploads = 0, unexpectedTurns = 0, unexpectedUploads = 0;
 try {
-  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  for (const viewport of [{ width: 1180, height: 757 }, { width: 390, height: 844 }]) {
     const context = await browser.newContext({ viewport });
     await context.route('https://**', route => route.abort());
     const page = await context.newPage();
@@ -247,16 +247,15 @@ try {
     await expect(historyLinks).toHaveCount(50); await expect(page.getByText('Abandoned history page')).toHaveCount(0);
     await page.goto(origin + chatPath(chats[0]));
     const controls = page.getByRole('button', { name: /^Sources and model:/ });
-    if (viewport.width < 768) {
-      await expect(controls).toHaveAttribute('aria-expanded', 'false');
-      await expect(page.getByRole('combobox', { name: 'Model: provider', exact: true })).toBeHidden();
-      await controls.focus(); await page.keyboard.press('Enter');
-      await expect(controls).toHaveAttribute('aria-expanded', 'true');
-      await expect(page.getByRole('combobox', { name: 'Model: provider', exact: true })).toBeVisible();
-      await question.fill('Draft before collapsing controls'); await controls.click();
-      await expect(controls).toHaveAttribute('aria-expanded', 'false');
-      await expect(question).toHaveValue('Draft before collapsing controls');
-    } else await expect(controls).toBeHidden();
+    await expect(controls).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByRole('combobox', { name: 'Model: provider', exact: true })).toBeHidden();
+    await controls.focus(); await page.keyboard.press('Enter');
+    await expect(controls).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByRole('combobox', { name: 'Model: provider', exact: true })).toBeVisible();
+    await question.fill('Draft before collapsing controls'); await controls.click();
+    await expect(controls).toHaveAttribute('aria-expanded', 'false');
+    await expect(controls).toBeFocused();
+    await expect(question).toHaveValue('Draft before collapsing controls');
     await question.fill('A original'); await expect(send).toBeEnabled();
     let pending = await hold(turnsUrl(chats[0])); await send.click(); await pending.waiting; interceptedTurns++;
     assert.equal(pending.body().question, 'A original');

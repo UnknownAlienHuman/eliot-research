@@ -320,7 +320,17 @@
 }
 
 .er-chat__options, .er-chat__options-controls { display: contents; }
-.er-chat__options > .er-chat__options-toggle { display: none; }
+.er-chat__options > .er-chat__options-toggle {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: space-between;
+  gap: var(--eliot-space-gutter);
+  min-inline-size: 0;
+}
+.er-chat__options-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.er-chat__options[data-expanded="false"] :is(.er-chat__scope, .er-models__label, .er-model-picker__compact) { display: none; }
+.er-chat__options[data-expanded="false"] :is(.er-chat__model, .er-models__row, .er-model-picker) { display: contents; }
+.er-chat__model :is(.er-status, .er-model-picker__warnings) { grid-column: 1 / -1; }
 .er-chat__scope { grid-column: 1 / -1; }
 
 .er-chat__asklabel {
@@ -334,6 +344,7 @@
 
 .er-chat__composer textarea {
   inline-size: 100%;
+  block-size: calc(var(--eliot-size-touch-target) + var(--eliot-space-block-control));
   min-block-size: var(--eliot-size-touch-target);
   max-block-size: max(var(--eliot-size-touch-target), min(calc(var(--eliot-size-touch-target) * 3), 25dvh));
 }
@@ -403,18 +414,6 @@
 }
 
 @media (max-width: 48rem) {
-  .er-chat__options > .er-chat__options-toggle {
-    display: flex;
-    grid-column: 1 / -1;
-    justify-content: space-between;
-    gap: var(--eliot-space-gutter);
-    min-inline-size: 0;
-  }
-  .er-chat__options-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .er-chat__options[data-expanded="false"] :is(.er-chat__scope, .er-models__label, .er-model-picker__compact) { display: none; }
-  .er-chat__options[data-expanded="false"] :is(.er-chat__model, .er-models__row, .er-model-picker) { display: contents; }
-  .er-chat__model :is(.er-status, .er-model-picker__warnings) { grid-column: 1 / -1; }
-
   .er-chat__head {
     align-items: flex-start;
     flex-wrap: wrap;
@@ -422,9 +421,5 @@
 
   .er-chat__head-actions {
     margin-inline-start: auto;
-  }
-
-  .er-chat__composer textarea {
-    block-size: calc(var(--eliot-size-touch-target) + var(--eliot-space-block-control));
   }
 }

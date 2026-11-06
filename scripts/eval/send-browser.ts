@@ -140,7 +140,7 @@ try {
     await expect(question).toHaveValue('');
     await question.fill('Model choice changes the request.');
     const inherited = await submit('lost');
-    if (viewport.width <= 768) await page.getByRole('button', { name: /^Sources and model:/ }).click();
+    await page.getByRole('button', { name: /^Sources and model:/ }).click();
     await page.getByRole('combobox', { name: 'Model: provider', exact: true }).selectOption('send-replay-synthetic');
     await page.getByRole('combobox', { name: 'Model', exact: true }).selectOption(alternateModel);
     const changedModel = await submit('ack');
@@ -179,7 +179,7 @@ try {
     // stored a pre-model rejection, then replay through the same first-chat target.
     const createsBeforeNative = creates;
     await page.goto(origin + chatPath());
-    if (viewport.width <= 768) await page.getByRole('button', { name: /^Sources and model:/ }).click();
+    await page.getByRole('button', { name: /^Sources and model:/ }).click();
     await page.getByRole('combobox', { name: 'Model: provider', exact: true }).selectOption('send-replay-synthetic');
     await page.getByRole('combobox', { name: 'Model', exact: true }).selectOption(missingModel);
     await question.fill('Native stored rejection with a lost acknowledgement.');
@@ -251,7 +251,7 @@ try {
     assert.deepEqual({ creates, turns: requests.length }, writesBeforeReload);
 
     await page.goto(origin + chatPath());
-    if (viewport.width <= 768) await page.getByRole('button', { name: /^Sources and model:/ }).click();
+    await page.getByRole('button', { name: /^Sources and model:/ }).click();
     await page.getByRole('combobox', { name: 'Model: provider', exact: true }).selectOption('send-replay-synthetic');
     await page.getByRole('combobox', { name: 'Model', exact: true }).selectOption(missingModel);
     await question.fill('Read a committed result after lost reply and reload ' + viewport.width);
