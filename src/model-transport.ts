@@ -458,6 +458,40 @@ function checkStatusCode(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 100 && value <= 599 ? value : undefined;
 }
 
+// Empty-completion diagnostics only. The pinned SDK accepts arbitrary response IDs;
+// these prefixes occur in OpenRouter's generation/chat examples, not an exhaustive
+// provider contract. Unknown formats (including SDK-generated IDs) stay redacted.
+export function safeEmptyCompletionLog(input: {
+  turnId: string; model: Pick<ModelSpec, "id" | "route">; finishReason: unknown;
+  response: unknown; usage: LanguageModelUsage | undefined;
+}) {
+  const response = input.response as { id?: unknown; modelId?: unknown; timestamp?: unknown } | null | undefined;
+  const id = response?.id, timestamp = response?.timestamp;
+  const modelRoute = /^(?:gateway:[a-z0-9][a-z0-9-]{0,63}\/|workers-ai:)[A-Za-z0-9@][A-Za-z0-9@._:/+-]{0,255}$/.test(input.model.route)
+    ? input.model.route : null;
+  const selectedId = modelRoute?.startsWith("gateway:") ? modelRoute.slice(modelRoute.indexOf("/") + 1) : modelRoute?.slice("workers-ai:".length);
+  const timestampMs = timestamp instanceof Date ? Date.prototype.getTime.call(timestamp) : NaN;
+  return {
+    turnId: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.turnId) ? input.turnId : null,
+    modelRoute,
+    finishReason: typeof input.finishReason === "string" && ["stop", "length", "content-filter", "tool-calls", "error", "other", "interrupted"].includes(input.finishReason)
+      ? input.finishReason : null,
+    responseAvailable: response !== null && typeof response === "object",
+    responseIdPresent: typeof id === "string" && id.length > 0,
+    responseId: typeof id === "string" && id.length <= 128 && /^(?:gen|chatcmpl)-[A-Za-z0-9][A-Za-z0-9-]*$/.test(id) ? id : null,
+    responseModelId: selectedId === input.model.id && response?.modelId === selectedId ? selectedId : null,
+    responseTimestamp: Number.isFinite(timestampMs) ? new Date(timestampMs).toISOString() : null,
+    usagePresent: input.usage !== undefined && input.usage !== null,
+    usage: {
+      inputTokens: count(input.usage?.inputTokens) ?? null,
+      cachedTokens: count(input.usage?.inputTokenDetails?.cacheReadTokens) ?? null,
+      outputTokens: count(input.usage?.outputTokens) ?? null,
+      reasoningTokens: count(input.usage?.outputTokenDetails?.reasoningTokens) ?? null,
+      totalTokens: count(input.usage?.totalTokens) ?? null,
+    },
+  };
+}
+
 // Shared projection for operator logs. Keeps only a validated HTTP status;
 // provider messages, bodies, codes and request data stay private. No retry is
 // started from this projection; callers surface the stored message as-is.

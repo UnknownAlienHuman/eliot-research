@@ -2074,3 +2074,98 @@ describe("chat-stream K2 wire regression", () => {
 
 });
 
+
+
+describe("empty completion diagnostics", () => {
+  const turnId = "aaaaaaaa-aaaa-4aaa-8aaa-000000000099";
+  const input = { projectId, chatId, turnId, question: "INPUT_SECRET", scopeMode: "explicit" as const,
+    sourceIds: ["s1"], model: "gateway:openrouter/test-model" };
+  it("logs only safe existing SDK metadata after an empty stop and preserves failed settlement", async () => {
+    const h = makeHarness("SOURCE_SECRET", "INSTRUCTIONS_SECRET");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network"));
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([JSON.stringify({ ...JSON.parse(chunk({ reasoning_content: "REASONING_SECRET" }, "stop", {
+        prompt_tokens: 8, completion_tokens: 3, total_tokens: 11, completion_tokens_details: { reasoning_tokens: 3 },
+      })), id: "gen-1234567890", model: "test-model", created: 1 })]);
+      const turn = requireTurn(await h.agent.submitTurn(input, true));
+      expect(turn).toMatchObject({ state: "failed", answer: "", error: "The model returned no answer text (finish: stop).",
+        inputTokens: 8, outputTokens: 3 });
+      expect(h.d1.prepare("SELECT state,error FROM chat_turn WHERE turn_id=?").get(turnId))
+        .toMatchObject({ state: "failed", error: turn.error });
+      expect(warn).toHaveBeenCalledExactlyOnceWith("Chat empty completion", {
+        turnId, modelRoute: input.model, finishReason: "stop", responseAvailable: true, responseIdPresent: true,
+        responseId: "gen-1234567890", responseModelId: "test-model", responseTimestamp: "1970-01-01T00:00:01.000Z",
+        usagePresent: true, usage: { inputTokens: 8, cachedTokens: null, outputTokens: 3, reasoningTokens: 3, totalTokens: 11 },
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("SECRET");
+      const options = vi.mocked(ai.streamText).mock.calls.at(-1)?.[0];
+      expect(options).not.toHaveProperty("include");
+      expect(options?.maxRetries).toBe(0); expect(fetchCalls).toBe(1); expect(network).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); network.mockRestore(); h.db.close(); h.d1.close(); }
+  });
+  it("does not read diagnostic metadata or log for a healthy answer", async () => {
+    const h = makeHarness();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const metadataRead = vi.fn(() => { throw new Error("METADATA_SECRET"); });
+    const original = vi.mocked(ai.streamText).getMockImplementation();
+    if (!original) throw new Error("Missing real SDK mock");
+    vi.mocked(ai.streamText).mockImplementationOnce((options) => {
+      const result = original(options); Object.defineProperty(result, "response", { get: metadataRead }); return result;
+    });
+    try {
+      await h.agent.onStart(); nextSSE = sse([chunk({ content: "Supported [S1:1]." }, "stop")]);
+      const turn = requireTurn(await h.agent.submitTurn(input, true));
+      expect(turn).toMatchObject({ state: "completed", answer: "Supported [S1:1].", error: null });
+      expect(metadataRead).not.toHaveBeenCalled(); expect(warn).not.toHaveBeenCalled(); expect(fetchCalls).toBe(1);
+    } finally { warn.mockRestore(); h.db.close(); h.d1.close(); }
+  });
+  it.each(["missing", "rejected", "throwing", "log-failure"])("keeps failed settlement when diagnostics are %s", async (failure) => {
+    const h = makeHarness();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => { if (failure === "log-failure") throw new Error("LOG_SECRET"); });
+    const original = vi.mocked(ai.streamText).getMockImplementation();
+    if (!original) throw new Error("Missing real SDK mock");
+    vi.mocked(ai.streamText).mockImplementationOnce((options) => {
+      const result = original(options);
+      if (failure !== "log-failure") Object.defineProperty(result, "response", { get: () => {
+        if (failure === "throwing") throw new Error("GETTER_SECRET");
+        return failure === "rejected" ? Promise.reject(new Error("REJECTED_SECRET")) : Promise.resolve(undefined);
+      } });
+      return result;
+    });
+    try {
+      await h.agent.onStart(); nextSSE = sse([chunk({}, "stop")]);
+      const turn = requireTurn(await h.agent.submitTurn(input, true));
+      expect(turn).toMatchObject({ state: "failed", answer: "", error: "The model returned no answer text (finish: stop).",
+        inputTokens: null, cachedTokens: null, outputTokens: null });
+      expect(turn.settlementPending).toBeUndefined(); expect(h.agent.state.active).toBeNull();
+      expect(h.d1.prepare("SELECT state,error FROM chat_turn WHERE turn_id=?").get(turnId)).toMatchObject({ state: "failed", error: turn.error });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("SECRET"); expect(fetchCalls).toBe(1);
+      if (failure === "missing" || failure === "rejected") expect(warn.mock.calls[0]?.[1])
+        .toMatchObject({ responseAvailable: false, responseId: null, responseIdPresent: false });
+    } finally { warn.mockRestore(); h.db.close(); h.d1.close(); }
+  });
+  it("does not leak an arbitrary provider ID, model name or private response fields", async () => {
+    const h = makeHarness("SOURCE_SECRET", "INSTRUCTIONS_SECRET");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const forbidden = vi.fn(() => { throw new Error("PRIVATE_SECRET"); });
+    const original = vi.mocked(ai.streamText).getMockImplementation();
+    if (!original) throw new Error("Missing real SDK mock");
+    vi.mocked(ai.streamText).mockImplementationOnce((options) => {
+      const result = original(options);
+      const response = { id: "gen-INPUT_SECRET\nsecret", modelId: "MODEL_SECRET", timestamp: new Date(NaN) };
+      for (const name of ["headers", "body", "messages", "reasoning", "providerMetadata"]) Object.defineProperty(response, name, { get: forbidden });
+      Object.defineProperty(result, "response", { get: () => Promise.resolve(response) });
+      Object.defineProperty(result, "request", { get: forbidden });
+      return result;
+    });
+    try {
+      await h.agent.onStart(); nextSSE = sse([chunk({ reasoning_content: "REASONING_SECRET" }, "stop")]);
+      const turn = requireTurn(await h.agent.submitTurn(input, true));
+      expect(turn.state).toBe("failed"); expect(forbidden).not.toHaveBeenCalled();
+      expect(warn.mock.calls[0]?.[1]).toMatchObject({ responseId: null, responseIdPresent: true, responseModelId: null, responseTimestamp: null });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("SECRET"); expect(fetchCalls).toBe(1);
+    } finally { warn.mockRestore(); h.db.close(); h.d1.close(); }
+  });
+});
