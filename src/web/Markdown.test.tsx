@@ -16,6 +16,22 @@ function render(text: string, refs: readonly MarkdownReference[] = references) {
 }
 
 describe('Markdown citation rendering', () => {
+  it.each(['chat', 'saved'])('keeps %s citations visible after escaped literal backticks', (kind) => {
+    const revisionId = '11111111-1111-4111-8111-111111111111';
+    const text = String.raw`The \` delimiter is literal [S1:14], as is this \` delimiter.`;
+    const resolved = resolveCitations(text, [{ sourceId: 's1', revisionId, title: 'Paper A', alias: 'S1',
+      blocks: [{ id: 14, type: 'paragraph', start: 42, end: 87, heading: null }] }]);
+    const answer = kind === 'saved' ? persistentResolvedAnswer(resolved.text, resolved.citations) : resolved;
+    const refs = answer.citations.map(citation => ({ text: citation.label,
+      href: citationHref('p1', citation), label: citationLabel(citation) }));
+    const html = render(answer.text, refs);
+    expect(html).not.toContain('<code>');
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(1);
+    expect(html).toContain(`revisionId=${revisionId}&amp;start=42&amp;end=87`);
+    expect(answer.citations).toHaveLength(1);
+    expect(resolved.text).toBe(text);
+  });
+
   it.each(['.er-citation--inline', 'a:not(.er-citation--inline)'])(
     'preserves focused %s across snapshot and streaming rerenders', async (selector) => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });

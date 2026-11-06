@@ -435,6 +435,9 @@ added, and stored turn states are never regraded.
 
 `code-ranges.ts` owns the supported top-level fence/inline ranges for citation and distillation checks. Matching
 backtick runs stay outside fences; an unmatched run remains prose and does not hide later independent spans.
+Outside inline code, escaped backticks remain prose; paired backslashes leave the following backtick unescaped.
+Only the first backtick of an escaped run is literal. Inside a code span, a backslash does not escape the closing run.
+The scanner agrees with Markdown rendering, so prose citations are resolved and persisted rather than silently hidden.
 Code bytes remain literal. Reference authority stays with each caller, using its existing frozen labels.
 
 Quote verification reuses one local canonical byte buffer, including across label resolution and verification in each

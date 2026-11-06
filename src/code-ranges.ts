@@ -44,6 +44,9 @@ export function inlineCodeRanges(text: string, fences: readonly CodeRange[]): Co
     while ((fences[fenceIndex]?.end ?? Infinity) <= i) fenceIndex++;
     const fence = fences[fenceIndex];
     if (fence !== undefined && i >= fence.start) { i = fence.end; continue; }
+    // Outside code, a backslash escapes the next character (including just
+    // the first tick of a run). Inside code, backslashes remain literal.
+    if (text[i] === "\\") { i += 2; continue; }
     if (text[i] !== "`") { i += 1; continue; }
     let openLength = 1;
     while (text[i + openLength] === "`") openLength += 1;

@@ -264,6 +264,7 @@ Adjacent user input parts share one message without changing their text; assista
 keep their boundaries. The same message assembly governs context estimation and the single model dispatch.
 Markdown reference definitions cannot redirect exact registered citation tokens in chat or saved answers, including
 adjacent tokens parsed as one link; ordinary explicit links and unregistered labels retain their Markdown behavior.
+Escaped literal backticks do not hide prose citations from resolution or Save; real inline-code labels remain literal.
 Groups of fully specified labels may normalize to separate inline references after every member passes the same
 frozen-scope validation; unknown identities and shorthand remain failures.
 Inline citations use compact passage numbers; full titles remain available to assistive technology and on hover.
