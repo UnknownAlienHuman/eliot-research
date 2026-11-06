@@ -187,6 +187,9 @@ Objects are immutable. Write R2 first, then the D1 pointer. Advance current/head
 stays readable with a visible conflict warning and never replaces the newer head. Retrying a page Save with the same
 mutation UUID returns its already committed winner. Old revisions remain readable for old citations. Use UUIDs and Unix milliseconds. Do not add
 a generic effects ledger; each operation stores its own model route, usage and estimate.
+Proposal write failures discard only objects successfully created by that attempt. After a D1 failure, cleanup first
+checks that its revision did not commit; an unreadable commit status preserves the objects. Conditional-create
+collisions, committed revisions, rejected proposals and retained history are never deleted by this cleanup.
 
 `POST /api/projects` accepts an optional caller UUID. Repeating it with the same trimmed title and effective description
 returns the active project without updating it; changed inputs or an archived/renamed collision return 409. New and

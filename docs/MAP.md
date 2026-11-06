@@ -456,6 +456,7 @@ page that the owner can accept or reject.
    K4 eval rejects cross-application owner assertions and retains the agent proposal/owner-acceptance checks.
    Catalogue refresh and source-understanding tools use the existing owner-authorized functions; agent actors cannot invoke these side effects.
 4. Move the proposals inbox and add `pnpm eval k4` using a real MCP client.
+   Failed proposal writes clean up confirmed fresh orphan objects; committed or uncertain D1 outcomes retain bytes.
    Opening a proposal citation releases the review dialog and focuses its exact source passage; reopening review
    retains the selected draft. The K1 browser journey covers both inline and listed citations without accepting it.
 
