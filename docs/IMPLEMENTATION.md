@@ -1362,7 +1362,9 @@ semantics and feature styles keep only their layout or distinct variants. The la
 reduced-motion and forced-colour queries remain accessibility preferences. Appearance is selected once in the header.
 The chat composer stays visible at the bottom of the reading pane while earlier answers scroll.
 Opening a saved chat first shows its latest messages after history and the pane are ready. This initial jump runs
-once per chat, not on Retry, reconnect or Reader/Back. Reading older messages stays undisturbed by later frames;
+once per chat, not on Retry, reconnect or Reader/Back. While the reader remains at the bottom, viewport and turn-list
+resizes keep the latest message attached there, including late fonts and catalogue notices. Scrolling away or explicitly
+loading earlier messages or hiding Chat for Reader releases that attachment. Reading older messages stays undisturbed by later frames;
 a keyboard-accessible Latest action in the existing composer controls row returns to the end and focuses the last turn.
 No inference or additional history read is triggered by scrolling. Answer details show
 cited passages; token counts, timings and context/verification counters stay in API/eval diagnostics. Library and

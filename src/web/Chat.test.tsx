@@ -30,7 +30,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.stubGlobal('ResizeObserver', class {
     constructor(private callback: (entries: unknown[]) => void) {}
-    observe() { this.callback([{ contentRect: { width: 800, height: 600 } }]); }
+    observe(target: Element) { this.callback([{ target, contentRect: { width: 800, height: 600 } }]); }
     disconnect() {}
   });
   vi.stubGlobal('WebSocket', class { close() {} });
@@ -554,8 +554,8 @@ describe('Chat snapshot source selection', () => {
 // Regression for the live audit: saved chats opened at their oldest loaded turn.
 // These controlled scroll metrics test lifecycle ordering, not browser geometry.
 describe('Saved chat reading position', () => {
-  let container: HTMLDivElement, top: number, height: number, visible: boolean;
-  let resize: (entries: Array<{ contentRect: { width: number; height: number } }>) => void;
+  let container: HTMLDivElement, top: number, height: number, viewportHeight: number, visible: boolean;
+  let resize: (entries: Array<{ target: Element; contentRect: { width: number; height: number } }>) => void;
   let reply: (response: Response) => void;
   let message: (event: { data: string }) => void;
   const snapshot = () => ({ turns: [1, 2, 3].map(id => ({ ...turn('t' + id), createdAt: id, historyVersion: 1 })),
@@ -566,14 +566,14 @@ describe('Saved chat reading position', () => {
     container.scrollTop = value; container.dispatchEvent(new Event('scroll'));
   }); };
   const show = async (value: boolean) => { await act(async () => {
-    visible = value; resize([{ contentRect: { width: value ? 800 : 0, height: value ? 200 : 0 } }]);
+    visible = value; resize([{ target: container, contentRect: { width: value ? 800 : 0, height: value ? 200 : 0 } }]);
   }); };
   const latest = () => host.querySelector<HTMLButtonElement>('[aria-label="Jump to latest message"]');
   beforeEach(async () => {
-    visible = true; top = 0; height = 1200;
+    visible = true; top = 0; height = 1200; viewportHeight = 200;
     vi.stubGlobal('ResizeObserver', class {
       constructor(callback: typeof resize) { resize = callback; }
-      observe() { resize([{ contentRect: { width: 800, height: 200 } }]); }
+      observe(target: Element) { resize([{ target, contentRect: { width: 800, height: 200 } }]); }
       disconnect() {}
     });
     vi.stubGlobal('WebSocket', class {
@@ -600,8 +600,8 @@ describe('Saved chat reading position', () => {
     if (!conversation) throw new Error('Missing conversation');
     container = conversation;
     Object.defineProperties(container, {
-      clientHeight: { get: () => visible ? 200 : 0 }, scrollHeight: { get: () => height },
-      scrollTop: { get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, height - 200)); } },
+      clientHeight: { get: () => visible ? viewportHeight : 0 }, scrollHeight: { get: () => height },
+      scrollTop: { get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, height - viewportHeight)); } },
     });
   });
   it.each(['HTTP first', 'socket first'])('opens latest once when %s, without late head/reconnect jumps', async order => {
@@ -624,6 +624,51 @@ describe('Saved chat reading position', () => {
     await act(async () => { await router.navigate(-1); });
     await show(true);
     expect(top).toBe(325); expect(latest()).not.toBeNull();
+  });
+  it('keeps the initial bottom aligned when asynchronous controls shrink the viewport', async () => {
+    await http(); expect(top).toBe(1000);
+    viewportHeight = 180;
+    await show(true);
+    expect(top).toBe(1020); expect(latest()).toBeNull();
+  });
+  it('preserves deliberate reading when asynchronous controls shrink the viewport', async () => {
+    await http(); await scroll(325); viewportHeight = 180;
+    await show(true);
+    expect(top).toBe(325); expect(latest()).not.toBeNull();
+  });
+  it('keeps the bottom aligned for late text reflow but leaves an older reader in place', async () => {
+    await http(); height = 1220;
+    const list = host.querySelector('.er-chat__turns');
+    if (!list) throw new Error('Missing turn list');
+    await act(async () => resize([{ target: list, contentRect: { width: 800, height } }]));
+    expect(top).toBe(1020); expect(latest()).toBeNull();
+    await scroll(325); height = 1400;
+    await act(async () => resize([{ target: list, contentRect: { width: 800, height } }]));
+    expect(top).toBe(325); expect(latest()).not.toBeNull();
+  });
+  it('does not mistake a queued scroll after reflow for the reader moving away', async () => {
+    await http(); height = 1220;
+    await act(async () => container.dispatchEvent(new Event('scroll')));
+    await show(true);
+    expect(top).toBe(1020); expect(latest()).toBeNull();
+  });
+  it('honors an upward reading gesture before the resize observer settles new geometry', async () => {
+    await http(); viewportHeight = 180;
+    await scroll(325); await show(true);
+    expect(top).toBe(325); expect(latest()).not.toBeNull();
+  });
+  it('recognizes later manual scrolling when content outside the observed list changes height', async () => {
+    await http(); height = 1220;
+    await act(async () => container.dispatchEvent(new Event('scroll')));
+    await scroll(325);
+    await show(true);
+    expect(top).toBe(325); expect(latest()).not.toBeNull();
+  });
+  it('retains Reader/Back position even when hidden output grows after leaving the bottom', async () => {
+    await http(); expect(top).toBe(1000);
+    await show(false); height = 1800; await socketHead();
+    await show(true);
+    expect(top).toBe(1000); expect(latest()).not.toBeNull();
   });
   it('starts another chat at its latest turn instead of carrying over the previous reading position', async () => {
     await http(); await scroll(325);

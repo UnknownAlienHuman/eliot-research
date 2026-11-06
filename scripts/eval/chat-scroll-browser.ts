@@ -73,6 +73,15 @@ try {
       if (route.request().method() === 'GET') return route.fallback();
       writes.push(route.request().url()); return route.abort('blockedbyclient');
     });
+    const gate = () => {
+      let release: () => void = () => {};
+      const waiting = new Promise<void>(resolve => { release = resolve; });
+      return { waiting, release };
+    };
+    let modelsGate = gate();
+    const fontsGate = gate();
+    await page.route(origin + '/api/models', async route => { await modelsGate.waiting; return route.fallback(); });
+    await page.route('**/fonts/*.woff2', async route => { await fontsGate.waiting; return route.fallback(); });
     await page.route(historyUrl, route => route.fulfill({ json: head() }));
     await page.route(historyUrl + '/turns?cursor=*', route => route.fulfill({ json: { turns: [makeTurn(1), makeTurn(2)], nextCursor: null } }));
     await page.routeWebSocket(url => url.pathname === '/agents/chat-agent/' + chat, socket => {
@@ -82,8 +91,14 @@ try {
     try {
       const conversation = page.locator('.er-chat__conversation'), latest = page.getByRole('button', { name: 'Jump to latest message' });
       const position = () => conversation.evaluate(el => ({ top: el.scrollTop, remaining: el.scrollHeight - el.clientHeight - el.scrollTop }));
-      await page.goto(origin + path); await expect(conversation.locator('[data-turn-id]')).toHaveCount(8);
-      await page.evaluate(() => document.fonts.ready);
+      await page.goto(origin + path, { waitUntil: 'domcontentloaded' });
+      await expect(conversation).toContainText('Saved answer 10');
+      await expect(conversation.locator('[data-turn-id]')).toHaveCount(8);
+      await expect.poll(async () => (await position()).remaining).toBeLessThanOrEqual(1);
+      fontsGate.release(); await page.evaluate(() => document.fonts.ready);
+      await expect.poll(async () => (await position()).remaining).toBeLessThanOrEqual(1);
+      modelsGate.release();
+      await expect(page.getByText('Loading model catalog…', { exact: true })).toHaveCount(0);
       await expect.poll(async () => (await position()).remaining).toBeLessThanOrEqual(1);
       await expect(latest).toHaveCount(0);
       await page.screenshot({ path: `eval/out/k2/chat-latest-${viewport.width}.png` });
@@ -113,12 +128,24 @@ try {
       await page.getByRole('button', { name: 'Load earlier messages', exact: true }).click();
       await expect(conversation.locator('[data-turn-id]')).toHaveCount(10);
       assert(Math.abs(await offset() - anchor) <= 1);
-      await page.reload();
+      // A user who begins reading before catalogue notices settle must not be
+      // pulled back to the bottom by the same resize that keeps initial entry aligned.
+      modelsGate = gate();
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(conversation).toContainText('Saved answer 10');
+      await page.evaluate(() => document.fonts.ready);
       await expect.poll(async () => (await position()).remaining).toBeLessThanOrEqual(1);
+      await reading.evaluate(el => { const box = el.closest('.er-chat__conversation'); box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top; });
+      await expect(latest).toBeVisible();
+      const beforeCatalog = (await position()).top;
+      modelsGate.release();
+      await expect(page.getByText('Loading model catalog…', { exact: true })).toHaveCount(0);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert(Math.abs((await position()).top - beforeCatalog) <= 1);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       assert.deepEqual(writes, []);
       console.log(JSON.stringify({ scope: 'K2_CHAT_SCROLL_BROWSER', viewport, storedSnapshotFixture: true, newModelCalls: 0,
-        initialLatest: true, readerBack: true, lateHead: true, explicitLatest: true, olderAnchor: true, reloadLatest: true }));
+        initialLatest: true, readerBack: true, lateHead: true, explicitLatest: true, olderAnchor: true, reloadLatest: true, delayedFontAndCatalog: true, readingDuringCatalog: true }));
     } catch (error) {
       console.log(JSON.stringify({ scope: 'K2_CHAT_SCROLL_FAILURE', viewport,
         measurements: await page.evaluate(() => Reflect.get(window, 'chatScrollMeasurements')) }));

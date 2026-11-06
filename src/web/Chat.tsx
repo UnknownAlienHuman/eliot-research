@@ -194,8 +194,11 @@ export function ChatView({
   const headWindow = useRef<HistoryHead | null>(null);
   const stateVersion = useRef(0);
   const conversationRef = useRef<HTMLDivElement | null>(null);
+  const turnListRef = useRef<HTMLOListElement | null>(null);
   const [conversationVisible, setConversationVisible] = useState(false);
   const initialScroll = useRef(true);
+  const atLatest = useRef(true);
+  const scrollPosition = useRef({ top: 0, height: 0, viewport: 0 });
   const [showLatest, setShowLatest] = useState(false);
   const prependScroll = useRef<{ element: HTMLElement | null; offset: number; top: number } | null>(null);
 
@@ -205,11 +208,34 @@ export function ChatView({
       setShowLatest(container.scrollHeight - container.clientHeight - container.scrollTop > 1);
   }
 
+  function rememberScrollPosition(): void {
+    const container = conversationRef.current;
+    if (container && container.clientHeight > 0)
+      scrollPosition.current = { top: container.scrollTop, height: container.scrollHeight, viewport: container.clientHeight };
+  }
+
   function jumpToLatest(): void {
     const container = conversationRef.current;
+    atLatest.current = true;
     if (container) {
       container.scrollTop = container.scrollHeight;
       container.querySelector<HTMLElement>('[data-turn-id]:last-child')?.focus({ preventScroll: true });
+    }
+    rememberScrollPosition();
+    updateLatest();
+  }
+
+  function rememberScroll(): void {
+    const container = conversationRef.current;
+    if (container && container.clientHeight > 0) {
+      const previous = scrollPosition.current;
+      const bottom = container.scrollHeight - container.clientHeight - container.scrollTop <= 1;
+      // Preserve an upward reading gesture even during reflow. A queued scroll
+      // at the old bottom or downward browser anchoring is not that gesture.
+      if (bottom) atLatest.current = true;
+      else if (container.scrollTop < previous.top || (container.scrollHeight === previous.height
+        && container.clientHeight === previous.viewport)) atLatest.current = false;
+      rememberScrollPosition();
     }
     updateLatest();
   }
@@ -270,11 +296,22 @@ export function ChatView({
     if (!conversation) return;
     // CSS hides different panes on desktop and phone. Retain their DOM and owning
     // state, then render the latest turn when the conversation has a box again.
-    const observer = new window.ResizeObserver(([entry]) => {
-      setConversationVisible(entry !== undefined && entry.contentRect.width > 0 && entry.contentRect.height > 0);
+    const observer = new window.ResizeObserver((entries) => {
+      const viewport = entries.find(entry => entry.target === conversation);
+      if (viewport) {
+        const visible = viewport.contentRect.width > 0 && viewport.contentRect.height > 0;
+        setConversationVisible(visible);
+        if (!visible) atLatest.current = false;
+      }
+      // Font reflow and asynchronous composer notices can move the bottom after
+      // the first paint. Keep it attached only while the reader is already there.
+      if (atLatest.current && !initialScroll.current && conversation.clientHeight > 0)
+        conversation.scrollTop = conversation.scrollHeight;
+      rememberScrollPosition();
       updateLatest();
     });
     observer.observe(conversation);
+    if (turnListRef.current) observer.observe(turnListRef.current);
     return () => observer.disconnect();
   }, []);
   useEffect(() => { sendSequence.current++; saveSequence.current++; sendLock.current = false; setBusy(false); }, [projectId, chatId]);
@@ -343,6 +380,7 @@ export function ChatView({
     setOlderError('');
     if (!sameRoute) {
       initialScroll.current = true;
+      atLatest.current = true;
       setShowLatest(false);
       restoreSelectionSeq.current = keepSelection ? -1 : selectionChangeSeq.current;
       setQueued(null);
@@ -461,11 +499,14 @@ export function ChatView({
     if (container && conversationVisible && container.clientHeight > 0 && chatReady && initialScroll.current) {
       container.scrollTop = container.scrollHeight;
       initialScroll.current = false;
+      atLatest.current = true;
+      rememberScrollPosition();
     }
     if (container && anchor) {
       if (anchor.element?.isConnected && container.contains(anchor.element))
         container.scrollTop += anchor.element.getBoundingClientRect().top - container.getBoundingClientRect().top - anchor.offset;
       else container.scrollTop = anchor.top;
+      rememberScrollPosition();
     }
     prependScroll.current = null;
     updateLatest();
@@ -473,6 +514,7 @@ export function ChatView({
 
   async function moreTurns(): Promise<void> {
     if (!chatId || !turnsCursor || olderBusy) return;
+    atLatest.current = false;
     const request = ++olderRequest.current, project = projectId, chat = chatId;
     const abort = new AbortController(); olderAbort.current = abort;
     setOlderBusy(true); setOlderError('');
@@ -711,7 +753,7 @@ export function ChatView({
         </dialog>
       ) : null}
 
-      <div className='er-chat__conversation' ref={conversationRef} onScroll={updateLatest}>
+      <div className='er-chat__conversation' ref={conversationRef} onScroll={rememberScroll}>
         {turnsCursor !== null ? <button className='er-button er-button--text' type='button' disabled={olderBusy} onClick={() => void moreTurns()}>
           {olderBusy ? 'Loading earlier messages…' : 'Load earlier messages'}
         </button> : null}
@@ -730,7 +772,7 @@ export function ChatView({
         {turns.length === 0 && chatReady && turnsError === ''
           ? <p className='er-chat__hint'>Ask a question to start this conversation.</p>
           : null}
-        <ol className='er-chat__turns'>
+        <ol className='er-chat__turns' ref={turnListRef}>
           {turns.map((turn) => (
             <li key={turn.turnId} className='er-chat__turn' data-state={turn.state} data-turn-id={turn.turnId} tabIndex={-1}>
               <TurnContent projectId={projectId} turn={turn} models={models} visible={conversationVisible} />

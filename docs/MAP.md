@@ -246,6 +246,7 @@ stop/reconnect, reopen chat and save an answer as a page.
    cancelling or closing the picker preserves the current draft and source scope.
    History and New chat also confirm before discarding a nonblank draft; cancellation preserves the current chat and scope.
    Saved chat entry shows its latest messages once; Reader/Back, Retry and reconnect preserve deliberate history reading.
+   Late font/control reflow keeps an already-bottom reader at the bottom without moving deliberate history reading.
    Latest returns to the end explicitly. `pnpm eval k2 --scroll-browser` covers this desktop/phone journey using stored
    snapshot fixtures and native Reader reads, with model calls blocked.
    New chat retires an unconfirmed first Send even on the unchanged blank route, without letting its late reply reuse the old chat or block the new composer.
