@@ -662,7 +662,7 @@ describe("ChatAgent older history", () => {
       expect(contextInput?.earlierHistoryExists).toBeUndefined();
       const messages = vi.mocked(ai.streamText).mock.calls.at(-1)?.[0].messages ?? [];
       const questions = messages.filter(item => item.role === "user").map(item => item.content);
-      expect(questions).toEqual(["frozen [S1:1] source", ...Array.from({ length: 120 }, (_, n) => "Question " + (n + 1)), "New explicit send"]);
+      expect(questions).toEqual(["frozen [S1:1] source\n\nQuestion 1", ...Array.from({ length: 119 }, (_, n) => "Question " + (n + 2)), "New explicit send"]);
       expect(fetchCalls).toBe(1); // The existing in-process fake stream, never a provider call.
     } finally { h.db.close(); h.d1.close(); }
   });
@@ -1472,6 +1472,25 @@ describe("chat-stream K2 wire regression", () => {
     } finally { h.db.close(); h.d1.close(); }
   });
 
+  it("sends frozen evidence and the first question as one user turn without changing stored input or citations", async () => {
+    const h = makeHarness();
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "Supported [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 })]);
+      const question = "Каков план? 🧪";
+      const turn = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: "joined-user-turn", question,
+        scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:openrouter/test-model" }, true));
+      expect(sentBodies[0]?.messages).toEqual([
+        { role: "system", content: "sys" },
+        { role: "user", content: "frozen [S1:1] source\n\n" + question },
+      ]);
+      expect(turn.question).toBe(question);
+      expect(turn.state).toBe("completed");
+      expect(turn.citations).toMatchObject([{ revisionId: "r1", block: 1, start: 0, end: 8 }]);
+      expect(fetchCalls).toBe(1);
+    } finally { h.db.close(); h.d1.close(); }
+  });
+
   it("streams explanatory multi-paragraph Markdown without sending a combined JSON schema", async () => {
     const projectInstructions = "For overview questions, explain the method's motivation and relevant background.";
     const h = makeHarness(
@@ -1689,7 +1708,7 @@ describe("chat-stream K2 wire regression", () => {
       expect(JSON.stringify(body)).not.toContain("reasoning_content");
       expect(JSON.stringify(body)).not.toContain("reasoning_details");
       expect(JSON.stringify(body)).not.toContain("thought_signature");
-      expect(body.messages?.some((m) => m.role === "user" && m.content === "Q2")).toBe(true);
+      expect(body.messages?.filter((m) => m.role === "user")).toEqual([{ role: "user", content: "frozen [S1:1] source\n\nQ2" }]);
     } finally { h.db.close(); }
   });
 
@@ -1725,7 +1744,7 @@ describe("chat-stream K2 wire regression", () => {
         expect(JSON.stringify(body)).not.toContain("reasoning_content");
         expect(JSON.stringify(body)).not.toContain("reasoning_details");
         expect(JSON.stringify(body)).not.toContain("thought_signature");
-        expect(body.messages?.some((m) => m.role === "user" && m.content === "Q2")).toBe(true);
+        expect(body.messages?.filter((m) => m.role === "user")).toEqual([{ role: "user", content: "frozen [S1:1] source\n\nQ2" }]);
       } finally { h.db.close(); }
     } finally {
       if (prevImpl) mocked.mockImplementation(prevImpl);

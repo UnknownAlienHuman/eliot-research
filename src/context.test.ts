@@ -5,7 +5,7 @@ import { createModelHistoryReader } from "./model-history.js";
 import { resolveCitations } from "./citations.js";
 import { LibraryError } from "./library.js";
 import { modelInputLimit, modelOutputReserve } from "./models.js";
-import { estimateHistoryMessage, estimateModelInput } from "./model-input.js";
+import { chatModelMessages, estimateHistoryMessage, estimateModelInput } from "./model-input.js";
 import type { Actor } from "./auth";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
@@ -14,9 +14,9 @@ import { readFileSync, readdirSync } from "node:fs";
 const NL = String.fromCharCode(10);
 const actor = { type: "owner", id: "o1", authentication: "local" } as unknown as Actor;
 const MODEL = { contextTokens: 1048576, maxOutputTokens: 2000 };
-function requestEstimate(messages: { role: string; content: string }[], question = "", instructions = "") {
+function requestEstimate(messages: { role: "system" | "user" | "assistant"; content: string }[], question = "", instructions = "") {
   return estimateModelInput({ instructions: [...messages.filter(m => m.role === "system").map(m => m.content), instructions].filter(Boolean).join("\n\n"),
-    messages: [...messages.filter(m => m.role !== "system").map(({ role, content }) => ({ role, content })), { role: "user", content: question }] });
+    messages: chatModelMessages(messages, question) });
 }
 
 interface MemSource {

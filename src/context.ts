@@ -154,7 +154,8 @@ function requestTokens(messages: ContextMessage[], caller: Pick<ContextInput, "q
     .filter(Boolean).join("\n\n");
   const requestMessages = messages.filter(message => message.role !== "system").map(({ role, content }) => ({ role, content }));
   requestMessages.push({ role: "user", content: caller.question ?? "" });
-  return estimateModelInput({ instructions, messages: requestMessages });
+  // Account for the final grouping without repeatedly copying whole sources during assembly.
+  return estimateModelInput({ instructions, messages: requestMessages }, { joinUserMessages: true });
 }
 function stripLabels(content: string): string {
   return content

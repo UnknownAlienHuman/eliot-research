@@ -2,7 +2,28 @@ import { streamText } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import { resolveModelTransport } from "./model-transport";
 import { DEFAULT_MODEL, MODELS, modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, type ModelSpec } from "./models";
-import { estimateModelInput } from "./model-input";
+import { chatModelMessages, estimateModelInput } from "./model-input";
+
+it("joins only adjacent user input while retaining evidence, Unicode and assistant history verbatim", () => {
+  const messages = [
+    { role: "system", content: "Instructions stay separate." },
+    { role: "user", content: "[S1:3] Источник 🧪\r\n" },
+    { role: "user", content: "Derived orientation." },
+    { role: "user", content: "Earlier question?" },
+    { role: "assistant", content: "Earlier answer [S1:3]." },
+  ] as const;
+  const before = structuredClone(messages);
+  expect(chatModelMessages(messages, "Новый вопрос?\n")).toEqual([
+    { role: "user", content: "[S1:3] Источник 🧪\r\n\n\nDerived orientation.\n\nEarlier question?" },
+    { role: "assistant", content: "Earlier answer [S1:3]." },
+    { role: "user", content: "Новый вопрос?\n" },
+  ]);
+  expect(messages).toEqual(before);
+  const question = "Новый вопрос?\n", instructions = messages[0].content;
+  const raw = [...messages.filter(message => message.role !== "system"), { role: "user", content: question }];
+  expect(estimateModelInput({ instructions, messages: raw }, { joinUserMessages: true }))
+    .toBe(estimateModelInput({ instructions, messages: chatModelMessages(messages, question) }));
+});
 
 it("captures the pinned Anthropic default near the estimated input boundary while accounting remains unknown", async () => {
   const provider = { id: "fixture", type: "openai-compatible" as const, gatewaySlug: "fixture", gatewayPath: "v1", enabled: true, baseUrl: "https://vendor.example/api" };
