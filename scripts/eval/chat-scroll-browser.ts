@@ -32,6 +32,40 @@ try {
   for (const viewport of [{ width: 1212, height: 799 }, { width: 390, height: 844 }]) {
     const context = await browser.newContext({ viewport });
     const page = await context.newPage(), sockets = new Set<WebSocketRoute>(), writes: string[] = [];
+    // Preserve actual layout transitions on failure; a single final offset cannot
+    // distinguish font reflow from a viewport resized by asynchronous controls.
+    await page.addInitScript(() => {
+      const measurements: unknown[] = [];
+      Object.assign(window, { chatScrollMeasurements: measurements });
+      let previous = '', observed: Element | null = null;
+      const sample = (reason: string) => {
+        const box = document.querySelector('.er-chat__conversation');
+        if (!box) return;
+        const rect = (selector: string) => document.querySelector(selector)?.getBoundingClientRect().height;
+        const geometry = { top: box.scrollTop, height: box.clientHeight, total: box.scrollHeight,
+          turns: rect('.er-chat__turns'), composer: rect('.er-chat__composer'), header: rect('.er-chat__head'),
+          projectHeader: rect('.er-project-workspace__header'), latest: !!document.querySelector('.er-chat__latest'),
+          fonts: document.fonts.status };
+        const next = JSON.stringify(geometry);
+        if (next === previous) return;
+        previous = next;
+        measurements.push({ reason, ...geometry });
+        if (measurements.length > 80) measurements.shift();
+      };
+      const sizes = new ResizeObserver(() => sample('resize'));
+      new MutationObserver(() => {
+        const box = document.querySelector('.er-chat__conversation');
+        if (box && box !== observed) {
+          observed = box;
+          for (const selector of ['.er-chat__conversation', '.er-chat__turns', '.er-chat__composer']) {
+            const element = document.querySelector(selector); if (element) sizes.observe(element);
+          }
+          box.addEventListener('scroll', () => sample('scroll'));
+        }
+        sample('DOM');
+      }).observe(document, { childList: true, subtree: true });
+      document.fonts.addEventListener('loadingdone', () => sample('fonts ready'));
+    });
     let turns = Array.from({ length: 8 }, (_, i) => makeTurn(i + 3));
     const head = () => ({ chat: { id: chat }, turns, nextCursor: 'earlier', queued: null, stateVersion: 1 });
     await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.fallback() : route.abort());
@@ -85,6 +119,11 @@ try {
       assert.deepEqual(writes, []);
       console.log(JSON.stringify({ scope: 'K2_CHAT_SCROLL_BROWSER', viewport, storedSnapshotFixture: true, newModelCalls: 0,
         initialLatest: true, readerBack: true, lateHead: true, explicitLatest: true, olderAnchor: true, reloadLatest: true }));
+    } catch (error) {
+      console.log(JSON.stringify({ scope: 'K2_CHAT_SCROLL_FAILURE', viewport,
+        measurements: await page.evaluate(() => Reflect.get(window, 'chatScrollMeasurements')) }));
+      await page.screenshot({ path: `eval/out/k2/chat-scroll-failed-${viewport.width}.png` });
+      throw error;
     } finally { await context.close(); }
   }
 } finally { await browser.close(); }
