@@ -84,10 +84,6 @@ vi.mock("./cost", async (importOriginal) => {
   };
 });
 
-vi.mock("./model-quota", async () => ({
-  assertProviderAllowance: vi.fn(async () => {}),
-}));
-
 vi.mock("./context", async (importOriginal) => {
   const actual = await importOriginal<typeof ContextModule>();
   return { ...actual,
@@ -125,7 +121,6 @@ import { ChatAgent } from "./chat";
 import { getAgentByName } from "agents";
 import { buildContext } from "./context";
 import { admitTurn } from "./cost";
-import { assertProviderAllowance } from "./model-quota";
 import { requireAvailableModel } from "./models";
 import { LibraryError } from "./library";
 
@@ -1517,7 +1512,6 @@ describe("chat-stream K2 wire regression", () => {
       expect(turn.tokenLimit).toBe(TOKEN_BOUND);
       expect(turn.inputTokens).toBe(20);
       expect(turn.outputTokens).toBe(18);
-      expect(vi.mocked(assertProviderAllowance)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(admitTurn)).toHaveBeenCalledTimes(1);
       expect(executedSql.some((s) => s.includes("token_limit"))).toBe(true);
       expect(executedSql.some((s) => s.includes("estimated_cost_microusd"))).toBe(false);
@@ -2018,7 +2012,7 @@ describe("chat-stream K2 wire regression", () => {
     const h = makeHarness();
     try {
       await h.agent.onStart();
-      vi.mocked(admitTurn).mockRejectedValueOnce(new LibraryError("budget", "Workers AI daily allowance is not configured. No model call was started.", 409));
+      vi.mocked(admitTurn).mockRejectedValueOnce(new LibraryError("conflict", "This answer cannot start right now. Retry starts a new turn; it will not continue automatically.", 409));
       const t1 = "eeeeeeee-eeee-4eee-8eee-000000000099";
       const r1 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t1, question: "Q blocked", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
       expect(r1.state).toBe("failed");
@@ -2026,9 +2020,8 @@ describe("chat-stream K2 wire regression", () => {
       expect(r1.inputTokens).toBe(0);
       expect(r1.cachedTokens).toBe(0);
       expect(r1.outputTokens).toBe(0);
-      expect(r1.error ?? "").toMatch(/allowance|budget|configured/i);
+      expect(r1.error ?? "").toContain("cannot start right now");
       expect(fetchCalls).toBe(0);
-      expect(vi.mocked(assertProviderAllowance)).not.toHaveBeenCalled();
       const row = h.d1.prepare("SELECT token_limit AS tokenLimit, input_tokens AS inputTokens, output_tokens AS outputTokens FROM chat_turn WHERE chat_id=? AND turn_id=?").get(chatId, t1) as unknown as { tokenLimit: number | null; inputTokens: number | null; outputTokens: number | null };
       expect(row.tokenLimit).toBe(0);
       expect(row.inputTokens).toBe(0);

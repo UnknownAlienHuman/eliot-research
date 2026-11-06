@@ -9,7 +9,6 @@ import type * as ModelTransport from "./model-transport";
 
 vi.mock("cloudflare:workers", () => ({ WorkflowEntrypoint: class { constructor(_ctx: unknown, readonly env: Env) {} } }));
 vi.mock("./models", async (original) => ({ ...await original<typeof Models>(), requireAvailableModel: vi.fn() }));
-vi.mock("./model-quota", () => ({ assertProviderAllowance: vi.fn() }));
 vi.mock("ai", async (original) => ({ ...await original<typeof AI>(), generateText: vi.fn() }));
 vi.mock("./model-transport", async (original) => ({ ...await original<typeof ModelTransport>(), resolveModelTransport: vi.fn() }));
 import { requireAvailableModel } from "./models";

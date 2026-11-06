@@ -44,7 +44,8 @@ Wrangler; never hand-write it.
 
 A paid effect is a model call, rendered Browser capture, billable AI Search use, or a Workflow that invokes one. Page
 load, list, read, citation open, reconnect and saving existing output must not start paid work. Before dispatch,
-`src/cost.ts` claims admission separately from nullable declared token capacity and checks call/time limits and provider allowance. Model prices and a local
+`src/cost.ts` claims admission separately from nullable declared token capacity; job code enforces call/time limits.
+Provider quota and billing restrictions are enforced upstream. Model prices and a local
 monthly currency/token budget are not admission prerequisites. Store capacity basis and actual input/cached/output
 counts on the owning row; unknown counts remain unknown. Historical currency estimates and reservations remain recorded
 without being reinterpreted as tokens or Neurons. Distillation runs once per
@@ -326,8 +327,8 @@ The owner API is rooted at `/api/projects/:projectId/sources/:sourceId/ocr`:
    renders that original locally and uploads every page once as PNG (`PUT /:jobId/pages/:pageNumber`). Create/upload
    perform no inference; no partial page selection silently replaces the document.
 2. Only explicit `POST /:jobId/start` admits paid work after all pages are present, the base is still the latest live
-   revision, and the separately captured current still matches. Selected-route, token/time/concurrency and
-   provider-allowance checks must also pass. Freeze the admitted model snapshot; no automatic model
+   revision, and the separately captured current still matches. Selected-route and token/time/concurrency
+   checks must also pass. Freeze the admitted model snapshot; no automatic model
    substitution. Known non-image models are rejected; unknown image capability is not proof of support and a provider
    rejection stops the job. `ocr-<jobId>` processes pages serially, at most one model call per page and `pageCount`
    calls total. Count dispatch before the call; paid steps have no retry or automatic continuation after failure.
@@ -489,10 +490,11 @@ label strings. JSON decoding preserves the original value; canonical bytes and s
 Extraction and synthesis preserve table row, metric and column/split identity; blank cells are unreported results.
 
 States: `none|queued|running|paused|done|partial|failed`. Ingest leaves readable revisions at `none`. Only an explicit
-Understand request queues its requested revision and attempts admission, subject to concurrency and provider allowance.
+Understand request queues its requested revision and attempts admission, subject to concurrency and usable model metadata.
 A full concurrency window leaves work `queued`; Workflow completion and cron admit already requested `queued` rows
-with zero calls, in creation order, using their stored model route. Unavailable models or allowance become visible
-`paused` until another explicit request. Cron also reconciles stale `running` rows against Workflow ID
+with zero calls, in creation order, using their stored model route. Unavailable models or unusable limits become visible
+`paused` until another explicit request. Upstream quota/billing rejections during dispatch fail the attempt without retry.
+Cron also reconciles stale `running` rows against Workflow ID
 `distill-<revisionId>` for original attempts and `distill-attempt-<attemptId>` for explicit retries, without restarting uncertain work. Migration `0007_manual_understanding.sql`
 removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
 resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
@@ -712,7 +714,7 @@ these paths; this change implements no lifecycle mutation.
 
 POST understanding accepts `retry:{attemptId,previousAttemptId}` separately from `saveAvailable`. The client retains
 that UUID and exact body in session storage before dispatch. Server replay checks current and archived identities
-before model/default/allowance work; a reused identity with a different canonical body conflicts. New acceptance
+before model lookup or admission work; a reused identity with a different canonical body conflicts. New acceptance
 requires the expected current failed or partial predecessor. Paid predecessors require confirmed `complete|errored|terminated`
 Workflow status; unknown, active or unreadable status blocks retry, including retention cases that cannot be
 distinguished from a transient failure. A failed zero-call predecessor may switch despite uncertain instance create:
@@ -729,7 +731,7 @@ verification, claim publication, finish and Save publication is fenced by the ow
 immutable and late old writes cannot publish into the new current attempt. Context freezes attempt, report, claim count,
 summary and state, then checks them in its single claims read; a changed projection rejects before inference.
 
-The reader distinguishes Retry understanding (a new model run using provider allowance), storage-only Reload and Save.
+The reader distinguishes Retry understanding (a new model run under the existing provider plan), storage-only Reload and Save.
 A lost/malformed retry reply stays unresolved across remount; GET with `requestId` returns that exact `knownRequestId` only when it is
 already current or archived; an older cached acknowledgement cannot clear a later pending request. Reading its old predecessor does not clear the pending identity. After a successful status
 read, Send same request explicitly resends the retained body; it may start that run if never accepted. Only a confirmed
@@ -1153,8 +1155,8 @@ cannot be disabled. The admitted model keeps this parameter frozen with its cont
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
-selection. Paid admission requires usable input metadata and provider allowance, without a price lookup or a
-locally invented monthly allowance. Record declared input plus published output capacity when both are known (twice
+selection. Local admission requires usable input metadata, without a price lookup or a locally invented monthly
+allowance. Providers enforce their quota/billing restrictions. Record declared input plus published output capacity when both are known (twice
 for distillation), otherwise `null` with an independent admission claim. Freeze the admitted `ModelSpec` and retain
 unknown usage as unknown. The assembly reserve does not become a provider maximum; legacy/OCR snapshots retain
 their admitted per-call cap. Provider errors/limits remain visible; there is no artificial
@@ -1239,13 +1241,16 @@ The bounded read is stored in the existing R2 snapshot; page loads and GETs use 
 A valid empty dataset is zero. Missing access, invalid data and stale-day data remain unavailable. The counter is an
 observation, not a token conversion or a guarantee that a Paid account stops at the free allocation.
 
-Migration `0008_model_providers.sql` stores the owner choice in `settings.native_usage_mode`:
-`included` (default) or `standard`. GET/PUT `/api/settings` exposes `nativeUsageMode`; saving the choice performs no
-inference, does not change the selected provider/models and applies to new admissions. `included` keeps native
-requests paused while an exact 10,000-Neuron daily cap cannot be verified/enforced for this connection. It is not a
-working usage meter or a claim that the Paid account stops at that allocation. `standard` explicitly permits normal
-Cloudflare billing, including Paid overage, while retaining each job's token/call/time bounds. Missing or unreadable
-policy fails closed for native requests. Non-native providers use their own limits independently of this setting.
+Native requests use the existing Cloudflare account plan. On Free, Cloudflare stops requests at its daily allocation;
+on Paid, overage may be billed. Eliot neither changes the subscription nor enforces a separate free spending cap.
+Model availability, quota and billing restrictions are enforced by Cloudflare. An explicit request still passes Eliot's
+model-metadata checks, atomic admission and per-job call/token bounds; provider failures are recorded without retry.
+The former local `included` / `standard` selector and admission veto are retired. GET `/api/settings` no longer exposes
+`nativeUsageMode`; PUT rejects that field before model lookup or mutation and tells stale clients to reload Settings.
+The column introduced by `0008_model_providers.sql` remains untouched as unused rollback data. There is no migration
+from `included` to `standard`, no subscription API call and no change to the owner's selected models or providers.
+Failed or paused jobs do not resume automatically; previously queued explicit work remains eligible for its existing
+scheduler. Deployment must account for already queued or running work. The Neuron readout is informational.
 
 During refresh, each enabled compatible provider supplies its bounded JSON `/models` catalogue; Workers AI uses its
 native binding. Partial failure preserves that provider's last good metadata and its original routing configuration.
@@ -1268,7 +1273,7 @@ Cloudflare documents R2 object consistency in the [Workers API reference](https:
 (dateModified: 2026-07-31), supporting the single-object snapshot timestamp contract.
 
 The factory fallback remains native Workers AI Flash (`workers-ai:@cf/zai-org/glm-5.3-flash`); the stored global answer
-and understanding defaults are owner choices. The owner currently uses OpenRouter while native allowance remains paused.
+and understanding defaults are owner choices; retiring the local usage selector does not change either selection.
 Benchmarks freeze the configured answer and understanding models for the run; they never switch models per question
 or lower the evidence gates for a provider. Available choices include the explicit native `workers-ai:@cf/zai-org/glm-5.3` route, Command Code through
 `gateway:command-code/<native-id>`, and owner-selected OpenRouter routes
@@ -1281,7 +1286,7 @@ OpenRouter embed/rerank IDs remain separate future K5 capabilities, not chat cho
 Settings uses one visible provider/search/free-name filter and catalogue, with Answers/Understanding choosing which
 default is being edited. Filters are display-only; the catalogue has no pagination or technical model-details panel.
 Chat and project settings use compact provider then model selection with the applicable default available. Refresh preserves the
-selected provider/native-ID pair. Usable model bounds and provider allowance remain required for dispatch.
+selected provider/native-ID pair. Usable model bounds remain required locally; provider quota/billing restrictions apply upstream.
 
 Migration `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; null disables external routes. Owner-only
 GET `/api/models/connection` and PUT read/save the exact existing named Gateway ID. Enabling requires

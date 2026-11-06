@@ -29,7 +29,6 @@ vi.mock("../model-transport", async () => ({
   modelFailure: vi.fn(() => "Unexpected model failure projection"),
 }));
 vi.mock("../model-catalog", () => ({ discoverGatewayModels: vi.fn() }));
-vi.mock("../model-quota", () => ({ assertProviderAllowance: vi.fn() }));
 vi.mock("../native-model-catalog", () => ({ discoverNativeModels: vi.fn() }));
 vi.mock("../models", async () => ({
   ...await vi.importActual<typeof Models>("../models"),
@@ -41,7 +40,6 @@ import { modelFailure, resolveModelTransport } from "../model-transport";
 import { availableModels, modelTokenLimit, requireAvailableModel, requireCatalogModel } from "../models";
 import { discoverGatewayModels } from "../model-catalog";
 import { discoverNativeModels } from "../native-model-catalog";
-import { assertProviderAllowance } from "../model-quota";
 import { DistillWorkflow, hasAvailableUnderstanding, requestUnderstanding, scheduleDistillation } from "./distill";
 
 const revisionId = "d9b7d198-0dd2-4d5f-8176-e824e25bb6d0";
@@ -186,7 +184,6 @@ function documentWithBlocks(parts: Array<{ type: Block["type"]; text: string }>)
 const forbiddenLookups = [requireAvailableModel, requireCatalogModel, availableModels,
   discoverGatewayModels, discoverNativeModels];
 beforeEach(() => {
-  vi.mocked(assertProviderAllowance).mockReset().mockResolvedValue(undefined);
   vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation"));
   vi.mocked(resolveModelTransport).mockReset().mockRejectedValue(new Error("Fixture transport stopped before dispatch."));
   vi.mocked(modelFailure).mockReset().mockReturnValue("Unexpected model failure projection");
@@ -584,16 +581,16 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
-  it.each(["allow", "deny"])("a stale %s allowance check cannot overwrite a route explicitly resumed after pause", async (outcome) => {
+  it.each(["allow", "deny"])("a stale %s model lookup cannot overwrite a route explicitly resumed after pause", async (outcome) => {
     const f = queuedBehindRunning();
     const replacement: ModelSpec = { ...snapshot, route: "gateway:command-code/fixture/replacement", id: "fixture/replacement" };
     vi.mocked(requireAvailableModel).mockImplementation(async (_env, route) => route === replacement.route ? replacement : snapshot);
     let release!: () => void, deny!: (error: Error) => void, enter!: () => void;
     const pending = new Promise<void>((resolve, reject) => { release = resolve; deny = reject; });
     const entered = new Promise<void>((resolve) => { enter = resolve; });
-    vi.mocked(assertProviderAllowance)
-      .mockImplementationOnce(async () => { enter(); await pending; })
-      .mockRejectedValueOnce(new LibraryError("budget", "Provider allowance is unavailable.", 409));
+    vi.mocked(requireAvailableModel)
+      .mockImplementationOnce(async () => { enter(); await pending; return snapshot; })
+      .mockRejectedValueOnce(new LibraryError("unavailable", "The selected model is unavailable.", 503));
     try {
       const staleAdmission = scheduleDistillation(f.env, explicitlySelectedRevisionId);
       await entered;
@@ -604,7 +601,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       // Both slots were still full, so the owner's new frozen choice is queued.
       f.db.prepare("UPDATE source_revision SET distill_state='done' WHERE id=?").run(revisionId);
       if (outcome === "allow") release();
-      else deny(new LibraryError("budget", "Old provider allowance is unavailable.", 409));
+      else deny(new LibraryError("unavailable", "The old selected model is unavailable.", 503));
       await staleAdmission;
       expect(f.createWorkflow).not.toHaveBeenCalled();
       expect(f.db.prepare("SELECT distill_state,distill_model FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))

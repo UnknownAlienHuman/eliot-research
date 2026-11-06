@@ -2,7 +2,6 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { generateText } from "ai";
 import { LibraryError } from "../library";
 import { modelOutputReserve, modelTokenReservation, type ModelSpec } from "../models";
-import { assertProviderAllowance } from "../model-quota";
 import { modelFailure, resolveModelTransport } from "../model-transport";
 import { OCR_LIMITS } from "../shared/api";
 import { loadOcrRow, ocrHash, ocrKey, putOcrArtifact, type OcrPage, type OcrRow } from "../ocr";
@@ -69,7 +68,6 @@ async function runPage(env: Env, id: string, ordinal: number): Promise<number> {
   const bytes = new Uint8Array(await image.arrayBuffer());
   if (await ocrHash(bytes) !== page.sha256) throw fail("A frozen OCR page checksum changed.");
   const model = frozenModel(job), tokenBound = modelTokenReservation(model);
-  await assertProviderAllowance(env, model);
   const transport = await resolveModelTransport(env, model, "ocr-" + id);
   const now = Date.now();
   if (now >= job.deadline_at) throw fail("OCR reached its admitted deadline.");

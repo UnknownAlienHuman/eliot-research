@@ -3,7 +3,6 @@ import { LibraryError } from "./library";
 import { scanBlocks } from "./blocks";
 import { readableTextWarning } from "./ingest";
 import { requireAvailableModel, modelTokenReservation, type ModelSpec } from "./models";
-import { assertProviderAllowance } from "./model-quota";
 import { OCR_LIMITS, ocrOutputLimit, type OcrJobView, type OcrState } from "./shared/api";
 
 export interface OcrScope { projectId: string; sourceId: string; jobId: string }
@@ -163,7 +162,6 @@ export async function startOcrJob(env: Env, actor: Actor, scope: OcrScope): Prom
   if (base.id !== job.base_revision_id || base.current_revision_id !== job.base_current_revision_id || base.readable_state === "pending")
     throw conflict("The latest source revision or readable head changed before OCR Start.");
   const model = imageModel(await requireAvailableModel(env, job.model_route));
-  await assertProviderAllowance(env, model);
   if (!env.OCR) throw new LibraryError("unavailable", "PDF OCR workflow is not configured.", 503);
   const now = Date.now(), bound = job.page_count * modelTokenReservation(model);
   await env.DB.prepare("UPDATE source_ocr_job SET state='failed',error='OCR deadline elapsed; no continuation was started.',finished_at=?,updated_at=? " +

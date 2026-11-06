@@ -1,21 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { admitDistill, admitTurn, failUndispatchedDistill } from "./cost.js";
 import { LibraryError } from "./library.js";
 import { estimateHistoryMessage, estimateModelInput } from "./model-input.js";
-import { assertProviderAllowance } from "./model-quota.js";
-import type * as ModelQuota from "./model-quota.js";
 import type { ModelSpec } from "./models.js";
 import { modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, modelTokenReservation } from "./models.js";
-
-// Provider allowance is mocked: the real model-quota module currently holds
-// a closed native placeholder, so admission tests pin allow/deny directly
-// instead of depending on registry or provider state.
-vi.mock("./model-quota", async (importOriginal) => {
-  const actual = await importOriginal<typeof ModelQuota>();
-  return { ...actual, assertProviderAllowance: vi.fn() };
-});
-const allowance = vi.mocked(assertProviderAllowance);
 
 const FLASH_ROUTE = "workers-ai:@cf/zai-org/glm-5.3-flash";
 function flashModel(): ModelSpec {
@@ -31,7 +20,6 @@ function flashModel(): ModelSpec {
   };
 }
 const FLASH_BOUND = 1048576 + 8192;
-const ALLOWANCE_CLOSED = new LibraryError("budget", "Workers AI daily allowance is not configured. No model call was started.", 409);
 
 const CHAT_DDL = "CREATE TABLE chat_turn (" +
   "chat_id TEXT NOT NULL, turn_id TEXT NOT NULL," +
@@ -59,6 +47,7 @@ const DISTILL_DDL = "CREATE TABLE source_revision (" +
 function testEnv() {
   const db = new DatabaseSync(":memory:");
   db.exec(CHAT_DDL);
+  db.exec("CREATE TABLE settings (id INTEGER PRIMARY KEY,native_usage_mode TEXT); INSERT INTO settings VALUES (1, 'included')");
   db.exec("CREATE TABLE source (id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'active'); INSERT INTO source(id) VALUES ('fixture-source')");
   db.exec(DISTILL_DDL);
   const shim = {
@@ -89,11 +78,6 @@ function distillRow(db: DatabaseSync, id: string) {
     " distill_output_tokens AS outputTokens, distill_estimated_cost_microusd AS legacyCost," +
     " distill_ms AS ms FROM source_revision WHERE id = ?").get(id) as Record<string, unknown>;
 }
-
-beforeEach(() => {
-  allowance.mockReset();
-  allowance.mockResolvedValue(undefined);
-});
 
 describe("provider input budget and request estimate", () => {
   it.each([32768, 4096, null])("reserves output only inside a proved combined window (%s)", (maxOutputTokens) => {
@@ -161,22 +145,13 @@ describe("admitTurn", () => {
     fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, created_at) VALUES (?, ?, 'started', ?)").run("c1", "t1", Date.now());
     const bound = await admitTurn(fixed.env, "c1", "t1", flashModel());
     expect(bound).toBe(FLASH_BOUND);
-    expect(allowance).toHaveBeenCalledOnce();
     expect(chatRow(fixed.db, "c1", "t1")).toEqual({ state: "started", tokenLimit: FLASH_BOUND });
-  });
-  it("throws a safe error and writes nothing when provider allowance is closed", async () => {
-    const fixed = testEnv();
-    fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, created_at) VALUES (?, ?, 'started', ?)").run("c1", "t1", Date.now());
-    allowance.mockRejectedValue(ALLOWANCE_CLOSED);
-    await expect(admitTurn(fixed.env, "c1", "t1", flashModel())).rejects.toMatchObject({ code: "budget", status: 409 });
-    expect(chatRow(fixed.db, "c1", "t1").tokenLimit).toBeNull();
   });
   it("throws without writing when the model has no usable limits", async () => {
     const fixed = testEnv();
     fixed.db.prepare("INSERT INTO chat_turn (chat_id, turn_id, state, created_at) VALUES (?, ?, 'started', ?)").run("c1", "t1", Date.now());
     const broken = { ...flashModel(), contextTokens: null } as unknown as ModelSpec;
     await expect(admitTurn(fixed.env, "c1", "t1", broken)).rejects.toMatchObject({ code: "unavailable", status: 503 });
-    expect(allowance).not.toHaveBeenCalled();
     expect(chatRow(fixed.db, "c1", "t1").tokenLimit).toBeNull();
   });
   it("admits a turn exactly once; a repeat or terminal row throws", async () => {
@@ -204,6 +179,7 @@ describe("admitDistill", () => {
     expect(row.tokenLimit).toBe(2 * FLASH_BOUND);
     expect(row.error).toBeNull();
     expect(Number(row.startedAt)).toBeGreaterThanOrEqual(before);
+    expect(fixed.db.prepare("SELECT native_usage_mode FROM settings WHERE id=1").get()).toEqual({ native_usage_mode: "included" });
   });
   it("records two combined windows without rewriting an already admitted distill", async () => {
     const fixed = testEnv();
@@ -225,16 +201,6 @@ describe("admitDistill", () => {
     await expect(admitDistill(fixed.env, "r3", flashModel())).resolves.toBe(false);
     const row = distillRow(fixed.db, "r3");
     expect(row.state).toBe("queued");
-    expect(row.tokenLimit).toBeNull();
-  });
-  it("pauses with a safe error and no token limit when provider allowance is closed", async () => {
-    const fixed = testEnv();
-    fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES (?, 'queued')").run("r1");
-    allowance.mockRejectedValue(ALLOWANCE_CLOSED);
-    await expect(admitDistill(fixed.env, "r1", flashModel())).resolves.toBe(false);
-    const row = distillRow(fixed.db, "r1");
-    expect(row.state).toBe("paused");
-    expect(row.error).toBe(ALLOWANCE_CLOSED.message);
     expect(row.tokenLimit).toBeNull();
   });
   it("pauses with a safe error when the model has no usable limits", async () => {

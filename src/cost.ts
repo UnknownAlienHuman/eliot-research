@@ -1,5 +1,4 @@
 import { LibraryError } from "./library";
-import { assertProviderAllowance } from "./model-quota";
 import type { ModelSpec } from "./models";
 import { modelTokenLimit } from "./models";
 
@@ -8,13 +7,10 @@ import { modelTokenLimit } from "./models";
 
 // Claim one chat turn and record declared total capacity, capped by a known combined window.
 // Unknown capacity stays null; token_limit_kind owns the admission CAS.
-// Provider allowance is checked before the claim;
-// its failure throws a safe owner-readable error and starts no call. The
-// conditional update is atomic: exactly one writer can claim a
+// The conditional update is atomic: exactly one writer can claim a
 // started/unreserved turn. There is no monthly or dollar gate.
 export async function admitTurn(env: Env, chatId: string, turnId: string, model: ModelSpec): Promise<number | null> {
   const bound = modelTokenLimit(model);
-  await assertProviderAllowance(env, model);
   const result = await env.DB.prepare(
     "UPDATE chat_turn SET token_limit = ?, token_limit_kind = ? WHERE chat_id = ? AND turn_id = ? AND state = 'started' AND token_limit_kind IS NULL AND token_limit IS NULL"
   ).bind(bound, bound === null ? "unknown" : "published", chatId, turnId).run();
@@ -26,9 +22,8 @@ export async function admitTurn(env: Env, chatId: string, turnId: string, model:
 // Admit one explicitly requested distill revision: record twice the declared
 // per-call capacity (or null unknown) on its row. State owns the admission CAS. Only an
 // explicitly queued, undispatched row is eligible, and at most two revisions
-// run at once. Provider allowance is checked first; its failure parks the row
-// as paused with a safe error before any call. Unusable model metadata parks
-// the row the same way. A full concurrency window leaves the row queued and
+// run at once. Unusable model metadata parks the row as paused with a safe
+// error before any call. A full concurrency window leaves the row queued and
 // returns false without pausing it. There is no monthly or dollar gate.
 export async function admitDistill(env: Env, revisionId: string, model: ModelSpec, attemptId?: string | null): Promise<boolean> {
   let bound: number | null;
@@ -38,12 +33,6 @@ export async function admitDistill(env: Env, revisionId: string, model: ModelSpe
     if (bound !== null && !Number.isSafeInteger(bound)) throw new LibraryError("unavailable", "This model has no usable input/output limits.", 503);
   } catch (err) {
     await pauseDistill(env, revisionId, model.route, err instanceof Error ? err.message : "This model has no usable input/output limits.", attemptId);
-    return false;
-  }
-  try {
-    await assertProviderAllowance(env, model);
-  } catch (err) {
-    await pauseDistill(env, revisionId, model.route, err instanceof Error ? err.message : "Provider allowance is unavailable. No model call was started.", attemptId);
     return false;
   }
   const admitted = await env.DB.prepare(

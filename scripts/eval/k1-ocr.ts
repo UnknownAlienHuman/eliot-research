@@ -92,8 +92,6 @@ export async function runK1OcrEval() {
       assert.equal(matches.length, 1, 'Requested OCR route must have one real catalogue entry.');
       assert(matches[0]?.enabled && matches[0].supportsImages !== false, 'Requested image model is unavailable.');
     }
-    const settings = await json<{ settings: { nativeUsageMode: string } }>('/api/settings');
-    if (paid && model.startsWith('workers-ai:')) assert.equal(settings.settings.nativeUsageMode, 'standard', 'Owner must enable Standard on this QA runtime before the paid run; eval never changes defaults/settings.');
     const original = await bytes('/api/revisions/' + revisionId + '/original');
     assert.equal(sha(original), old.originalSha256, 'Original PDF hash differs from revision metadata.');
     const readable = ['readable', 'readable_with_warnings'].includes(old.readableState);
@@ -143,7 +141,7 @@ export async function runK1OcrEval() {
       assert.equal(cancelBefore.revisions.find(r => r.id === cancelRevision)?.originalMime, 'application/pdf');
       assert(!(await list(cancelSource)).jobs.some(j => ['preparing', 'queued', 'running'].includes(j.state)), 'Cancellation fixture is already active.');
     }
-    await pass('preflight', { origin, projectId, sourceId, revisionId, model, pages, paidOptIn: paid, nativeUsageMode: settings.settings.nativeUsageMode });
+    await pass('preflight', { origin, projectId, sourceId, revisionId, model, pages, paidOptIn: paid });
     browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark' });
     const page = await context.newPage(), blocked: string[] = [], browserMutations = new Set<string>();
