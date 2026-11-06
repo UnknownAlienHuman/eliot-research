@@ -1360,7 +1360,11 @@ replace legacy adapters rather than copying old runtime/query layers.
 Shared card, chip and labelled-field presentation lives in `src/web/ui/controls.css`; native elements keep their
 semantics and feature styles keep only their layout or distinct variants. The layout uses one 48rem breakpoint;
 reduced-motion and forced-colour queries remain accessibility preferences. Appearance is selected once in the header.
-The chat composer stays visible at the bottom of the reading pane while earlier answers scroll. Answer details show
+The chat composer stays visible at the bottom of the reading pane while earlier answers scroll.
+Opening a saved chat first shows its latest messages after history and the pane are ready. This initial jump runs
+once per chat, not on Retry, reconnect or Reader/Back. Reading older messages stays undisturbed by later frames;
+a keyboard-accessible Latest action in the existing composer controls row returns to the end and focuses the last turn.
+No inference or additional history read is triggered by scrolling. Answer details show
 cited passages; token counts, timings and context/verification counters stay in API/eval diagnostics. Library and
 understanding show useful availability, progress and actionable failures without model routes or workflow machinery.
 The project screen uses Sources, Chat and Studio panes on desktop and the same three destinations in the compact

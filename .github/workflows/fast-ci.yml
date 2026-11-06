@@ -72,6 +72,7 @@ jobs:
           pnpm eval k2 --picker-only
           pnpm eval k2 --view-isolation
           pnpm eval k2 --send-browser
+          pnpm eval k2 --scroll-browser
           pnpm eval k2 --project-browser
           pnpm eval k2 --models-only
           pnpm eval k3 --native-only
