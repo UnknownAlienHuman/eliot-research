@@ -13,7 +13,7 @@ export function isOpenRouterApiBase(value: string | null | undefined): boolean {
   } catch { return false; }
 }
 
-export interface DistillInput { revisionId: string; model: ModelSpec; callTimeoutMs?: 180_000 | 300_000 }
+export interface DistillInput { revisionId: string; model: ModelSpec; attemptId?: string | null }
 
 export interface OwnerActor {
   type: "owner";
@@ -133,12 +133,19 @@ export interface AnswerWarning {
 
 export interface TurnView {
   turnId: string;
+  /** Read/stream metadata from the owning DO row; not part of model history. */
+  createdAt?: number;
+  historyVersion?: number;
   question: string;
+  /** Original accepted request, retained when a queued question never started. */
+  input?: RunTurnInput;
   answer: string;
   state: "started" | "completed" | "partial" | "failed" | "cancelled";
   model: string;
   scopeMode: "project_default" | "explicit" | "empty";
   contextMode?: "whole" | "claims" | "none";
+  /** Storage-backed disclosure when older exchanges yielded room to sources and the latest exchange. */
+  historyNotice?: string;
   revisionIds: string[];
   sourceIds: string[];
   citations: Citation[];
@@ -151,10 +158,17 @@ export interface TurnView {
   outputTokens: number | null;
   providerUsage?: ProviderUsage | null;
   tokenLimit: number | null;
+  tokenLimitKind?: "published" | "unknown" | "legacy";
   firstTokenMs: number | null;
   totalMs: number | null;
   error: string | null;
+  /** Owning DO result still awaits confirmation of its D1 accounting projection. */
+  settlementPending?: true;
+  settlementError?: string;
 }
+
+export interface TurnPage { turns: TurnView[]; nextCursor: string | null }
+export interface ChatSnapshotState { stateVersion: number; queued: { turnId: string; question: string } | null; settlementError: string | null }
 
 export interface RunTurnInput {
   projectId: string;

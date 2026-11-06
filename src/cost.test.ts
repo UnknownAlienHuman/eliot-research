@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { admitDistill, admitTurn, failUndispatchedDistill } from "./cost.js";
 import { LibraryError } from "./library.js";
+import { estimateHistoryMessage, estimateModelInput } from "./model-input.js";
 import { assertProviderAllowance } from "./model-quota.js";
 import type * as ModelQuota from "./model-quota.js";
 import type { ModelSpec } from "./models.js";
+import { modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, modelTokenReservation } from "./models.js";
 
 // Provider allowance is mocked: the real model-quota module currently holds
 // a closed native placeholder, so admission tests pin allow/deny directly
@@ -22,7 +24,7 @@ function flashModel(): ModelSpec {
     id: "@cf/zai-org/glm-5.3-flash",
     label: "GLM 5.3 Flash",
     contextTokens: 1048576,
-    maxOutputTokens: null,
+    maxOutputTokens: 8192,
     outputReserveTokens: 8192,
     checkedOn: "2026-10-27",
     enabled: true,
@@ -35,14 +37,17 @@ const CHAT_DDL = "CREATE TABLE chat_turn (" +
   "chat_id TEXT NOT NULL, turn_id TEXT NOT NULL," +
   " state TEXT NOT NULL DEFAULT 'started' CHECK (state IN ('started','completed','partial','failed','cancelled'))," +
   " token_limit INTEGER CHECK (token_limit IS NULL OR token_limit >= 0)," +
+  " token_limit_kind TEXT," +
   " input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER," +
   " created_at INTEGER NOT NULL, PRIMARY KEY (chat_id, turn_id))";
 const DISTILL_DDL = "CREATE TABLE source_revision (" +
   "id TEXT PRIMARY KEY," +
+  " source_id TEXT NOT NULL DEFAULT 'fixture-source', deleted_at INTEGER, readable_state TEXT NOT NULL DEFAULT 'readable'," +
   " distill_state TEXT NOT NULL DEFAULT 'none' CHECK (distill_state IN ('none','queued','running','paused','done','partial','failed'))," +
-  " distill_model TEXT, distill_started_at INTEGER," +
+  " distill_model TEXT DEFAULT '" + FLASH_ROUTE + "', distill_started_at INTEGER," +
   " distill_token_limit INTEGER CHECK (distill_token_limit IS NULL OR distill_token_limit >= 0)," +
-  " distill_error TEXT," +
+  " distill_token_limit_kind TEXT," +
+  " distill_attempt_id TEXT, distill_error TEXT," +
   " distill_calls INTEGER NOT NULL DEFAULT 0 CHECK (distill_calls BETWEEN 0 AND 2)," +
   " distill_input_tokens INTEGER, distill_cached_tokens INTEGER, distill_output_tokens INTEGER," +
   " distill_estimated_cost_microusd INTEGER CHECK (distill_estimated_cost_microusd IS NULL OR distill_estimated_cost_microusd >= 0)," +
@@ -54,6 +59,7 @@ const DISTILL_DDL = "CREATE TABLE source_revision (" +
 function testEnv() {
   const db = new DatabaseSync(":memory:");
   db.exec(CHAT_DDL);
+  db.exec("CREATE TABLE source (id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'active'); INSERT INTO source(id) VALUES ('fixture-source')");
   db.exec(DISTILL_DDL);
   const shim = {
     prepare(sql: string) {
@@ -87,6 +93,66 @@ function distillRow(db: DatabaseSync, id: string) {
 beforeEach(() => {
   allowance.mockReset();
   allowance.mockResolvedValue(undefined);
+});
+
+describe("provider input budget and request estimate", () => {
+  it.each([32768, 4096, null])("reserves output only inside a proved combined window (%s)", (maxOutputTokens) => {
+    const model = { contextTokens: 192000, maxOutputTokens, outputReserveTokens: 2048 };
+    expect(modelInputLimit(model)).toBe(192000);
+    expect(modelInputLimit({ ...model, contextWindowTokens: 256000 })).toBe(192000);
+    expect(modelInputLimit({ ...model, contextWindowTokens: 128000 })).toBe(125952);
+    expect(model.maxOutputTokens).toBe(maxOutputTokens);
+  });
+  it.each([0, -1, 1.5, NaN, Infinity])("rejects an invalid provider ceiling %s", (contextTokens) => {
+    expect(() => modelInputLimit({ contextTokens, maxOutputTokens: null, outputReserveTokens: 8192 })).toThrow(LibraryError);
+  });
+  it("rejects a combined window with no output headroom", () => {
+    expect(() => modelInputLimit({ contextTokens: 8192, contextWindowTokens: 8192, maxOutputTokens: null, outputReserveTokens: 8192 })).toThrow(LibraryError);
+  });
+  it.each(["ordinary source", '"\\\r\n\t\b\f\0\u001f', "\ufeffРусский 😀 漢字", "\ud800 x \udc00", "[S1:92]"])("matches the existing serialized JSON estimate for %j", (content) => {
+    const request = { instructions: content, messages: [{ role: "user", content }, { role: "assistant", content: content + " tail" }],
+      schema: { type: "object", description: content } };
+    expect(estimateModelInput(request)).toBe(Math.ceil(new TextEncoder().encode(JSON.stringify(request)).byteLength / 3) + request.messages.length * 32 + 1024);
+    const first = request.messages[0];
+    if (!first) throw new Error("Missing message fixture.");
+    expect(estimateHistoryMessage(first)).toBe(Math.ceil(new TextEncoder().encode(JSON.stringify(first) + ",").byteLength / 3) + 32);
+  });
+});
+
+describe("published generation maximum", () => {
+  it.each([32768, 4096])("uses published %i independently of the assembly reserve", (capacity) => {
+    const model = { ...flashModel(), maxOutputTokens: capacity, outputReserveTokens: 8192 };
+    expect(modelOutputLimit(model, 1024))
+      .toBe(capacity);
+    expect(modelOutputReserve(model)).toBe(Math.min(8192, capacity));
+  });
+  it("caps a published maximum by the remaining context window", () => {
+    expect(modelOutputLimit({ contextTokens: 64000, contextWindowTokens: 64000, maxOutputTokens: 32768 }, 40000)).toBe(24000);
+  });
+  it("does not subtract an input-only ceiling from published output capacity", () => {
+    expect(modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, 40000)).toBe(32768);
+    expect(modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, 64000)).toBe(32768);
+  });
+  it("omits an unknown maximum without changing metadata or the recorded accounting bound", () => {
+    const model = Object.freeze({ ...flashModel(), maxOutputTokens: null });
+    expect(modelOutputLimit(model, 1024)).toBeUndefined();
+    expect(model.maxOutputTokens).toBeNull();
+    expect(modelOutputReserve(model)).toBe(8192);
+    expect(modelTokenLimit(model)).toBeNull();
+    expect(modelTokenReservation(model)).toBe(FLASH_BOUND);
+  });
+  it.each([64000, 64001, -1, 1.5])("rejects unusable input allocation %i before generation", (input) => {
+    expect(() => modelOutputLimit({ contextTokens: 64000, contextWindowTokens: 64000, maxOutputTokens: 32768 }, input)).toThrow(LibraryError);
+  });
+  it.each([0, -1, null, NaN, Infinity, 1.5])("rejects invalid input ceiling %s even with a known window", (context) => {
+    expect(() => modelOutputLimit({ contextTokens: context, contextWindowTokens: 64000, maxOutputTokens: 32768 }, 1)).toThrow(LibraryError);
+  });
+  it.each([0, -1, NaN, Infinity, 1.5])("rejects invalid combined window %s", (window) => {
+    expect(() => modelOutputLimit({ contextTokens: 64000, contextWindowTokens: window, maxOutputTokens: 32768 }, 1)).toThrow(LibraryError);
+  });
+  it("rejects input beyond its ceiling without inferring a combined window", () => {
+    expect(() => modelOutputLimit({ contextTokens: 64000, maxOutputTokens: 32768 }, 64001)).toThrow(LibraryError);
+  });
 });
 
 describe("admitTurn", () => {
@@ -138,6 +204,18 @@ describe("admitDistill", () => {
     expect(row.tokenLimit).toBe(2 * FLASH_BOUND);
     expect(row.error).toBeNull();
     expect(Number(row.startedAt)).toBeGreaterThanOrEqual(before);
+  });
+  it("records two combined windows without rewriting an already admitted distill", async () => {
+    const fixed = testEnv();
+    const model = { ...flashModel(), contextWindowTokens: 1048576, maxOutputTokens: 943718 };
+    try {
+      fixed.db.prepare("INSERT INTO source_revision (id, distill_state) VALUES ('bounded', 'queued')").run();
+      await expect(admitDistill(fixed.env, "bounded", model)).resolves.toBe(true);
+      expect(distillRow(fixed.db, "bounded").tokenLimit).toBe(2097152);
+      fixed.db.prepare("INSERT INTO source_revision (id, distill_state, distill_token_limit, distill_token_limit_kind) VALUES ('prior', 'running', 3984588, 'published')").run();
+      await expect(admitDistill(fixed.env, "prior", model)).resolves.toBe(false);
+      expect(distillRow(fixed.db, "prior").tokenLimit).toBe(3984588);
+    } finally { fixed.db.close(); }
   });
   it("holds a third revision queued while two are already running", async () => {
     const fixed = testEnv();

@@ -1,3 +1,4 @@
+import { fencedCodeRanges, fencedRanges, inlineCodeRanges } from "./code-ranges.ts";
 import { countNumericQuantities, numbersSupported, parseSingleNumber } from "./numbers.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
@@ -13,9 +14,8 @@ import type { Block } from "./blocks.js";
  * declared reference tokens; splitDistillStatements keeps fenced code as one
  * unit. resultStatement formats one scalar result card and rejects it when
  * the composed task/dataset/conditions plus metric:valueText+unit lacks numeric
- * support. Direct dataset/quote split contradictions and absent standalone
- * uppercase dataset identifiers are rejected; other task/metric/dataset
- * semantics remain unchecked.
+ * support. Direct dataset/quote split contradictions are rejected; other
+ * task/metric/dataset semantics remain unchecked.
  */
 
 export interface CandidateClaim {
@@ -55,32 +55,10 @@ export function sourceContextJson(value: Record<string, unknown>, authorityLabel
       : token.replaceAll("[", "\\u005b").replaceAll("]", "\\u005d"));
 }
 
-/** Rejected claims contribute source-label cues only, never their draft facts. */
-export function unresolvedClaimBlocks(
-  candidates: readonly { quoteBlock: string }[],
-  dropped: readonly { index: number; reason: string }[],
-  allowed: ReadonlySet<string>,
-): string[] {
-  const rejected = new Set(dropped
-    .filter(({ index, reason }) => !reason.startsWith("guide-") && Number.isInteger(index) && index >= 0 && index < candidates.length)
-    .map(({ index }) => index));
-  const blocks = new Set<string>();
-  candidates.forEach(({ quoteBlock }, index) => {
-    if (rejected.has(index) && allowed.has(quoteBlock)) blocks.add(quoteBlock);
-  });
-  return [...blocks];
-}
-
-interface Fence {
-  char: string;
-  count: number;
-}
-
 interface Slice {
   base: number;
   text: string;
-  folded: string;
-  map: number[];
+  fold?: ReturnType<typeof foldText>;
 }
 
 interface Hit {
@@ -96,11 +74,12 @@ interface Hit {
  * byte ranges. No search, no fallback, no generation.
  */
 export function resolveQuoteBlock(
-  text: string,
+  text: string | Uint8Array,
   blocks: readonly Block[],
   label: string,
+  allocate?: (bytes: number) => void,
 ): { block: number; quote: string } | undefined {
-  if (typeof text !== "string" || typeof label !== "string") return undefined;
+  if ((typeof text !== "string" && !(text instanceof Uint8Array)) || typeof label !== "string") return undefined;
   const match = COMPACT_LABEL_RE.exec(label);
   const alias = match?.[1];
   const blockId = match?.[2];
@@ -110,6 +89,8 @@ export function resolveQuoteBlock(
   if (!Number.isSafeInteger(block) || block < 1) return undefined;
   const row = blocks.find((entry) => entry.id === block);
   if (row === undefined) return undefined;
+  if (Number.isSafeInteger(row.start) && Number.isSafeInteger(row.end) && row.start >= 0 && row.end > row.start)
+    allocate?.(2 * (row.end - row.start));
   let quote: string;
   try {
     quote = sliceUtf8(text, row.start, row.end);
@@ -118,68 +99,6 @@ export function resolveQuoteBlock(
   }
   if (quote === "") return undefined;
   return { block, quote };
-}
-
-/** Char ranges covered by ```/~~~ fenced code; labels inside never resolve. */
-function fencedRanges(text: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
-  const parts = text.split("\n");
-  let fence: Fence | undefined;
-  let fenceStart = 0;
-  let pos = 0;
-  for (let i = 0; i < parts.length; i++) {
-    const line = parts[i] ?? "";
-    const lineEnd = pos + line.length + (i < parts.length - 1 ? 1 : 0);
-    if (fence === undefined) {
-      const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-      if (open !== undefined) {
-        fence = { char: open[0] ?? "`", count: open.length };
-        fenceStart = pos;
-      }
-    } else {
-      const trimmed = line.trim();
-      if (trimmed.startsWith(fence.char.repeat(fence.count)) && new RegExp(`^${fence.char}+$`).test(trimmed)) {
-        ranges.push({ start: fenceStart, end: lineEnd });
-        fence = undefined;
-      }
-    }
-    pos = lineEnd;
-  }
-  if (fence !== undefined) ranges.push({ start: fenceStart, end: text.length });
-  return ranges;
-}
-
-/** Inline `code` spans; an unclosed backtick run stays literal prose. */
-function inlineCodeRanges(text: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] !== "`") {
-      i += 1;
-      continue;
-    }
-    let open = 0;
-    while (text[i + open] === "`") open++;
-    let j = i + open;
-    let found = -1;
-    while (j < text.length) {
-      if (text[j] !== "`") {
-        j += 1;
-        continue;
-      }
-      let close = 0;
-      while (text[j + close] === "`") close++;
-      if (close === open) {
-        found = j;
-        break;
-      }
-      j += close;
-    }
-    if (found < 0) break;
-    ranges.push({ start: i, end: found + open });
-    i = found + open;
-  }
-  return ranges;
 }
 
 /**
@@ -214,8 +133,9 @@ export function cleanDistillText(
       known.set(`[block ${block}]`, block);
     }
   }
-  const fences = [...fencedRanges(text), ...inlineCodeRanges(text)];
-  const inside = (at: number): boolean => fences.some((range) => at >= range.start && at < range.end);
+  const fences = fencedRanges(text);
+  const code = [...fences, ...inlineCodeRanges(text, fences)];
+  const inside = (at: number): boolean => code.some((range) => at >= range.start && at < range.end);
   const parts: string[] = [];
   let last = 0;
   let invalidReferences = 0;
@@ -237,6 +157,24 @@ export function cleanDistillText(
   }
   parts.push(text.slice(last));
   return { text: parts.join(""), invalidReferences };
+}
+
+/** Retain ambiguous markup for review instead of claiming verified completion. */
+export function checkDistillContent(text: string, labels: readonly string[], revisionId: string): { empty: boolean; requiresReview: boolean } {
+  if (!text.trim()) return { empty: true, requiresReview: false };
+  const fences = fencedCodeRanges(text), inline = inlineCodeRanges(text, fences);
+  const code = fences.some((range) => text.slice(range.contentStart, range.contentEnd).trim() !== "")
+    || inline.some((range) => text.slice(range.start, range.end).replace(/^`+|`+$/g, "").trim() !== "");
+  let prose = "", start = 0;
+  for (const range of [...fences, ...inline].sort((a, b) => a.start - b.start)) {
+    prose += text.slice(start, range.start); start = range.end;
+  }
+  prose += text.slice(start);
+  const cleaned = cleanDistillText(prose, labels, revisionId).text;
+  const requiresReview = /!\[|\]\s*(?:\(|\[)|\[\^|^\s*\[[^\]]+\]:|<\/?[A-Za-z][^>]*>|<!--|&[^;\s]+;|^(?: {4}|\t)/mu.test(prose)
+    || fences.some((range) => !range.closed && text.slice(range.contentStart, range.contentEnd).trim() === "")
+    || (!/[\p{L}\p{N}]/u.test(cleaned) && /[~|+<>=]/u.test(cleaned));
+  return { empty: !code && !/[\p{L}\p{N}\p{S}]/u.test(cleaned) && !(requiresReview && text.trim()), requiresReview };
 }
 
 /**
@@ -266,7 +204,9 @@ export function splitDistillStatements(text: string): string[] {
 }
 
 /** Fold one slice; map[folded index] is the UTF-16 index of the source unit. */
-function foldText(input: string): { folded: string; map: number[] } {
+function foldText(input: string, allocate?: (bytes: number) => void): { folded: string; map: number[] } {
+  // Folded UTF-16 plus a conservatively charged growing numeric-index array.
+  allocate?.(20 * input.length + 128);
   let folded = "";
   const map: number[] = [];
   let i = 0;
@@ -286,36 +226,36 @@ function foldText(input: string): { folded: string; map: number[] } {
       continue;
     }
     const foldedChar = SINGLES.has(unit) ? "'" : DOUBLES.has(unit) ? '"' : DASHES.has(unit) ? "-" : undefined;
-    if (foldedChar === undefined) {
-      const width = (input.codePointAt(i) ?? 0) > 0xffff ? 2 : 1;
-      folded += input.slice(i, i + width);
-      map.push(i);
-      i += width;
-    } else {
-      folded += foldedChar;
-      map.push(i);
-      i += 1;
-    }
+    // String search uses UTF-16 indexes: retain an entry for each surrogate unit too.
+    folded += foldedChar ?? unit;
+    map.push(i);
+    i += 1;
   }
   return { folded, map };
 }
 
 function byteOffset(base: number, slice: string, utf16Index: number): number {
-  return base + encoder.encode(slice.slice(0, utf16Index)).byteLength;
+  let offset = base;
+  for (const char of slice.slice(0, utf16Index)) {
+    const point = char.codePointAt(0) ?? 0;
+    offset += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
+  }
+  return offset;
 }
 
-function loadSlices(text: string, blocks: readonly Block[]): Map<number, Slice> {
+function loadSlices(bytes: Uint8Array, blocks: readonly Block[], allocate?: (bytes: number) => void): Map<number, Slice> {
   const out = new Map<number, Slice>();
   for (const block of blocks) {
     if (!Number.isInteger(block.id) || block.id < 1) continue;
+    if (Number.isSafeInteger(block.start) && Number.isSafeInteger(block.end) && block.start >= 0 && block.end >= block.start && block.end <= bytes.byteLength)
+      allocate?.(2 * (block.end - block.start) + 64);
     let slice: string;
     try {
-      slice = sliceUtf8(text, block.start, block.end);
+      slice = sliceUtf8(bytes, block.start, block.end);
     } catch {
       continue;
     }
-    const folded = foldText(slice);
-    out.set(block.id, { base: block.start, text: slice, folded: folded.folded, map: folded.map });
+    out.set(block.id, { base: block.start, text: slice });
   }
   return out;
 }
@@ -344,17 +284,18 @@ function exactHits(slices: Map<number, Slice>, order: number[], quote: string): 
   return hits;
 }
 
-function foldedHits(slices: Map<number, Slice>, order: number[], foldedQuote: string): Hit[] {
+function foldedHits(slices: Map<number, Slice>, order: number[], foldedQuote: string, allocate?: (bytes: number) => void): Hit[] {
   const hits: Hit[] = [];
   for (const id of order) {
     const slice = slices.get(id);
     if (slice === undefined) continue;
+    const { folded, map } = slice.fold ??= foldText(slice.text, allocate);
     let from = 0;
     while (hits.length < 2) {
-      const at = slice.folded.indexOf(foldedQuote, from);
+      const at = folded.indexOf(foldedQuote, from);
       if (at < 0) break;
-      const start16 = slice.map[at];
-      const end16 = at + foldedQuote.length < slice.folded.length ? slice.map[at + foldedQuote.length] : slice.text.length;
+      const start16 = map[at];
+      const end16 = at + foldedQuote.length < folded.length ? map[at + foldedQuote.length] : slice.text.length;
       if (start16 === undefined || end16 === undefined) break;
       hits.push({ blockId: id, start: byteOffset(slice.base, slice.text, start16), end: byteOffset(slice.base, slice.text, end16) });
       from = at + 1;
@@ -380,15 +321,19 @@ function singleDataSplit(value: string | null, quoted: boolean): string | undefi
 }
 
 export function verifyClaims(
-  text: string,
+  text: string | Uint8Array,
   blocks: readonly Block[],
   candidates: readonly CandidateClaim[],
+  allocate?: (bytes: number) => void,
 ): { claims: VerifiedClaim[]; dropped: { index: number; reason: string }[]; clearedNumbers: number } {
-  const slices = loadSlices(text, blocks);
   const claims: VerifiedClaim[] = [];
   const dropped: { index: number; reason: string }[] = [];
   let clearedNumbers = 0;
+  if (candidates.length === 0) return { claims, dropped, clearedNumbers };
+  const bytes = typeof text === "string" ? encoder.encode(text) : text;
+  const slices = loadSlices(bytes, blocks, allocate);
   candidates.forEach((candidate, index) => {
+    if (typeof candidate.quote === "string") allocate?.(2 * candidate.quote.length);
     if (typeof candidate.quote !== "string" || candidate.quote.replace(/[\s\u00AD]/gu, "") === "") {
       dropped.push({ index, reason: "empty-quote" });
       return;
@@ -400,15 +345,16 @@ export function verifyClaims(
     const order = scopeOrder(slices, candidate.block);
     let hits = exactHits(slices, order, candidate.quote);
     if (hits.length === 0) {
-      const foldedQuote = foldText(candidate.quote).folded;
-      hits = foldedQuote === "" ? [] : foldedHits(slices, order, foldedQuote);
+      const foldedQuote = foldText(candidate.quote, allocate).folded;
+      hits = foldedQuote === "" ? [] : foldedHits(slices, order, foldedQuote, allocate);
     }
     const first = hits[0];
     if (first === undefined) {
       dropped.push({ index, reason: "unmatched" });
       return;
     }
-    const verifiedText = sliceUtf8(text, first.start, first.end);
+    allocate?.(2 * (first.end - first.start));
+    const verifiedText = sliceUtf8(bytes, first.start, first.end);
     if (!numbersSupported(candidate.statement, verifiedText)) {
       dropped.push({ index, reason: "unsupported-statement-numbers" });
       return;
@@ -459,15 +405,6 @@ export function verifyClaims(
   return { claims, dropped, clearedNumbers };
 }
 
-/** Only standalone uppercase ASCII dataset identifiers; presence does not prove row association. */
-function hasUppercaseDatasetIdentifier(dataset: string | null, quote: string): boolean {
-  if (dataset === null) return true;
-  const identifier = dataset.trim();
-  if (!/^[A-Z]{2,}$/u.test(identifier)) return true;
-  const boundary = "[^\\p{L}\\p{M}\\p{N}_]";
-  return new RegExp(`(?:^|${boundary})${identifier}(?=$|${boundary})`, "iu").test(quote);
-}
-
 /**
  * Format one stored result card after the normal verify step. Non-result
  * claims keep their original statement. A result claim must carry its
@@ -481,10 +418,8 @@ function hasUppercaseDatasetIdentifier(dataset: string | null, quote: string): b
  * conditions plus metric:valueText+unit (joining, never doubling, the
  * unit) must be supported by the verified quote; valueText must be
  * supported by the statement; the statement must be supported by the
- * composed record. A standalone uppercase ASCII dataset identifier must
- * also occur as a whole word in the own quote; this spelling check does not
- * prove semantic row association. Callers run verifyClaims first; this
- * formats, it does not re-admit or infer conditions.
+ * composed record. Callers run verifyClaims first; this formats, it does
+ * not re-admit or infer conditions.
  */
 export function resultStatement(claim: VerifiedClaim): string | null {
   if (claim.kind !== "result") return claim.statement;
@@ -502,7 +437,6 @@ export function resultStatement(claim: VerifiedClaim): string | null {
   // quantity (compound powers count as one via the shared tokenizer).
   // Never split, relabel, or borrow conditions to repair a compound.
   if (countNumericQuantities(text) > 1) return null;
-  if (!hasUppercaseDatasetIdentifier(claim.dataset, claim.quote)) return null;
   const unit = clean(claim.unit);
   const scalar =
     unit === null || text.endsWith(unit) ? text : unit === "%" ? text + unit : text + " " + unit;

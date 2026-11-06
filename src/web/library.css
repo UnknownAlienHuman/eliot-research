@@ -104,9 +104,27 @@
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
 }
+.er-lib__find {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  max-width: var(--eliot-type-reading-measure);
+  background: var(--md-sys-color-surface-container-low);
+}
+.er-lib__find :is(label, [role="status"]) { grid-column: 1 / -1; }
+.er-lib__find .er-button { padding-inline: var(--eliot-space-block-control); }
+.er-lib__find input { min-width: 0; width: 100%; }
+.er-lib__find [role="status"]:empty { display: none; }
+.er-lib__find + .er-lib__text mark { scroll-margin-block-start: 12rem; }
 .er-lib__excerpt { border-inline-start: var(--eliot-focus-width) solid var(--md-sys-color-primary); }
 .er-lib__excerpt p { margin: 0; overflow-wrap: anywhere; }
-.er-lib__excerpt pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--eliot-type-font-family-mono); }
+.er-lib__text mark {
+  color: var(--md-sys-color-on-secondary-container);
+  background: var(--md-sys-color-secondary-container);
+  scroll-margin-block: 4rem;
+}
 @media (max-width: 48rem) {
   .er-lib__reader { grid-template-columns: minmax(0, 1fr); }
   .er-lib__row { padding-inline: var(--eliot-space-panel); }

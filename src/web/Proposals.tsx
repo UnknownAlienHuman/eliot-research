@@ -1,9 +1,9 @@
 // Owner inbox for immutable agent proposal revisions.
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Link } from 'react-router';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router';
 import type { Citation } from '../citations';
 import type { ProposalSummary, ProposalView } from '../shared/api';
-import { Markdown } from './Markdown';
+import { Markdown, citationHref, citationLabel } from './Markdown';
 import type { MarkdownReference } from './Markdown';
 import './proposals.css';
 
@@ -24,14 +24,10 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   throw new ProposalRequestError(message, response.status);
 }
 
-const readerHref = (projectId: string, citation: Citation) => '/p/' + encodeURIComponent(projectId) + '/source/' +
-  encodeURIComponent(citation.sourceId) + '?revisionId=' + encodeURIComponent(citation.revisionId) +
-  '&start=' + citation.start + '&end=' + citation.end;
-const citationLabel = (citation: Citation) => citation.sourceTitle + ' · ' + citation.block + (citation.deleted ? ' (deleted)' : '');
 function citationReferences(projectId: string, citations: readonly Citation[]): MarkdownReference[] {
   const refs = new Map<string, MarkdownReference>();
   for (const citation of citations) for (const text of [citation.label, '[R' + citation.revisionId + ':' + citation.block + ']'])
-    if (text) refs.set(text, { text, label: citationLabel(citation), href: readerHref(projectId, citation) });
+    if (text) refs.set(text, { text, label: citationLabel(citation), href: citationHref(projectId, citation) });
   return [...refs.values()];
 }
 const kindLabel = (kind: string) => kind.slice(0, 1).toLocaleUpperCase() + kind.slice(1);
@@ -43,6 +39,7 @@ const dateTimeValue = (timestamp: number) => {
 
 export function ProposalsInbox({ projectId, onAccepted }: { readonly projectId: string; readonly onAccepted?: (pageId: string) => void }) {
   const id = useId();
+  const location = useLocation();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const dialogTitleRef = useRef<HTMLHeadingElement | null>(null);
   const [proposals, setProposals] = useState<ProposalSummary[] | null>(null);
@@ -58,6 +55,8 @@ export function ProposalsInbox({ projectId, onAccepted }: { readonly projectId: 
   const [decisionError, setDecisionError] = useState('');
   const [notice, setNotice] = useState('');
   const listSeq = useRef(0), detailSeq = useRef(0), decisionLock = useRef(false), mounted = useRef(false);
+  // Release the modal before the Reader focuses its cited passage.
+  useLayoutEffect(() => { dialogRef.current?.close(); }, [location]);
 
   const loadList = useCallback(async (cursor: string | null = null, append = false): Promise<void> => {
     if (!projectId) return;
@@ -211,7 +210,7 @@ export function ProposalsInbox({ projectId, onAccepted }: { readonly projectId: 
                   <ul>
                     {visible.citations.map((citation: Citation) => (
                       <li key={citation.revisionId + ':' + citation.block + ':' + citation.start}>
-                        <Link className="er-citation" to={readerHref(projectId, citation)}>{citationLabel(citation)}</Link>
+                        <Link className="er-citation" to={citationHref(projectId, citation)}>{citationLabel(citation)}</Link>
                       </li>
                     ))}
                   </ul>

@@ -1,6 +1,6 @@
 import { countNumericQuantities, numbersSupported } from "./numbers.js";
-import { describe, expect, it } from "vitest";
-import { cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, unresolvedClaimBlocks, verifyClaims } from "./quotes.js";
+import { describe, expect, it, vi } from "vitest";
+import { checkDistillContent, cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "./quotes.js";
 import type { CandidateClaim, VerifiedClaim } from "./quotes.js";
 import { sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
@@ -28,6 +28,107 @@ function claim(overrides: Partial<CandidateClaim> & { quote: string; block: numb
 }
 
 describe("verifyClaims", () => {
+  it("charges a legacy fold map before allocating it and preserves the ordinary quote contract", () => {
+    const text = 'The \u201cexact quote\u201d is retained. ' + "x".repeat(900000), bytes = TE.encode(text);
+    const blocks = [{ id: 1, type: "paragraph" as const, start: 0, end: bytes.length, heading: null }];
+    const candidate = claim({ kind: "method", quote: 'The "exact quote" is retained.', block: 1 });
+    const stop = new Error("Allocation guard");
+    let used = 0;
+    const allocate = vi.fn((size: number) => { if (size > 16 * 1024 * 1024 - used) throw stop; used += size; });
+    const decode = vi.spyOn(TextDecoder.prototype, "decode");
+    try {
+      expect(() => verifyClaims(bytes, blocks, [candidate], allocate)).toThrow(stop);
+      expect(allocate).toHaveBeenLastCalledWith(20 * text.length + 128);
+      expect(decode).toHaveBeenCalledTimes(1); // Canonical slice only; no verified quote after the rejected fold.
+    } finally { decode.mockRestore(); }
+    const small = text.slice(0, 30), normal = verifyClaims(small, [blockFor(1, small, small)], [candidate]);
+    expect(normal.claims[0]?.quote).toBe('The \u201cexact quote\u201d is retained.');
+  });
+
+  it("checks a caller's allocation guard before decoding a legacy block larger than the current scanner size", () => {
+    const bytes = TE.encode("Canonical retained content. ".repeat(400));
+    const blocks = [{ id: 1, type: "paragraph" as const, start: 0, end: bytes.length, heading: null }];
+    const stop = new Error("Allocation guard"), decode = vi.spyOn(TextDecoder.prototype, "decode");
+    try {
+      expect(() => resolveQuoteBlock(bytes, blocks, "[S1:1]", () => { throw stop; })).toThrow(stop);
+      expect(decode).not.toHaveBeenCalled();
+      expect(resolveQuoteBlock(bytes, blocks, "[S1:1]")?.quote).toBe(new TextDecoder().decode(bytes));
+    } finally { decode.mockRestore(); }
+  });
+
+  it("encodes a 512 KiB source once across 512 blocks and reuses supplied bytes", () => {
+    const text = ("x".repeat(1023) + "\n").repeat(512), bytes = TE.encode(text);
+    const blocks: Block[] = Array.from({ length: 512 }, (_, i) => ({ id: i + 1, type: "paragraph", start: i * 1024, end: (i + 1) * 1024, heading: null }));
+    const candidate = claim({ kind: "method", quote: "xxx", block: 256 });
+    for (const input of [text, bytes]) {
+      const encode = vi.spyOn(TextEncoder.prototype, "encode");
+      let out: ReturnType<typeof verifyClaims>;
+      try {
+        expect(verifyClaims(input, blocks, [])).toEqual({ claims: [], dropped: [], clearedNumbers: 0 });
+        expect(encode).not.toHaveBeenCalled();
+        out = verifyClaims(input, blocks, [candidate]);
+        expect(encode.mock.calls).toEqual(typeof input === "string" ? [[text]] : []);
+      } finally { encode.mockRestore(); }
+      expect(out.dropped).toEqual([]);
+      expect(out.claims[0]).toMatchObject({ quote: "xxx", block: 256, start: 255 * 1024, end: 255 * 1024 + 3, ambiguous: true });
+    }
+  });
+
+  it("maps all UTF-8 widths to the original offsets in exact and folded matches", () => {
+    const prefix = "\0A\u007f\u0080\u07ff\u0800\ud7ff\ue000\uffff😀\u{10ffff} ", text = prefix + "a—b.";
+    const blocks = [blockFor(1, text, text)], start = TE.encode(prefix).length;
+    for (const input of [text, TE.encode(text)]) {
+      for (const quote of ["a—b.", "a-b."]) {
+        expect(verifyClaims(input, blocks, [claim({ quote, block: 1 })]).claims[0])
+          .toMatchObject({ quote: "a—b.", start, end: TE.encode(text).length, ambiguous: false });
+      }
+    }
+  });
+
+  it("keeps canonical byte views, candidate order and exact/normalized duplicate preference", () => {
+    const passage = "\uFEFFКириллица 😀 alpha—beta\u00AD end.", text = passage + "\n\n" + passage;
+    const blocks = [blockFor(1, text, passage), { ...blockFor(2, text, passage), start: TE.encode(passage + "\n\n").length, end: TE.encode(text).length }];
+    const candidates = [claim({ quote: "alpha-beta end.", block: 2 }), claim({ quote: "😀 alpha—beta", block: 1 })];
+    const expected = verifyClaims(text, blocks, candidates), bytes = TE.encode(text);
+    const padded = new Uint8Array(bytes.length + 4); padded.set(bytes, 2);
+    expect(expected.claims.map(item => [item.block, item.ambiguous, item.quote])).toEqual([
+      [2, true, "alpha—beta\u00AD end."], [1, true, "😀 alpha—beta"],
+    ]);
+    expect(verifyClaims(padded.subarray(2, -2), blocks, candidates)).toEqual(expected);
+    expect(resolveQuoteBlock(bytes, blocks, "[S1:1]")).toEqual({ block: 1, quote: passage });
+    for (const item of expected.claims) expect(sliceUtf8(bytes, item.start, item.end)).toBe(item.quote);
+  });
+
+  it("prefers an adjacent exact quote over a normalized stated-block quote", () => {
+    const first = "😀 alpha—beta.", second = "я alpha-beta.", text = first + "\n\n" + second;
+    const blocks = [blockFor(1, text, first), blockFor(2, text, second)];
+    for (const input of [text, TE.encode(text)]) {
+      const out = verifyClaims(input, blocks, [claim({ quote: "alpha-beta.", block: 1 })]);
+      const start = TE.encode(first + "\n\nя ").length;
+      expect(out.dropped).toEqual([]);
+      expect(out.claims[0]).toMatchObject({ block: 2, quote: "alpha-beta.", start, end: TE.encode(text).length, ambiguous: false });
+    }
+  });
+
+  it.each([[1, 4], [0, 3], [-1, 4], [0, 7], [4, 0], [0.5, 4], [0, NaN], [0, Infinity], [0, Number.MAX_SAFE_INTEGER + 1]])(
+    "rejects invalid source byte ranges %s:%s in resolver and verifier", (start, end) => {
+      const bytes = TE.encode("😀я"), blocks: Block[] = [{ id: 1, type: "paragraph", start, end, heading: null }];
+      expect(resolveQuoteBlock(bytes, blocks, "[S1:1]")).toBeUndefined();
+      expect(verifyClaims(bytes, blocks, [claim({ quote: "😀", block: 1 })])).toMatchObject({ claims: [], dropped: [{ index: 0, reason: "unknown-block" }] });
+    },
+  );
+
+  it("rejects malformed UTF-8, keeps valid siblings and handles empty input", () => {
+    const bytes = new Uint8Array([0xff, 0x61]), blocks: Block[] = [
+      { id: 1, type: "paragraph", start: 0, end: 1, heading: null },
+      { id: 2, type: "paragraph", start: 1, end: 2, heading: null },
+    ];
+    expect(resolveQuoteBlock(bytes, blocks, "[S1:1]")).toBeUndefined();
+    expect(verifyClaims(bytes, blocks, [claim({ quote: "a", block: 2 })]).claims[0]).toMatchObject({ quote: "a", block: 2, start: 1, end: 2 });
+    expect(verifyClaims(new Uint8Array(), [], [])).toEqual({ claims: [], dropped: [], clearedNumbers: 0 });
+    expect(resolveQuoteBlock(new Uint8Array(), [{ id: 1, type: "paragraph", start: 0, end: 0, heading: null }], "[S1:1]")).toBeUndefined();
+  });
+
   it("verifies exact bytes in the stated block", () => {
     const text = "Intro.\n\nThe residual mapping F(x) = H(x) \u2212 x is learned.\n";
     const sub = "The residual mapping F(x) = H(x) \u2212 x is learned.";
@@ -83,6 +184,21 @@ describe("verifyClaims", () => {
     }
   });
 
+  it.each([
+    { prefix: "Before \u{1f30d}. ", canonical: "The \u201cexact quote\u201d ends here.", candidate: 'The "exact quote" ends here.' },
+    { prefix: "", canonical: "The \u201cexact \u{1f30d} quote\u201d ends here.", candidate: 'The "exact \u{1f30d} quote" ends here.' },
+    { prefix: "\u{20000}\u{1f30d} ", canonical: "\u{20001}\u2013\u{1f30d} end", candidate: "\u{20001}-\u{1f30d} end" },
+    { prefix: "\u{1f30d} ", canonical: "Quoted\u2013\u{20000}", candidate: "Quoted-\u{20000}" },
+  ])("maps normalized quotes after supplementary Unicode to exact original bytes: $candidate", ({ prefix, canonical, candidate }) => {
+    const text = "Intro.\n\n" + prefix + canonical + " Tail.\n";
+    const passage = prefix + canonical + " Tail.\n";
+    const out = verifyClaims(text, [blockFor(2, text, passage)], [claim({ kind: "method", quote: candidate, block: 2 })]);
+    const start = TE.encode("Intro.\n\n" + prefix).byteLength;
+    expect(out.dropped).toEqual([]);
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0]).toMatchObject({ quote: canonical, block: 2, start, end: start + TE.encode(canonical).byteLength });
+  });
+
   it("marks duplicates ambiguous and keeps the stated occurrence", () => {
     const one = "Same sentence here.";
     const text = one + "\n\n" + one + "\n";
@@ -97,6 +213,18 @@ describe("verifyClaims", () => {
     expect(out.claims[0]).toMatchObject({ block: 1, ambiguous: true });
     const found = out.claims[0];
     if (found !== undefined) expect(sliceUtf8(text, found.start, found.end)).toBe(one);
+  });
+
+  it("keeps the stated block and ambiguity when normalized duplicates follow supplementary Unicode", () => {
+    const first = "\u{1f30d} The \u201cexact quote\u201d.", second = "\u{20000} The \u201cexact quote\u201d.";
+    const text = first + "\n\n" + second;
+    const blocks = [blockFor(1, text, first), blockFor(2, text, second)];
+    const out = verifyClaims(text, blocks, [claim({ kind: "method", quote: 'The "exact quote".', block: 2 })]);
+    const canonical = "The \u201cexact quote\u201d.";
+    const start = TE.encode(first + "\n\n\u{20000} ").byteLength;
+    expect(out.dropped).toEqual([]);
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0]).toMatchObject({ quote: canonical, block: 2, start, end: TE.encode(text).byteLength, ambiguous: true });
   });
 
   it("drops empty quotes, unknown blocks and unmatched quotes", () => {
@@ -243,6 +371,20 @@ describe("verifyClaims", () => {
     expect(out.claims[0]).toMatchObject({ valueText: "1,280,000", valueNumber: 1280000 });
     expect(out.claims[1]).toMatchObject({ valueText: "1 280 000", valueNumber: null });
     expect(out.claims[2]).toMatchObject({ valueText: "1e-8", valueNumber: 1e-8 });
+  });
+
+  it.each([
+    ["0,500", 0.5], ["-0,050", -0.05], ["+0,500%", 0.5], ["0,500e-2", 0.005],
+    ["1,280,000", 1280000], ["1,500", 1500], ["0,5", null], ["1 280 000", null],
+  ] as const)("preserves scalar interpretation and canonical bytes for %s", (valueText, valueNumber) => {
+    const text = "Потеря 😀: " + valueText + ".";
+    const out = verifyClaims(TE.encode(text), [blockFor(1, text, text)], [claim({
+      quote: text, block: 1, statement: text, metric: "loss", valueText,
+    })]);
+    expect(out.dropped).toEqual([]);
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0]).toMatchObject({ statement: text, quote: text, valueText, valueNumber,
+      start: 0, end: TE.encode(text).byteLength });
   });
 
   it("drops statements whose numbers lack quote support, keeps supported model names", () => {
@@ -500,37 +642,6 @@ describe("sourceContextJson", () => {
   });
 });
 
-describe("unresolvedClaimBlocks", () => {
-  it("cues rejected claims' own allowed blocks in candidate order without forwarding draft facts", () => {
-    const candidates = [
-      { quoteBlock: "[S1:7]", statement: "Unverified compound result: 12% and 19%.", valueText: "12% and 19%" },
-      { quoteBlock: "[S1:8]" },
-      { quoteBlock: "[S1:7]" },
-      { quoteBlock: "[S1:9]" },
-      { quoteBlock: "[S2:7]" },
-      { quoteBlock: "[S1:10]" },
-    ] as const;
-    const dropped = [
-      { index: 2, reason: "unsupported-condition-numbers" },
-      { index: 1, reason: "unmatched" },
-      { index: 3, reason: "guide-unsupported-statement-numbers" },
-      { index: 0, reason: "pre-synthesis-missing-or-unsupported-primary-result" },
-      { index: 4, reason: "unknown-block" },
-      { index: 0, reason: "guide-invalid-reference" },
-    ] as const;
-    expect(unresolvedClaimBlocks(candidates, dropped, new Set(["[S1:7]", "[S1:8]", "[S1:9]", "[S1:10]"])))
-      .toEqual(["[S1:7]", "[S1:8]"]);
-  });
-
-  it("ignores guide-only collisions and invalid claim indices", () => {
-    const candidates = [{ quoteBlock: "[S1:7]" }];
-    const dropped = [-1, 0.5, 1, NaN, Infinity, Number.MAX_SAFE_INTEGER]
-      .map((index) => ({ index, reason: "unmatched" }));
-    dropped.push({ index: 0, reason: "guide-invalid-reference" });
-    expect(unresolvedClaimBlocks(candidates, dropped, new Set(["[S1:7]"]))).toEqual([]);
-  });
-});
-
 describe("resolveQuoteBlock", () => {
   it("returns exact canonical bytes for an S1 label, keeping hard hyphens and brackets", () => {
     const text = "Intro.\n\nThe state-\nof-the-art [MASK] model.\n";
@@ -588,6 +699,19 @@ describe("cleanDistillText", () => {
     const kept = cleanDistillText(text, ["[S1:37]"], rev, true);
     expect(kept.invalidReferences).toBe(1);
     expect(kept.text).toBe("Confirmed by block [R" + rev + ":37]. See `[S1:37]` and [S9:1].");
+  });
+});
+
+describe("checkDistillContent", () => {
+  const revision = "revision", labels = ["[S1:1]"];
+  it.each(["", " \n\t", ". ()", "[S1:1].", "([S1:1])", "**[S1:1]**", "**([S1:1])**", "[Rrevision:1].", "([block 1])", "~~~\n \n~~~", "```js\n\n```"])("rejects known empty content %j", (text) => {
+    expect(checkDistillContent(text, labels, revision)).toEqual({ empty: true, requiresReview: false });
+  });
+  it.each(["**A fact. [S1:1]**", "Смысл [S1:1].", "∑", "x ≤ y", "50%", "`++`", "`//`", "`<b>`", "``literal ` [S1:1]``", "~~~\n[S1:1]\n~~~", "```html\n<b>\n```"])("keeps ordinary text and supported code %j", (text) => {
+    expect(checkDistillContent(text, labels, revision)).toEqual({ empty: false, requiresReview: false });
+  });
+  it.each(["[S1:1](https://example.test)", "![image](https://example.test)", "<!-- hidden -->", "<span>hidden</span>", "&#32;", "&Tab;", "[^note]", "[note]: https://example.test", "[^note]: Footnote.", "    [S1:1]", "```", "~[S1:1]~", "~~[S1:1]~~"])("retains ambiguous Markdown for review %j", (text) => {
+    expect(checkDistillContent(text, labels, revision)).toEqual({ empty: false, requiresReview: true });
   });
 });
 
@@ -765,60 +889,6 @@ describe("resultStatement", () => {
     expect(
       resultStatement({ ...syntheticClaim, task: "classification", metric: "accuracy", dataset: "Dataset A", conditions: null, quote, statement, valueText: "84.2", unit: "%", valueNumber: 84.2 }),
     ).toBeNull();
-  });
-
-  it("rejects the retained R5 GLUE result when its own quote omits the standalone dataset identifier", () => {
-    const quote = `Model & Method # Trainable
-Parameters MNLI SST-2 MRPC CoLA QNLI QQP RTE STS-B Avg.
-RoBbase (FT)* 125.0M 87.6 94.8 90.2 63.6 92.8 91.9 78.7 91.2 86.4
-RoBbase (BitFit)* 0.1M 84.7 93.7 92.7 62.0 91.8 84.0 81.5 90.8 85.2
-RoBbase (AdptD)* 0.3M 87.1±.0 94.2±.1 88.5±1.1 60.8±.4 93.1±.1 90.2±.0 71.5±2.7 89.7±.3 84.4
-RoBbase (AdptD)* 0.9M 87.3±.1 94.7±.3 88.4±.1 62.6±.9 93.0±.2 90.6±.0 75.9±2.2 90.3±.1 85.4
-RoBbase (LoRA) 0.3M 87.5±.3 95.1±.2 89.7±.7 63.4±1.2 93.3±.3 90.8±.1 86.6±.7 91.5±.2 87.2RoBlarge (FT)* 355.0M 90.2 96.4 90.9 68.0 94.7 92.2 86.6 92.4 88.9
-RoBlarge (LoRA) 0.8M 90.6±.2 96.2±.5 90.9±1.2 68.2±1.9 94.9±.3 91.6±.1 87.4±2.5 92.6±.2 89.0RoBlarge (AdptP)† 3.0M 90.2±.3 96.1±.3 90.2±.7 68.3±1.0 94.8±.2 91.9±.1 83.8±2.9 92.1±.7 88.4
-RoBlarge (AdptP)† 0.8M 90.5±.3 96.6±.2 89.7±1.2 67.8±2.5 94.8±.3 91.7±.2 80.1±2.9 91.9±.4 87.9
-RoBlarge (AdptH)† 6.0M 89.9±.5 96.2±.3 88.7±2.9 66.5±4.4 94.7±.2 92.1±.1 83.4±1.1 91.0±1.7 87.8
-RoBlarge (AdptH)† 0.8M `.replace(/\r\n/g, "\n");
-    const claim: VerifiedClaim = {
-      ...syntheticClaim,
-      block: 36,
-      start: 19346,
-      end: 20368,
-      quote,
-      task: "GLUE",
-      metric: "average score",
-      dataset: "GLUE",
-      statement: "RoBERTa base with LoRA and 0.3M trainable parameters achieves a GLUE average of 87.2, versus 86.4 for RoBERTa base full fine-tuning with 125.0M trainable parameters.",
-      valueText: "87.2",
-      unit: null,
-      conditions: "model: RoBERTa base (LoRA, 0.3M parameters); comparison: RoBERTa base FT (125.0M parameters) at 86.4",
-      valueNumber: 87.2,
-    };
-    expect(resultStatement(claim)).toBeNull();
-    expect(resultStatement({ ...claim, dataset: " GLUE " })).toBeNull();
-  });
-
-  it("requires a whole-word match and accepts case variation for uppercase dataset identifiers", () => {
-    const quote = "On the glue benchmark, Model Alpha reaches 87.2 accuracy.";
-    const statement = "Model Alpha reaches 87.2 accuracy on GLUE.";
-    const claim: VerifiedClaim = {
-      ...syntheticClaim,
-      statement,
-      quote,
-      task: null,
-      metric: "accuracy",
-      dataset: "GLUE",
-      valueText: "87.2",
-      unit: null,
-      conditions: null,
-      start: 0,
-      end: TE.encode(quote).byteLength,
-      valueNumber: 87.2,
-    };
-    expect(resultStatement(claim)).toBe(statement);
-
-    const embeddedQuote = "On λGLUE, GLUE2, or GLUE_name, Model Alpha reaches 87.2 accuracy.";
-    expect(resultStatement({ ...claim, quote: embeddedQuote })).toBeNull();
   });
 });
 

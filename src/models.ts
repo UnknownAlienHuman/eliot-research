@@ -75,7 +75,8 @@ export interface CatalogModel {
   route: string;
   id: string;
   label: string;
-  contextTokens: number | null;
+  contextTokens: number | null; // Existing prompt/assembly ceiling; may be input-only.
+  contextWindowTokens?: number;
   maxOutputTokens: number | null;
   outputReserveTokens?: number;
   responseFormat?: boolean;
@@ -86,8 +87,7 @@ export interface CatalogModel {
   apiProtocol?: "openai-chat" | "openai-responses" | "anthropic" | "google";
   apiBaseUrl?: string;
   mayTrainOnYourPrompts?: boolean;
-  nativeReasoningEffort?: "low" | "high";
-  nativeReasoningEfforts?: readonly string[];
+  nativeReasoningEffort?: "low";
   checkedOn: string;
   enabled: boolean;
   unavailableReason?: string;
@@ -100,36 +100,56 @@ export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
 // Owner-selected native default metadata is a fallback, not a provider allowlist.
 export const MODELS: ModelSpec[] = [
   { route: DEFAULT_MODEL, id: "@cf/zai-org/glm-5.3-flash", label: "GLM 5.3 Flash", contextTokens: 1_048_576,
-    maxOutputTokens: 1_048_576, outputReserveTokens: 8192, supportsImages: true, supportsTemperature: true,
-    nativeReasoningEffort: "low", checkedOn: "2026-10-31", enabled: true },
+    contextWindowTokens: 1_048_576, maxOutputTokens: null, outputReserveTokens: 8192, supportsImages: true, nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true },
 ];
-export const modelOutputLimit = (model: Pick<CatalogModel, "outputReserveTokens" | "maxOutputTokens">) => {
+// Assembly headroom and legacy/OCR reservations are not a provider generation cap.
+export const modelOutputReserve = (model: Pick<CatalogModel, "outputReserveTokens" | "maxOutputTokens">) => {
   const bound = model.outputReserveTokens ?? model.maxOutputTokens ?? 0;
   return Math.min(bound, model.maxOutputTokens ?? bound);
 };
-export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "outputReserveTokens" | "maxOutputTokens">): number {
-  const output = modelOutputLimit(model), total = (model.contextTokens ?? 0) + output;
+export function modelInputLimit(model: Pick<CatalogModel, "contextTokens" | "contextWindowTokens" | "maxOutputTokens" | "outputReserveTokens">): number {
+  const input = model.contextTokens ?? 0, window = model.contextWindowTokens, reserve = modelOutputReserve(model);
+  if (!Number.isSafeInteger(input) || input <= 0 || !Number.isSafeInteger(reserve) || reserve <= 0 ||
+    (window !== undefined && (!Number.isSafeInteger(window) || window <= reserve)))
+    throw new LibraryError("unavailable", "The model has no usable input capacity.", 503);
+  return window === undefined ? input : Math.min(input, window - reserve);
+}
+export function modelOutputLimit(model: Pick<CatalogModel, "contextTokens" | "contextWindowTokens" | "maxOutputTokens">, inputEstimate: number): number | undefined {
+  const inputCeiling = model.contextTokens ?? 0, window = model.contextWindowTokens;
+  if (!Number.isSafeInteger(inputCeiling) || inputCeiling <= 0 || !Number.isSafeInteger(inputEstimate) ||
+    inputEstimate < 0 || inputEstimate > inputCeiling ||
+    (window !== undefined && (!Number.isSafeInteger(window) || window <= inputEstimate)))
+    throw new LibraryError("unavailable", "This request has no usable output context.", 503);
+  // Unknown provider capacity stays unknown; omission inherits SDK/provider defaults.
+  if (model.maxOutputTokens === null) return undefined;
+  if (!Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens <= 0)
+    throw new LibraryError("unavailable", "The model has no usable output maximum.", 503);
+  // The prompt ceiling does not prove a combined window. Without one, preserve
+  // published output capacity rather than inventing remaining headroom.
+  return window === undefined ? model.maxOutputTokens : Math.min(model.maxOutputTokens, window - inputEstimate);
+}
+export function modelTokenReservation(model: Pick<CatalogModel, "contextTokens" | "outputReserveTokens" | "maxOutputTokens">): number {
+  const output = modelOutputReserve(model), total = (model.contextTokens ?? 0) + output;
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
     !Number.isSafeInteger(output) || output <= 0 || !Number.isSafeInteger(total))
     throw new LibraryError("unavailable", "The model has no usable input/output limits.", 503);
   return total;
 }
-export function distillModelSpec(model: ModelSpec): ModelSpec;
-export function distillModelSpec(model: CatalogModel): CatalogModel;
-export function distillModelSpec(model: CatalogModel): CatalogModel {
-  if (!model.route.startsWith("workers-ai:")) return model;
-  const nativeReasoningEffort = model.nativeReasoningEfforts?.includes("high") ? "high" : model.nativeReasoningEffort;
-  const outputReserveTokens = model.maxOutputTokens === null ? model.outputReserveTokens
-    : Math.min(model.maxOutputTokens, Math.max(modelOutputLimit(model), 16_384));
-  if (nativeReasoningEffort === model.nativeReasoningEffort && outputReserveTokens === model.outputReserveTokens) return model;
-  return { ...model,
-    ...(nativeReasoningEffort === undefined ? {} : { nativeReasoningEffort }),
-    ...(outputReserveTokens === undefined ? {} : { outputReserveTokens }),
-  };
+export function modelTokenLimit(model: Pick<CatalogModel, "contextTokens" | "contextWindowTokens" | "maxOutputTokens">): number | null {
+  // Declared capacities, independent of byte/token planning estimates. Not a
+  // guarantee of upstream acceptance or a substitute for reported usage.
+  const input = model.contextTokens ?? 0, output = model.maxOutputTokens, window = model.contextWindowTokens;
+  if (!Number.isSafeInteger(input) || input <= 0 ||
+    (window !== undefined && (!Number.isSafeInteger(window) || window <= 0)) ||
+    (output !== null && (!Number.isSafeInteger(output) || output <= 0 || !Number.isSafeInteger(input + output))))
+    throw new LibraryError("unavailable", "The model has no usable input/output limits.", 503);
+  // Input and output share an explicitly published combined window. Input-only
+  // metadata cannot establish that window; unknown output remains unknown.
+  return output === null ? null : Math.min(input + output, window ?? Infinity);
 }
 function missingMetadata(model: CatalogModel): string | null {
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||
-    !Number.isSafeInteger(modelOutputLimit(model)) || modelOutputLimit(model) <= 0)
+    !Number.isSafeInteger(modelOutputReserve(model)) || modelOutputReserve(model) <= 0)
     return "The provider has not published usable context/output metadata.";
   return null;
 }
@@ -182,14 +202,13 @@ function isCatalogModel(value: unknown): value is CatalogModel {
     typeof value.label !== "string" || typeof value.checkedOn !== "string" || typeof value.enabled !== "boolean" ||
     !nullableFinite(value.contextTokens) || !nullableFinite(value.maxOutputTokens)) return false;
   if (value.outputReserveTokens !== undefined && (!Number.isSafeInteger(value.outputReserveTokens) || (value.outputReserveTokens as number) <= 0)) return false;
+  if (value.contextWindowTokens !== undefined && (!Number.isSafeInteger(value.contextWindowTokens) || (value.contextWindowTokens as number) <= 0)) return false;
   if (value.responseFormat !== undefined && typeof value.responseFormat !== "boolean") return false;
   if (value.structuredOutputs !== undefined && typeof value.structuredOutputs !== "boolean") return false;
   if (value.supportsTemperature !== undefined && typeof value.supportsTemperature !== "boolean") return false;
   if (value.supportsImages !== undefined && typeof value.supportsImages !== "boolean") return false;
   if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
-  if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low" && value.nativeReasoningEffort !== "high") return false;
-  if (value.nativeReasoningEfforts !== undefined && (!Array.isArray(value.nativeReasoningEfforts)
-    || value.nativeReasoningEfforts.some(effort => typeof effort !== "string"))) return false;
+  if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low") return false;
   if (value.apiProtocol !== undefined && !["openai-chat", "openai-responses", "anthropic", "google"].includes(String(value.apiProtocol))) return false;
   if (value.apiBaseUrl !== undefined && typeof value.apiBaseUrl !== "string") return false;
   if (value.mayTrainOnYourPrompts !== undefined && typeof value.mayTrainOnYourPrompts !== "boolean") return false;
@@ -240,13 +259,12 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     const fallback = models.get(model.route);
     const visible: CatalogModel = { route: model.route, id: model.id, label: model.label, contextTokens: model.contextTokens,
       maxOutputTokens: model.maxOutputTokens, checkedOn: model.checkedOn, enabled: model.enabled };
-    for (const field of ["outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning",
-      "nativeReasoningEffort", "nativeReasoningEfforts", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
+    for (const field of ["contextWindowTokens", "outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning",
+      "nativeReasoningEffort", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
       if (model[field] !== undefined) Object.assign(visible, { [field]: model[field] });
     }
     models.set(model.route, { ...visible, label: fallback?.label ?? model.label,
       ...(visible.supportsImages === undefined && fallback?.supportsImages !== undefined ? { supportsImages: fallback.supportsImages } : {}),
-      ...(visible.supportsTemperature === undefined && fallback?.supportsTemperature !== undefined ? { supportsTemperature: fallback.supportsTemperature } : {}),
       maxOutputTokens: model.maxOutputTokens ?? fallback?.maxOutputTokens ?? null });
   }
   for (const [route, model] of models) {

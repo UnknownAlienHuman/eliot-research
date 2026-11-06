@@ -1,7 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { generateText } from "ai";
 import { LibraryError } from "../library";
-import { modelOutputLimit, modelTokenLimit, type ModelSpec } from "../models";
+import { modelOutputReserve, modelTokenReservation, type ModelSpec } from "../models";
 import { assertProviderAllowance } from "../model-quota";
 import { modelFailure, resolveModelTransport } from "../model-transport";
 import { OCR_LIMITS } from "../shared/api";
@@ -34,7 +34,7 @@ interface Report {
 }
 function frozenModel(job: OcrRow): ModelSpec {
   const model = JSON.parse(job.model_snapshot) as ModelSpec;
-  if (model.route !== job.model_route || job.token_limit !== job.page_count * modelTokenLimit(model))
+  if (model.route !== job.model_route || job.token_limit !== job.page_count * modelTokenReservation(model))
     throw fail("The admitted OCR model or token bound changed. No call was started.");
   return model;
 }
@@ -68,7 +68,7 @@ async function runPage(env: Env, id: string, ordinal: number): Promise<number> {
   if (!page || !image || image.size !== page.bytes) throw fail("A frozen OCR page is missing.");
   const bytes = new Uint8Array(await image.arrayBuffer());
   if (await ocrHash(bytes) !== page.sha256) throw fail("A frozen OCR page checksum changed.");
-  const model = frozenModel(job), tokenBound = modelTokenLimit(model);
+  const model = frozenModel(job), tokenBound = modelTokenReservation(model);
   await assertProviderAllowance(env, model);
   const transport = await resolveModelTransport(env, model, "ocr-" + id);
   const now = Date.now();
@@ -83,9 +83,10 @@ async function runPage(env: Env, id: string, ordinal: number): Promise<number> {
   if (remaining <= 0) throw fail("OCR reached its admitted deadline before the model call.");
   let generated: Awaited<ReturnType<typeof generateText>>;
   try {
+    // OCR snapshots retain their admitted per-page cap in outputReserveTokens.
     generated = await generateText({ model: transport, instructions: PROMPT,
       messages: [{ role: "user", content: [{ type: "image", image: bytes, mediaType: "image/png" }] }],
-      maxOutputTokens: modelOutputLimit(model), maxRetries: 0,
+      maxOutputTokens: modelOutputReserve(model), maxRetries: 0,
       abortSignal: AbortSignal.timeout(Math.min(OCR_LIMITS.pageTimeoutMs, remaining)) });
   } catch (error) { throw fail(modelFailure(error, model)); }
   const usage = generated.totalUsage, input = count(usage.inputTokens), cached = count(usage.inputTokenDetails?.cacheReadTokens), output = count(usage.outputTokens);

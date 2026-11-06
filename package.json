@@ -13,11 +13,13 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit --pretty false",
     "lint": "eslint src vite.config.ts",
-    "test": "vitest run --config vitest.k0.config.ts && node --test scripts/eval/origin.test.mjs",
+    "test": "vitest run --config vitest.k0.config.ts && node --test scripts/eval/origin.test.mjs scripts/legacy-export.test.mjs",
     "eval": "node scripts/eval/run.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
-    "cf:types": "wrangler types src/worker-configuration.d.ts --include-runtime false --strict-vars false",
-    "cf:dry-run": "pnpm build && wrangler deploy --dry-run --outdir dist/worker"
+    "legacy:export": "node scripts/legacy-export.mjs",
+    "cf:types": "wrangler types src/worker-configuration.d.ts --env production --include-runtime false --strict-vars false",
+    "cf:dry-run": "pnpm build && wrangler deploy --dry-run --outdir dist/worker",
+    "cf:production-dry-run": "ELIOT_REMOTE_BINDINGS=0 CLOUDFLARE_ENV=production pnpm build && wrangler deploy --dry-run --outdir dist/production-worker"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.91",
@@ -31,12 +33,17 @@
     "ai": "7.0.152",
     "hono": "4.13.14",
     "jose": "6.2.13",
+    "mdast-util-from-markdown": "2.1.0",
+    "mdast-util-gfm": "3.1.0",
+    "micromark-extension-gfm": "3.0.0",
     "pdfjs-dist": "6.4.299",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-markdown": "10.1.0",
     "react-router": "7.18.4",
+    "rehype-katex": "7.0.1",
     "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -50,6 +57,7 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
     "eslint": "10.9.1",
+    "jsdom": "27.0.1",
     "typescript": "6.0.3",
     "typescript-eslint": "8.68.0",
     "vite": "8.2.2",

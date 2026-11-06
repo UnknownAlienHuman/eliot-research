@@ -3,13 +3,14 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import type { Block } from "../blocks";
+import { scanBlocks, type Block } from "../blocks";
 import type { Actor } from "../auth";
 import { LibraryError } from "../library";
+import { estimateModelInput } from "../model-input";
+import { modelInputLimit } from "../models";
 import type { ModelSpec } from "../models";
 import type * as Models from "../models";
 import type * as ModelTransport from "../model-transport";
-import type * as Ai from "ai";
 import type { DistillInput } from "../shared/api";
 import type { DistillReport } from "../understanding";
 
@@ -19,8 +20,8 @@ vi.mock("cloudflare:workers", () => ({
   },
 }));
 vi.mock("ai", async () => {
-  const actual = await vi.importActual<typeof Ai>("ai");
-  return { ...actual, generateText: vi.fn(), Output: { ...actual.Output, object: vi.fn(actual.Output.object) } };
+  const actual = await vi.importActual<Record<string, unknown>>("ai");
+  return { ...actual, generateText: vi.fn(), Output: { object: vi.fn() } };
 });
 vi.mock("../model-transport", async () => ({
   ...await vi.importActual<typeof ModelTransport>("../model-transport"),
@@ -28,6 +29,7 @@ vi.mock("../model-transport", async () => ({
   modelFailure: vi.fn(() => "Unexpected model failure projection"),
 }));
 vi.mock("../model-catalog", () => ({ discoverGatewayModels: vi.fn() }));
+vi.mock("../model-quota", () => ({ assertProviderAllowance: vi.fn() }));
 vi.mock("../native-model-catalog", () => ({ discoverNativeModels: vi.fn() }));
 vi.mock("../models", async () => ({
   ...await vi.importActual<typeof Models>("../models"),
@@ -36,9 +38,10 @@ vi.mock("../models", async () => ({
 
 import { NoObjectGeneratedError, generateText, Output } from "ai";
 import { modelFailure, resolveModelTransport } from "../model-transport";
-import { availableModels, distillModelSpec, requireAvailableModel, requireCatalogModel } from "../models";
+import { availableModels, modelTokenLimit, requireAvailableModel, requireCatalogModel } from "../models";
 import { discoverGatewayModels } from "../model-catalog";
 import { discoverNativeModels } from "../native-model-catalog";
+import { assertProviderAllowance } from "../model-quota";
 import { DistillWorkflow, hasAvailableUnderstanding, requestUnderstanding, scheduleDistillation } from "./distill";
 
 const revisionId = "d9b7d198-0dd2-4d5f-8176-e824e25bb6d0";
@@ -55,7 +58,7 @@ const snapshot: ModelSpec = Object.freeze({
 
 function fixture(storedRoute: string, document?: { text: string; blocks: Block[] }) {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql", "0012_model_admission.sql", "0013_understanding_retry.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
   const text = document?.text ?? "The method uses normalization. Its source passage is retained.";
   const blocks = document?.blocks ?? [{ id: 1, type: "paragraph", start: 0, end: new TextEncoder().encode(text).byteLength, heading: null }];
@@ -67,45 +70,44 @@ function fixture(storedRoute: string, document?: { text: string; blocks: Block[]
     .run(revisionId, sourceId, readableSize, storedRoute, Date.now() - 100);
   db.prepare("UPDATE source SET current_revision_id=? WHERE id=?").run(revisionId, sourceId);
   const bodies = new Map([[prefix + "text.md", text], [prefix + "blocks.json", JSON.stringify(blocks)]]);
-  const dispatchCAS = vi.fn();
+  const dispatchCAS = vi.fn(), sourceWrites = vi.fn();
   const env = { DB: {
+    async batch(statements: Array<{ run(): Promise<unknown> }>) {
+      db.exec("BEGIN");
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        db.exec("COMMIT");
+        return results;
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+    },
     prepare(sql: string) {
-      return { bind(...args: SQLInputValue[]) {
-        return {
+      const operations = (args: SQLInputValue[]) => ({
           first: async () => db.prepare(sql).get(...args) ?? null,
+          all: async () => ({ results: db.prepare(sql).all(...args) }),
           run: async () => {
+            if (/^UPDATE\s+source\s/i.test(sql)) sourceWrites(sql, args);
             if (/SET\s+distill_calls\s*=\s*distill_calls\s*\+\s*1/i.test(sql)) dispatchCAS(sql, args);
             return { meta: { changes: Number(db.prepare(sql).run(...args).changes) } };
           },
-        };
-      } };
+        });
+      return { ...operations([]), bind: (...args: SQLInputValue[]) => operations(args) };
     },
   }, BUCKET: {
     async get(key: string) {
       const body = bodies.get(key);
-      return body === undefined ? null : { text: async () => body, json: async () => JSON.parse(body) as unknown,
-        arrayBuffer: async () => new TextEncoder().encode(body).buffer };
+      if (body === undefined) return null;
+      const bytes = new TextEncoder().encode(body);
+      return { text: async () => body, json: async () => JSON.parse(body) as unknown,
+        arrayBuffer: async () => bytes.buffer, size: bytes.byteLength, body: new Response(bytes).body };
     },
     async put(key: string, body: string) {
       if (bodies.has(key)) return null;
       bodies.set(key, body); return {};
     },
   } } as unknown as Env;
-  return { db, env, bodies, dispatchCAS };
+  return { db, env, bodies, dispatchCAS, sourceWrites };
 }
-
-function withBatch(target: ReturnType<typeof fixture>) {
-  const db = target.env.DB as unknown as {
-    batch(statements: Array<{ run(): Promise<{ meta: { changes: number } }> }>): Promise<{ meta: { changes: number } }[]>;
-  };
-  db.batch = async (statements) => {
-    const results = [];
-    for (const statement of statements) results.push(await statement.run());
-    return results;
-  };
-  return target;
-}
-
 
 const explicitlySelectedRevisionId = "148e1392-f987-4fc5-bc65-152c9000b4d8";
 const explicitlySelectedSourceId = "e61d9a7d-0817-4a9b-b46b-3f52ab3bd47f";
@@ -114,10 +116,10 @@ const otherQueuedSourceId = "c3fd7da4-b662-4aa5-a6fc-9c84b6299940";
 
 function callerFixture() {
   const db = new DatabaseSync(":memory:");
-  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql"])
+  for (const name of ["0001_library.sql", "0002_ask.sql", "0003_distill.sql", "0005_model_gateway.sql", "0006_integrity.sql", "0007_manual_understanding.sql", "0008_model_providers.sql", "0012_model_admission.sql", "0013_understanding_retry.sql"])
     db.exec(readFileSync(new URL(`../../migrations/${name}`, import.meta.url), "utf8"));
 
-  const insertSource = (id: string, title: string, revision: string, state: "none" | "queued", createdAt: number) => {
+  const insertSource = (id: string, title: string, revision: string, state: "none" | "queued" | "running", createdAt: number) => {
     db.prepare("INSERT INTO source(id,title,kind,created_by,created_at,updated_at) VALUES (?,?,'text','owner',?,?)")
       .run(id, title, createdAt, createdAt);
     db.prepare(`INSERT INTO source_revision(id,source_id,revision_no,readable_state,readable_size,created_by,created_at,
@@ -129,7 +131,8 @@ function callerFixture() {
   insertSource(explicitlySelectedSourceId, "Selected", explicitlySelectedRevisionId, "queued", 2);
   insertSource(otherQueuedSourceId, "Older queued source", otherQueuedRevisionId, "queued", 1);
 
-  const createWorkflow = vi.fn(async (_input: { id: string; params: DistillInput }) => ({ id: "stubbed-workflow" }));
+  const createWorkflow = vi.fn(async (_input: { id: string; params: { revisionId: string; model: ModelSpec } }) => ({ id: "stubbed-workflow" }));
+  const bodies = new Map<string, string>();
   const env = { DB: {
     prepare(sql: string) {
       const operations = (args: SQLInputValue[]) => ({
@@ -139,8 +142,34 @@ function callerFixture() {
       });
       return { ...operations([]), bind: (...args: SQLInputValue[]) => operations(args) };
     },
-  }, DISTILL: { create: createWorkflow } } as unknown as Env;
-  return { db, env, createWorkflow };
+  }, DISTILL: { create: createWorkflow }, BUCKET: {
+    async get(key: string) {
+      const body = bodies.get(key);
+      return body === undefined ? null : { json: async () => JSON.parse(body) as unknown };
+    },
+  } } as unknown as Env;
+  return { db, env, createWorkflow, insertSource, bodies };
+}
+
+// A and C occupy both slots while explicitly requested B waits. A's persisted
+// output simulates cached Workflow steps, not a new model generation.
+function queuedBehindRunning() {
+  const f = callerFixture();
+  f.insertSource(sourceId, "Finishing source", revisionId, "running", 0);
+  f.db.prepare("UPDATE source_revision SET distill_state='running',distill_started_at=? WHERE id IN (?,?)")
+    .run(Date.now(), revisionId, otherQueuedRevisionId);
+  f.db.prepare("UPDATE source_revision SET distill_calls=2,guide_summary='Saved understanding' WHERE id=?").run(revisionId);
+  f.bodies.set(prefix + "distill.json", JSON.stringify({ state: "done", error: null,
+    usage: { calls: 2, wallMs: 100, inputTokens: 20, cachedTokens: 0, outputTokens: 10, tokenLimit: 540672 } }));
+  return f;
+}
+
+async function completeSavedWorkflow(f: ReturnType<typeof callerFixture>) {
+  const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) =>
+    name === "finish understanding" ? callback() : undefined);
+  return new DistillWorkflow({} as ExecutionContext, f.env).run(
+    { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>,
+    { do: stepDo } as unknown as WorkflowStep);
 }
 
 function documentWithBlocks(parts: Array<{ type: Block["type"]; text: string }>): { text: string; blocks: Block[] } {
@@ -154,69 +183,17 @@ function documentWithBlocks(parts: Array<{ type: Block["type"]; text: string }>)
   return { text: parts.map(({ text }) => text).join(""), blocks };
 }
 
-const generationUsage = { inputTokens: 12, inputTokenDetails: { noCacheTokens: 12, cacheReadTokens: 0, cacheWriteTokens: undefined },
-  outputTokens: 24, outputTokenDetails: { textTokens: 24, reasoningTokens: undefined }, totalTokens: 36 };
-function parseGeneration(options: Parameters<typeof generateText>[0], output: unknown) {
-  if (!options.output) throw new Error("The production call did not supply its output schema.");
-  return options.output.parseCompleteOutput({ text: JSON.stringify(output) }, {
-    response: { id: "fixture-response", timestamp: new Date(0), modelId: snapshot.id }, usage: generationUsage, finishReason: "stop",
-  });
-}
-function proseDraftFixture() {
-  const document = documentWithBlocks([
-    { type: "paragraph", text: "Method Alpha uses normalization.\n" },
-    { type: "paragraph", text: "The method applies only to Condition Beta.\n" },
-    { type: "paragraph", text: "The source notes a limitation.\n" },
-    { type: "paragraph", text: "Gamma is a process used under Condition Beta.\n" },
-  ]);
-  const f = withBatch(fixture(snapshot.route, document));
-  const extraction = {
-    guide: [
-      { labels: ["[S1:1]"], text: "Method Alpha uses normalization." },
-      { labels: ["[S1:1]"], text: "The method applies only to Condition Beta." },
-      { labels: ["[S1:3]"], text: "The source notes a limitation." },
-      { labels: ["[S1:1]"], text: "The method reports 99 outcomes." },
-    ],
-    digest: [
-      { labels: ["[S1:1]", "[S1:2]"], text: "Method Alpha uses normalization. The method applies only to Condition Beta." },
-      { labels: ["[S1:1]"], text: "The method reports 99 outcomes." },
-    ],
-    glossary: [
-      { labels: ["[S1:1]"], en: "normalization", ru: "нормализация", definition: "Метод использует нормализацию." },
-      { labels: ["[S1:4]"], en: "Gamma", ru: "Гамма", definition: "Процесс используется при Condition Beta." },
-      { labels: ["[S1:3]"], en: "count", ru: "число", definition: "Число равно 99." },
-    ],
-    claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "Method Alpha uses normalization.",
-      task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }],
-    questions: ["What method is described?", "What condition is stated?", "What limitation is noted?"],
-    authors: "", published: null,
-  };
-  const selection = {
-    supportedClaims: ["C0"],
-    additionalClaims: [{ quoteBlock: "[S1:3]", kind: "limitation", statement: "The source notes a limitation.",
-      task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }],
-    guide: extraction.guide.slice(0, 3).map((item, index) => ({ ...item, labels: index === 1 ? ["[S1:2]"] : item.labels })),
-    digest: [{ labels: ["[S1:2]"], text: "The method applies only to Condition Beta." }],
-    glossary: extraction.glossary.slice(0, 2),
-  };
-  const validatedDigest = [
-    { labels: ["[S1:1]", "[S1:2]"], text: "Method Alpha uses normalization." },
-    { labels: ["[S1:1]", "[S1:2]"], text: "The method applies only to Condition Beta." },
-  ];
-  return { f, document, extraction, selection, validatedDigest };
-}
-
-
 const forbiddenLookups = [requireAvailableModel, requireCatalogModel, availableModels,
   discoverGatewayModels, discoverNativeModels];
 beforeEach(() => {
+  vi.mocked(assertProviderAllowance).mockReset().mockResolvedValue(undefined);
   vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation"));
   vi.mocked(resolveModelTransport).mockReset().mockRejectedValue(new Error("Fixture transport stopped before dispatch."));
   vi.mocked(modelFailure).mockReset().mockReturnValue("Unexpected model failure projection");
   for (const lookup of forbiddenLookups) vi.mocked(lookup).mockReset().mockRejectedValue(new Error("Unexpected catalogue lookup"));
 });
 
-async function run(f: ReturnType<typeof fixture>, serializeErrors = false, input: DistillInput = { revisionId, model: snapshot }) {
+async function run(f: ReturnType<typeof fixture>, serializeErrors = false, model = snapshot) {
   const stepDo = vi.fn(async (_name: string, _options: unknown, callback: () => Promise<unknown>) => {
     try { return await callback(); } catch (error) {
       // eslint-disable-next-line preserve-caught-error -- Simulate Workflow serialization stripping the error class and cause.
@@ -225,7 +202,7 @@ async function run(f: ReturnType<typeof fixture>, serializeErrors = false, input
     }
   });
   await new DistillWorkflow({} as ExecutionContext, f.env).run(
-    { payload: input } as WorkflowEvent<DistillInput>,
+    { payload: { revisionId, model } } as WorkflowEvent<DistillInput>,
     { do: stepDo } as unknown as WorkflowStep);
   return stepDo;
 }
@@ -245,7 +222,506 @@ function finished(f: ReturnType<typeof fixture>, error: string) {
 }
 
 describe("DistillWorkflow admitted model snapshot", () => {
-  it("explicit Understand dispatches only its revision; cron leaves queued untouched", async () => {
+  it.each(["scanner >400k", "legacy >4096-byte block"])("completes both synthetic producers and actual verify/store for %s", async (shape) => {
+    const lead = "The method preserves source evidence and its conditions. The source retains canonical text. The source describes its method. ";
+    const paragraph = "Canonical evidence preserves the source conditions and terminology. ".repeat(120);
+    const text = shape === "scanner >400k" ? lead + Array(160).fill(paragraph).join("\n\n") : lead + "Ordinary retained content. ".repeat(400);
+    const blocks = shape === "scanner >400k" ? scanBlocks(text) : [{ id: 1, type: "paragraph" as const, start: 0, end: text.length, heading: null }];
+    const first = blocks[0];
+    if (!first) throw new Error("Missing canonical first block.");
+    const f = fixture(snapshot.route, { text, blocks });
+    const model = { ...snapshot, contextTokens: 1000000, contextWindowTokens: 1000000 };
+    f.db.prepare("UPDATE source_revision SET distill_token_limit=NULL,distill_token_limit_kind='unknown' WHERE id=?").run(revisionId);
+    const guide = ["The method preserves source evidence and its conditions.", "The source retains canonical text.", "The source describes its method."]
+      .map(text => ({ labels: ["[S1:1]"], text }));
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ output: { guide, digest: [guide[0]], glossary: [], questions: ["Which method?", "Which evidence?", "Which conditions?"],
+        claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: guide[0]?.text,
+          task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] },
+        totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
+      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["G0", "G1", "G2"], supportedDigest: ["D0"], supportedGlossary: [] },
+        totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
+    const original = new Map(f.bodies);
+    try {
+      const steps = await run(f, false, model);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source", "verify source excerpts", "review and synthesize", "store understanding", "finish understanding"]);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+      if (shape === "scanner >400k") expect(text.length / 3).toBeGreaterThan(400000);
+      else expect(first.end - first.start).toBeGreaterThan(4096);
+      const quote = text.slice(first.start, first.end);
+      expect(f.db.prepare("SELECT block_index AS block,start_byte AS start,end_byte AS end,quote FROM claim WHERE source_revision_id=?").get(revisionId))
+        .toEqual({ block: first.id, start: first.start, end: first.end, quote });
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_token_limit AS bound,distill_token_limit_kind AS kind FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "done", calls: 2, bound: null, kind: "unknown" });
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      expect(report).toMatchObject({ state: "done", usage: { calls: 2, inputTokens: 36, outputTokens: 17, tokenLimit: null, tokenLimitKind: "unknown" } });
+      expect(f.bodies.get(prefix + "guide.md")).toContain(`[R${revisionId}:1]`);
+      expect(f.bodies.get(prefix + "digest.md")).toContain(guide[0]?.text);
+      expect(f.bodies.get(prefix + "glossary.json")).toBe("[]");
+      for (const [key, body] of original) expect(f.bodies.get(key)).toBe(body);
+    } finally { f.db.close(); }
+  });
+
+  it.each(["selected", "duplicate", "unknown", "wrong section", "retargeted", "empty"])("resolves reviewed prose IDs without rewriting text or evidence: %s", async (mode) => {
+    const document = documentWithBlocks([
+      { type: "paragraph", text: "The method adds positional encodings to input embeddings. Both have the same dimension.\n" },
+      { type: "paragraph", text: "In this work, we use sine and cosine functions of different frequencies.\n" },
+    ]);
+    const f = fixture(snapshot.route, document);
+    const guide = [
+      { labels: ["[S1:1]"], text: "The method has 9999 dimensions." },
+      { labels: ["[S1:1]"], text: "The method adds positional encodings to input embeddings." },
+      { labels: ["[S1:1]"], text: "Both have the same dimension." },
+      { labels: ["[S1:2]"], text: "The method uses sine and cosine functions of different frequencies." },
+    ];
+    const [bad, first, second, third] = guide;
+    if (!bad || !first || !second || !third) throw new Error("Missing draft fixture.");
+    const digest = { labels: ["[S1:1]", "[S1:2]"], text: first.text + " " + third.text };
+    const term = { labels: ["[S1:1]"], en: "Positional encoding", ru: "Позиционное кодирование", definition: first.text };
+    const extraction = { guide, digest: [{ labels: ["[S1:1]"], text: "There are 9999 dimensions." }, digest],
+      glossary: [{ ...term, definition: "There are 9999 dimensions." }, term],
+      questions: ["Which encodings?", "Where are they added?", "Which dimension?"],
+      claims: [{ quoteBlock: "[S1:2]", kind: "method", statement: third.text,
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] };
+    const selection = { supportedClaims: ["C0"], additionalClaims: [],
+      supportedGuide: mode === "duplicate" ? ["G0", "G0", "G1"] : mode === "unknown" ? ["G3"]
+        : mode === "wrong section" ? ["D0"] : ["G0", "G1", "G2"],
+      supportedDigest: mode === "empty" ? [] : ["D0"], supportedGlossary: ["T0"],
+      ...(mode === "retargeted" ? { guide: [{ labels: ["[S1:2]"], text: first.text }] } : {}) };
+    const usage = { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } };
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText).mockResolvedValueOnce({ output: extraction, totalUsage: usage } as never)
+      .mockResolvedValueOnce({ output: selection, totalUsage: usage } as never);
+    try {
+      await run(f);
+      expect(generateText).toHaveBeenCalledTimes(2); expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+      const options = vi.mocked(generateText).mock.calls[1]?.[0];
+      const content = options?.messages?.[0]?.content, instructions = options?.instructions;
+      if (typeof content !== "string" || typeof instructions !== "string") throw new Error("Missing review input.");
+      const context = JSON.parse(content);
+      expect(context.proseDrafts.guide).toEqual(guide.slice(1).map((item, i) => ({ id: "G" + i, ...item })));
+      expect(context.proseDrafts.digest).toEqual([{ id: "D0", ...digest }]);
+      expect(context.proseDrafts.glossary).toEqual([{ id: "T0", ...term }]);
+      const schema = JSON.parse(instructions.split("Return one JSON object conforming to this schema: ")[1] ?? "null");
+      expect(schema.properties).not.toHaveProperty("guide"); expect(schema.properties).not.toHaveProperty("glossary");
+      expect(JSON.stringify(schema)).not.toContain(digest.text);
+      expect(schema.properties.supportedGuide.items.enum).toEqual(["G0", "G1", "G2"]);
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      const valid = ["selected", "duplicate"].includes(mode);
+      expect(report.state).toBe(mode === "selected" ? "done" : mode === "duplicate" ? "partial" : "failed");
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(valid);
+      if (valid) {
+        expect(f.bodies.get(prefix + "digest.md")).toBe(digest.text + `\n\n[R${revisionId}:1] [R${revisionId}:2]`);
+        expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual([{ ...term, labels: [`[R${revisionId}:1]`] }]);
+        expect(f.db.prepare("SELECT statement FROM claim WHERE source_revision_id=?").get(revisionId)).toEqual({ statement: third.text });
+        // Invalid digest/glossary draft indexes must not shift retained claim lineage.
+        expect(report.dropped).toEqual(expect.arrayContaining([{ index: 0, reason: "digest-unsupported-statement-numbers" }, { index: 0, reason: "glossary-unsupported-output" }]));
+        const original = new Map(f.bodies), beforeUsage = report.usage;
+        await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true });
+        await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true });
+        for (const [key, value] of original) expect(f.bodies.get(key)).toBe(value);
+        expect(JSON.parse(f.bodies.get(prefix + "checked/distill.json") ?? "null").usage).toEqual(beforeUsage);
+        expect(generateText).toHaveBeenCalledTimes(2);
+      } else expect(f.bodies.has(prefix + "guide.md")).toBe(false);
+    } finally { f.db.close(); }
+  });
+
+  it.each(["overlapping", "invalid end", "mid-byte"])("bounds %s legacy verification after a retained first call without a second dispatch", async (shape) => {
+    const text = shape === "mid-byte" ? "\u00e9 retained text" : "Retained source evidence. " + "x".repeat(1000000);
+    const size = new TextEncoder().encode(text).length;
+    const blocks: Block[] = shape === "overlapping" ? Array.from({ length: 12 }, (_, i) => ({ id: i + 1, type: "paragraph", start: 0, end: size, heading: null }))
+      : [{ id: 1, type: "paragraph", start: shape === "mid-byte" ? 1 : 0, end: shape === "invalid end" ? size + 1 : size, heading: null }];
+    const f = fixture(snapshot.route, { text, blocks });
+    const raw = JSON.stringify({ output: { claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "Retained source evidence.",
+      task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }],
+      guide: [], questions: [] }, usage: { inputTokens: 17, cachedTokens: 0, outputTokens: 8, tokenLimit: null, tokenLimitKind: "unknown" } });
+    f.bodies.set(prefix + "distill-call1.json", raw);
+    f.db.prepare("UPDATE source_revision SET distill_calls=1 WHERE id=?").run(revisionId);
+    try {
+      const steps = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) => name === "extract source" ? undefined : callback());
+      await new DistillWorkflow({} as ExecutionContext, f.env).run({ payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>, { do: steps } as unknown as WorkflowStep);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source", "verify source excerpts"]);
+      expect(generateText).not.toHaveBeenCalled(); expect(f.dispatchCAS).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId)).toEqual({ state: "failed", calls: 1 });
+      expect(f.bodies.get(prefix + "distill-call1.json")).toBe(raw);
+      expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
+      expect(f.bodies.has(prefix + "distill-verified.json")).toBe(false);
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      expect(report.usage).toMatchObject({ calls: 1, inputTokens: 17, outputTokens: 8 });
+      if (shape === "overlapping") expect(report.error).toBe("Narrow the source selection so the answer fits.");
+    } finally { f.db.close(); }
+  });
+
+  it.each([
+    { paragraphs: 12, capacity: 40000, formerCap: 24000 },
+    { paragraphs: 164, capacity: 1000000, formerCap: 360000 },
+    { paragraphs: 190, capacity: 1000000, formerCap: 400000 },
+  ])("dispatches $paragraphs canonical paragraphs above the former $formerCap estimate", async ({ paragraphs, capacity, formerCap }) => {
+    const paragraph = "The method preserves source evidence and its conditions. ".repeat(120);
+    const text = Array(paragraphs).fill(paragraph).join("\n\n"), blocks = scanBlocks(text);
+    const model = { ...snapshot, contextTokens: capacity, contextWindowTokens: capacity + 2048, outputReserveTokens: 2048 };
+    const f = fixture(model.route, { text, blocks });
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    try {
+      await run(f, false, model);
+      expect(text.length / 3).toBeGreaterThan(formerCap);
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      const options = vi.mocked(generateText).mock.calls[0]?.[0];
+      const instructions = options?.instructions;
+      if (!options || typeof instructions !== "string") throw new Error("Missing extraction instructions.");
+      const schema = JSON.parse(instructions.slice(instructions.lastIndexOf("Return one JSON object conforming to this schema: ") + "Return one JSON object conforming to this schema: ".length));
+      expect(estimateModelInput({ instructions, messages: options.messages as { role: string; content: string }[], schema })).toBeLessThanOrEqual(modelInputLimit(model));
+      const content = options?.messages?.[0]?.content;
+      if (typeof content !== "string") throw new Error("Missing extraction context.");
+      expect(content.split("\n").map(line => JSON.parse(line).text).join(""))
+        .toBe(blocks.map(block => text.slice(block.start, block.end)).join(""));
+    } finally { f.db.close(); }
+  });
+
+  it("rejects cumulative extraction allocations at the existing memory allowance before dispatch", async () => {
+    const paragraph = "The method preserves source evidence and its conditions. ".repeat(120);
+    const text = Array(400).fill(paragraph).join("\n\n");
+    const model = { ...snapshot, contextTokens: 3000000 };
+    const f = fixture(model.route, { text, blocks: scanBlocks(text) });
+    try {
+      await run(f, false, model);
+      finished(f, "Narrow the source selection so the answer fits.");
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["text.md", "blocks.json"])("cancels an understated oversized %s stream without dispatch", async (name) => {
+    const f = fixture(snapshot.route), originalGet = f.env.BUCKET.get.bind(f.env.BUCKET);
+    let pulls = 0;
+    const cancel = vi.fn();
+    f.env.BUCKET.get = vi.fn(async (key: string) => {
+      if (key !== prefix + name) return originalGet(key);
+      return { size: 1, body: new ReadableStream({ pull(controller) { pulls++; controller.enqueue(new Uint8Array(1024 * 1024)); }, cancel }) };
+    }) as unknown as R2Bucket["get"];
+    try {
+      await run(f, false, { ...snapshot, contextTokens: 100000000 });
+      finished(f, "Narrow the source selection so the answer fits.");
+      expect(pulls).toBeLessThanOrEqual(17);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("validates extraction statement references before numeric support without losing candidate order", async () => {
+    const document = documentWithBlocks([{ type: "paragraph", text: "The method uses normalization for 9 layers." }]);
+    const f = fixture(snapshot.route, document);
+    const statements = ["Unknown reference [S9:9].", "The method uses normalization. [S1:1]", "Ordinary method.",
+      "The method uses 8 layers. [S1:1]", "The method uses 9 layers.", "[S1:1]",
+      `Persistent reference. [R${revisionId}:1]`, "Block reference. [block 1]", "Literal `[S9:9]` example.",
+      "Unknown reference [S8:8].", "Final method."];
+    const raw = JSON.stringify({ output: {
+      guide: ["The source describes a method.", "The method uses normalization.", "The source retains its text."].map(text => ({ labels: ["[S1:1]"], text })),
+      questions: ["Which method?", "What normalization?", "What evidence?"],
+      claims: statements.map(statement => ({ quoteBlock: "[S1:1]", kind: "method", statement,
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null })),
+    }, usage: { inputTokens: 17, cachedTokens: 0, outputTokens: 8, tokenLimit: 100 } });
+    f.bodies.set(prefix + "distill-call1.json", raw);
+    f.db.prepare("UPDATE source_revision SET distill_calls=1,distill_token_limit=123456 WHERE id=?").run(revisionId);
+    try {
+      const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) => {
+        if (name === "extract source") return;
+        if (name === "verify source excerpts") return callback();
+        throw new Error("Fixture stops before the next paid step.");
+      });
+      await new DistillWorkflow({} as ExecutionContext, f.env).run(
+        { payload: { revisionId, model: snapshot } } as WorkflowEvent<{ revisionId: string; model: ModelSpec }>, { do: stepDo } as unknown as WorkflowStep);
+      const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
+      expect(verified.claims.map((claim: { statement: string }) => claim.statement)).toEqual([
+        "The method uses normalization. ", "Ordinary method.", "The method uses 9 layers.",
+        "Persistent reference. ", "Block reference. ", "Literal `[S9:9]` example.", "Final method.",
+      ]);
+      expect(verified.dropped).toEqual(expect.arrayContaining([
+        { index: 0, reason: "claim-invalid-reference" }, { index: 3, reason: "unsupported-statement-numbers" },
+        { index: 5, reason: "empty-claim-statement" },
+        { index: 9, reason: "unsupported-statement-numbers" },
+      ]));
+      expect(verified.claims.every((claim: { quote: string }) => claim.quote === document.text)).toBe(true);
+      expect(f.bodies.get(prefix + "distill-call1.json")).toBe(raw);
+      expect(f.db.prepare("SELECT distill_token_limit FROM source_revision WHERE id=?").get(revisionId)).toEqual({ distill_token_limit: 123456 });
+      expect(generateText).not.toHaveBeenCalled(); expect(resolveModelTransport).not.toHaveBeenCalled(); expect(f.dispatchCAS).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each([
+    { name: "bibliography", passage: "References\nAda Example. Related research. 2021.", authors: "Ada Example", published: "2021" },
+    { name: "body attribution", passage: "We compare the 2024 method described by Ann Example.", authors: "Ann Example", published: "2024" },
+    { name: "Unicode bibliography", passage: "Литература\nМария Ёлкина. Чужая статья. 2023 г.", authors: "Мария Ёлкина", published: "2023" },
+    { name: "Unicode byline text", passage: "Автор: Zoë Łukasz\nОпубликовано: 2024-02-29", authors: "Zoë Łukasz", published: "2024-02-29" },
+    { name: "front matter is canonical text", passage: "---\nauthors: Ada Example\npublished: 2020-03\n---", authors: "Ada Example", published: "2020-03" },
+    { name: "partial occurrences", passage: "Annabelle Example's run has identifier 2024-02-29.", authors: "Ann", published: "2024" },
+    { name: "unavailable", passage: "No bibliographic information is supplied.", authors: "", published: null },
+    { name: "legacy null fields", passage: "The literal null is content, not metadata.", authors: null, published: null },
+  ])("does not promote $name from retained model output into source metadata", async ({ passage, authors, published }) => {
+    const document = documentWithBlocks([{ type: "paragraph", text: passage + "\n\nThe method uses normalization." }]);
+    const f = fixture(snapshot.route, document);
+    const raw = JSON.stringify({ output: {
+      guide: ["The source describes a method.", "The method uses normalization.", "The source retains its text."].map(text => ({ labels: ["[S1:1]"], text })),
+      questions: ["Which method?", "What normalization?", "What evidence?"],
+      claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The method uses normalization.",
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }], authors, published,
+    }, usage: { inputTokens: 17, cachedTokens: 0, outputTokens: 8, tokenLimit: 100 } });
+    f.bodies.set(prefix + "distill-call1.json", raw);
+    f.db.prepare("UPDATE source_revision SET distill_calls=1 WHERE id=?").run(revisionId);
+    const originalBodies = new Map(f.bodies);
+    try {
+      for (let replay = 0; replay < 2; replay++) {
+        const metadata = replay === 0 ? { authors: "", published: null } : { authors: "Историческая Zoë Ёлкина", published: "2021-03" };
+        if (replay) {
+          f.db.prepare("INSERT INTO source_revision(id,source_id,revision_no,readable_state,created_by,created_at) VALUES(?,?,2,'readable','owner',1)")
+            .run(explicitlySelectedRevisionId, sourceId);
+          f.db.prepare("UPDATE source SET authors=?,published=?,current_revision_id=? WHERE id=?")
+            .run(metadata.authors, metadata.published, explicitlySelectedRevisionId, sourceId);
+        }
+        const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) => {
+          if (name === "extract source") return; // Simulate cached extraction; the paid function is not invoked.
+          if (name === "verify source excerpts") return callback(); // Actual production verifier/storage callback.
+          throw new Error("Fixture stops before the next paid step.");
+        });
+        await new DistillWorkflow({} as ExecutionContext, f.env).run(
+          { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>, { do: stepDo } as unknown as WorkflowStep);
+        expect(stepDo.mock.calls.map(([name]) => name)).toEqual(replay ? ["extract source", "verify source excerpts"] : ["extract source", "verify source excerpts", "review and synthesize"]);
+        expect(f.db.prepare("SELECT authors,published FROM source WHERE id=?").get(sourceId)).toEqual(metadata);
+        expect(f.db.prepare("SELECT current_revision_id AS head FROM source WHERE id=?").get(sourceId))
+          .toEqual({ head: replay ? explicitlySelectedRevisionId : revisionId });
+        expect(f.db.prepare("SELECT distill_calls AS calls,distill_input_tokens AS input,distill_cached_tokens AS cached,distill_output_tokens AS output FROM source_revision WHERE id=?")
+          .get(revisionId)).toEqual({ calls: 1, input: 17, cached: 0, output: 8 });
+        const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
+        expect(verified.claims).toHaveLength(1);
+        expect(verified.claims[0].quote).toBe(document.text);
+        for (const [key, body] of originalBodies) expect(f.bodies.get(key)).toBe(body);
+      }
+      expect(generateText).not.toHaveBeenCalled(); expect(resolveModelTransport).not.toHaveBeenCalled();
+      expect(f.dispatchCAS).not.toHaveBeenCalled();
+      expect(f.sourceWrites).not.toHaveBeenCalled();
+      for (const lookup of forbiddenLookups) expect(lookup).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("cron drains an explicitly requested queue after a concurrency slot is freed", async () => {
+    const f = queuedBehindRunning();
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    try {
+      await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId: explicitlySelectedSourceId });
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: "queued" });
+      f.db.prepare("UPDATE source_revision SET distill_state='done' WHERE id=?").run(revisionId);
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({ id: `distill-${explicitlySelectedRevisionId}`,
+        params: { revisionId: explicitlySelectedRevisionId, model: snapshot } });
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("Workflow completion drains a waiting explicitly requested revision without replaying paid steps", async () => {
+    const f = queuedBehindRunning();
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    try {
+      await completeSavedWorkflow(f);
+      expect(f.db.prepare("SELECT distill_state,distill_calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ distill_state: "done", distill_calls: 2 });
+      expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({ id: `distill-${explicitlySelectedRevisionId}`,
+        params: { revisionId: explicitlySelectedRevisionId, model: snapshot } });
+      expect(generateText).not.toHaveBeenCalled();
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["deleted source", "deleted revision", "unreadable revision", "changed model"])("admission rechecks %s after async catalogue lookup", async (change) => {
+    const f = callerFixture();
+    vi.mocked(requireAvailableModel).mockImplementation(async () => {
+      if (change === "deleted source") f.db.prepare("UPDATE source SET state='deleted' WHERE id=?").run(explicitlySelectedSourceId);
+      if (change === "deleted revision") f.db.prepare("UPDATE source_revision SET deleted_at=1 WHERE id=?").run(explicitlySelectedRevisionId);
+      if (change === "unreadable revision") f.db.prepare("UPDATE source_revision SET readable_state='failed' WHERE id=?").run(explicitlySelectedRevisionId);
+      if (change === "changed model") f.db.prepare("UPDATE source_revision SET distill_model='gateway:command-code/fixture/new' WHERE id=?").run(explicitlySelectedRevisionId);
+      return snapshot;
+    });
+    try {
+      await scheduleDistillation(f.env, explicitlySelectedRevisionId);
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state,distill_token_limit FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: "queued", distill_token_limit: null });
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("concurrent cron, explicit request and repeated completion create each waiting Workflow once", async () => {
+    const f = queuedBehindRunning();
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    try {
+      await Promise.all([
+        completeSavedWorkflow(f), completeSavedWorkflow(f), scheduleDistillation(f.env),
+        requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId: explicitlySelectedSourceId }),
+      ]);
+      await completeSavedWorkflow(f);
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({ id: `distill-${explicitlySelectedRevisionId}`,
+        params: { revisionId: explicitlySelectedRevisionId, model: snapshot } });
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM source_revision WHERE distill_state='running'").get()).toEqual({ n: 2 });
+      expect(f.db.prepare("SELECT distill_state,distill_calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ distill_state: "done", distill_calls: 2 });
+      expect(generateText).not.toHaveBeenCalled();
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("cron leaves a full concurrency window queued", async () => {
+    const f = queuedBehindRunning();
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    try {
+      await Promise.all([scheduleDistillation(f.env), scheduleDistillation(f.env)]);
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: "queued" });
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["none", "paused", "failed", "done", "partial", "running", "paid queued", "deleted source", "deleted revision", "unreadable"])("cron skips %s without catalogue or dispatch", async (state) => {
+    const f = callerFixture();
+    f.db.prepare("UPDATE source_revision SET distill_state='none' WHERE id=?").run(otherQueuedRevisionId);
+    if (["none", "paused", "failed", "done", "partial", "running"].includes(state))
+      f.db.prepare("UPDATE source_revision SET distill_state=?,distill_started_at=? WHERE id=?").run(state, Date.now(), explicitlySelectedRevisionId);
+    if (state === "paid queued") f.db.prepare("UPDATE source_revision SET distill_calls=1 WHERE id=?").run(explicitlySelectedRevisionId);
+    if (state === "deleted source") f.db.prepare("UPDATE source SET state='deleted' WHERE id=?").run(explicitlySelectedSourceId);
+    if (state === "deleted revision") f.db.prepare("UPDATE source_revision SET deleted_at=1 WHERE id=?").run(explicitlySelectedRevisionId);
+    if (state === "unreadable") f.db.prepare("UPDATE source_revision SET readable_state='needs_conversion' WHERE id=?").run(explicitlySelectedRevisionId);
+    const before = f.db.prepare("SELECT * FROM source_revision ORDER BY id").all();
+    try {
+      await scheduleDistillation(f.env);
+      expect(f.db.prepare("SELECT * FROM source_revision ORDER BY id").all()).toEqual(before);
+      expect(requireAvailableModel).not.toHaveBeenCalled();
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("cron uses the frozen route and pauses unavailable models until an explicit request", async () => {
+    const f = callerFixture();
+    f.db.prepare("UPDATE settings SET distill_model='gateway:command-code/fixture/new-default' WHERE id=1").run();
+    vi.mocked(requireAvailableModel).mockRejectedValue(new LibraryError("unavailable", "The selected model is unavailable.", 503));
+    try {
+      await scheduleDistillation(f.env);
+      expect(vi.mocked(requireAvailableModel).mock.calls.map(([, route]) => route)).toEqual([snapshot.route, snapshot.route]);
+      expect(f.db.prepare("SELECT distill_state,distill_model,distill_calls FROM source_revision").all())
+        .toEqual(Array.from({ length: 2 }, () => ({ distill_state: "paused", distill_model: snapshot.route, distill_calls: 0 })));
+      vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("does not replace a missing frozen model with the current setting", async () => {
+    const f = callerFixture();
+    f.db.prepare("UPDATE source_revision SET distill_model=NULL").run();
+    try {
+      await scheduleDistillation(f.env);
+      expect(f.db.prepare("SELECT distill_state FROM source_revision").all()).toEqual([{ distill_state: "paused" }, { distill_state: "paused" }]);
+      expect(requireAvailableModel).not.toHaveBeenCalled();
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("a drain failure cannot change or replay the already finalized revision", async () => {
+    const f = queuedBehindRunning();
+    const prepare = f.env.DB.prepare.bind(f.env.DB);
+    f.env.DB.prepare = ((sql: string) => {
+      if (sql.includes("SELECT r.id,r.distill_model AS model")) throw new Error("Queue read unavailable");
+      return prepare(sql);
+    }) as D1Database["prepare"];
+    try {
+      await expect(completeSavedWorkflow(f)).resolves.toEqual({ revisionId });
+      expect(f.db.prepare("SELECT distill_state,distill_calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ distill_state: "done", distill_calls: 2 });
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each(["allow", "deny"])("a stale %s allowance check cannot overwrite a route explicitly resumed after pause", async (outcome) => {
+    const f = queuedBehindRunning();
+    const replacement: ModelSpec = { ...snapshot, route: "gateway:command-code/fixture/replacement", id: "fixture/replacement" };
+    vi.mocked(requireAvailableModel).mockImplementation(async (_env, route) => route === replacement.route ? replacement : snapshot);
+    let release!: () => void, deny!: (error: Error) => void, enter!: () => void;
+    const pending = new Promise<void>((resolve, reject) => { release = resolve; deny = reject; });
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    vi.mocked(assertProviderAllowance)
+      .mockImplementationOnce(async () => { enter(); await pending; })
+      .mockRejectedValueOnce(new LibraryError("budget", "Provider allowance is unavailable.", 409));
+    try {
+      const staleAdmission = scheduleDistillation(f.env, explicitlySelectedRevisionId);
+      await entered;
+      await scheduleDistillation(f.env, explicitlySelectedRevisionId);
+      expect(f.db.prepare("SELECT distill_state FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId)).toEqual({ distill_state: "paused" });
+      await requestUnderstanding(f.env, { type: "owner" } as Actor,
+        { sourceId: explicitlySelectedSourceId, model: replacement.route });
+      // Both slots were still full, so the owner's new frozen choice is queued.
+      f.db.prepare("UPDATE source_revision SET distill_state='done' WHERE id=?").run(revisionId);
+      if (outcome === "allow") release();
+      else deny(new LibraryError("budget", "Old provider allowance is unavailable.", 409));
+      await staleAdmission;
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state,distill_model FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: "queued", distill_model: replacement.route });
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({ id: `distill-${explicitlySelectedRevisionId}`,
+        params: { revisionId: explicitlySelectedRevisionId, model: replacement } });
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { release(); f.db.close(); }
+  });
+
+  it.each([0, 1])("cron never recreates an ambiguous Workflow after %i model dispatches", async (calls) => {
+    const f = callerFixture();
+    f.db.prepare("UPDATE source_revision SET distill_state='none' WHERE id=?").run(otherQueuedRevisionId);
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    f.createWorkflow.mockImplementation(async () => {
+      f.db.prepare("UPDATE source_revision SET distill_calls=? WHERE id=?").run(calls, explicitlySelectedRevisionId);
+      throw new Error("Workflow acknowledgement lost");
+    });
+    const get = vi.fn().mockRejectedValue(new Error("Workflow status unavailable"));
+    f.env.DISTILL.get = get;
+    try {
+      await scheduleDistillation(f.env);
+      f.db.prepare("UPDATE source_revision SET distill_started_at=? WHERE id=?").run(Date.now() - 360_000, explicitlySelectedRevisionId);
+      await scheduleDistillation(f.env);
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).toHaveBeenCalledTimes(1);
+      expect(f.db.prepare("SELECT distill_state,distill_calls FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: calls === 0 ? "failed" : "running", distill_calls: calls });
+      expect(generateText).not.toHaveBeenCalled();
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("a next-Workflow dispatch failure leaves the previous terminal result intact", async () => {
+    const f = queuedBehindRunning();
+    const savedReport = f.bodies.get(prefix + "distill.json");
+    vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
+    f.createWorkflow.mockRejectedValue(new Error("Dispatch unavailable"));
+    try {
+      await expect(completeSavedWorkflow(f)).resolves.toEqual({ revisionId });
+      await completeSavedWorkflow(f);
+      expect(f.db.prepare("SELECT distill_state,distill_calls FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ distill_state: "done", distill_calls: 2 });
+      expect(f.bodies.get(prefix + "distill.json")).toBe(savedReport);
+      expect(f.db.prepare("SELECT distill_state,distill_calls,distill_token_limit FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId))
+        .toEqual({ distill_state: "failed", distill_calls: 0, distill_token_limit: 0 });
+      expect(f.createWorkflow).toHaveBeenCalledTimes(1);
+      expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it("explicit Understand dispatches only its revision; cron can then drain other requested work", async () => {
     const f = callerFixture();
     vi.mocked(requireAvailableModel).mockResolvedValue(snapshot);
     try {
@@ -266,12 +742,19 @@ describe("DistillWorkflow admitted model snapshot", () => {
         ]);
       expect(generateText).not.toHaveBeenCalled();
 
-      // Cron (no target) only reconciles stale running: it must not admit queued work.
-      await scheduleDistillation(f.env);
+      // Discarding the first receipt does not authorise another Workflow for this revision.
+      await requestUnderstanding(f.env, { type: "owner" } as Actor, {
+        sourceId: explicitlySelectedSourceId, revisionId: explicitlySelectedRevisionId, model: snapshot.route,
+      });
       expect(f.createWorkflow).toHaveBeenCalledTimes(1);
+      expect(generateText).not.toHaveBeenCalled();
+
+      // The later background drain may admit the already requested older row.
+      await scheduleDistillation(f.env);
+      expect(f.createWorkflow).toHaveBeenCalledTimes(2);
       expect(f.db.prepare("SELECT id,distill_state AS state FROM source_revision ORDER BY created_at").all())
         .toEqual([
-          { id: otherQueuedRevisionId, state: "queued" },
+          { id: otherQueuedRevisionId, state: "running" },
           { id: explicitlySelectedRevisionId, state: "running" },
         ]);
       expect(generateText).not.toHaveBeenCalled();
@@ -285,57 +768,6 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(f.db.prepare("SELECT COUNT(*) AS count FROM source_revision WHERE distill_state='running'").get())
         .toEqual({ count: 2 });
       expect(generateText).not.toHaveBeenCalled();
-    } finally { f.db.close(); }
-  });
-
-  it("leaves Gateway model bounds and reasoning metadata unchanged", () => {
-    const gateway: ModelSpec = Object.freeze({ ...snapshot, maxOutputTokens: 65_536,
-      nativeReasoningEffort: "low", nativeReasoningEfforts: Object.freeze(["low", "high"]) });
-    expect(distillModelSpec(gateway)).toBe(gateway);
-  });
-
-  it.each([
-    { capabilities: Object.freeze(["low", "high"]), effort: "high", capacity: null, currentReserve: 8192, reserve: 8192 },
-    { capabilities: undefined, effort: "low", capacity: null, currentReserve: 8192, reserve: 8192 },
-    { capabilities: Object.freeze(["low", "high"]), effort: "high", capacity: 1_048_576, currentReserve: 8192, reserve: 16_384 },
-    { capabilities: Object.freeze(["low"]), effort: "low", capacity: 1_048_576, currentReserve: 8192, reserve: 16_384 },
-    { capabilities: undefined, effort: "low", capacity: 1_048_576, currentReserve: 8192, reserve: 16_384 },
-    { capabilities: Object.freeze(["low"]), effort: "low", capacity: 8192, currentReserve: 8192, reserve: 8192 },
-    { capabilities: Object.freeze(["low", "high"]), effort: "high", capacity: 1_048_576, currentReserve: 32_768, reserve: 32_768 },
-  ] as const)("admits native $effort with reserve $reserve from published capacity $capacity", async ({ capabilities, effort, capacity, currentReserve, reserve }) => {
-    const f = callerFixture();
-    const published: ModelSpec = Object.freeze({
-      route: "workers-ai:@cf/zai-org/glm-5.3-flash", id: "@cf/zai-org/glm-5.3-flash", label: "Native published fixture",
-      contextTokens: 1_048_576, maxOutputTokens: capacity, outputReserveTokens: currentReserve,
-      nativeReasoningEffort: "low", ...(capabilities ? { nativeReasoningEfforts: capabilities } : {}),
-      checkedOn: "2026-10-30", enabled: true,
-    });
-    const expectedModel = { ...published, nativeReasoningEffort: effort, outputReserveTokens: reserve };
-    vi.mocked(requireAvailableModel).mockResolvedValue(published);
-    try {
-      f.db.prepare("UPDATE settings SET native_usage_mode='standard',distill_model=? WHERE id=1").run(snapshot.route);
-      f.db.prepare("UPDATE source_revision SET distill_model=? WHERE id=?").run(published.route, explicitlySelectedRevisionId);
-      await requestUnderstanding(f.env, { type: "owner" } as Actor, {
-        sourceId: explicitlySelectedSourceId, revisionId: explicitlySelectedRevisionId, model: published.route,
-      });
-
-      expect(requireAvailableModel).toHaveBeenCalledExactlyOnceWith(f.env, published.route);
-      expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({
-        id: `distill-${explicitlySelectedRevisionId}`,
-        params: { revisionId: explicitlySelectedRevisionId, model: expectedModel, ...(reserve > 8192 ? { callTimeoutMs: 300_000 } : {}) },
-      });
-      const admitted = f.createWorkflow.mock.calls[0]?.[0].params.model;
-      if (effort === published.nativeReasoningEffort && reserve === currentReserve) expect(admitted).toBe(published);
-      else expect(admitted).not.toBe(published);
-      expect(admitted).toStrictEqual(expectedModel);
-      expect(published.nativeReasoningEffort).toBe("low");
-      expect(published.outputReserveTokens).toBe(currentReserve);
-      expect(f.db.prepare("SELECT distill_model AS model,distill_state AS state,distill_calls AS calls,distill_token_limit AS tokenLimit FROM source_revision WHERE id=?")
-        .get(explicitlySelectedRevisionId)).toEqual({ model: published.route, state: "running", calls: 0, tokenLimit: 2 * (published.contextTokens + reserve) });
-      expect(f.db.prepare("SELECT distill_model AS model,native_usage_mode AS mode FROM settings WHERE id=1").get())
-        .toEqual({ model: snapshot.route, mode: "standard" });
-      expect(generateText).not.toHaveBeenCalled();
-      expect(resolveModelTransport).not.toHaveBeenCalled();
     } finally { f.db.close(); }
   });
 
@@ -436,6 +868,17 @@ describe("DistillWorkflow admitted model snapshot", () => {
   });
 
   it("requires nullable additional-result metadata for new call two but still saves historical optional call-two output", async () => {
+    const withBatch = (target: ReturnType<typeof fixture>) => {
+      const db = target.env.DB as unknown as {
+        batch(statements: Array<{ run(): Promise<{ meta: { changes: number } }> }>): Promise<{ meta: { changes: number } }[]>;
+      };
+      db.batch = async (statements) => {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        return results;
+      };
+      return target;
+    };
     const document = documentWithBlocks([
       { type: "paragraph", text: "Method Alpha uses a low-rank update.\n" },
       { type: "paragraph", text: "The source reports 3 and 5 examples. On Set 2021 Variant Alpha, the model scores 9.4 QScore, improving over the baseline by 1.7 QScore.\n" },
@@ -446,13 +889,12 @@ describe("DistillWorkflow admitted model snapshot", () => {
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
     vi.mocked(Output.object).mockClear();
     const extraction = {
+      digest: [{ labels: ["[S1:1]"], text: "Method Alpha uses a low-rank update." }], glossary: [],
       guide: [
         { labels: ["[S1:1]"], text: "The source describes method Alpha." },
         { labels: ["[S1:3]"], text: "The source notes a limitation." },
         { labels: ["[S1:4]"], text: "The source describes a related condition." },
       ],
-      digest: [{ labels: ["[S1:1]"], text: "The source describes method Alpha." }],
-      glossary: [],
       claims: [
         { quoteBlock: "[S1:3]", kind: "result", task: "outcomes", metric: "count", dataset: null,
           valueText: "9", unit: null, conditions: null, statement: "The source reports 9 outcomes." },
@@ -482,13 +924,11 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const call2SourceContext = call2Messages?.[0]?.content;
       if (typeof call2SourceContext !== "string") throw new Error("Call two source context was not captured.");
       const capturedContext = JSON.parse(call2SourceContext) as {
-        candidates: Array<{ id: string; statement: string; quote: string }>;
+        candidates: Array<{ id: string; statement: string }>;
         evidence: Array<{ label: string; quote: string }>;
-        proseDrafts: { guide: Array<{ labels: string[]; text: string }>; digest: Array<{ labels: string[]; text: string }>; glossary: unknown[] };
       };
-      expect(capturedContext.candidates).toEqual([{ id: "C0", statement: "Method Alpha uses a low-rank update.", quoteBlock: "[S1:1]", quote: "Method Alpha uses a low-rank update.\n", kind: "method",
+      expect(capturedContext.candidates).toEqual([{ id: "C0", statement: "Method Alpha uses a low-rank update.", quoteBlock: "[S1:1]", kind: "method",
         task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }]);
-      expect(capturedContext.proseDrafts).toEqual({ guide: extraction.guide, digest: extraction.digest, glossary: extraction.glossary });
       expect(capturedContext.evidence).toContainEqual({ label: "[S1:2]", block: 2,
         quote: "The source reports 3 and 5 examples. On Set 2021 Variant Alpha, the model scores 9.4 QScore, improving over the baseline by 1.7 QScore.\n" });
       const verifiedBody = f.bodies.get(prefix + "distill-verified.json");
@@ -519,6 +959,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
         return JSON.parse(instructions.slice(at + marker.length)) as JsonSchemaNode;
       };
       const firstSchema = generatedSchema(callInstructions[0]);
+      expect(firstSchema.properties).not.toHaveProperty("authors");
+      expect(firstSchema.properties).not.toHaveProperty("published");
       const secondSchema = generatedSchema(callInstructions[1]);
       const firstClaim = firstSchema.properties?.claims?.items;
       const additionalClaim = secondSchema.properties?.additionalClaims?.items;
@@ -568,7 +1010,14 @@ describe("DistillWorkflow admitted model snapshot", () => {
     cached.bodies.set(prefix + "distill-call2.json", JSON.stringify({
       output: {
         supportedClaims: ["C0"],
-        additionalClaims: [{ quoteBlock: "[S1:2]", kind: "result", statement: "The source reports a result of 3 times." }],
+        additionalClaims: [
+          { quoteBlock: "[S1:2]", kind: "result", statement: "The source reports a result of 3 times." },
+          { quoteBlock: "[S1:1]", kind: "method", statement: "[S1:1]" },
+          { quoteBlock: "[S1:1]", kind: "method", statement: " \n\t" },
+          { quoteBlock: "[S1:1]", kind: "method", statement: "The method uses a low-rank update." },
+          { quoteBlock: "[S1:1]", kind: "method", statement: "The method uses 9999 layers." },
+          { quoteBlock: "[S1:1]", kind: "result", statement: "The source reports a result." },
+        ],
         guide: [
           { labels: ["[S1:1]"], text: "The source describes method Alpha." },
           { labels: ["[S1:2]"], text: "The source reports a result." },
@@ -585,8 +1034,11 @@ describe("DistillWorkflow admitted model snapshot", () => {
     }));
     cached.db.prepare("UPDATE source_revision SET distill_state='failed',distill_calls=2,distill_error=? WHERE id=?")
       .run("historical call-two output", revisionId);
+    cached.db.prepare("UPDATE source SET authors=?,published=? WHERE id=?").run("Историческая Zoë Ёлкина", "2021-03", sourceId);
+    const originalCachedBodies = new Map(cached.bodies);
     try {
       expect(await hasAvailableUnderstanding(cached.env, revisionId)).toBe(true);
+      expect(cached.bodies.has(prefix + "distill-call1.json")).toBe(false);
       vi.mocked(generateText).mockClear();
       vi.mocked(resolveModelTransport).mockClear();
       await expect(requestUnderstanding(cached.env, { type: "owner" } as Actor, {
@@ -597,181 +1049,21 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const savedBody = cached.bodies.get(prefix + "checked/distill.json");
       if (!savedBody) throw new Error("Historical call-two output was not saved.");
       const saved = JSON.parse(savedBody) as DistillReport & { state: string };
-      expect(saved.state).toBe("done");
-      expect(saved.kept).toBe(1);
+      expect(saved.state).toBe("partial"); // Cards survive; original claim markup cannot be recovered.
+      expect(saved.kept).toBe(2);
       expect(saved.usage.calls).toBe(2);
+      expect(cached.db.prepare("SELECT authors,published FROM source WHERE id=?").get(sourceId))
+        .toEqual({ authors: "Историческая Zoë Ёлкина", published: "2021-03" });
+      for (const [key, body] of originalCachedBodies) expect(cached.bodies.get(key)).toBe(body);
       expect(saved.dropped).toContainEqual({ index: 0, reason: "additional-missing-or-unsupported-primary-result" });
+      expect(saved.dropped).toContainEqual({ index: 1, reason: "additional-empty-statement" });
+      expect(saved.dropped).toContainEqual({ index: 2, reason: "additional-empty-statement" });
+      expect(saved.dropped).toContainEqual({ index: 4, reason: "additional-unsupported-statement-numbers" });
+      expect(saved.dropped).toContainEqual({ index: 5, reason: "additional-missing-or-unsupported-primary-result" });
+      expect(cached.db.prepare("SELECT statement FROM claim WHERE source_revision_id=? ORDER BY ordinal").all(revisionId))
+        .toEqual([{ statement: "Method Alpha uses a low-rank update." }, { statement: "The method uses a low-rank update." }]);
     } finally { cached.db.close(); }
   });
-
-  it("validates complete prose drafts and restricts the second response to unchanged text with corrected frozen labels", async () => {
-    const { f, document, extraction, selection, validatedDigest } = proseDraftFixture();
-    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
-    vi.mocked(generateText)
-      .mockImplementationOnce(async (options) => {
-        for (const invalid of [
-          { ...extraction, digest: undefined }, { ...extraction, glossary: undefined },
-          { ...extraction, guide: [{ labels: ["[S1:999]"], text: "Method Alpha uses normalization." }, ...extraction.guide.slice(1)] },
-        ]) await expect(parseGeneration(options, invalid)).rejects.toBeInstanceOf(NoObjectGeneratedError);
-        return { output: await parseGeneration(options, extraction), totalUsage: generationUsage } as never;
-      })
-      .mockImplementationOnce(async (options) => {
-        const content = options.messages?.[0]?.content;
-        if (typeof content !== "string" || !options.output) throw new Error("The second production request was not captured.");
-        const context = JSON.parse(content);
-        expect(context.proseDrafts).toEqual({ guide: extraction.guide.slice(0, 3), digest: validatedDigest, glossary: extraction.glossary.slice(0, 2) });
-        expect(context.evidence.map((item: { label: string }) => item.label)).toEqual(expect.arrayContaining(["[S1:2]", "[S1:4]"]));
-        expect(JSON.stringify(context)).not.toContain("99");
-        expect(await options.output.responseFormat).toMatchObject({ type: "json", schema: { type: "object" } });
-        const firstTerm = selection.glossary[0], secondTerm = selection.glossary[1];
-        if (!firstTerm || !secondTerm) throw new Error("The tuple fixture requires two distinct glossary entries.");
-        for (const invalid of [
-          { ...selection, guide: [{ ...selection.guide[0], text: "The method gains an unsupported explanation." }] },
-          { ...selection, digest: [{ labels: ["[S1:2]"], text: "The method gains an unsupported explanation." }] },
-          { ...selection, glossary: [{ ...firstTerm, definition: "Неподдержанное новое определение." }] },
-          { ...selection, glossary: [{ ...firstTerm, ru: secondTerm.ru }] },
-          { ...selection, guide: [{ ...selection.guide[0], labels: ["[S1:999]"] }] },
-          { ...selection, digest: [extraction.digest[1]] },
-        ]) await expect(parseGeneration(options, invalid)).rejects.toBeInstanceOf(NoObjectGeneratedError);
-        await expect(parseGeneration(options, { ...selection, guide: [], digest: [], glossary: [] })).resolves.toMatchObject({ guide: [], digest: [], glossary: [] });
-        return { output: await parseGeneration(options, selection), totalUsage: generationUsage } as never;
-      });
-    try {
-      await run(f);
-      expect(generateText).toHaveBeenCalledTimes(2);
-      for (const [options] of vi.mocked(generateText).mock.calls) expect(options).toMatchObject({ maxRetries: 0, maxOutputTokens: snapshot.outputReserveTokens });
-      const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
-      expect(verified.digest).toEqual(validatedDigest);
-      expect(verified.glossary).toEqual(extraction.glossary.slice(0, 2));
-      expect(verified.dropped).toEqual(expect.arrayContaining([
-        { index: 3, reason: "guide-unsupported-statement-numbers" },
-        { index: 1, reason: "digest-unsupported-statement-numbers" },
-        { index: 2, reason: "glossary-unsupported-output" },
-      ]));
-      expect(f.bodies.get(prefix + "guide.md")).toContain("The method applies only to Condition Beta.\n\n[R" + revisionId + ":2]");
-      expect(f.bodies.get(prefix + "digest.md")).toContain("The method applies only to Condition Beta.");
-      expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual(selection.glossary.map((item) => ({
-        ...item, labels: item.labels.map((label) => label.replace("S1:", "R" + revisionId + ":")),
-      })));
-      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,claim_count AS claims FROM source_revision WHERE id=?").get(revisionId))
-        .toEqual({ state: "done", calls: 2, claims: 2 });
-      expect(f.bodies.get(prefix + "text.md")).toBe(document.text);
-      expect(f.bodies.get(prefix + "blocks.json")).toBe(JSON.stringify(document.blocks));
-      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(true);
-      const raw = f.bodies.get(prefix + "distill-call2.json");
-      if (!raw) throw new Error("The selected rich synthesis output was not retained.");
-      const altered = JSON.parse(raw);
-      altered.output.digest[0].text = "The method gains an unsupported explanation.";
-      f.bodies.set(prefix + "distill-call2.json", JSON.stringify(altered));
-      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
-      f.bodies.set(prefix + "distill-call2.json", raw);
-      const verifiedBody = f.bodies.get(prefix + "distill-verified.json");
-      if (!verifiedBody) throw new Error("Validated drafts were not retained.");
-      const incomplete = JSON.parse(verifiedBody);
-      delete incomplete.glossary;
-      f.bodies.set(prefix + "distill-verified.json", JSON.stringify(incomplete));
-      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
-      f.bodies.set(prefix + "distill-verified.json", verifiedBody);
-    } finally { f.db.close(); }
-  });
-
-  it("rejects a second-call response that authors new prose without starting another call", async () => {
-    const { f, extraction, selection } = proseDraftFixture();
-    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
-    vi.mocked(generateText)
-      .mockImplementationOnce(async (options) => ({ output: await parseGeneration(options, extraction), totalUsage: generationUsage } as never))
-      .mockImplementationOnce(async (options) => ({ output: await parseGeneration(options, {
-        ...selection, digest: [{ labels: ["[S1:2]"], text: "The method gains an unsupported explanation." }],
-      }), totalUsage: generationUsage } as never));
-    try {
-      await run(f);
-      expect(generateText).toHaveBeenCalledTimes(2);
-      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId))
-        .toEqual({ state: "failed", calls: 2 });
-      expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null")).toMatchObject({ output: null });
-      expect(f.bodies.has(prefix + "guide.md")).toBe(false);
-      expect(f.bodies.has(prefix + "digest.md")).toBe(false);
-      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
-    } finally { f.db.close(); }
-  });
-
-  it.each(["guide", "digest"] as const)("stops before call two when every %s draft failed verification", async (category) => {
-    const { f, extraction } = proseDraftFixture();
-    extraction[category] = extraction[category].map((item) => ({ ...item, text: "The method reports 99 outcomes." }));
-    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
-    vi.mocked(generateText)
-      .mockImplementationOnce(async (options) => ({ output: await parseGeneration(options, extraction), totalUsage: generationUsage } as never));
-    try {
-      await run(f);
-      expect(generateText).toHaveBeenCalledTimes(1);
-      expect(resolveModelTransport).toHaveBeenCalledTimes(1);
-      expect(JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null")[category]).toEqual([]);
-      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId))
-        .toEqual({ state: "failed", calls: 1 });
-      expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
-      expect(f.bodies.has(prefix + "guide.md")).toBe(false);
-      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
-    } finally { f.db.close(); }
-  });
-
-  it("encodes an empty glossary as zero items and rejects replacement tuples", async () => {
-    const { f, extraction, selection } = proseDraftFixture();
-    extraction.glossary = [];
-    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
-    vi.mocked(generateText)
-      .mockImplementationOnce(async (options) => ({ output: await parseGeneration(options, extraction), totalUsage: generationUsage } as never))
-      .mockImplementationOnce(async (options) => {
-        expect(await options.output?.responseFormat).toMatchObject({ type: "json", schema: { type: "object" } });
-        await expect(parseGeneration(options, selection)).rejects.toBeInstanceOf(NoObjectGeneratedError);
-        return { output: await parseGeneration(options, { ...selection, glossary: [] }), totalUsage: generationUsage } as never;
-      });
-    try {
-      await run(f);
-      expect(generateText).toHaveBeenCalledTimes(2);
-      expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual([]);
-      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId))
-        .toEqual({ state: "done", calls: 2 });
-    } finally { f.db.close(); }
-  });
-
-  it("drops fresh glossary drafts with blank terms before call two and keeps valid tuples unchanged", async () => {
-    const { f, extraction, selection } = proseDraftFixture();
-    const validTuples = extraction.glossary.slice(0, 2);
-    extraction.glossary.push(
-      { labels: ["[S1:4]"], en: "", ru: "Гамма", definition: "Процесс используется при Condition Beta." },
-      { labels: ["[S1:4]"], en: "Gamma", ru: " \t ", definition: "Процесс используется при Condition Beta." },
-    );
-    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
-    vi.mocked(generateText)
-      .mockImplementationOnce(async (options) => ({ output: await parseGeneration(options, extraction), totalUsage: generationUsage } as never))
-      .mockImplementationOnce(async (options) => {
-        const content = options.messages?.[0]?.content;
-        if (typeof content !== "string") throw new Error("Call two prose drafts were not captured.");
-        const context = JSON.parse(content) as { proseDrafts: { glossary: unknown[] } };
-        expect(context.proseDrafts.glossary).toEqual(validTuples);
-        const valid = selection.glossary[0];
-        if (!valid) throw new Error("The fixture requires a valid glossary tuple.");
-        await expect(parseGeneration(options, { ...selection, glossary: [{ ...valid, en: "" }] }))
-          .rejects.toBeInstanceOf(NoObjectGeneratedError);
-        await expect(parseGeneration(options, { ...selection, glossary: [{ ...valid, ru: " \t " }] }))
-          .rejects.toBeInstanceOf(NoObjectGeneratedError);
-        return { output: await parseGeneration(options, selection), totalUsage: generationUsage } as never;
-      });
-    try {
-      await run(f);
-      expect(generateText).toHaveBeenCalledTimes(2);
-      const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
-      expect(verified.glossary).toEqual(validTuples);
-      expect(verified.dropped).toEqual(expect.arrayContaining([
-        { index: 3, reason: "glossary-unsupported-output" },
-        { index: 4, reason: "glossary-unsupported-output" },
-      ]));
-      expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual(selection.glossary.map((item) => ({
-        ...item, labels: item.labels.map((label) => label.replace("S1:", "R" + revisionId + ":")),
-      })));
-    } finally { f.db.close(); }
-  });
-
 
   it("passes the exact admitted context, reserve and checked date to transport without rediscovery", async () => {
     const f = fixture(snapshot.route);
@@ -866,40 +1158,59 @@ describe("DistillWorkflow admitted model snapshot", () => {
     expect(resolveModelTransport).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, 300_000] as const)("retains typed failure telemetry with frozen timeout %s and no raw text", async (callTimeoutMs) => {
+  it.each([32768, 4096, null])("uses published %s for understanding generation independently of its reserve", async (capacity) => {
+    const model = { ...snapshot, maxOutputTokens: capacity };
+    const f = fixture(model.route);
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    const bound = modelTokenLimit(model);
+    f.db.prepare("UPDATE source_revision SET distill_token_limit=?,distill_token_limit_kind=? WHERE id=?")
+      .run(bound === null ? null : 2 * bound, bound === null ? "unknown" : "published", revisionId);
+    try {
+      await run(f, false, model);
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(generateText).mock.calls[0]?.[0].maxOutputTokens).toBe(capacity ?? undefined);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      expect(f.db.prepare("SELECT distill_calls FROM source_revision WHERE id=?").get(revisionId)).toEqual({ distill_calls: 1 });
+    } finally { f.db.close(); }
+  });
+
+  it("retains a legacy admitted bound and per-call cap during replay with a larger published output capacity", async () => {
+    const model = { ...snapshot, maxOutputTokens: 32768 };
+    const f = fixture(model.route);
+    const oldBound = 2 * (snapshot.contextTokens + 8192);
+    f.db.prepare("UPDATE source_revision SET distill_token_limit=? WHERE id=?").run(oldBound, revisionId);
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    try {
+      await run(f, false, model);
+      expect(vi.mocked(generateText).mock.calls[0]?.[0].maxOutputTokens).toBe(8192);
+      expect(f.db.prepare("SELECT distill_token_limit,distill_token_limit_kind FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ distill_token_limit: oldBound, distill_token_limit_kind: null });
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null") as DistillReport;
+      expect(report.usage.tokenLimit).toBe(oldBound);
+      expect(report.usage.tokenLimitKind).toBe("legacy");
+      await run(f, false, model);
+      expect(generateText).toHaveBeenCalledTimes(1);
+    } finally { f.db.close(); }
+  });
+
+  it("retains typed structured-output failure telemetry and cause across serialized steps", async () => {
     // Does not reproduce eval/out/openrouter-20261028/resnet-trace (generic External failure, distill-call2.json 404, unrecoverable).
     // It covers the proven pinned ai@7.0.152 shape in isolation: NoObjectGeneratedError carries usage/finishReason.
-    const model: ModelSpec = callTimeoutMs === undefined ? snapshot : Object.freeze({
-      route: "workers-ai:@cf/zai-org/glm-5.3-flash", id: "@cf/zai-org/glm-5.3-flash", label: "Frozen native profile",
-      contextTokens: 1_048_576, maxOutputTokens: 1_048_576, outputReserveTokens: 16_384,
-      nativeReasoningEffort: "high", checkedOn: "2026-10-31", enabled: true,
-    });
-    const input: DistillInput = Object.freeze({ revisionId, model, ...(callTimeoutMs === undefined ? {} : { callTimeoutMs }) });
-    const originalInput = structuredClone(input);
-    const f = fixture(model.route);
-    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const f = fixture(snapshot.route);
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
     const rawProviderUsage = { prompt_tokens: 1200, completion_tokens: 34, total_tokens: 1234 };
     const sdkUsage = { inputTokens: 1200, inputTokenDetails: { noCacheTokens: 1200, cacheReadTokens: 0, cacheWriteTokens: undefined }, outputTokens: 34, outputTokenDetails: { textTokens: 34, reasoningTokens: undefined }, totalTokens: 1234, raw: rawProviderUsage };
-    const visibleText = '{"guide":"synthetic-visible-Ж🙂';
-    const sdkError = new NoObjectGeneratedError({ message: "No object generated: response did not match schema.", text: visibleText, response: { id: "resp-typed-1", timestamp: new Date(), modelId: model.id }, usage: sdkUsage, finishReason: "length" });
+    const sdkError = new NoObjectGeneratedError({ message: "No object generated: response did not match schema.", text: '{"guide":', response: { id: "resp-typed-1", timestamp: new Date(), modelId: "fixture/admitted" }, usage: sdkUsage, finishReason: "length" });
     vi.mocked(generateText).mockRejectedValueOnce(sdkError);
     try {
-      const steps = await run(f, true, input);
+      const steps = await run(f, true);
       expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
-      expect(steps.mock.calls[0]?.[1]).toMatchObject({ retries: { limit: 0 } });
-      expect(timeout).toHaveBeenCalledExactlyOnceWith(callTimeoutMs ?? 180_000);
-      expect(input).toStrictEqual(originalInput);
       expect(generateText).toHaveBeenCalledTimes(1);
-      expect(generateText).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0, maxOutputTokens: model.outputReserveTokens }));
       expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
       const rawBody = f.bodies.get(prefix + "distill-call1.json");
       if (!rawBody) throw new Error("Typed failure did not retain its per-call artifact.");
-      const stored = JSON.parse(rawBody) as { output: null; finishReason: string; visibleTextBytes: number; usage: { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage: unknown } };
+      const stored = JSON.parse(rawBody) as { output: null; usage: { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; providerUsage: unknown } };
       expect(stored.output).toBeNull();
-      expect(Object.keys(stored).sort()).toEqual(["finishReason", "output", "usage", "visibleTextBytes"]);
-      expect(stored.finishReason).toBe("length");
-      expect(stored.visibleTextBytes).toBe(new TextEncoder().encode(visibleText).byteLength);
       expect(stored).not.toHaveProperty("error");
       expect(JSON.stringify(stored)).not.toContain('{"guide":');
       expect(stored.usage.inputTokens).toBe(1200);
@@ -921,7 +1232,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
       const row = f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_error AS error FROM source_revision WHERE id=?").get(revisionId);
       expect(row).toEqual({ state: "failed", calls: 1, error: report.error });
-    } finally { timeout.mockRestore(); f.db.close(); }
+    } finally { f.db.close(); }
   });
 
   it("preserves only the safe provider failure across a serialized step with unknown usage", async () => {

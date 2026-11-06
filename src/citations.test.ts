@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerWarnings, persistentAnswer, persistentResolvedAnswer, resolveCitations, uncitedStatements,
+import { answerWarnings, persistentResolvedAnswer, resolveCitations, uncitedStatements,
   numericCitationLabels, unsupportedNumericStatements } from "./citations.js";
 import type { Citation, LabelSource } from "./citations.js";
 import { isCitableBlock, scanBlocks, sliceUtf8, type Block } from "./blocks.js";
@@ -89,8 +89,9 @@ describe("resolveCitations", () => {
       [`[S1:1, R${MIXED_REV}:1]`, compact + compact, compact],
       [`${compact} text ${persistent}`, `${compact} text ${compact}`, compact],
     ] as const) {
-      expect(resolveCitations(input, sources)).toEqual({ text, citations: [{ ...citation, label }], invalidLabels: 0 });
-      expect(persistentAnswer(input, sources)).toEqual({ text: text.replaceAll(compact, persistent),
+      const turn = resolveCitations(input, sources);
+      expect(turn).toEqual({ text, citations: [{ ...citation, label }], invalidLabels: 0 });
+      expect(persistentResolvedAnswer(turn.text, turn.citations)).toEqual({ text: text.replaceAll(compact, persistent),
         citations: [{ ...citation, label: persistent }], invalidLabels: 0 });
     }
   });
@@ -267,10 +268,12 @@ describe("resolveCitations", () => {
 
 });
 
-describe("persistentAnswer", () => {
-  it("rewrites known compact labels to full revision ids", () => {
-    const out = persistentAnswer("see [S1:1] and [S2:2] plus [S9:1]", makeSources());
-    expect(out.invalidLabels).toBe(1);
+describe("persistentResolvedAnswer", () => {
+  it("saves resolved compact labels while the turn retains its rejected-label diagnostic", () => {
+    const turn = resolveCitations("see [S1:1] and [S2:2] plus [S9:1]", makeSources());
+    expect(turn.invalidLabels).toBe(1);
+    const out = persistentResolvedAnswer(turn.text, turn.citations);
+    expect(out.invalidLabels).toBe(0);
     expect(out.text).toBe(`see [R${REV_A}:1] and [R${REV_B}:2] plus `);
     expect(out.citations).toHaveLength(2);
     expect(out.citations[0]).toMatchObject({ sourceId: SRC_A, label: `[R${REV_A}:1]` });
@@ -279,14 +282,27 @@ describe("persistentAnswer", () => {
 
   it("keeps valid persistent labels as-is", () => {
     const answer = `done [R${REV_A}:3]`;
-    const out = persistentAnswer(answer, makeSources());
+    const turn = resolveCitations(answer, makeSources());
+    const out = persistentResolvedAnswer(turn.text, turn.citations);
     expect(out.invalidLabels).toBe(0);
     expect(out.text).toBe(answer);
     expect(out.citations[0]).toMatchObject({ revisionId: REV_A, sourceId: SRC_A, block: 3, start: 20, end: 30 });
   });
-});
+  it("preserves frozen citation identity, code and unresolved bytes without fresh scope", () => {
+    const canonical = "Пролог 😀. Сохранённая цитата.", passage = "Сохранённая цитата.";
+    const start = new TextEncoder().encode(canonical.slice(0, canonical.indexOf(passage))).length;
+    const citation: Citation = { revisionId: REV_A, sourceId: SRC_A, block: 7, start,
+      end: new TextEncoder().encode(canonical).length, sourceTitle: "Старый источник", deleted: true, label: "[S1:7]" };
+    const text = "😀 Пример [S1:7]. `[S1:7]` [S9:9]\n~~~\n[S1:7]\n~~~";
+    const saved = persistentResolvedAnswer(text, [citation, citation]);
+    const persistent = `[R${REV_A}:7]`;
+    expect(saved.text).toBe("😀 Пример " + persistent + ". `[S1:7]` [S9:9]\n~~~\n[S1:7]\n~~~");
+    expect(saved.citations).toEqual([{ ...citation, label: persistent }]);
+    expect(saved.invalidLabels).toBe(0);
+    expect(sliceUtf8(canonical, saved.citations[0]?.start ?? -1, saved.citations[0]?.end ?? -1)).toBe(passage);
+    expect(citation.label).toBe("[S1:7]");
+  });
 
-describe("persistentResolvedAnswer", () => {
   it("rewrites the turn occurrence but preserves the same label inside fenced code", () => {
     const turn = resolveCitations("see [S1:1]\n```\n[S1:1]\n```\nafter", makeSources());
     expect(turn.invalidLabels).toBe(0);
@@ -654,6 +670,70 @@ describe("inline code literals", () => {
 });
 
 describe("answerWarnings", () => {
+  it.each(["- ", "* ", "+ ", "1. ", "2) "])("keeps wrapped sentences in %s list items", (marker) => {
+    for (const newline of ["\n", "\r\n"]) {
+      const raw = `${marker}Размер 🌍 равен 512${newline}  измерениям [S1:1].`;
+      const resolved = resolveCitations(raw, makeSources());
+      expect(answerWarnings(resolved.text, resolved.citations, new Map([["[S1:1]", "512 dimensions"]]))).toEqual([]);
+      expect(numericCitationLabels(resolved.text, resolved.citations)).toEqual(["[S1:1]"]);
+      expect(answerWarnings(resolved.text, resolved.citations, new Map([["[S1:1]", "8 heads"]])))
+        .toEqual([{ start: 0, end: raw.length, kind: "unsupported-number" }]);
+    }
+  });
+
+  it.each([
+    "- Uncited fact.\n  Supported fact [S1:1].",
+    "- Uncited fact.\n  supported fact [S1:1].",
+    "- Факт без ссылки.\n  подтверждённый факт [S1:1].",
+    "- **Uncited fact.**\n  supported fact [S1:1].",
+    "- Uncited fact.\r\n  supported fact [S1:1].",
+    "- Uncited fact. another\n  supported fact [S1:1].",
+    "- **Uncited lead.**\n  Supported fact [S1:1].",
+    "- Uncited fact\n- Supported fact [S1:1].",
+    "- Uncited fact\n    - Supported fact [S1:1].",
+    "- Uncited fact\n  > Supported fact [S1:1].",
+    "- Uncited fact\n  >Supported fact [S1:1].",
+    "- Uncited fact\n\n  Supported fact [S1:1].",
+    "- Uncited fact\n  # Supported heading [S1:1]",
+    "- Uncited fact\n    # Supported heading [S1:1]",
+    "- Uncited fact\nSupported fact [S1:1].",
+  ])("does not lend a continuation citation to a different unit: %s", (raw) => {
+    const resolved = resolveCitations(raw, makeSources());
+    const warnings = answerWarnings(resolved.text, resolved.citations, new Map());
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.kind).toBe("missing-citation");
+    expect(raw.slice(warnings[0]?.start, warnings[0]?.end)).not.toContain("Supported");
+  });
+
+  it("keeps tab continuations and preserved revision ranges without rewriting answer bytes", () => {
+    const raw = "- Факт 🌍\n\tподтверждён [S1:2].";
+    const sources = makeSources(), before = JSON.stringify(sources);
+    const resolved = resolveCitations(raw, sources);
+    const saved = persistentResolvedAnswer(resolved.text, resolved.citations);
+    expect(resolved.text).toBe(raw);
+    expect(answerWarnings(resolved.text, resolved.citations, new Map())).toEqual([]);
+    expect(answerWarnings(saved.text, saved.citations, new Map())).toEqual([]);
+    expect(saved.citations[0]).toMatchObject({ revisionId: REV_A, block: 2, start: 10, end: 20 });
+    expect(JSON.stringify(sources)).toBe(before);
+  });
+
+  it("keeps long Unicode continuations in bounds without weakening abbreviation checks", () => {
+    const raw = `- ${"Слово 🌍 ".repeat(1024)}\n  подтверждено [S1:1].`;
+    const resolved = resolveCitations(raw, makeSources());
+    expect(answerWarnings(raw, resolved.citations, new Map())).toEqual([]);
+    expect(resolved.text).toBe(raw);
+    const withDoctor = resolveCitations("- Dr.\n  Smith agrees [S1:1].", makeSources());
+    // Do not pretend to solve ICU's existing ambiguity around abbreviations.
+    expect(uncitedStatements(withDoctor.text, withDoctor.citations)).toBe(1);
+  });
+
+  it("does not borrow numeric evidence across a preserved newline after a citation", () => {
+    const raw = "- Value is 512 [S1:1]\n  another value is 8 [S1:2].";
+    const resolved = resolveCitations(raw, makeSources());
+    const quotes = new Map([["[S1:1]", "No measurement"], ["[S1:2]", "512 and 8"]]);
+    expect(unsupportedNumericStatements(raw, resolved.citations, quotes)).toBe(1);
+  });
+
   function resolvedWarnings(raw: string, quotes: ReadonlyMap<string, string> = new Map()) {
     const resolved = resolveCitations(raw, makeSources());
     return { text: resolved.text, citations: resolved.citations, warnings: answerWarnings(resolved.text, resolved.citations, quotes) };

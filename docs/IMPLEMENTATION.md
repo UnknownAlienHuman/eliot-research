@@ -26,23 +26,26 @@ WebSocket, MCP, Durable Object and Workflow classes. HTTP, chat, MCP and Workflo
 |---|---|
 | `src/index.ts` | routes, errors, DO/Workflow exports |
 | `src/auth.ts` | Access JWT and actors |
-| `src/cost.ts`, `src/models.ts` | usage, model bounds and provider admission |
+| `src/cost.ts`, `src/models.ts`, `src/model-{catalog,quota,transport}.ts`, `src/native-model-catalog.ts` | usage, catalogues, model bounds and provider admission/transport |
 | `src/library.ts`, `src/ingest.ts`, `src/read.ts`, `src/blocks.ts` | Library and exact reading |
 | `src/ocr.ts`, `src/workflows/ocr.ts` | explicit PDF OCR, saved preview and storage-only Apply |
 | `src/context.ts`, `src/citations.ts`, `src/chat.ts` | cited answers |
-| `src/workflows/*.ts` | ingest, explicit OCR, distill, project map, research |
-| `src/tools/`, `src/mcp.ts`, `src/search.ts` | shared tools, MCP, optional AI Search |
+| `src/workflows/ingest.ts`, `src/workflows/ocr.ts`, `src/workflows/distill.ts` | implemented ingest, explicit OCR and distillation workflows |
+| `src/tools.ts`, `src/mcp.ts`, `src/proposals.ts` | shared tools, MCP and owner-reviewed proposals |
 | `src/shared/`, `src/web/` | shared payloads and owner UI |
 | `migrations/`, `scripts/eval/` | contour schema and real acceptance |
 
+This table names current owners. AI Search (`src/search.ts`, K5), project-knowledge and research workflows (K6/K7)
+are planned only; their files and bindings are not part of the current replacement. Add them only at their MAP gate.
+
 Bindings arrive only with their contour: K0 `ASSETS`; K1 `DB`, `BUCKET`, `AI`, `INGEST`, plus `OCR` for explicit PDF jobs; K2 `CHAT`; K3 `DISTILL`
-and reconciliation-only cron; K5 direct `SEARCH`; K6 `PROJECT_KNOWLEDGE`; K7 `RESEARCH` and optional `BROWSER`. Generate `Env` with
+and cron for reconciliation and the explicitly requested queue; K5 direct `SEARCH`; K6 `PROJECT_KNOWLEDGE`; K7 `RESEARCH` and optional `BROWSER`. Generate `Env` with
 Wrangler; never hand-write it.
 
 A paid effect is a model call, rendered Browser capture, billable AI Search use, or a Workflow that invokes one. Page
 load, list, read, citation open, reconnect and saving existing output must not start paid work. Before dispatch,
-`src/cost.ts` checks the job's token/call/time bounds and provider allowance. Model prices and a local
-monthly currency/token budget are not admission prerequisites. Store the token bound and actual input/cached/output
+`src/cost.ts` claims admission separately from nullable declared token capacity and checks call/time limits and provider allowance. Model prices and a local
+monthly currency/token budget are not admission prerequisites. Store capacity basis and actual input/cached/output
 counts on the owning row; unknown counts remain unknown. Historical currency estimates and reservations remain recorded
 without being reinterpreted as tokens or Neurons. Distillation runs once per
 immutable revision; ordinary whole/claim answers use one model call; search/tool loops and explicit jobs have hard caps.
@@ -58,7 +61,7 @@ JSON lives under `/api/`, validated with zod. Error shape:
 ```
 
 Use cursor pagination. Chat inventory uses immutable `(created_at,id)` descending so activity between pages cannot
-move an unseen chat above the cursor. Add idempotency only where a natural key exists: turn ID, page-revision mutation ID and
+move an unseen chat above the cursor. Add idempotency only where a natural key exists: project/chat/turn ID, source-revision ID, page-revision mutation ID and
 deterministic Workflow ID. The MCP endpoint transports the shared toolset; it is not a second business API.
 
 ## 2. Access and actors
@@ -76,6 +79,11 @@ only owner accepts. Local bypass requires `ELIOT_LOCAL_DEV=1` and localhost; a d
 
 K0 configuration uses `ELIOT_ACCESS_TEAM_DOMAIN` (bare `<team>.cloudflareaccess.com`), `ELIOT_ACCESS_AUD`,
 `ELIOT_OWNER_EMAIL`, `ELIOT_OWNER_SERVICE_TOKEN` (the signed `common_name`, not a client secret), and `ELIOT_ORIGIN`.
+`ELIOT_MCP_ACCESS_AUD` optionally selects a separate Access application's audience for `/mcp` only. When blank or
+absent it uses `ELIOT_ACCESS_AUD`, preserving a shared-application setup. When set, each route accepts only its own
+audience, including owner assertions; MCP assertions are not accepted by UI/API/chat. The existing legacy hostname
+and `/mcp` Access applications have different audiences, so replacement configuration must set both without changing
+their policies. Cloudflare assigns an audience per application ([JWT validation](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/), checked 2026-11-05).
 `exp` is mandatory; only RS256 assertions are accepted. Local bypass runs before production configuration validation,
 accepts only `localhost`, `127.0.0.1` or `[::1]`, and rejects Cloudflare edge requests carrying `cf-ray`. It never exempts
 mutations or WebSocket upgrades from exact Origin checks. All static assets use `run_worker_first: true` and private,
@@ -87,9 +95,58 @@ its entry asset as well as JSON, and K1 checks text/range/original response head
 For local use, copy `.dev.vars.example` to `.dev.vars`, then `pnpm dev`. `pnpm cf:types` generates the checked-in Env;
 the example keeps variable order aligned with Wrangler configuration so generation is stable locally and in CI.
 `pnpm eval k0` exercises the actual running Worker and writes viewport screenshots to ignored `eval/out/k0/`.
+It reports authentication observed in twelve parsed `/api/me` responses; deployed Access owner-token and browser-login
+checks always remain `NOT_RUN` because the browser eval accepts loopback origins only, even with synthetic CI Access headers.
 On 2026-10-25 the owner retained the existing legacy `eliotr-core.kleymor-metal.workers.dev` hostname Access application;
 no replacement deployment or new-domain setup has been performed. Live browser and deployed owner-token acceptance
 remain separate from local/signed-fixture checks.
+
+### Replacing the existing Worker
+
+The owner authorized replacing the version at the existing `eliotr-core` address on 2026-11-05. The prepared
+`env.production` keeps that Worker name and its existing `workers.dev` hostname; it does not create a staging address.
+Build with `pnpm cf:production-dry-run`. Vite selects `CLOUDFLARE_ENV=production` at build time; a later deploy flag
+does not retarget the artifact. Inspect the config named by `.wrangler/deploy/config.json` before any remote action
+([Vite environments](https://developers.cloudflare.com/workers/vite-plugin/reference/cloudflare-environments/)).
+
+The active legacy Worker already uses declarative `exports`. `src/production.ts` exports the new `ChatAgent` as
+`ResearchSession`; `CHAT` binds to that same existing export, with SQLite storage and no DO lifecycle migration.
+Generate binding types with `pnpm cf:types`, which targets the production entrypoint so Wrangler resolves the
+`ResearchSession` alias rather than producing an untyped namespace union. Both environments use the same binding
+contracts. The logical `/agents/chat-agent` route is unchanged. This reuses the existing namespace, not a new namespace; it is
+allowed only after a fresh pre-cutover check confirms the namespace has no stored objects. Stop if it is nonempty.
+Cloudflare documents the [named-export alias](https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/#avoid-downtime-during-a-rename).
+`pnpm eval k4 --signed-agent-miniflare --production-build` checks this exact build with synthetic JWKS and local
+D1/R2: authenticated ChatAgent RPC and WebSocket 101 through the alias, forged-Origin 403, separate Access audiences,
+the built owner HTML/JS assets, MCP reads/proposals and zero model calls. The same production probe runs in fast-ci
+after default-build browser checks. This is local evidence, not deployed Access acceptance.
+
+The separate **working** library D1/R2 `eliot-research-library` was provisioned on 2026-11-05, not as a staging copy.
+The production D1 binding names that dedicated database. All 12 active `migrations/*.sql` through `0013` were applied
+with Wrangler, excluding archived `0004`; the migration ledger matches, `quick_check` returns `ok`, foreign-key check
+returns no violations, and project/source/revision counts remain zero. R2 is Standard storage with public access
+disabled and no custom domain. Keep both legacy databases, all legacy buckets and the old Workflow intact;
+never apply replacement SQL to the legacy schema or delete its data. Existing legacy data remains retained but is
+not automatically visible in the replacement; verified K10 import is a separate operation.
+
+Before cutover, save the active version/config, obtain legacy D1 Time Travel bookmarks, and recheck DO objects,
+Workflow activity and both queue backlogs. Full D1 SQL export can temporarily block queries and belongs in the
+planned maintenance window. Quiesce old producers/cron, pause delivery and detach old queue consumers without
+purging messages or deleting queues. The new config has no queue consumers; its `*/5 * * * *` cron reconciles only
+already owner-requested native work under existing admission limits. It replaces both old legacy schedules. Keep the
+old configuration for restoration; queues retain messages only for their configured retention period even when paused.
+
+Set the verified account, existing Access team/UI audience/MCP audience/owner and exact origins before deployment.
+Access policies, service tokens and provider credentials are not created or changed by this configuration. Existing
+hostname Access already protects the address; keep previews disabled and `ELIOT_LOCAL_DEV=0`. Empty auth values fail
+closed until configured. Start live acceptance with owner login, API, WebSocket and native Markdown/read/range only.
+
+Rollback must restore the old code **and its bindings/triggers/consumers** while retaining the new library resources.
+The alias makes no DO lifecycle change, but new chat data is not promised compatible with old ResearchSession code;
+the old app must continue using its old D1 mappings. Do not delete resources or treat Worker rollback as a data restore
+([rollback limits](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)). All deployment,
+queue changes and live acceptance remain NOT_RUN. Library provisioning/schema preparation does not switch traffic;
+local dry-run and Miniflare commands themselves never provision or deploy remote resources.
 
 ## 3. Data and immutable writes
 
@@ -106,14 +163,17 @@ Migrations own schema names:
 | `0008_model_providers.sql` | provider configuration, owning-row token bounds and saved native usage choice; existing accounting data retained |
 | `0009_agents.sql` | trigram claim FTS/backfill and immutable proposal base revision |
 | `0010_source_ocr.sql` | owner-requested `source_ocr_job`, frozen PDF/model inputs, bounded page progress/usage, preview identity and applied revision |
+| `0011_studio_pages.sql` | published-page index on immutable creation time and ID for Studio pagination |
+| `0012_model_admission.sql` | chat admission claim independent of nullable capacity, revision capacity basis; old terminal receipts remain unchanged |
 
-Apply all active `migrations/*.sql` in filename order: currently `0001`–`0003` and `0005`–`0010`.
+Apply all active `migrations/*.sql` in filename order: currently `0001`–`0003` and `0005`–`0012`.
 The unaccepted `0004_agents.sql` draft is preserved at `infra/legacy-migrations/0004_agents.sql`, outside that selection.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:
 
 ```text
 source/<revision>/original
+source/<revision>/original-<upload>  # caller-ID file replacement; server-owned upload UUID
 source/<revision>/text.md
 source/<revision>/blocks.json
 source/<revision>/{guide.md,digest.md,glossary.json,distill.json,chunks.json}
@@ -128,6 +188,30 @@ stays readable with a visible conflict warning and never replaces the newer head
 mutation UUID returns its already committed winner. Old revisions remain readable for old citations. Use UUIDs and Unix milliseconds. Do not add
 a generic effects ledger; each operation stores its own model route, usage and estimate.
 
+`POST /api/projects` accepts an optional caller UUID. Repeating it with the same trimmed title and effective description
+returns the active project without updating it; changed inputs or an archived/renamed collision return 409. New and
+replayed acceptance responses retain 201. Omitting the UUID still creates a new project.
+Project lists default to active rows; `/api/projects?archived=true` returns only archived projects with the same
+50-row cursor pagination. Archive/restore uses the existing project PATCH and changes no memberships, evidence,
+history or pages. Omitted title/archive fields are preserved by the UPDATE itself so concurrent Rename and Unarchive
+cannot restore one another's stale values. No deletion or model work is part of project archival.
+
+**Freshness repair — implementation and acceptance in MAP.** Ingest publication batches its terminal revision,
+guarded readable head and dependent accepted-head staleness atomically; OCR Apply also invalidates existing accepted
+heads. Match exact string revision IDs in accepted heads' `inputs_json`; do not stale unrelated pages or pages on a
+failed head race. `saveAnswer` and proposal acceptance calculate freshness inside their existing guarded head UPDATE,
+in the same D1 batch that inserts or accepts the immutable page revision. Evaluate every recorded `inputs_json` ID,
+including uncited context, as an exact JSON string against its available, readable source revision and that source's
+current readable head. Missing, deleted, unreadable or superseded inputs make the new head stale; all-current inputs
+and the empty input array make it current, including when replacing a stale head. Archive or detach alone does not
+make evidence unavailable. A source switch serialized before publication is observed there; a switch serialized after
+publication invalidates the newly accepted dependent head. Historical input order, bodies and citation bytes remain
+unchanged. Repeated Save/Accept returns the recorded winner without recomputing freshness; Reject, a failed head CAS
+and replay of an older acceptance cannot change another head's freshness. No dependency store, automatic refresh or
+model call is added. Studio freshness display remains the separate open §13 repair.
+Freshness follows the current readable head: a pending, failed or unreadable replacement retains the prior readable
+evidence until a new readable head wins. Show that replacement's conversion state separately.
+
 ## 4. Ingest and conversion
 
 The browser may select many files but sends one file/request with at most two concurrent requests. API file cap is
@@ -135,17 +219,69 @@ The browser may select many files but sends one file/request with at most two co
 routes. Buffer once, hash SHA-256, store original, create pending rows and start deterministic `ingest-<revisionId>`.
 An exact duplicate returns the existing source plus Attach; never silently merge.
 
-The HTTP surface is `/api/projects`, `/api/projects/:id/sources/{file,text,url,attach}`, `/api/sources/:id` and
+The HTTP surface is `/api/projects`, `/api/projects/:id/sources/{file,text,url,attach,available}`, `/api/sources/:id` and
 `/api/revisions/:id/{text,range,outline,original}`. The file route accepts one multipart `file`; text/URL use separate,
-strict JSON shapes. An explicit `sourceId` replacement creates a new revision of that attached source, including a
+strict JSON shapes. Reader text/outline GET failures expose an explicit Retry readable text action for the same
+revision and selected UTF-8 range. Retry coalesces repeated clicks, does no writes or model work, and ignores departed
+responses. Text, outline and loaded revision publish together: a failed outline cannot leave another revision's text
+under the previous revision identity. Read failures are separate from clipboard and upload actions.
+An explicit `sourceId` replacement creates a new revision of that attached source, including a
 deliberate reconversion of identical bytes. Ordinary duplicate uploads return 409 plus the existing identity; a
-conditional insert in the D1 batch guards concurrent duplicates without a second identity store.
+conditional insert in the D1 batch guards concurrent uploads and replacements against the same bytes belonging to
+another live source. Only a stored revision starts ingest; a losing request retains the existing source and revisions.
+File replacements may supply a revision UUID. A repeat returns that stored revision only when source membership and
+the immutable file identity match; changed bytes, metadata or an unavailable revision are rejected. It performs no R2 write
+or Workflow creation. Concurrent attempts use separate server-owned original keys: only the key recorded on the winning
+D1 revision may start ingest, including after a lost batch reply. Losing attempts may remove only their own unreferenced key.
+
+Add sources → Browse Library lists active shared sources not already attached to that project, including saved sources
+not yet readable. `GET /api/projects/:id/sources/available` reads metadata only: 50 rows plus one lookahead, ordered by
+immutable `(source.created_at,source.id)` descending. Its value cursor is JSON `[projectId,createdAt,id]`, checked for
+project, safe nonnegative timestamp and UUID. Attaching a row cannot move the cursor or admit conversion/understanding;
+the existing idempotent Attach reuses the shared source identity. Its source read may finish storage publication
+of an already completed ingest from the existing Workflow result and matching retained artifacts (§4); it starts no
+new conversion, understanding or model call. Membership insertion remains idempotent.
+An attached row opens the listed revision directly, even when it falls beyond the project's loaded source pages.
+Refresh restarts the list for new sources or eligibility changes above its cursor. Closing the dialog cancels reads;
+submitted Attach keeps its original project. The dialog uses the existing query client and Material controls.
 
 Revision metadata records `conversion_calls` before dispatch, nullable `conversion_tokens` when the service returns
-usage, and `conversion_ms`. Every Workflow step has retries disabled; conversion is one call bounded to 60 seconds.
+usage, and `conversion_ms`. Load/commit storage steps allow two retries (three attempts, one-second delay, 30 seconds
+per attempt). `convert and store` has retries disabled; conversion is one call bounded to 60 seconds. A started
+conversion uses a `conversion_calls=0 AND readable_state='pending'` compare-and-set before dispatch; replay without
+winning that claim cannot call the service. An ambiguous claim acknowledgement retains its persisted count, and
+completion uses `MAX` for calls plus known-first nullable tokens, never resetting uncertain work to zero.
 The Blob sent to `toMarkdown` carries its stored MIME type: the real service rejected an empty type. PDF metadata and
 embedded-image conversion are disabled. Output containing only page headings is `needs_conversion`, never readable
 source evidence. Exactly one leading UTF-8 BOM is removed before canonical storage; readers preserve those stored bytes.
+
+**Completion recovery — implemented slice, acceptance in MAP.** `ingest-completion.ts` owns the storage publication
+used by Workflow and source reader. A single D1 batch publishes revision metadata, stales exact dependencies of the
+previous accepted head and advances the source only to a newer readable revision. The existing newest-readable,
+ownership and non-deleted guards remain; an older completion stays readable with a conflict warning and cannot
+replace a newer readable head. A newer pending/unreadable replacement does not hide the older readable result.
+Read-back adopts a committed batch whose reply was lost; different terminal metadata is not overwritten. A matching
+older readable-but-unpublished result can finish publication without replaying conversion even when a newer revision
+is pending. Preflight checks newest readable, and the batch checks the full terminal projection (including the
+warning/state pair) again before head advancement or staleness. Historical capture fields
+remain immutable under migration `0006`; later Save/Accept computes freshness at its own publication boundary (§3).
+Canonical R2 writes use conditional create, never overwrite an existing text or block object, and retain returned
+ETags in the small cached conversion result. Commit/reconciliation checks both objects' ETags and text size. Text
+alone, equal sizes, missing blocks or changed objects do not prove completion. A partial store remains a failure;
+neither conversion nor R2 writes are repeated to repair it. Original bytes remain available.
+On exhausted storage attempts, a separate bounded storage step records an actionable failure without reducing known
+call/usage fields. The Workflow returns its cached conversion metadata (not bodies), even if that failure write is
+unavailable. Source detail reads consult only the existing `ingest-<revisionId>` instance, for the requested revision
+or latest revision, after ownership validation. At most one status read and one storage commit run per source read.
+A complete matching output plus retained artifacts can finish commit. No read creates, recreates, resumes or restarts
+a Workflow, and no recovery resolves a converter or calls a model. Missing completed evidence gives an actionable
+failure; unknown/unavailable status remains pending with an explicit warning, since the original job may still run.
+An ambiguous create/status reply also retains pending identity rather than falsely stopping the accepted job.
+Unmarked legacy instances without retained conversion metadata cannot be reconstructed from artifact presence.
+Checked 2026-11-02 against pinned Workers types `5.20261024.1` and official
+[Workflow retry/cache rules](https://developers.cloudflare.com/workflows/build/rules-of-workflows/),
+[Workers status API](https://developers.cloudflare.com/workflows/build/workers-api/) and
+[R2 conditional writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/).
 
 `IngestWorkflow` converts native UTF-8 text locally. Cache `env.AI.toMarkdown().supported()` and call `toMarkdown` only
 for required document formats. Ordinary ingest never invokes OCR or opts into model-assisted image conversion: retain scans/images and mark
@@ -160,7 +296,7 @@ K1 static capture uses HTTPS port 443, at most three redirects, a 15-second tota
 Hostname validation does not pin DNS resolution; DNS rebinding prevention is not claimed. No owner/model credentials
 are sent to captured sites or corpus download hosts. `ELIOT_REMOTE_BINDINGS=0 pnpm dev` disables remote services for
 local native-text work and CI; the production bindings and Access checks are unchanged. `pnpm db:local` applies pending
-active `migrations/*.sql` in filename order, including `0010_source_ocr.sql`; archived `0004` stays excluded.
+active `migrations/*.sql` in filename order, including `0011_studio_pages.sql`; archived `0004` stays excluded.
 Remote D1/R2 provisioning and deployment are not run.
 
 Unexpected C0/DEL characters, excluding ordinary text whitespace, produce a readable-text warning without changing
@@ -210,7 +346,7 @@ The owner API is rooted at `/api/projects/:projectId/sources/:sourceId/ocr`:
 
 Shared bounds are 1–1,000 pages, at most 1 MiB PNG and 4,000,000 pixels per page, browser render long edge at most
 2,000 pixels, 90 seconds per page call, and 25 MiB for the complete/reviewed text. Admission stores
-`pageCount * modelTokenLimit(model)` as the job token bound and a finite deadline; these are job bounds, not provider
+`pageCount * modelTokenReservation(model)` as the job token bound and a finite deadline; these are job bounds, not provider
 prices or a billing guarantee. The ordinary 60-second `toMarkdown` conversion bound remains separate.
 OCR allocates output independently of the interactive chat reserve. The shared `ocrOutputLimit` used by admission
 and the Run preview selects at least 16,384 output tokens per page when published capacity permits, caps that
@@ -241,14 +377,6 @@ Local real-service results (2026-10-31 UTC) verify this bounded control/storage 
   became stale and one unrelated page stayed current; heads, body UTF-8, serialized citations API data and exact old
   range bytes matched. This comparison made GET requests only.
 
-The full 26-page LoRA PDF run subsequently completed 26 calls, recording 107,718 input and 28,926 output tokens,
-zero cached tokens. All pages were visually checked before Apply; merged table cells were transcribed into explicit
-Shared columns rather than attributed to the first task. The reviewed canonical text is 94,701 bytes, with the same
-original PDF and immutable old ranges. Repeat Apply returned the same new revision and kept the OCR call count at
-26; understanding remained `none`, zero calls. Saved per-page timings have nearest-rank p50 22,633 ms and p95
-35,578 ms (n=26). Their sum is 627,256 ms, not a separately reported end-to-end duration. Neurons and money remain
-unknown for this OCR run. These observations do not establish full-corpus OCR or K3 semantic acceptance.
-
 Actual usage across the two jobs was **two observed inference calls** against an admitted ceiling of **three calls**
 (one apply page plus two cancellation-fixture pages), input `3,783 + 3,783 = 7,566`, output
 `1,310 + 1,281 = 2,591` tokens, with zero reported cached tokens. The resumed Apply job kept its original one-call
@@ -276,6 +404,10 @@ This is one reviewed full-PDF case, not full-corpus OCR quality or K2/K3 accepta
 `[start,end)` in `text.md`. Compute byte offsets, not JavaScript character indexes. Split prose near sentence boundaries;
 keep tables/code intact up to a bounded size.
 
+On new scans, an ordered marker interrupts a paragraph only with numeric start 1, including `01.`.
+An existing list keeps unindented continuation lines until a blank line or another recognized block.
+Only new readable representations use this rule; stored block maps and citation ranges remain unchanged.
+
 New scans join an explicit adjacent `Table <number>:` or `Table <number>.` caption with its sole neighboring
 whole table when the complete original span, including intervening whitespace, fits 4,096 bytes. A caption between
 two tables, a table with two candidate captions, or a caption/table split by the size bound stays separate. The
@@ -297,6 +429,15 @@ normalization preserves factual prose and citation targets. Repeated references 
 their first emitted label so every occurrence can link through the returned citation metadata. No model call is
 added, and stored turn states are never regraded.
 
+`code-ranges.ts` owns the supported top-level fence/inline ranges for citation and distillation checks. Matching
+backtick runs stay outside fences; an unmatched run remains prose and does not hide later independent spans.
+Code bytes remain literal. Reference authority stays with each caller, using its existing frozen labels.
+
+Quote verification reuses one local canonical byte buffer, including across label resolution and verification in each
+distillation storage operation. String callers encode once. `sliceUtf8` validates integer bounds and UTF-8 boundaries
+before fatal decoding, preserving BOM bytes. Normalized text/maps are computed only for fallback slices; empty candidate
+sets do no source work. No source buffer or folded map is cached between operations.
+
 For each candidate quote, search exact bytes in the stated block, then adjacent blocks; only then apply conservative
 whitespace/quote/dash/soft-hyphen normalization with a map back to original bytes. Prefer the stated block, mark
 ambiguous duplicates, and drop unmatched claims. Numeric support compares complete numeric literals, including their
@@ -317,9 +458,18 @@ Balanced TeX integer powers (`10^{-6}`, `3.7×10^{4}`) and single-backslash `\ti
 token identity as their explicit caret forms. Incomplete braces and separately written quantities are not repaired;
 canonical text and citation ranges remain unchanged.
 The production verifier and K3 stored eval share `src/numbers.ts`; the eval does not keep a weaker numeric checker.
+Parsed `valueNumber` uses the same normalization after its format check: `0,500` becomes `0.5`, while `1,280,000`
+remains `1280000`. `valueText`, quotes, ranges and previously unparsed formats remain unchanged.
 
 The verifier stores the original canonical slice, including original whitespace and punctuation, after normalized
 matching. Candidate statements with unsupported digit groups are dropped rather than retained with misleading prose.
+The normalization map has one entry per UTF-16 unit, including both units of a supplementary character, because string
+search returns UTF-16 indexes. A supplementary character before or within a normalized quote must not shift its
+original UTF-8 range. Exact matches, stated-block preference and duplicate ambiguity retain their existing behavior.
+This exported fallback is covered by synthetic quote regressions and a retained-candidate Save/GET/range case on
+Workerd/D1/R2. Current extraction resolves whole canonical blocks and normally takes the exact-match path; no observed
+fresh-model or corpus failure is attributed to this fallback. The fixture establishes range/storage correctness,
+not semantic support, missing-anchor recovery or live model quality.
 Digest/glossary numeric statements are checked against only the verified quotes selected by their labels; a valid
 label alone does not authorize a new number or experiment condition.
 
@@ -333,75 +483,101 @@ label strings. JSON decoding preserves the original value; canonical bytes and s
 Extraction and synthesis preserve table row, metric and column/split identity; blank cells are unreported results.
 
 States: `none|queued|running|paused|done|partial|failed`. Ingest leaves readable revisions at `none`. Only an explicit
-Understand request queues and admits its requested revision, subject to concurrency and provider allowance;
-unavailable allowance becomes visible `paused` until another explicit request. Cron only reconciles stale `running` rows
-against Workflow ID `distill-<revisionId>`; it never admits queued work. Migration `0007_manual_understanding.sql`
+Understand request queues its requested revision and attempts admission, subject to concurrency and provider allowance.
+A full concurrency window leaves work `queued`; Workflow completion and cron admit already requested `queued` rows
+with zero calls, in creation order, using their stored model route. Unavailable models or allowance become visible
+`paused` until another explicit request. Cron also reconciles stale `running` rows against Workflow ID
+`distill-<revisionId>` for original attempts and `distill-attempt-<attemptId>` for explicit retries, without restarting uncertain work. Migration `0007_manual_understanding.sql`
 removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
 resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
 
-After a successful Understand or Save-existing POST the reader refreshes its workspace source metadata before the
-follow-up view GET by invalidating the active `sources` query for that project in the existing QueryClient. Infinite
-query pages retain loaded pagination; queued/running work is polled to its terminal state without a document reload
-or selection reset. These reads never dispatch understanding.
+After a successful Understand or Save-existing POST the reader invalidates the active `sources` query for that project
+and rereads understanding. Infinite source pages retain loaded pagination and source selection. A failed follow-up GET
+shows the accepted request with a storage-only Reload action; Understand/Save stay unavailable until a successful read.
+The reader locks before dispatch. Any POST error—including a lost reply, non-2xx response or unreadable JSON—leaves the
+outcome unknown and keeps both actions unavailable until Reload succeeds. A successful read of `none` only enables a
+later explicit request; it never resubmits.
+Mounting the reader always refreshes status, and a failed status read blocks actions until Reload succeeds.
+The existing QueryClient owns revision-scoped status reads, passes their AbortSignal and polls queued/running work
+without overlapping reads. A read error stops polling until Reload; the last received view is retained with its error.
+Navigation cancels reads and ignores the departed reader's action continuation. Submitted POSTs keep their original
+source/revision; a successful late POST may still invalidate its owning project's source badge query. These reads never
+dispatch understanding, and no document reload or new server state is introduced.
+
+**Bibliographic metadata — implementation and acceptance in MAP.** Current ingest/OCR inputs have no separate,
+reliably attributed author/date fields; PDF conversion explicitly disables PDF metadata. Canonical text, including
+front matter, bylines, references and date-looking strings, is content rather than a typed bibliographic input.
+Distillation no longer requests authors/publication in the extraction schema or promotes model guesses into `source`.
+New sources retain the schema defaults: authors `''`, publication `NULL`. Only a future explicit source metadata
+producer with an identifiable field boundary may populate them; no name/date parser or paid metadata pass is added.
+
+Legacy raw call output may still contain author/date guesses. Verification ignores those fields without rewriting
+the immutable raw bytes or source text, quotes and ranges. Existing source-wide D1 authors/publication remain unchanged
+during verification, GET and explicit Save-existing reuse, including when reading later revisions of that source.
+This repair does not certify or correct historical values; correction requires its own explicit stored-data change.
+Accounting and the existing two-call bound remain unchanged. Checked 2026-11-03 against the pinned D1/R2/Workflows types
+and official [prepared statements](https://developers.cloudflare.com/d1/worker-api/prepared-statements/),
+[conditional R2 writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and
+[Workflow steps](https://developers.cloudflare.com/workflows/build/workers-api/) contracts.
+`pnpm eval k3 --metadata-only` runs the production verification/storage/GET/Save paths on isolated Workerd/D1/R2,
+with retained synthetic outputs and both paid producer callbacks skipped. It checks default/historical metadata,
+replacement heads and immutable bytes/ETags. A separate synthetic cached-candidate case uses storage-only Save to
+recheck normalized supplementary-Unicode quotes, then verifies D1 and exact revision/range reads and repeated Save.
+The two recorded calls remain historical fixture data; no producer is invoked. It establishes storage behavior,
+not model quality or paid-step replay.
 
 `DistillWorkflow` uses two bounded calls:
 
-1. labelled canonical text → metadata, draft guide/digest/EN–RU glossary, 3–5 questions and candidate claims;
-2. verified original excerpts → semantic review and selection of those prose drafts and supported claims.
+1. labelled canonical text → draft guide, digest, EN/RU glossary, 3–5 questions and candidate claims;
+2. verified original excerpts → supported claim and prose-draft selection, with at most eight additional atomic claims.
 
 Each input block is a separate JSON record containing its exact `quoteBlock` and text, so a label does not implicitly
 name following blocks or an entire section. The first output requests the source guide before detailed claims.
-Both fresh model inputs reuse `readableTextWarning` to attach optional `readabilityWarning` metadata to each affected
-canonical block or frozen excerpt. Non-printing glyphs do not establish missing operators or conditions; readable
-parts remain usable. This input signal changes no canonical bytes, stored artifacts, labels or call bounds and does
-not by itself establish semantic quality.
 Each claim still selects one `quoteBlock` from the closed compact label set for that immutable revision. Code resolves
 it to the full original block as its own quote, preserving PDF line-break hyphens, brackets and Markdown bytes;
 the model does not transcribe canonical evidence. Claim quote/range and numeric checks remain against that one block,
 and a statement that adds numbers absent from it is rejected.
-Fresh claim output selects its block and writes one atomic statement before extracting structured result/context
-fields from that statement and quote. In fresh synthesis each retained candidate carries its own exact canonical
-quote inline for review; this does not expand the frozen excerpt pool or add stored evidence copies.
 
-Draft guide/digest items use `{ labels, text }`, with the closed `labels` array of 1–4 source-block selections before
-`text`; glossary entries likewise select labels before their EN/RU terms and definition. Code resolves every declared
-label to its exact canonical block and checks references and numbers in each complete draft against only the union
-of those selected quotes. Private `Verified.guide`, `digest` and `glossary` retain these validated drafts as
-hypotheses. Fresh call two receives them alongside candidate claims paired with their own original quotes. Original
-excerpts remain the sole evidence. The frozen excerpt pool is exactly the union of declared claim and prose/glossary
-selections; code adds no inferred bindings.
+Draft guide/digest items use `{ labels, text }` and glossary entries select the same closed 1–4-label set.
+Code resolves every declared label to its exact canonical block and checks references and numbers against only
+those selected quotes. A fresh draft is retained or rejected whole, never shortened to a numerically valid sentence
+that could omit its qualifier. The frozen evidence pool is the union of declared claim and prose selections.
 
-Call two must semantically review the statement, identities, conditions and qualifiers against each item's own
-selected quote union. Its section-specific text enums permit only selecting or rejecting the supplied guide/digest
-text verbatim; glossary choices retain each complete EN/RU/definition tuple. It may correct labels within the same
-frozen evidence pool, but cannot invent new prose or mix glossary fields across drafts. The final rich synthesis
-shape remains unchanged. An empty or incomplete selection remains partial or failed under the existing finish
-rules; schema conformance alone never establishes semantic support. Legacy cached artifacts without the private
-digest/glossary drafts retain their existing broad parser and storage-only recheck path. No third call, model change,
-table, migration or artifact-version registry is introduced.
-Fresh glossary draft validation rejects blank-after-trim English or Russian terms before call two, retaining the
-original spelling of valid terms. This does not reinterpret historical cached glossary output.
-Historical cached synthesis rechecks do not consume `Verified.guide` or expand its frozen evidence pool, so this new
-producer shape does not rebind or rewrite old artifacts. Raw selections are retained in R2, stored labels use the full
-revision UUID, and system instructions state the English/Russian response language in both calls. These
-request/validation changes do not establish paid-service or quality acceptance.
+Call two receives the validated drafts with short section-specific IDs (`G`, `D`, `T`). Its schema returns only
+`supportedGuide`, `supportedDigest` and `supportedGlossary` ID arrays, not repeated prose or new citation labels.
+The server resolves each selected ID to the complete original draft and labels, deduplicating selections. The reviewer
+must reject a draft that needs different evidence or wording; it cannot silently rebind its citation or mix glossary
+fields. Empty selections are allowed. Missing required guide/digest drafts stop before call two; empty final selections
+produce no usable understanding rather than promoting unreviewed call-one output. Fewer than three guide entries are
+partial. Final rendering retains each selected item's complete text and does not truncate it at a sentence boundary.
+
+Historical full-text call-two artifacts keep their existing storage-only validation and Save shape; they do not need
+new draft fields. The same attempt-scoped keys isolate drafts, output and usage during explicit retries. No historical
+artifact or canonical byte is rewritten, and the two-call bound, admission, materialization budget and no-paid-retry
+rule are unchanged. The storage eval covers ID selection through Workflow, D1/R2, GET and repeated Save without models.
+This repairs the unreviewed-prose producer path; fresh semantic quality and latency remain unaccepted until real runs.
+The earlier #459 PaLM HTTP 408 does not establish schema size as its cause, and no speedup is claimed from schema size.
 
 Code verifies quotes and numbers between calls. Draft statements are hypotheses, not evidence: the second call checks
 each retained candidate against its own quote and can add a small number of atomic facts from the same frozen excerpts.
 Fresh candidates that already fail the scalar-result projection are excluded before the second call. Their originally
 selected source blocks remain in the same declared evidence pool; code neither splits a compound candidate nor creates
 facts from it. Historical verified candidate IDs are not recomputed during cached-output rechecks.
-For fresh synthesis, rejected candidates contribute only their original allowed source labels as inspection cues,
-never rejected statements or values. Numeric outcomes stay separate; qualitative properties without a scalar use
-an existing non-result kind with absent numeric fields, without changing the deterministic result guards.
-Source-stated qualitative advantages and capabilities belong in their own supported claim entries, rather than
-appearing only in a guide, digest or another claim's condition.
 Only its supported, code-checked output is committed to the claim reader. Result claims describe one scalar result
 per task/dataset/metric/condition instead of a compound table row. A result's `valueText` may contain at most one numeric
 quantity; an explicit list such as two percentages is rejected even when both values occur in the quote and
 `valueNumber` is null. Scientific powers count as one quantity. Code does not split the list, infer conditions or relabel
 it to retain a card. Citation annotations are resolved separately from factual numbers; an unknown annotation rejects
-its item. Paid steps have no retry; only deterministic storage steps
+its item. First-call claim statements use the same declared-reference cleaner as guide text and second-call additions
+before numeric verification. Only the claim's own `quoteBlock`, its persistent form and corresponding `[block N]`
+annotation may be removed; unknown references and annotation-only statements reject the candidate. Code literals
+remain literal and factual numbers still need the original quote. Drop indexes identify the original candidates;
+diagnostic entries need not be sorted. Surviving claims retain their order.
+The raw first output, original block/range and frozen evidence selections remain unchanged. Historical cached candidate
+IDs are not recomputed and no output is automatically rechecked or regenerated. Synthetic retained outputs reproduce
+this gap through current whole-block verification and Workerd/D1/R2 storage; the inspected corpus reports contained no
+such inline annotations. This does not explain their missing anchors or establish model quality.
+Paid steps have no retry; only deterministic storage steps
 may use bounded native Workflow retries, with immutable R2 writes and natural `(revision, ordinal)` claim keys.
 Result cards preserve the original statement selected by call two instead of replacing it with a synthetic scalar
 sentence. Its primary numeric value must occur in that statement, and every authored number must be represented in
@@ -411,21 +587,28 @@ semantic support is still a separate quality gate.
 Code also rejects a result whose simple literal dataset name carries one explicit data split while its own quote
 names that same dataset with a different unambiguous split. It does not rewrite fields or infer dataset aliases;
 ambiguous splits and other task/metric/dataset semantics remain for quality review.
-A standalone all-uppercase ASCII dataset identifier must occur as a whole word in that result's own quote,
-ignoring case and surrounding field whitespace. This spelling check does not infer aliases, verify table-row
-association or apply exact-phrase matching to descriptive dataset, task or metric text.
 New second-call additional claims require the same nullable structured fields as extraction. Cached outputs may
 omit these fields; storage-only rechecks retain that shape and treat omissions as null without inventing metadata.
 Store raw result/report in R2, compact verified claims in D1, and usage
 and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
 and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
+`GET /api/projects/:id/overview` returns `{ sources, nextCursor }`: 50 active attached sources with current readable
+heads, ordered by immutable source `(created_at,id)` ascending. Its value cursor includes the project ID; only returned
+rows load R2 reports, never the lookahead. Title/head/understanding updates do not move the boundary. An old-created
+source that becomes eligible before the boundary requires Refresh; one scan is not a membership snapshot.
+Studio opens the overview. Load more retains the preceding rows; Retry repeats the failed page. Refresh discards the
+scan and requests page one, while project changes/unmount cancel the prior query. Rows open their exact revision in
+Reader. The existing QueryClient owns this storage-only read state while mounted; leaving the overview discards its pages.
+The K3 A3 GPU-memory gate accepts the frozen source sentence or exact EN/RU assertion forms naming LoRA,
+GPT-3 175B and threefold memory reduction. Both complete fields must match; otherwise `REVIEW_REQUIRED` blocks
+automatic acceptance without a factual-failure verdict. No sentence is discarded. The retained paragraph block 5,
+bytes `[1011,1940)`, matches its canonical R2 range (929 bytes) and requires review. Passing the isolated source sentence
+does not close this actual anchor. `pnpm eval k3 --anchors-only` runs synthetic checks before API calls and rejects
+model opt-in. This is not general semantic verification; frozen questions and production claim verification are unchanged.
 Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.providerUsage` from AI SDK `usage.raw`
 as a JSON object or null. A typed structured-output failure retains `output: null` and known usage in the same immutable
 artifact. Its safe failure cause is exposed by the owning report; request bodies, headers and private protocol fields
 are excluded.
-Failed structured responses may also retain `finishReason` and numeric `visibleTextBytes`. An unknown byte count is
-omitted, never recorded as zero. No partial response text is retained or parsed into claims; zero visible bytes do
-not by themselves establish a thinking-only cause. A failed first call never starts the second call.
 It remains failed and unavailable for Save unless complete compatible output exists. The final report retains
 `usage.providerUsage` as an array of at most two such entries for
 saved call responses; older artifacts may omit the field. This is provider usage telemetry, not request bodies,
@@ -434,45 +617,61 @@ Capture the fixed safe provider-failure projection on the owning revision before
 The final report and reader retain that cause even when Workflow serialization strips the original error class;
 provider response bodies, request headers and credentials remain excluded.
 `done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal
-filtering and remains diagnostic. `partial` records a missing required component or an interrupted/error outcome,
+filtering and remains diagnostic. `partial` records a missing required component, ambiguous Markdown visibility or an interrupted/error outcome,
 not a nonzero drop percentage. The same exact-quote, numeric-support and anchor gates apply to both states.
 In particular, nonempty validated final guide and digest may be stored with zero claims as `partial`; missing claims
 alone must not discard those readable artifacts. Zero claims never produces `done`: both normal finish and storage-only
 Save available output require at least three guide sentences and at least one kept final claim for `done`. Only the
 second call's supported selections/additions become cards; first-call draft candidates are never promoted to fill an
 empty final claim set. A readable zero-claim partial result is not full K3 acceptance or proof of semantic quality.
+Known empty claim statements (whitespace or punctuation/formatting wrappers around declared references) do not count
+as kept claims, including cached rechecks. Additional-claim drop reasons retain their original call-two array indexes.
 Guide/digest describe the paper for the owner rather than candidate review or model reasoning. Conflicting source
 values remain attributed to their separate source passages instead of being silently reconciled.
-The existing GET-only `pnpm eval k3 --review-source` exports retained guide/digest/glossary text with its persisted
-labels and exact canonical excerpts for owner review. Shared citation/numeric helpers check invalid labels, uncited
-guide/digest statements and numbers against their selected quotes; violations fail the command after the artifact
-is written. Claim numeric validation includes task/metric/dataset/unit alongside the statement, value and conditions.
-These mechanical checks retain `semanticNOT_EVALUATED` and `fullK3Accepted:false`; all-card and prose meaning still
-require source-facing review. Frozen questions and anchor predicates are unchanged.
+Guide/digest sentences need content beyond declared citations and punctuation/formatting wrappers; `[S1:1].`,
+`([S1:1])` and `**[S1:1]**` do not count toward completion. Glossary entries also require nonblank EN/RU terms.
+Ordinary letters, numbers, Unicode symbols and nonblank supported fenced/inline code remain content. The bounded
+check does not parse Markdown: explicit links, images, HTML/entities, footnotes, reference definitions, indented code
+and ambiguous marker-only output are kept as whole review units rather than sentence-split, and force `partial`
+even with three guide units and kept claims. Only the existing fenced/inline forms promise code-literal treatment;
+other constructs retain the existing reference-cleaning policy, and the original raw output remains available.
+Ambiguous surviving claim statements, such as a tilde-only remainder, also prevent `done` without discarding the card.
+Claim review uses the original statement before reference cleaning or result formatting, and counts only final kept
+cards. Retained claims recover this origin from call one and its recorded claim-drop indexes, with block/text alignment;
+missing or unmatched legacy origins conservatively keep surviving cards as `partial`. No stored field is added.
+This gives up automatic visibility classification of those constructs; it does not discard them or establish
+semantic support. Both normal completion and storage-only Save apply this policy without another model call.
 Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels
 in guide/digest/glossary storage, including within sentence-level validation. Code literals remain literal; unknown
 annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.
 
-K3 records `distill_calls` (hard maximum two), `distill_started_at` and `distill_ms` on the owning revision. Admission
-records both full-context call bounds before dispatch, with at most two revisions running. Each
-new internal `DistillInput` is `{ revisionId, model: ModelSpec, callTimeoutMs? }`: after admission and before Workflow creation,
+K3 records `distill_calls` (hard maximum two per explicit attempt), `distill_started_at` and `distill_ms` on the owning revision. Admission
+records declared capacity when known before dispatch, with at most two revisions running. Each
+new internal `DistillInput` is `{ revisionId, model: ModelSpec, attemptId? }`: after admission and before Workflow creation,
 snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
-The reader's `progress.maximumTokens` uses the owning revision's recorded admission bound, with its retained report
-as the historical fallback. Only unstarted work without a recorded bound may forecast from its stored selected route
-or the current default. Changing defaults or catalogue metadata never recomputes an admitted or terminal job's bound;
-missing historical bounds remain unknown.
+Admission basis is `published`, `unknown` or `legacy`. New declared capacity is the input ceiling plus published
+output capacity per call, capped by an explicitly known combined context window. An input-only ceiling does not
+imply a combined window; unknown output leaves the numeric capacity `null`. Previously admitted values remain
+unchanged, including older conservative sums that exceed a now-known combined window. `progress.maximumTokens` exposes only
+a positive published value; `recordedTokenLimit` retains the owning row/report value separately. Legacy reservations
+are not provider maxima. Zero is the existing released-reservation sentinel when no call dispatched, with known-zero
+usage; it is not published provider capacity. Only unstarted work without a recorded value may forecast from metadata.
+Changing defaults never recomputes stored admission values. Legacy replay retains its original output cap, and old R2
+reports are not rewritten; API copies mark missing historical basis as legacy. OCR keeps its frozen per-page cap.
 Queued work retains its selected route. Repeating the request without an override keeps that selection; an explicit
 different route conflicts before scheduling. Only a successful `none`/`paused` transition may establish a new selection.
 Old terminal reports and cached Save retain their recorded usage and shape. Each
 Workflow paid step has zero retries; an atomic per-revision dispatch count prevents step replay from buying a duplicate
-call. Explicit Understand schedules only its requested revision. Ingest and cron never start source understanding;
-completed or unchanged work is not automatically re-distilled, and failed paid work is not retried. The
+call. Explicit Understand schedules only its requested revision. Ingest never queues understanding. Completion and cron
+may admit only already requested, undispatched queued work; admission atomically rechecks revision/source liveness,
+readability, the frozen model route and the two-slot limit after asynchronous model/provider checks. Missing stored
+routes pause rather than adopting a new default. A failure draining the queue cannot retry the finalized Workflow.
+Completed or unchanged work is not automatically re-distilled, and failed paid work is never retried automatically. The
 pipeline uses at most two bounded model calls with zero paid-step retries. Completed/partial revisions return existing
 artifacts on repeat. Budget-paused work resumes
 only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
-Legacy jobs and unchanged budgets retain a 180 s call deadline and 4-minute paid step. New larger-budget native jobs
-freeze `callTimeoutMs=300000` and a 6-minute paid step; missing timeout fields use the legacy bound. Each call also
-respects the remaining 15-minute job deadline. The K2 chat ceiling stays 90 s. The owner reader shows availability,
+Each background distillation call has a 180 s deadline (native paid-step deadline 4 minutes). Ordinary chat uses Stop
+and platform/provider limits; its K2 latency gate remains separate from execution. The owner reader shows availability,
 progress, useful model names and verification caveats. Calls, reservations,
 token counts and wall time remain in API/eval diagnostics rather than the reading interface. Long papers can use the
 same bounded two-call pipeline without a chat-sized timeout or a reduced quality target.
@@ -486,7 +685,8 @@ state; a lost D1 reply reconciles that same stored result without overwriting it
 write that finds an existing artifact must verify equal content; different content is a conflict. Digest paragraphs
 are checked one authored sentence at a time with the same declared evidence, retaining supported sentences and
 rejecting unsupported numbers without rewriting them. Guide/digest links resolve against the immutable block map,
-while claim cards open their exact original quote ranges.
+while claim cards open their exact original quote ranges. The reader labels these cards “Claims and source excerpts”,
+not “Verified claims”: matching quote bytes and numeric literals does not establish the generated claim's meaning.
 
 If both bounded calls finished, the owner can explicitly **Save available output** after failure or **Recheck saved
 output** after a verifier correction. `POST /api/sources/:id/understanding` with `saveAvailable:true` validates the
@@ -502,6 +702,58 @@ are retained but excluded by readers, context and later FTS queries. No original
 Calls, tokens, estimated cost, original model wall time and retained provider usage telemetry remain unchanged.
 A repeated save of the checked head returns the same result. GET exposes `canRecover` from compatible stored output
 only; failed output is never re-queued.
+**Explicit failed/partial-attempt retry.** Migration `0013_understanding_retry.sql` adds nullable current
+`distill_attempt_id` and canonical `distill_request_json` to `source_revision`; the revision remains the sole active
+state/counter owner. Null means the original revision-scoped attempt. `distill_history` is an immutable terminal
+archive with a real reader: GET `/api/sources/:id/understanding/history?revisionId=...` pages stable archived identities;
+GET understanding with `attemptId` opens their exact saved receipt, claims and artifact pointers. A new retry uses
+`source/<revision>/understanding/<attemptId>/` for raw output, verification, bodies and checked reports. Canonical
+original/text/block keys and citation identities do not change. Future K9 source-prefix export/cleanup must include
+these paths; this change implements no lifecycle mutation.
+
+POST understanding accepts `retry:{attemptId,previousAttemptId}` separately from `saveAvailable`. The client retains
+that UUID and exact body in session storage before dispatch. Server replay checks current and archived identities
+before model/default/allowance work; a reused identity with a different canonical body conflicts. New acceptance
+requires the expected current failed or partial predecessor. Paid predecessors require confirmed `complete|errored|terminated`
+Workflow status; unknown, active or unreadable status blocks retry, including retention cases that cannot be
+distinguished from a transient failure. A failed zero-call predecessor may switch despite uncertain instance create:
+its terminal state and the new identity fence the old dispatch CAS. No elapsed-time guess proves quiescence.
+
+Before switching, immutable `history/<retryRequestId>.json` beneath the predecessor attempt prefix preserves the exact owning revision row (including legacy cost/pricing,
+unknown token counts and zero sentinels) and current claims. It contains no request-time timestamp or newly generated value; the caller request ID makes a distinct snapshot key when a competing Save changes that predecessor.
+The owning row is reread after confirmed Workflow quiescence so an in-flight legacy settlement cannot be lost.
+`Understanding.recordedUsage` exposes that exact current/archived D1 accounting separately from unchanged R2
+`report.usage`; nulls, zeros and legacy currency/date fields are retained verbatim. Snapshot failure or unequal existing bytes blocks retry. A single D1 batch archives that pointer and changes the current
+identity/projection; the old attempt's fields are never reconstructed from current model defaults. A lost batch reply
+rereads the same identity; cron can admit only the already accepted queued attempt. Finish captures the owning claim count in its initial attempt-scoped SQL snapshot, before R2 waits; later claims from another attempt cannot enter the old report. Every admission, dispatch, failure,
+verification, claim publication, finish and Save publication is fenced by the owning attempt. Old artifacts remain
+immutable and late old writes cannot publish into the new current attempt. Context freezes attempt, report, claim count,
+summary and state, then checks them in its single claims read; a changed projection rejects before inference.
+
+The reader distinguishes Retry understanding (a new model run using provider allowance), storage-only Reload and Save.
+A lost/malformed retry reply stays unresolved across remount; GET with `requestId` returns that exact `knownRequestId` only when it is
+already current or archived; an older cached acknowledgement cannot clear a later pending request. Reading its old predecessor does not clear the pending identity. After a successful status
+read, Send same request explicitly resends the retained body; it may start that run if never accepted. Only a confirmed
+receipt permits a later explicit new retry. Previous-attempt controls perform reads only. Partial retry archives the working prior guide/claims/report before
+switching, so that result remains readable in history. Terminal pre-admission rejections use the same immutable
+`distill_history` table with `rejection` instead of a snapshot pointer; they do not appear as model runs in history.
+The rejection insert refuses an accepted current identity, while acceptance refuses any rejected identity, so the
+D1 winner is definitive even when a duplicate preflight fails while the original request is still in flight.
+POST returns a matching `rejected` outcome and GET returns `requestRejection` beside its exact `knownRequestId`.
+The matching accepted GET receipt owns history invalidation, including recovery after a lost or malformed POST reply;
+it explicitly cancels any pre-accept history fetch before starting a fresh read, including a first fetch without cached
+data. An already open history refreshes without remounting. Rejected receipts do not invalidate run history.
+Reopening a cached Previous attempts list explicitly refetches it, coalescing an in-flight receipt read and retaining
+the selected historical reader and loaded pagination; the first open enables one initial fetch.
+Only this durable outcome clears a rejected pending request and permits a fresh explicit model/ID choice; an ordinary
+HTTP error leaves the request unknown. Replays adopt either accepted or rejected winners before model work.
+`pnpm eval k3 --retry-only` applies strict migrations and exercises pinned Workerd/Workflows/D1/R2 and the production
+browser controls at 1440/390 widths. Both paid producer callbacks are replaced with retained synthetic output and external
+network is denied. This verifies storage/replay/fencing behavior, not model quality, provider availability or deployed
+migration compatibility. Production migration/deployment are NOT_RUN. Once retry rows exist, the Worker and Workflow
+binding must execute attempt-aware code; old unfenced code cannot safely process the new identity/artifact paths.
+This change does not establish a safe rollback to an older build.
+
 ## 7. Shared tools
 
 Tools return compact Markdown with explicit pagination and a default 4,000-token cap:
@@ -522,19 +774,41 @@ Each source context declares its exact citable-label inventory from the resolver
 gaps and are never page numbers; the inventory is included in the existing input-token estimate.
 
 Freeze readable revision IDs at turn start. Context modes are whole labelled text, verified K3 guides/claims when whole
-text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. Whole-text capacity is
-`min(0.6 × model context, 400k)` after history/output reserve. If the complete scope does not fit, choose whole or
+text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. The input estimate must fit the published input/assembly ceiling. Only when an explicit combined
+`contextWindowTokens` is known, also reserve existing output headroom inside that window: the input budget is
+`min(contextTokens, contextWindowTokens - outputReserveTokens)`; without a known window it is `contextTokens`. If the complete scope does not fit, choose whole or
 compact evidence per source within that same budget, compressing eligible sources with the greatest savings first.
 Readable sources without usable knowledge remain whole when they fit; no source is dropped or reordered. Mixed
 requests retain `claims` mode whenever any source is compressed. Recompute history against the final label inventory
 and reject the full request before inference if no representation fits. No source understanding or search is started.
+`outputReserveTokens` is assembly headroom, not the provider's generation maximum. Chat and source understanding
+use a published `maxOutputTokens`, clamped by an estimated remaining allowance, not measured provider tokenization.
+`contextWindowTokens` retains a declared combined window independently of the input/assembly ceiling. Clamp output
+by estimated remaining headroom only when that combined window is known. Old cached rows and generic refreshes may
+retain no combined-window metadata; then preserve published output capacity without subtracting the input ceiling.
+An unknown
+maximum stays `null` in the catalogue and Eliot omits the SDK option; SDK/provider defaults may then apply,
+not an inferred 8,192-token maximum or an unlimited output promise. A non-null chat `token_limit_kind` is its admission
+claim even with `token_limit=null`; the atomic claim cannot repeat or change while started. Migration 0012 marks only
+previously admitted started rows as legacy; terminal rows are never backfilled. GET, stream and repeat receipts expose
+the same basis without changing old payloads. Actual reported usage is retained even if it contradicts declared capacity.
+OCR retains its separate frozen
+per-page output cap described in section 4.
 For compressed sources, include the stored guide with its exact
 quoted source passages. Deduplicate identical (block, quote) pairs within each frozen revision while retaining distinct
 quotes from the same block. Keep derived claim statements and conditions in a separate orientation message marked as
 non-evidence; only original quoted passages provide evidence and citation labels. Source and orientation text both
 count toward the same context budget.
 
-Estimate text as UTF-8 bytes / 3. Include newest in-scope history up to 10% of context. Public assistant history retains
+Estimate the final instructions/messages JSON as UTF-8 bytes / 3 plus existing per-message and fixed framing overhead.
+Assembly and dispatch use the same estimate without copying the full source JSON. This is a heuristic, not a guaranteed
+token upper bound or proof that a provider will accept the request. Unknown output defaults can also exceed the reserved
+headroom (the pinned Anthropic Claude adapter can serialize `max_tokens=128000` when Eliot omits the option); capacity
+and accounting stay unknown rather than adopting that default as published metadata. `estimatedInputTokens` retains
+its content-only API meaning. Select newest in-scope exchanges through the model-only bounded SQL reader using the
+remaining input budget after the current question, instructions and source evidence. Neither a percentage quota nor
+the UI's 50-row page limits model history. Charge JSON escaping, each separating array comma and message framing during
+selection while retaining content-only totals. Public assistant history retains
 a citation only when the prior full ordered scope is a prefix of the current scope and its stored source, revision,
 block and exact range match a currently supplied passage. Render that citation with its current compact alias;
 strip unverified, stale and unavailable references. Prior assistant prose remains conversation context, not evidence.
@@ -542,23 +816,102 @@ The Command Code adapter sends the current question and frozen source context wi
 It does not capture or synthesize private reasoning fields. Existing private wire records remain untouched; the
 ordinary chat path uses public text and verified labels only. A partial prior answer is identified as incomplete.
 
+Older history may be excluded only as whole question/answer pairs, newest first, within the remaining input and
+assembly-memory allowances. Preserve the latest reusable exchange intact; use the existing compact-source path or
+fail explicitly if that exchange and required input cannot fit. The same omission notice is included in the bounded
+model input, stored on the turn, shown beside its answer and retained by Save whenever history is excluded by capacity,
+scope eligibility or a bounded history scan. UI history pages are not loaded for inference, and only this chat and the
+current frozen source scope contribute. A scan that exhausts its safe allowance before finding a reusable newest
+exchange fails before inference rather than silently answering without that conversation.
+Scope and citation eligibility remain unchanged. History normalization occurs after evidence assembly, so optional
+older text cannot consume the memory allowance before source loading; raw newest-exchange estimates guide preflight
+without copying its text. The 16 MiB cumulative assembly guard remains in force. Optional whole-source derived
+orientation yields to retained history on both token and assembly-memory capacity; it must not reject an otherwise
+fitting evidence-and-history request merely to materialize its guide text.
+There is still one model call per Send, no summarization or automatic retry. More retained history can increase billed
+input tokens substantially, up to the model's existing input limit; removing the quota is not a cost-neutral change.
+The estimate is not provider billing or tokenization.
+
+`model-history.ts` advances by immutable `(created_at,id)` key with LIMIT 1 as a read batch, not a retention cap.
+Ordering uses the physical indexed columns rather than the checked-ID output alias, including timestamp ties.
+It probes `octet_length(payload)` before JSON work, then reads scalar state, citation-scope and serialized-size metadata.
+Failed/current/uncited-partial rows cannot consume a fixed history slot. No SQL eligibility predicate or unbounded
+window aggregation can hide a scan behind LIMIT. Cumulative raw JSON inspection/fragment reads are bounded by the
+existing 16 MiB allowance, and per-query metadata plus fragment transfer/parse allocations are charged to the shared
+assembly allowance before each query. There is no new fixed turn count or independent 4 MiB payload cap.
+The newest candidate's scalar sizes guide source preflight; actual public question/answer, prior scope and citations
+load only after evidence leaves room. Raw `->` JSON fragments preserve NUL and lone surrogates through JSON.parse;
+SQL TEXT extraction is not used for hydration. Reads pin ID, creation key and history_version across source awaits;
+a changed or deleted candidate fails safely instead of widening a stale allocation estimate. Parsed candidates are
+cached across whole/compact retries, while citation normalization uses each attempt's final passage inventory.
+A partial-history instruction is included only while a selected exchange is partial, with its full cost reserved.
+`pnpm eval k2 --context-only` also runs the model-history acceptance against pinned Workerd/DO SQLite, reporting actual
+SQL queries, cursor rowsRead, transferred string bytes and serialized input estimates, without provider calls.
+
 Resolve one `ModelSpec` for each turn and freeze it across admission, context limits, request bounds and settlement.
 The HTTP Send handler and synchronous eval share `runTurn`: persist the started turn, record the token bound after
 provider admission, assemble frozen context, dispatch one streaming model call, resolve citations and persist answer,
 citation, token, timing, invalid-label and terminal-state fields. Historical currency columns remain unchanged.
-WebSocket frames and reconnect expose
-read-only state snapshots; they never enqueue or dispatch paid work. GET, history, reconnect and Save never start model/search work. One active turn
+First nonblank text and terminal/Stop results persist immediately. Intermediate full-turn checkpoints are throttled
+to once per second; one pending timeout flushes accumulated text during provider silence. Each checkpoint is stored
+before broadcast, with citation targets resolved against the same in-memory frozen block maps. Only the stored copy
+is normalized; the raw stream accumulator remains intact for labels and code spans split across chunks. A restarted
+partial answer therefore retains its citation links and Save targets without reconstructing context or rereading sources.
+Finalization clears the timeout; a checkpoint write failure aborts the stream and uses the existing
+terminal-save path, without retrying inference. Runtime stalls or storage failure can delay persistence; restart retains
+the last stored checkpoint and never continues the model automatically.
+WebSocket frames and reconnect expose state snapshots and never enqueue or dispatch paid work. An authorised history
+read/reconnect may finish the idempotent local save of an already accepted, proven-undispatched self-handoff or settle
+an already stored answer's D1 projection, as specified below; it does not admit work or change terminal D1 accounting.
+GET, history, reconnect and Save never start model/search work. One active turn
 and one queued submission are allowed; the next returns `409/busy`. Stop stores partial text, closing a tab does not
-cancel, and failed streams are not automatically continued. Retry is a new owner submission.
-The 90-second deadline settles as failed without text or partial with text; only an explicit owner Stop is reported as
-cancelled. A timed-out eval wait is reconciled by bounded reads of that same submitted turn ID, never another Send.
+cancel, and failed streams are not automatically continued. Retrying a confirmed failed generation is a new owner submission.
+Before the first turn payload is durable, fresh acceptance retains its full input in the existing self-handoff slot.
+A distinct next question gets a truthful busy response until that input is saved; the normal waiting slot then reopens.
+The mounted composer retains one unconfirmed Send ID, its normalized question/scope/ordered source IDs/explicit model
+and any acknowledged chat ID. An explicit Send with identical input reuses them after a lost or unreadable response;
+only a matching turn-ID acknowledgement consumes the attempt in its visible view. Sources/overview navigation retains
+it with the draft. Changed input has a new turn ID in the same known chat; changing chats or unmounting discards the draft and attempt.
+New chat confirms discarding any nonblank draft and retires the pending attempt even while the first Send still uses
+the blank chat route. It releases that composer's Send lock; an older creation or turn reply cannot admit a question,
+clear a new draft, navigate or release a newer Send. Cancelling the confirmation preserves the original retry identity.
+No read or timer sends it again, and an empty history read does not prove rejection.
+For a new conversation the same attempt retains its creation UUID and original title before POST `/chats`. The optional
+caller ID uses the existing chat primary key: insert returns 201; matching project/title and an unarchived chat return
+the stored row with 200. Foreign, archived or differently titled identities return 409 without updating metadata. Omitted IDs keep
+server-generated creation. Titles must be valid Unicode; the composer uses up to 80 complete code points.
+After reload, History can open a committed chat and any accepted turn through existing storage-only reads. No request
+is resumed automatically. If only creation committed, the full question is not recoverable from its truncated title;
+unaccepted draft text is not persisted in the URL, localStorage or another client cache.
+Ordinary chat has no application wall-clock or idle-abort timer. Stop signals abort and preserves received text;
+its response acknowledges that signal, not upstream completion. The pinned SDK can close its consumer and release
+the local queue even if transport cancellation stalls; missing provider usage stays unknown. Provider/platform failures
+remain failed without text or partial with text. Only explicit owner Stop can produce
+cancelled. After the SDK iterator closes, read any resolved usage and check the signal before accepting a normal finish:
+abort can close the iterator normally. The eval's model POST wait has no 90-second client cutoff; a failed wait is
+reconciled by bounded reads of that same submitted turn ID, never another Send.
+Platform facts checked 2026-11-04: [Durable Objects RPC/HTTP](https://developers.cloudflare.com/durable-objects/platform/limits/)
+has no fixed wall-time cap while a request, connection or I/O remains active; CPU/memory limits still apply.
+[AI Gateway request timeout](https://developers.cloudflare.com/ai-gateway/configuration/request-handling/) concerns the
+first response, rather than the duration of an already streaming response. Provider limits remain independent; no
+gateway timeout, retry or provider setting is changed by this policy.
+When the SDK normalizes a provider finish to `other`, the stored error retains its distinct raw code only if it
+matches `[A-Za-z][A-Za-z0-9_.:-]{0,63}`. Arbitrary upstream messages are omitted.
 Only a terminal stored turn is adopted; pending outcomes stay unresolved. Missing provider usage retains the recorded
 token bound and is never treated as zero usage.
 Missing-citation and unsupported-number diagnostics are advisory UTF-16 answer ranges stored in the existing
 ChatAgent turn JSON and exposed by snapshots/history for API and eval readers. The owner Markdown view renders the
 answer without diagnostic frames or rewriting it. These diagnostics do not change a normally finished stream to
-partial. Truncation, stream/protocol failure and invalid resolved labels
-remain real failures. Saved output carries a concise review note when warnings exist. D1 schema and usage are unchanged.
+partial. Explicitly indented plain-text continuations belong to their Markdown list item for sentence analysis;
+plain soft wraps and the item marker are masked with equal-length spaces only in the analysis view. Lines containing
+sentence punctuation or ending in closing markup/citations retain their newline boundary, including before lowercase
+text. This conservatively leaves wraps near abbreviations/decimals unchanged. Separate sentences,
+new items, quotes, headings, blank lines and fenced code retain their boundaries. Unindented continuations keep the
+conservative existing behavior. Answer bytes, source blocks and saved revision ranges are never rewritten.
+Truncation, stream/protocol failure and invalid resolved labels remain real failures. A normally finished answer with rejected references stays partial; its error names the bounded
+rejected-marker samples. Saving a partial answer preserves its recorded failure reason as escaped Markdown text;
+it does not claim generation was interrupted when only references failed. Historical partials without a reason receive
+a neutral review note. Saved output also carries a concise review note when warnings exist. D1 schema and usage are unchanged.
 An answer over a nonempty whole/claim source scope with no resolved citation is incomplete; this hard citation-presence
 gate is separate from advisory spans. General answers in explicitly empty scope do not require Library citations.
 
@@ -582,6 +935,153 @@ network event. Keep recorded token bounds, actual token counts and any historica
 distinct; missing usage remains unknown. Private turn telemetry exposes only the allowlisted `inputTokens`, `outputTokens`, `totalTokens`,
 `cachedTokens` and `reasoningTokens`, each null when missing or invalid. Eval may reuse only completed turns
 with exact frozen source/revision sets; a non-reusable question stays manual and resume never dispatches a replacement.
+
+### Context materialization and proposed chat repairs
+
+The materialization bound below is implemented by the current repair slice; chat repairs remain open.
+[MAP's repair order](MAP.md#active-repair-order) owns acceptance status.
+
+- **Materialization bound — `context.ts`.** Each assembly has one cumulative **16 MiB** allocation allowance, separate
+  from the provider input budget. It counts actual streamed R2 bytes, chunk bookkeeping, contiguous copies,
+  decoded UTF-16 strings, conservative parsed-JSON overhead, metadata, labels, orientation and joined projections.
+  Distill extraction and verification reuse the streamed canonical-text/block-map reader and the same per-operation
+  allowance; extraction also charges decoded passages, escaped source JSON and joined projections before dispatch.
+  Verification and synthesis storage charge resolved canonical quotes, verifier slices/fold maps and joined evidence;
+  repeated references reuse one decoded block within the operation. Legacy maps are not rescanned or capped at the
+  current scanner's block size. Charges remain conservative allocation accounting, not measured heap usage.
+  Charges are not released for discarded attempts. This is a product guard, not a measurement of V8's heap or a
+  process-wide concurrency limit; SDKs, the caller's already-loaded turn payloads and other isolate requests need
+  additional memory. The implementation PR records observed memory separately from this accounting bound.
+  R2 bodies use `body.getReader()`, count chunks before retaining them, and cancel on failure. Block maps are consumed
+  first and reused within the assembly. For whole-reading with a known nonnegative readable size inside the remaining
+  allowance, including pending-GET/block-reader overhead, overlap only that source's block-map and text GETs.
+  Hold at most one unread text body; do not materialize it until block validation succeeds. Unknown/over-limit sizes
+  and reused maps keep serial reads. A block larger than the remaining allowance rejects before text consumption:
+  cancel an already pending text body, or do not issue its GET on the serial path. Missing/invalid maps and budget
+  failures also cancel the unused body, preserve block-first errors, and never open a later source.
+  Successful whole-reading still uses two GETs per source; a failed map may incur one unused text GET.
+  Reports, guides and exact ranges use the same bound, and ranges must return exactly their requested byte length.
+  At most 256 guide ranges are fetched per assembly; another range rejects the whole request before its GET,
+  preventing small passages from turning the byte allowance into thousands of serial reads.
+  Declared sizes cannot waive the streamed checks. No new GET starts after exhaustion.
+  Source queries return at most 1,025 rows and reject more than **1,024** sources; explicit ID arrays share that cap.
+  Explicit selection uses one `json_each` query in first-occurrence order and the same conservative byte-based SQL
+  metadata bound as default selection. Near the allowance, non-ASCII metadata may reject earlier than the old JS loop.
+  IDs and explicit input IDs are capped at 128 UTF-8 bytes. SQL clips title/summary/report-key fields above
+  4,096/32,768/4,096 bytes and marks the complete request invalid, rather than publishing truncated metadata.
+  Lengths use `length(CAST(field AS BLOB))`, including NUL tails. Window sums include IDs and suppress oversized
+  aggregate metadata before transfer.
+  Claim queries similarly suppress oversized fields and reject more than **256** rows, without using a partial list.
+  History is selected newest-first after evidence assembly. Raw allocation sizes are checked before loading and
+  normalizing text; token fit uses the normalized messages because stale/reordered citation labels can disappear.
+  An older exchange that cannot fit is omitted with notice; the latest reusable exchange is never silently discarded
+  to meet either allowance. UTF-8 token estimation does not allocate encoded copies.
+  Caller and output reserves remain unchanged.
+  Metadata still chooses eligible whole/compact representations before body reads. `readable_size` is only a
+  preflight estimate, not an exact token count or a lower bound on projected citable text: fitting marker-heavy
+  sources remain eligible. Frozen scope/order, aliases and original UTF-8 citation ranges are preserved. Failure
+  returns the existing narrow-scope/understanding-needed response before inference, without automatic distillation.
+  Checked 2026-11-04 against the installed `@cloudflare/workers-types@5.20261024.1` R2 declarations and the official
+  [R2 range/body contract](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and
+  [Worker memory contract](https://developers.cloudflare.com/workers/platform/limits/#memory). The platform's
+  128 MB limit is shared by the isolate, not a separate allowance for each assembly.
+- **Interrupted accepted input - `chat.ts`.** Fresh acceptance and queue promotion both retain the unchanged request in
+  `queued` with the same active ID until validation, first DO payload write and state clear finish. Snapshots hide this
+  self-handoff; it is not a second waiting question. Before clearing input on recovery, store its turn ID/question/input
+  in the existing DO turn history as `failed` with an explicit never-dispatched message and zero token usage/bound.
+  Do not resolve a new model or invent frozen revision IDs for a question that never started. Persist this recovery
+  before clearing the queue; repeat recovery must preserve an already recorded turn. Retain the active turn's partial
+  text and unknown usage as today. GET, onStart and reconnect never start either model call. Repeating the recovered ID
+  returns the stored result; retry through a new Send has a new ID. The existing reader shows the saved failure reason.
+  The original request is retained in optional `TurnView.input` inside that existing DO payload. `model` keeps only
+  an explicitly requested route, or an empty string when none was chosen; no default/catalogue lookup or revision
+  freeze is performed. A never-started retained question has no D1 admission row. Its DO usage and token bound are known zero,
+  while an interrupted active turn retains its existing known values and nulls.
+  Shared question/selection/model fields are stored once on the turn; compact input metadata retains project/chat
+  identity and optional-field presence, and reads reconstruct the exact request. This avoids doubling a long accepted
+  question within the platform's [2 MB SQLite row limit](https://developers.cloudflare.com/durable-objects/platform/limits/).
+  Stop preserves the retained input while aborting the active handoff. A validation failure records the question as
+  undispatched without a model call.
+  If its local write or queue-state clear fails, release the settled in-memory task/controller and retain the input.
+  Make one storage-only recovery attempt when that task ends. A subsequent authorised history read/reconnect, submit
+  or Stop may make one further attempt after project validation; no timer, background loop or automatic Send is added.
+  Persist the failed, never-dispatched turn before clearing the self-handoff. While storage remains unavailable,
+  return a clear `503/unavailable` rather than hide the question or discard its input. Once recovered, reconnect and
+  repeat-ID return the stored outcome and a new explicit Send can use the freed slot without restarting the object.
+  The authorised WebSocket connection obtains its snapshot through server RPC: the pinned Agents SDK forbids
+  `setState` inside its readonly connection context. This also covers a handoff failing while the connection opens.
+  Connections remain readonly; no client mutation is enabled.
+  A retained self-handoff with only an empty, unadmitted `started` row is also recovered as known zero, retaining
+  its creation time and original queued input. Terminal or already-admitted rows are never rewritten by this repair.
+  Client notifications are best-effort so a disconnected reader cannot interrupt persistence or queue handoff;
+  reconnect reads the stored snapshot. Read queue/active state together after awaiting history, so a delayed history
+  read cannot resurrect a question that finished meanwhile. This does not implement terminal D1 settlement/reconciliation below.
+- **Older turns - `chat.ts`, `index.ts`, `shared/api.ts`, `web/Chat.tsx`.** GET on the existing
+  `/api/projects/:id/chats/:chatId/turns` resource returns at most 50 turns and `nextCursor`. The validated value cursor
+  records chat ID and the oldest returned immutable `(created_at,id)`; strict descending tuple comparison handles
+  timestamp ties without depending on the anchor row's continued existence. A covering DO index supports the range;
+  one ID-only lookahead detects more rows without loading a 51st answer. Authorization and bounded storage-only
+  recovery still run before reading payloads. Initial HTTP/WebSocket snapshots retain their latest-50 window and also
+  return a next cursor. These owner-visible reads retain their 50-row paging contract. Model history uses the independent
+  budgeted reader described above, regardless of how much the owner browses; Send does not materialize a UI page first.
+  `writeTurn` preserves `created_at` on conflict and increments the same row's `history_version`. Startup adds that
+  column with legacy default zero and the ordering index, without rewriting old payloads. Read and stream projections
+  carry `createdAt`/`historyVersion`; neither is duplicated inside payload JSON or used as model context. UI merges by
+  immutable turn ID and stored version, including the first preparation/handoff frame and the wait=1 receipt.
+  The same DO has one constant-size `chat_history_clock` row for ordering queue/settlement projections across HTTP
+  and WebSocket. Existing state/payload writes advance it before writing; a failed write can leave an unused version
+  but cannot publish changed state with an older version. Repeated reads do not advance it. Snapshots and queue frames
+  expose `stateVersion` and the complete queue/settlement-notice projection, including an explicit null to clear a notice.
+  Queue frames use the same bounded pending-turn/latest-50 ID projection as snapshots, including notices for pending
+  turns outside the current page. Both go through the same client merge: a newer queue frame may supersede an older
+  snapshot only with its notice/clear included. Older projections cannot resurrect a queue or an obsolete notice. This is transport
+  metadata only, not an admission mechanism, effects ledger or another message store. UI sorts by creation time/ID,
+  so delayed pages/snapshots cannot regress streamed text or erase older rows. Ordinary overlapping reconnects keep
+  the older cursor. A disjoint latest window after
+  more than 50 missed turns resets only the pagination boundary to that snapshot: explicit Load earlier messages fills
+  the middle gap, deduplicates through retained rows and continues older. No automatic full-history fetch runs.
+  Only a newer head window may move that boundary; a delayed older first socket snapshot cannot replace a newer HTTP
+  boundary. The first HTTP or socket head restores scope once from the merged latest turn before enabling Send.
+  Manual selection and a newly acknowledged chat's current selection take precedence; later HTTP/reconnect heads
+  do not restore it again. Retrying history within the same chat does not reset that initial selection guard.
+  A successful authorized socket snapshot makes chat ready even when the parallel initial HTTP read is pending or
+  fails, without widening selected or empty scope to project defaults.
+  An older request's success/error/finally is scoped to its initiating project/chat and request generation; obsolete
+  reads are aborted. Older pages never restore selection, queue or composer state. Page merging preserves a visible
+  turn element's offset in the conversation scrollport, rather than using total height growth: middle-gap insertion
+  and streamed growth below the reader must not move it. Keyed answer/details remain open; old answers use the existing storage-only Save with their
+  original citations. Checked 2026-11-03 against Agents `0.30.1`, Workers types `5.20261024.1` and the official
+  [SQLite cursor contract](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#sql-api): queries
+  are fully consumed synchronously before any await, including the ID-only lookahead.
+- **Terminal settlement — `chat.ts`.** The owning DO payload has optional `settlementPending: true` before the D1
+  INSERT attempt; an INSERT may commit without acknowledging it. A terminal result retains that marker until a D1
+  primary-binding read confirms its projection. `active` names an execution **or unfinished settlement**: release the
+  volatile task/controller when execution ends, retain the pointer while settlement is pending, and do not replace it
+  with another Send. If queued B exists, save B as never dispatched under the interrupted-queue rule before clearing
+  it. B has known zero usage and no D1 row, and never receives a settlement marker. Storage recovery never promotes B.
+  Startup and authorised history/reconnect, repeat-ID, Stop and Save reads perform storage-only recovery. One action
+  selects at most **eight** marked IDs via the partial `turns_pending_settlement` DO index, prioritising the active ID.
+  This also finds marked results outside the latest-50 history window or with a cleared pointer. An unresolved marked
+  orphan becomes the active settlement pointer. Historical **unmarked** terminal orphans whose pointer was already
+  lost are not backfilled by this slice; it does not scan all historical payloads or add a second turn store.
+  For each selected turn, read D1 once; update at most once and only with `WHERE state='started'` plus model/scope-mode
+  identity guards, then read back once, including after an update error or zero changes. An already-terminal row is
+  read and compared without issuing an UPDATE, respecting migration `0006`. Exact comparison covers model, scope
+  mode, ordered revision JSON, context mode, state, input/cached/output counts, token bound, citation/invalid-label
+  counts, first-token/total timing and error. Historical currency, pricing date and creation time remain untouched.
+  A started D1 row can be ahead of a DO checkpoint: recover its known token counts/bound and frozen scope when the DO
+  value is still unknown/uninitialised; persist those values before terminalising D1. Null remains null when neither
+  record knows usage. Scope is checkpointed in DO before its D1 write. A confirmed missing row at the pristine
+  pre-INSERT checkpoint means no admission/dispatch and known zero; no D1 receipt is invented. A read failure does
+  not prove absence. Missing rows with evidence of execution remain pending and visible.
+  On exact confirmation, clear the marker and error locally, then release the pointer. An ambiguous committed update
+  converges by read-back; a local marker-clear failure retries that confirmation without updating terminal D1. Storage
+  failure or terminal mismatch retains the marker, payload and pointer, with a safe `settlementError` in the existing
+  reader; an older hidden turn's error is also exposed by the snapshot and existing history Retry control. Mismatched
+  terminal rows are never overwritten or silently adopted. One action has no retry loop, timer, model lookup,
+  admission or inference. Notifications remain best-effort. Checked 2026-11-02 against pinned Agents `0.30.1`, Workers
+  types `5.20261024.1`, the official [D1 prepared-statement contract](https://developers.cloudflare.com/d1/worker-api/prepared-statements/)
+  and [DO SQLite contract](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/).
 
 ## 9. AI Search projection — K5 only
 
@@ -608,8 +1108,10 @@ Initial monthly owner guard leaves included-tier headroom: 4.5M ingestion tokens
 Use the installed Agents SDK `createMcpHandler` path verified by generated types, a fresh MCP SDK v2 server/request and
 stateless Streamable HTTP at `POST /mcp`. Allow exact hostnames only. Register §7 tools; no K7 web tools before K7 and no
 large upload through MCP.
-`ELIOT_MCP_ORIGIN` selects that endpoint's exact origin. The UI and MCP hostnames use an Access application audience
-that covers both configured hosts; signed service tokens become read/propose agents only on MCP, never on UI APIs.
+`ELIOT_MCP_ORIGIN` selects that endpoint's exact origin. Separate UI/MCP Access applications use `ELIOT_ACCESS_AUD`
+and `ELIOT_MCP_ACCESS_AUD`; a shared application leaves the latter blank. Signed service tokens become read/propose
+agents only on MCP, never on UI APIs. `pnpm eval k4 --signed-agent-miniflare` uses distinct test audiences, rejects
+cross-application owner assertions in both directions, and exercises the real MCP proposal/owner-acceptance path.
 Migration `0009_agents.sql` adds the proposal base to existing page revisions and maintains current-claim FTS.
 Checked-output recovery publishes its guarded head before claim upserts, so FTS insert/update and head maintenance
 are all used. No claim-delete trigger is needed before lifecycle deletion has a caller. Headless proposals are omitted
@@ -631,30 +1133,17 @@ call; an in-flight call may finish.
 
 ## 11. Models
 
-The native default's cold-start metadata selects low reasoning effort for interactive chat. GLM 5.3 Flash supports
-low/high/max and defaults to max when effort is omitted; reasoning cannot be disabled. Native catalogue discovery
-preserves published `supported_efforts` as optional `nativeReasoningEfforts`; missing or malformed values stay unknown.
-New native K3 admissions select `high` only when the same catalogue snapshot advertises it, otherwise retaining that
-snapshot's existing choice. With known published output capacity, their job reserve is at least 16,384 tokens, capped
-by that capacity and never reducing an existing larger reserve; unknown capacity retains its current reserve.
-The model, reserve and applicable call timeout are frozen before Workflow creation. Existing admitted parameters,
-Gateway routing and owner model selections are unchanged. Successful service completion under these job bounds
-does not establish semantic acceptance; claims and synthesized prose retain the same own-quote, condition and
-full-contour quality gates.
-
-The existing Flash fallback's advertised output capacity is 1,048,576 tokens, checked from Cloudflare's marketplace
-model-search response on 2026-10-31; `max_output_length` is the protocol alias for completion/output tokens. This
-ceiling shares the context window with input and is not the requested job reserve or a completion-size guarantee.
-The model input schema also advertises temperature 0–2, so the existing source-faithful temperature-0 policy applies
-when capability metadata is known; an explicit negative capability in a snapshot is not overwritten.
+The native default's cold-start metadata includes its documented low reasoning effort, matching the existing native
+catalogue discovery policy. GLM 5.3 Flash supports low/high/max and defaults to max when effort is omitted; reasoning
+cannot be disabled. The admitted model keeps this parameter frozen with its context and output bounds.
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
-selection. Paid admission requires usable context/output bounds and provider allowance, without a price lookup or a
-locally invented monthly allowance. Record `modelTokenLimit = contextTokens + outputLimit` before dispatch (twice for
-two-call distillation), freeze the admitted `ModelSpec`, and retain unknown usage as unknown. Interactive chat retains
-its 8,192-token reserve; the native K3 reserve above is a separate job allocation, not a new provider quota. Provider
-errors/limits remain visible; there is no artificial
+selection. Paid admission requires usable input metadata and provider allowance, without a price lookup or a
+locally invented monthly allowance. Record declared input plus published output capacity when both are known (twice
+for distillation), otherwise `null` with an independent admission claim. Freeze the admitted `ModelSpec` and retain
+unknown usage as unknown. The assembly reserve does not become a provider maximum; legacy/OCR snapshots retain
+their admitted per-call cap. Provider errors/limits remain visible; there is no artificial
 quota, paid fallback or model-name allowlist/banlist.
 
 **Providers.** Migration `0008_model_providers.sql` stores the editable provider configuration in
@@ -838,6 +1327,13 @@ uncaptured web result. Check stop/budget before every external call and preserve
 
 ## 13. Owner interface
 
+Reader's Find in source scans the loaded immutable text on explicit Next/Previous only, without model/external-search
+calls or a separate index. Already revision-pinned navigation makes no API calls; pinning an unpinned Reader URL can
+refresh its source metadata. Matching uses original-string Unicode indices before UTF-8 conversion; literal punctuation
+is escaped, EN/RU case is ignored, and only the selected range is retained. Search does not alter canonical bytes.
+The existing URL/highlight/copy flow keeps historical revisions pinned and supports Back/Forward. Native K1 checks
+desktop/phone navigation, no-match retention, copied UTF-8 ranges and zero additional API calls.
+
 Move the accepted Material 3 Expressive UI; do not redraw it. `src/web/ui/` owns tokens/primitives/features. Raw colours,
 font stacks, radii or timings outside tokens are defects. Move each feature with the contour that makes it live and
 replace legacy adapters rather than copying old runtime/query layers.
@@ -853,14 +1349,69 @@ bottom bar. Pane contents scroll independently; the composer is the final Chat r
 sources. Sources start with readable-source checkboxes and current understanding availability. One Add action opens
 the existing file/text/URL forms in a native dialog. History is a menu and project settings a dialog. Opening a source
 passage temporarily replaces the center reader without dropping the selected chat or source scope. Saved output
-refreshes Studio through the existing storage-only page API.
+refreshes Studio through the existing storage-only page API. An explicit repeat of an unconfirmed Save retains its
+mutation UUID per chat/turn in the mounted workspace, so a lost reply cannot duplicate a committed page. Other saves
+remain independent; only the latest request for that chat/turn can clear its pending UUID. A late success still refreshes
+Studio, but cannot retire a newer pending retry. A confirmed Save permits a later new copy. No automatic retry or browser
+persistence is added.
+Proposal review closes its modal before route navigation focuses the Reader, including repeated clicks on the same
+citation. The selected draft remains available when review reopens; modified links leave the current review open.
+The source Reader highlights a citation's exact UTF-8 range inside the complete canonical text and focuses/scrolls
+to it on passage navigation. The surrounding text and the pre's complete text content stay unchanged. Copy link
+handles selections within or across the mark; invalid ranges retain full text with an error and Clear passage.
+A confirmed file replacement cancels in-flight source-list reads before invalidating their caches because a source is
+shared across projects. Late pre-replacement responses cannot overwrite a new project's first list read. Only active
+lists refetch; their paging/selection and immutable citation links remain while current-source links follow the new head.
+A failed list refresh offers Retry even when all pages were loaded; it retries those pages rather than fetching a next page.
+Clear passage retains the explicit revision from the URL even before it appears in the loaded metadata. It removes
+only the passage selection; a pending/failed historical metadata read cannot redirect it to the current revision.
+Add sources keeps text and URL drafts independent. Each form allows one pending submission while its fields remain
+editable. Success clears only the unchanged submitted draft; later edits, failures and duplicate responses keep it.
+After text/URL/file additions or Attach, cancel the older project source-list read before refreshing; a late empty
+first-page response cannot hide the confirmed source. The refresh retains loaded pages and source selection.
+Closing and reopening the dialog does not cancel the write or discard newer input. Drafts stay local to the mounted
+project workspace; no automatic retry or browser persistence is added.
+Projects exposes Show archived projects and Unarchive. Each list view owns its query/cursor; switching views aborts
+old reads and starts its first page. Failed reads keep loaded rows and offer Retry. A pending write or Rename edit
+disables view switching; failed writes preserve the row/edit, while success refreshes that view. The active-only
+project picker and MCP default remain unchanged.
+Create waits for Rename to finish or be cancelled. If an update removes the edited row from the loaded pages, its
+existing editor stays available above the list with the unsaved name and original target; Save/Cancel never depend
+on that row remaining visible.
+A successful Save closes only the submitted edit; typing while it is pending remains unsaved until another explicit Save.
+Create also preserves text edited while its request is pending. An explicit repeat of an unconfirmed, unchanged
+payload reuses its UUID; confirmation or a changed payload starts a new attempt. The draft and UUID are local to the
+mounted Projects form and are discarded on remount/reload.
+The project header's Switch project opens a native dialog over the existing `/api/projects` pages. Loading, empty,
+initial/page Retry and Refresh stay in that picker; its list reads abort on close or route change. Selecting a project
+opens its chat route without creating a chat or sending a question. Escape/Close returns focus and preserves the
+originating draft/selection. An ordinary same-tab choice of another project requires confirmation before discarding
+a nonblank question; Cancel leaves the picker, draft and source scope intact. Current-project and blank-draft choices
+need no confirmation. Confirmed project changes keep the workspace's existing reset semantics.
 Converting project-default scope to an explicit selection waits until all source pages are loaded; it never drops
 unloaded sources. Already explicit selections retain their full IDs while the visible source list is paginated.
+Choosing a stored suggested question explicitly selects its one source and opens the existing chat composer. Workspace
+owns the draft text and visible source selection; ChatView retains the Send/Stop/Save lifecycle and draft-edit guard.
+A nonblank different draft requires confirmation, with Keep draft/Escape preserving its text and selection. Route
+changes dismiss the pending choice. The composer displays its current source scope. Chat freezes current readable
+heads on explicit Send; historical Reader questions stay read-only. Prefill creates no chat or inference request.
 
 Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:sourceId?start=&end=`; K2
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
 Every screen has loading, empty and actionable error states plus stale/paused where relevant. Use one Markdown renderer
-with raw HTML disabled and resolved citation chips. Do not cache private text in localStorage or a service worker.
+with raw HTML disabled and resolved citation chips. Inline citations show one compact number per distinct passage
+URL in visible occurrence order; compact/persistent aliases share that number, while hidden definitions and unused metadata consume none. Their accessible names and hover titles
+retain the full source title and block, with 24px minimum targets and visible keyboard focus. Snapshot and streaming
+rerenders retain existing link elements and their keyboard focus. Full source lists retain
+their title labels. This changes presentation only, never the immutable revision or byte-range destination.
+Do not cache private text in localStorage or a service worker.
+An exact registered compact/persistent citation token keeps its resolved Reader target even when Markdown has a
+reference definition for that token. Adjacent registered tokens remain separate citations even if Markdown parses
+them as one full-reference link. Explicit URLs, ordinary full-reference links and non-exact or unregistered spellings stay unchanged.
+The web renderer uses `remark-math` and `rehype-katex` for `\(...\)`, `\[...\]` and `$$...$$` as native MathML, without
+KaTeX styles or font assets. Only the TeX compatibility path adds a standard GFM Markdown AST pass to preserve code, links
+and other literal nodes. Single `$` stays literal for currency; unfinished expressions stay readable and display formulas
+scroll locally. This targets modern Chromium with native MathML, with no legacy HTML fallback or stored-evidence changes.
 
 The shared model picker reuses the approved legacy Material interaction and provider/native-ID identity. Settings
 provider, search and free-name filters only filter the displayed catalogue; they do not change saved routes or admission.
@@ -868,10 +1419,99 @@ Chat uses compact provider then model controls with project default available. A
 unambiguous catalogue choices is visibly unavailable. Model changes affect the next Send; each answer shows its stored
 model's name. New chats may Send with no sources, while existing chats wait for their history to load. Changing chats
 clears the previous queue view and ignores messages from the closed connection. The inherited model name is displayed
-without sending an explicit override. Settings keeps human provider names and known quota values on compact rows,
+without sending an explicit override.
+On phone, one Sources and model disclosure shows the current scope and model summary while the existing controls
+stay mounted. Opening it exposes scope navigation and the same picker; collapsing keeps draft/selection/provider
+state and leaves model errors, pending status and data-use warnings visible. Desktop controls remain expanded.
+History and New chat confirm before discarding a nonblank question draft. Cancel preserves the open menu, chat, draft
+and source scope. Choosing the current chat or using a modified link leaves its draft intact
+without confirmation; blank drafts follow the existing navigation. This applies to these controls, not browser Back/Forward.
+Settings keeps human provider names and known quota values on compact rows,
 with provider addresses and Gateway routing in connection dialogs. Both owner billing and data-use choices remain.
 Unknown metadata stays visible, and model-job admission remains separate
 from selection.
+
+**Conversation decomposition — open.** Keep the active conversation's HTTP/socket/history/version/cursor/scroll
+lifecycle together when separating it from presentational composer/actions. Each route, connection and source selection
+keeps one state owner; preserve stale-response cancellation, queued status and current Material layout. Use existing
+React/QueryClient facilities where they remove current duplication. In `ChatAgent.runTurn`, keep admission → frozen
+context → dispatch → settlement visible in one orchestrator; extract only deterministic citation/completion and usage
+projection helpers, keeping stop/deadline ordering intact. Then review `SourcesPane`, `OcrDialog` and `ModelSettings`
+for similarly independent responsibilities when touching them. Function length locates review targets; it is not a
+quota or justification for a hook hierarchy, generic lifecycle framework, new provider layer or mass file splitting.
+
+`web/use-chat-history.ts` owns project chat-list reads, paging and created-row insertion. Both page paths merge by ID,
+so a delayed first page cannot erase a newly created chat. Failure retains loaded rows/cursor; initial failure offers
+Retry. Cleanup aborts the current read. Conversation HTTP/socket/version/cursor/scroll and Send/Stop/Save remain in
+`ChatView`.
+Its memoized turn content retains unchanged answers across streamed frames. The existing conversation box's resize
+observer pauses content rendering while CSS hides that pane on desktop or phone, retaining its DOM/details and the
+owning socket/history/action state; revealing it renders the latest received turn without replaying hidden frames.
+
+**Post-stream usage.** `chat-usage.ts:turnUsageProjection` owns the pure
+post-stream projection of AI SDK reported token/provider usage and the known-zero undispatched case. `runTurn` applies
+that usage-only patch at its original post-stream point. An absent report leaves existing unknown values and the held
+reservation untouched; reported zeros stay zero and missing reported fields stay null. It reuses the existing safe
+provider-usage projection. Admission, abort/deadline, queue, citation work and durable settlement remain orchestrated
+by `ChatAgent`; no state owner or effect moved. Existing stream/Stop/deadline/settlement and view-isolation gates check
+the assembled path. The larger ChatView history/socket ownership decomposition remains open and is not part of this slice.
+
+**Studio completeness — implementation and acceptance in MAP.** The existing pages GET returns at most 50 summaries,
+with a project/kind-scoped value cursor on immutable `(created_at,id)` and a 51st metadata-row lookahead. Migration
+`0011_studio_pages` indexes published pages in that order. Accept and source invalidation change head/freshness and
+`updated_at`, not the pagination key; a cursor never re-reads its anchor. List/detail expose creation time and the
+existing accepted `headRevisionNo`, without another version store. Supported writers advance that revision number;
+within one head freshness changes only from current to stale. The UI uses those facts to deduplicate and merge
+reordered metadata without letting a delayed current/older-head response undo an already observed stale/newer head.
+
+Studio exposes explicit Load more pages, Refresh pages and separate list/detail retries. Current/Stale appears as text
+in the list with a button description, and selected detail announces its own returned head's freshness as a status.
+Loading more keeps selection. Refresh restarts the listing, discarding unchecked older summaries, while preserving
+the selected reader and rereading it independently, even outside the first page. Detail never borrows status from an
+older list row; a newer list head can trigger a fresh detail read. Requests are abortable and scoped by project/page
+and generation through success/error/finally. A failed read does not claim refreshed freshness.
+
+Owner acceptance triggers a new scan and selects the accepted page directly. A headless proposal can become eligible
+above an already passed cursor: immutable ordering cannot make that old scan discover it. External acceptance and
+source changes are picked up by explicit Refresh, rather than polling or claiming one scan captures every concurrent
+eligibility change. Historical bodies and exact citation links remain immutable. These reads never start model/search
+work. Checked 2026-11-03 against pinned D1 types and the official [D1 binding](https://developers.cloudflare.com/d1/worker-api/d1-database/)
+and [SQLite tuple pagination](https://www.sqlite.org/rowvalue.html#scrolling_window_queries) contracts.
+
+**Asynchronous view isolation — implementation and acceptance in MAP.** Chat Send freezes the question, source scope
+and model override before awaiting chat creation. A departed creation view cannot dispatch a turn after that await.
+An already submitted write retains its original target; its acknowledgement, error and navigation belong to the
+initiating mounted location, including its navigation generation. Returning A→B→A does not renew old ownership.
+Draft edits made during Send survive acknowledgement and intentional first-chat navigation; that navigation also
+retains newer source selection rather than restoring the sent scope from history. Stop/Save result messages use the
+same view ownership. A successful Save still refreshes Studio in its owning mounted project. Separate project/chat
+request generations prevent an old completion from unlocking a newer Send.
+
+Reader is keyed by project/source, resetting metadata, text and both React/native replacement-file state on source
+change. Revision and passage navigation reuse that source reader. Metadata reads carry source/revision generation
+and abort signals; pending polls do not overlap. A metadata read error retains the last source view, stops polling
+and offers Retry source status. Successful explicit Retry restores pending polling until conversion settles;
+metadata errors remain separate from text and replacement errors. Text/outline reads abort on revision change/unmount. A replacement
+POST remains bound to its original source/file, while only its initiating location may change URL, error or file
+selection. A narrow `(projectId,sourceId)` lock in the existing App outlives keyed Reader/workspace remounts, pane changes
+and same-tab project/Settings navigation. A→B→A and same-source query changes cannot dispatch another A upload before
+settlement, while other project/source pairs can upload independently. Only the owning POST's settlement removes its
+key; completed requests leave no retained lock. This is a same-tab request guard, not cross-tab or reload idempotency.
+Existing source/citation and same-revision OCR navigation retain text/outline semantics.
+An explicit repeat for the same selected replacement File reuses its revision UUID until a matching acknowledgement.
+A changed File or a confirmed new upload gets a new UUID. Reader remounts discard the File and attempt; no browser draft
+is persisted. Confirmation clears the file input so the same file can be deliberately selected again.
+No write is cancelled or automatically retried to infer its server outcome, and no read starts model work.
+
+`pnpm eval k2 --view-isolation` exercises the reused workspace on desktop and phone, including held success/error
+responses, A→B→A, project/Settings remounts, serialized polls, revision changes and independent project/source locks.
+Success/error cleanup is checked while the original workspace is absent. It uses native stored sources and intercepts
+model and held replacement POSTs before dispatch. Lost, malformed and mismatched replies are also tested after actual
+native replacement acceptance: an explicit repeat adds no revision, while a confirmed new action does. Stored turns
+remain empty and native conversion calls stay zero; this proves view ownership and storage replay, not model semantics.
+Checked against pinned React 19.3 and official
+[effect cleanup](https://react.dev/reference/react/useEffect) and
+[AbortController](https://developer.mozilla.org/en-US/docs/Web/API/AbortController) contracts.
 
 ## 14. Lifecycle and export
 
@@ -879,6 +1519,41 @@ Detach removes membership only. Archive hides a source from new selection. Delet
 marks deleted immediately, then removes R2/search objects synchronously or in daily cleanup. Deleted evidence stays
 identified and citations never retarget. Replacement/deletion marks pages stale from full revision IDs. Export streams
 a ZIP of originals, `text.md`, claims, pages/citations and a checksum manifest.
+
+### K10 local legacy preparation
+
+`pnpm legacy:export --database /private/core.sqlite --objects /private/r2 --output /private/export` reads a
+completed, offline SQLite snapshot through `node:sqlite` with `readOnly: true`; it makes no HTTP, Cloudflare, model or
+shell call. Supply a closed/checkpointed SQLite backup, not a live database or SQL dump. Object files must already be
+materialized below the supplied directory using their exact R2 keys. Obtaining production snapshots is a separate,
+authorised operation. Use a private directory outside the checkout; the export contains private document bytes and
+metadata and must not be committed or uploaded implicitly.
+
+The CLI preserves projects, sources, all membership rows and revision metadata from one SQLite read transaction.
+Only `LIVE` revisions have bodies exported. The complete pinned strict legacy manifest schema is validated,
+including required original metadata (not proof of original bytes), optional fields and ownership-cutover rules.
+It binds the manifest to the source namespace/owner/generation, source
+and immutable revision/view identities, hashes its exact bytes, and derives its canonical manifest key. Each object's
+residency digest contains that object's own checksum: `content.md` is **not** a sibling of `manifest.json`. It separately
+checks the content residency digest against D1, derives the content key, verifies the content checksum against both
+D1 and manifest, and checks UTF-8 without changing bytes. The exact legacy manifest is retained beside `text.md`.
+Manifest reads are capped at 512 KiB; content and any recorded original at 25 MiB each, processed one revision at a time.
+Missing objects, malformed UTF-8, identity/checksum mismatches, symlink/non-regular paths and broken metadata references fail closed. Nonblocking object opens also prevent FIFO
+replacement from hanging the verifier.
+
+An empty/null `original_r2_key` produces `original_status: not_recorded` and no original file, even when the manifest
+names an original or records its digest. This says nothing about originals elsewhere. A recorded original reference
+must resolve and match `source.original_sha256` before `original_status: verified` is emitted. Non-LIVE bodies, ancillary
+normalized files, artifact/wiki revisions, research outputs, credentials and grants are not copied. This is preparation
+for K10, not a complete backup or import into the replacement. No D1 migration or production state changes are involved.
+
+The output must be a new directory separate from the inputs, with an existing parent. Files use private permissions
+where supported. Each exported file has its original key, byte count and SHA-256 in `export.json`; stdout prints counts
+and the report checksum. `export.json` is atomically renamed into place last and is the completion marker. On failure the command exits 1;
+a partial directory can remain and must not be treated as an export. Rerun into a new directory, never overwrite inputs
+or a previous export. The report explicitly says `local_snapshot_only`: it cannot prove live R2 metadata, current
+production completeness, or a coherent production capture. `pnpm test` exercises the CLI and synthetic snapshot,
+including the 8/15/17 shape, non-LIVE exclusion, exact bytes, missing originals and corruption; no production data is used.
 
 ## 15. Platform facts and open checks
 

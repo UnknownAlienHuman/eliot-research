@@ -7,6 +7,7 @@ import { isCitableBlock } from "./blocks";
 import type { Citation, LabelSource } from "./citations";
 import { resolveCitations } from "./citations";
 import { readOutline, readText } from "./read";
+import { PAGE_FRESHNESS_SQL } from "./pages";
 
 export const PROPOSAL_KINDS = ["note", "answer", "report", "wiki"] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
@@ -347,8 +348,8 @@ export async function decideProposal(
       "UPDATE page_revision SET status='accepted' WHERE id=? AND status='proposed' AND base_revision_id IS ? AND EXISTS (SELECT 1 FROM page p WHERE p.id=page_revision.page_id AND p.project_id=? AND p.head_revision_id IS ?)",
     ).bind(input.revisionId, input.expectedHeadRevisionId, input.projectId, input.expectedHeadRevisionId),
     env.DB.prepare(
-      "UPDATE page SET head_revision_id=?,updated_at=? WHERE id=? AND project_id=? AND head_revision_id IS ? AND EXISTS (SELECT 1 FROM page_revision r WHERE r.id=? AND r.page_id=page.id AND r.status='accepted' AND r.base_revision_id IS ?)",
-    ).bind(input.revisionId, now, stored.pageId, input.projectId, input.expectedHeadRevisionId, input.revisionId, input.expectedHeadRevisionId),
+      `UPDATE page SET head_revision_id=?,freshness=(${PAGE_FRESHNESS_SQL}),updated_at=? WHERE id=? AND project_id=? AND head_revision_id IS ? AND EXISTS (SELECT 1 FROM page_revision r WHERE r.id=? AND r.page_id=page.id AND r.status='accepted' AND r.base_revision_id IS ?)`,
+    ).bind(input.revisionId, input.revisionId, now, stored.pageId, input.projectId, input.expectedHeadRevisionId, input.revisionId, input.expectedHeadRevisionId),
   ]);
   const acceptChanges = acceptBatch.map((result) => result.meta.changes);
   if (acceptChanges[0] === 1 && acceptChanges[1] === 1) {

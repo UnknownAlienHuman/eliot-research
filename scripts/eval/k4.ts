@@ -25,6 +25,8 @@ const outDir = fileURLToPath(new URL("../../eval/out/k4/", import.meta.url));
 const now = new Date();
 const runId = now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
 const localMiniflareMode = process.argv.includes("--signed-agent-miniflare");
+const productionBuild = process.argv.includes("--production-build");
+assert(!productionBuild || localMiniflareMode, "--production-build requires the isolated --signed-agent-miniflare runtime.");
 const serveSignedAgentMode = process.argv.includes("--serve-signed-agent");
 
 type LocalMcpRuntime = {
@@ -32,6 +34,7 @@ type LocalMcpRuntime = {
   uiOrigin: string;
   agentHeaders: Record<string, string>;
   ownerHeaders: Record<string, string>;
+  audienceChecks: { uiOwnerOnMcp: number; mcpOwnerOnUi: number; uiAgentOnUi: number };
   expiresAt: string;
   fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   dispose: () => Promise<void>;
@@ -48,9 +51,24 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
     "Serve origins must be http://127.0.0.1:<positive-port> and http://localhost:<same-port> without a path, query or fragment.");
   }
   const root = fileURLToPath(new URL("../../", import.meta.url));
-  const workerDir = path.join(root, "dist", "eliot_research");
+  const redirect = JSON.parse(await readFile(path.join(root, ".wrangler", "deploy", "config.json"), "utf8"));
+  const workerDir = path.dirname(path.resolve(root, ".wrangler", "deploy", redirect.configPath));
   const config = JSON.parse(await readFile(path.join(workerDir, "wrangler.json"), "utf8"));
-  assert.equal(config.name, "eliot-research"); assert.equal(config.main, "index.js");
+  assert.equal(config.name, productionBuild ? "eliotr-core" : "eliot-research"); assert.equal(config.main, "index.js");
+  const chatClass = productionBuild ? "ResearchSession" : "ChatAgent";
+  assert.deepEqual(config.durable_objects.bindings, [{ name: "CHAT", class_name: chatClass }]);
+  if (productionBuild) {
+    assert.deepEqual(config.exports, { ResearchSession: { type: "durable-object", storage: "sqlite" } });
+    assert.deepEqual(config.migrations, []);
+    assert.equal(config.assets.binding, "ASSETS");
+    assert.equal(config.assets.not_found_handling, "single-page-application");
+    assert.equal(config.assets.run_worker_first, true);
+    assert.deepEqual(config.triggers.crons, ["*/5 * * * *"]);
+    assert.deepEqual(config.queues, { producers: [], consumers: [] });
+    assert.equal(config.d1_databases[0].database_name, "eliot-research-library");
+    assert.equal(config.r2_buckets[0].bucket_name, "eliot-research-library");
+    assert.equal(config.vars.ELIOT_LOCAL_DEV, "0");
+  }
   const migrationConfig = config.d1_databases?.find((entry: any) => entry.binding === "DB");
   assert(migrationConfig && typeof migrationConfig.migrations_dir === "string");
   const migrationsDir = path.resolve(workerDir, migrationConfig.migrations_dir);
@@ -66,13 +84,15 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
   const kid = "k4-" + randomUUID();
   const jwk = { ...await exportJWK(publicKey), kid, alg: "RS256", use: "sig", key_ops: ["verify"] };
   const team = "k4-" + randomUUID().replaceAll("-", "").slice(0, 20) + ".cloudflareaccess.com";
-  const issuer = "https://" + team, audience = "k4-test-" + randomUUID(), ownerEmail = "k4-owner@example.test";
+  const issuer = "https://" + team, audience = "k4-test-" + randomUUID(), mcpAudience = "k4-mcp-" + randomUUID(), ownerEmail = "k4-owner@example.test";
   const expiresAt = Math.floor(Date.now() / 1000) + (serveSignedAgentMode ? 1800 : 300);
-  const sign = (claims: Record<string, unknown>) => new SignJWT({ type: "app", ...claims })
-    .setProtectedHeader({ alg: "RS256", kid, typ: "JWT" }).setIssuer(issuer).setAudience(audience)
+  const sign = (claims: Record<string, unknown>, aud = audience) => new SignJWT({ type: "app", ...claims })
+    .setProtectedHeader({ alg: "RS256", kid, typ: "JWT" }).setIssuer(issuer).setAudience(aud)
     .setIssuedAt().setExpirationTime(serveSignedAgentMode ? expiresAt : "5m").sign(privateKey);
-  const [agentJwt, ownerJwt] = await Promise.all([
-    sign({ sub: "", common_name: "k4-test-agent" }), sign({ sub: "k4-test-owner", email: ownerEmail }),
+  const [agentJwt, ownerJwt, mcpOwnerJwt, uiAgentJwt] = await Promise.all([
+    sign({ sub: "", common_name: "k4-test-agent" }, mcpAudience), sign({ sub: "k4-test-owner", email: ownerEmail }),
+    sign({ sub: "k4-test-owner", email: ownerEmail }, mcpAudience),
+    sign({ sub: "", common_name: "k4-test-agent" }),
   ]);
   const jwksUrl = issuer + "/cdn-cgi/access/certs", jwksBody = JSON.stringify({ keys: [jwk] });
   const egressScript = `const expected=${JSON.stringify(jwksUrl)},body=${JSON.stringify(jwksBody)};` +
@@ -103,11 +123,11 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
         compatibilityDate: config.compatibility_date, compatibilityFlags: config.compatibility_flags,
         outboundService: { name: "k4-test-jwks-egress" },
         d1Databases: { DB: tag + "-db" }, r2Buckets: { BUCKET: tag + "-r2" },
-        durableObjects: { CHAT: { className: "ChatAgent", useSQLite: true } }, workflows,
+        durableObjects: { CHAT: { className: chatClass, useSQLite: true } }, workflows,
         assets: { directory: path.resolve(workerDir, config.assets.directory), binding: "ASSETS",
           routerConfig: { has_user_worker: true }, assetConfig: { not_found_handling: config.assets.not_found_handling } },
         bindings: { ...config.vars, ELIOT_LOCAL_DEV: "0", ELIOT_ACCESS_TEAM_DOMAIN: team,
-          ELIOT_ACCESS_AUD: audience, ELIOT_OWNER_EMAIL: ownerEmail, ELIOT_OWNER_SERVICE_TOKEN: "",
+          ELIOT_ACCESS_AUD: audience, ELIOT_MCP_ACCESS_AUD: mcpAudience, ELIOT_OWNER_EMAIL: ownerEmail, ELIOT_OWNER_SERVICE_TOKEN: "",
           ELIOT_ORIGIN: uiOrigin, ELIOT_MCP_ORIGIN: mcpOrigin, ELIOT_CF_ACCOUNT_ID: "" },
       },
       { name: "k4-test-jwks-egress", modules: true, script: egressScript },
@@ -117,6 +137,20 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
   const mf = new Miniflare(options);
   try {
     await mf.ready;
+    const audienceChecks = { uiOwnerOnMcp: 0, mcpOwnerOnUi: 0, uiAgentOnUi: 0 };
+    for (const [name, url, jwt] of [
+      ["uiOwnerOnMcp", new URL("/mcp", mcpOrigin), ownerJwt],
+      ["mcpOwnerOnUi", new URL("/api/me", uiOrigin), mcpOwnerJwt],
+    ] as const) {
+      const response = await mf.dispatchFetch(url, { headers: { "cf-access-jwt-assertion": jwt } });
+      audienceChecks[name] = response.status;
+      assert.equal(response.status, 403, `${name}: another Access application's owner JWT must be rejected.`);
+      assert((await response.text()).includes("This sign-in session is invalid."), `${name}: reject the audience before actor or MCP protocol handling.`);
+    }
+    const uiAgentResponse = await mf.dispatchFetch(new URL("/api/me", uiOrigin), { headers: { "cf-access-jwt-assertion": uiAgentJwt } });
+    audienceChecks.uiAgentOnUi = uiAgentResponse.status;
+    assert.equal(uiAgentResponse.status, 403, "A valid UI-audience agent must still be denied owner APIs.");
+    assert((await uiAgentResponse.text()).includes("This account is not the Eliot owner."), "The role gate must reject an agent even after UI audience verification.");
     const db = await mf.getD1Database("DB", "eliot-k4-test");
     for (const file of migrationFiles) {
       const sql = await readFile(path.join(migrationsDir, file), "utf8");
@@ -124,7 +158,7 @@ async function startLocalMcpRuntime(): Promise<LocalMcpRuntime> {
       catch (error) { throw new Error("Miniflare D1 migration " + file + " failed: " + (error instanceof Error ? error.message : String(error)), { cause: error }); }
     }
     return {
-      mcpOrigin, uiOrigin, expiresAt: new Date(expiresAt * 1000).toISOString(),
+      mcpOrigin, uiOrigin, audienceChecks, expiresAt: new Date(expiresAt * 1000).toISOString(),
       agentHeaders: { "cf-access-jwt-assertion": agentJwt },
       ownerHeaders: { "cf-access-jwt-assertion": ownerJwt },
       fetch: (input, init) => mf.dispatchFetch(input, init),
@@ -449,6 +483,35 @@ async function seedLocalSignedProject(): Promise<{ projectId: string; projectTit
   const created = await apiJson("/api/projects", "POST", { title: projectTitle, description: "Ephemeral local signed-MCP transport fixture." }, localRuntime.ownerHeaders);
   const projectId = created.project?.id;
   assert(UUID_RE.test(projectId), "Local owner JWT did not create the transport project.");
+  if (productionBuild) {
+    const shell = await localRuntime.fetch(new URL("/", localRuntime.uiOrigin), { headers: localRuntime.ownerHeaders });
+    assert.equal(shell.status, 200, "The production entrypoint must serve the built owner UI.");
+    assert.match(shell.headers.get("content-type") ?? "", /text\/html/u);
+    const html = await shell.text();
+    assert(html.includes("<title>Eliot Research</title>"));
+    const script = html.match(/<script[^>]+src="([^"]+)"/u)?.[1];
+    assert(script?.startsWith("/assets/"), "The production UI must reference a built static asset.");
+    const asset = await localRuntime.fetch(new URL(script, localRuntime.uiOrigin), { headers: localRuntime.ownerHeaders });
+    assert.equal(asset.status, 200, "The production asset binding must serve the built UI module.");
+    assert.match(asset.headers.get("content-type") ?? "", /javascript/u);
+    await asset.body?.cancel();
+    const chat = await apiJson(`/api/projects/${projectId}/chats`, "POST", { title: "Production alias probe" }, localRuntime.ownerHeaders);
+    const chatId = chat.chat?.id;
+    assert(UUID_RE.test(chatId));
+    const snapshot = await apiJson(`/api/projects/${projectId}/chats/${chatId}`, "GET", undefined, localRuntime.ownerHeaders);
+    assert.equal(snapshot.chat.id, chatId, "The existing export alias must support ChatAgent RPC.");
+    const url = new URL(`/agents/chat-agent/${chatId}?projectId=${projectId}`, localRuntime.uiOrigin);
+    const wrongOrigin = await localRuntime.fetch(url, { headers: { ...localRuntime.ownerHeaders, Upgrade: "websocket", Origin: "https://wrong.example" } });
+    assert.equal(wrongOrigin.status, 403);
+    await wrongOrigin.body?.cancel();
+    const connected: any = await localRuntime.fetch(url, { headers: { ...localRuntime.ownerHeaders, Upgrade: "websocket", Origin: localRuntime.uiOrigin } });
+    assert.equal(connected.status, 101, "The signed owner must open the existing logical chat route through the export alias.");
+    assert(connected.webSocket);
+    connected.webSocket.accept();
+    connected.webSocket.close(1000, "Alias probe complete");
+    report.productionBuildProbe = { worker: "eliotr-core", durableObjectExport: "ResearchSession",
+      ownerHtml: 200, ownerModule: 200, rpcSnapshot: "PASS", signedOwnerWebSocket: 101, forgedOriginWebSocket: 403, modelCalls: 0 };
+  }
   const seedText = buildSeedText(runId), seedBytes = encoder.encode(seedText).byteLength;
   const added = await apiJson("/api/projects/" + projectId + "/sources/text", "POST", { title: "K4 authored transport source " + runId, text: seedText }, localRuntime.ownerHeaders);
   const sourceId = added.sourceId, revisionId = added.revisionId;
@@ -1131,6 +1194,7 @@ async function runSignedAgent(): Promise<void> {
   let outlineMinimumRetry: { advertisedTokens: number; firstBlockId: number; nextCursor: number } | null = null;
   let multiBlockRead: { sourceBytes: number; segments: number; labeledSegments: number } | null = null;
   if (localRuntime) {
+    report.accessAudienceProbe = localRuntime.audienceChecks;
     const forgedOrigin = await localRuntime.fetch(new URL("/mcp", localRuntime.uiOrigin), {
       method: "POST",
       headers: {
@@ -1334,6 +1398,8 @@ function markdown(): string {
     `- MCP origin: ${report.endpoint.origin}`,
     `- Mode: ${report.mode}; signed-agent=${report.signedAgent.status}; owner-simulation=${report.ownerSimulation.status}`,
     `- Signed-agent boundary: API=${report.signedAgent.apiDeniedStatus ?? "NOT_RUN"}; decision=${report.signedAgent.proposalDecisionDeniedStatus ?? "NOT_RUN"}; propose_page HTTP=${report.signedAgent.proposePageHttpStatus ?? "NOT_RUN"}; reason=${report.signedAgent.reason ?? "none"}`,
+    `- Access audience/role probes: UI owner on MCP=${report.accessAudienceProbe?.uiOwnerOnMcp ?? "NOT_RUN"}; MCP owner on UI=${report.accessAudienceProbe?.mcpOwnerOnUi ?? "NOT_RUN"}; UI-audience agent on UI=${report.accessAudienceProbe?.uiAgentOnUi ?? "NOT_RUN"}`,
+    `- Existing Worker build alias: ${report.productionBuildProbe ? JSON.stringify(report.productionBuildProbe) : "NOT_RUN (default local build)"}`,
     `- Search cursor parse: guide=${report.cursorParsing?.guidePrefixAccepted ?? false}; claim=${report.cursorParsing?.claimPrefixAccepted ?? false}; UUID entity cursors unchanged=${report.cursorParsing?.otherUuidCursorUnchanged ?? false}`,
     `- Client: ${report.client.package} ${report.client.version} with ${report.client.transport}; SDK protocol defaults` ,
     `- Scope: LOCAL_REAL_MCP_PROTOCOL=${report.scope.LOCAL_REAL_MCP_PROTOCOL}; LIVE_ACCESS_NOT_RUN=${report.scope.LIVE_ACCESS_NOT_RUN}`,

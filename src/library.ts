@@ -1,5 +1,7 @@
 import type { Actor } from "./auth";
+import { z } from "zod";
 import type { Project, Revision, Source } from "./shared/api";
+import { recoverIngest, STATUS_UNAVAILABLE, STORAGE_FAILURE } from "./ingest-completion";
 
 export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 type Duplicate = { sourceId: string; title: string; revisionId: string };
@@ -23,22 +25,25 @@ export async function getProject(env: Env, _actor: Actor, id: string): Promise<P
   if (!project) throw new LibraryError("not_found", "Project not found.", 404);
   return project;
 }
-export async function listProjects(env: Env, _actor: Actor, cursor: string | undefined) {
-  const result = await env.DB.prepare(`SELECT ${PROJECT_FIELDS} FROM project WHERE archived_at IS NULL
+export async function listProjects(env: Env, _actor: Actor, cursor: string | undefined, archived = false) {
+  const result = await env.DB.prepare(`SELECT ${PROJECT_FIELDS} FROM project WHERE archived_at IS ${archived ? "NOT NULL" : "NULL"}
     AND (? IS NULL OR (created_at,id)<(SELECT created_at,id FROM project WHERE id=?))
     ORDER BY created_at DESC,id DESC LIMIT 51`).bind(cursor ?? null, cursor ?? null).all<Project>();
   return { projects: result.results.slice(0, 50), nextCursor: result.results.length > 50 ? result.results[49]?.id : null };
 }
-export async function createProject(env: Env, actor: Actor, input: { title: string; description?: string }) {
-  const id = crypto.randomUUID(), now = Date.now();
-  await env.DB.prepare("INSERT INTO project(id,title,description,created_at,updated_at) VALUES(?,?,?,?,?)")
+export async function createProject(env: Env, actor: Actor, input: { id?: string; title: string; description?: string }) {
+  const id = input.id ?? crypto.randomUUID(), now = Date.now();
+  await env.DB.prepare("INSERT INTO project(id,title,description,created_at,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING")
     .bind(id, input.title, input.description ?? "", now, now).run();
-  return getProject(env, actor, id);
+  const stored = await getProject(env, actor, id);
+  if (stored.title !== input.title || stored.description !== (input.description ?? "") || stored.archivedAt !== null)
+    throw new LibraryError("conflict", "This project ID cannot be reused with these inputs.", 409);
+  return stored;
 }
 export async function updateProject(env: Env, actor: Actor, id: string, input: { title?: string; archived?: boolean }) {
-  const project = await getProject(env, actor, id);
-  await env.DB.prepare("UPDATE project SET title=?,archived_at=?,updated_at=? WHERE id=?")
-    .bind(input.title ?? project.title, input.archived === undefined ? project.archivedAt : input.archived ? Date.now() : null, Date.now(), id).run();
+  await getProject(env, actor, id);
+  await env.DB.prepare("UPDATE project SET title=coalesce(?,title),archived_at=CASE WHEN ? IS NULL THEN archived_at ELSE ? END,updated_at=? WHERE id=?")
+    .bind(input.title ?? null, input.archived === undefined ? null : Number(input.archived), input.archived ? Date.now() : null, Date.now(), id).run();
   return getProject(env, actor, id);
 }
 export async function listSources(env: Env, actor: Actor, projectId: string, cursor: string | undefined) {
@@ -48,6 +53,23 @@ export async function listSources(env: Env, actor: Actor, projectId: string, cur
     AND (? IS NULL OR (s.created_at,s.id)<(SELECT created_at,id FROM source WHERE id=?))
     ORDER BY s.created_at DESC,s.id DESC LIMIT 51`).bind(projectId, cursor ?? null, cursor ?? null).all<Source>();
   return { sources: result.results.slice(0, 50).map((source) => ({ ...source, enabled: Boolean(source.enabled) })), nextCursor: result.results.length > 50 ? result.results[49]?.id : null };
+}
+export async function availableSources(env: Env, actor: Actor, projectId: string, cursor: string | undefined) {
+  await getProject(env, actor, projectId);
+  let before: [string, number, string] | undefined;
+  if (cursor !== undefined) {
+    try {
+      if (cursor.length > 512) throw new Error("cursor");
+      before = z.tuple([z.literal(projectId), z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), z.uuid()]).parse(JSON.parse(cursor));
+    } catch { throw new LibraryError("invalid", "This Library cursor is invalid. Refresh the Library.", 400); }
+  }
+  const result = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION}
+    WHERE s.state='active' AND NOT EXISTS(SELECT 1 FROM project_source ps WHERE ps.project_id=? AND ps.source_id=s.id)
+    ${before ? "AND (s.created_at,s.id)<(?,?)" : ""}
+    ORDER BY s.created_at DESC,s.id DESC LIMIT 51`)
+    .bind(projectId, ...(before ? [before[1], before[2]] : [])).all<Source>();
+  const sources = result.results.slice(0, 50), last = sources.at(-1);
+  return { sources, nextCursor: result.results.length > 50 && last ? JSON.stringify([projectId, last.createdAt, last.id]) : null };
 }
 export async function setProjectScope(env: Env, actor: Actor, input: { projectId: string; sourceIds: string[] }) {
   await getProject(env, actor, input.projectId);
@@ -59,9 +81,29 @@ export async function setProjectScope(env: Env, actor: Actor, input: { projectId
   return { sourceIds: input.sourceIds };
 }
 export async function getSource(env: Env, _actor: Actor, id: string, requestedRevisionId?: string) {
-  const source = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION} WHERE s.id=? AND s.state!='deleted'`)
+  let source = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION} WHERE s.id=? AND s.state!='deleted'`)
     .bind(id).first<Source>();
   if (!source) throw new LibraryError("not_found", "Source not found.", 404);
+  let target: Pick<Source, "revisionId" | "readableState" | "error"> = source;
+  if (requestedRevisionId && requestedRevisionId !== source.revisionId) {
+    const selected = await env.DB.prepare("SELECT id AS revisionId,readable_state AS readableState,error FROM source_revision WHERE id=? AND source_id=? AND deleted_at IS NULL")
+      .bind(requestedRevisionId, id).first<typeof target>();
+    if (!selected) throw new LibraryError("not_found", "This revision does not belong to this source.", 404);
+    target = selected;
+  }
+  let completionError: string | null = null;
+  const unpublished = ["readable", "readable_with_warnings"].includes(target.readableState) && source.currentRevisionId !== target.revisionId
+    && await env.DB.prepare(`SELECT 1 FROM source_revision r WHERE r.id=? AND r.source_id=? AND r.deleted_at IS NULL
+      AND NOT EXISTS(SELECT 1 FROM source_revision newer WHERE newer.source_id=r.source_id AND newer.revision_no>r.revision_no
+        AND newer.deleted_at IS NULL AND newer.readable_state IN ('readable','readable_with_warnings'))`)
+      .bind(target.revisionId, id).first();
+  if (target.readableState === "pending" || target.error === STORAGE_FAILURE ||
+    unpublished) {
+    completionError = await recoverIngest(env, target.revisionId);
+    source = await env.DB.prepare(`SELECT ${SOURCE_FIELDS} FROM source s ${LATEST_REVISION} WHERE s.id=? AND s.state!='deleted'`).bind(id).first<Source>();
+    if (!source) throw new LibraryError("not_found", "Source not found.", 404);
+    if (completionError && target.revisionId === source.revisionId) source = { ...source, error: completionError };
+  }
   const fields = "id,revision_no AS revisionNo,readable_state AS readableState,created_at AS createdAt,converter,conversion_tokens AS conversionTokens,conversion_calls AS conversionCalls,conversion_ms AS conversionMs,warning_summary AS warningSummary,error,original_mime AS originalMime,original_sha256 AS originalSha256,original_size AS originalSize";
   const revisions = await env.DB.prepare(`SELECT ${fields} FROM source_revision WHERE source_id=? AND deleted_at IS NULL ORDER BY revision_no DESC LIMIT 50`)
     .bind(id).all<Revision>();
@@ -72,7 +114,8 @@ export async function getSource(env: Env, _actor: Actor, id: string, requestedRe
     if (!selected) throw new LibraryError("not_found", "This revision does not belong to this source.", 404);
     revisions.results.push(selected);
   }
-  return { source, revisions: revisions.results };
+  return { source, revisions: revisions.results.map((revision) => revision.id === target.revisionId && completionError
+    ? { ...revision, error: completionError } : revision) };
 }
 export async function attachSource(env: Env, actor: Actor, projectId: string, sourceId: string) {
   await getProject(env, actor, projectId);
@@ -92,19 +135,23 @@ export interface NewSource {
   mimeType: string;
   url?: string;
   sourceId?: string;
+  revisionId?: string;
+}
+interface CapturedRevision {
+  source_id: string; original_key: string | null; original_sha256: string | null; original_size: number | null;
+  original_filename: string | null; original_mime: string | null; deleted_at: number | null; source_state: string;
 }
 export async function addSource(env: Env, actor: Actor, projectId: string, input: NewSource) {
   await getProject(env, actor, projectId);
+  if (input.revisionId !== undefined && (!input.sourceId || input.kind !== "file" || !z.uuid().safeParse(input.revisionId).success))
+    throw new LibraryError("invalid", "A replacement revision UUID requires one file and an attached source.", 400);
   if (!input.bytes.byteLength || input.bytes.byteLength > MAX_SOURCE_BYTES) {
     throw new LibraryError("invalid", "Choose a non-empty source of at most 25 MiB.", 413);
   }
   const digest = await crypto.subtle.digest("SHA-256", input.bytes);
   const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  const duplicate = await env.DB.prepare(`SELECT s.id AS sourceId,s.title,r.id AS revisionId FROM source_revision r
-    JOIN source s ON s.id=r.source_id WHERE r.original_sha256=? AND r.deleted_at IS NULL AND s.state!='deleted' LIMIT 1`)
-    .bind(hash).first<Duplicate>();
-  if (duplicate && duplicate.sourceId !== input.sourceId) throw new LibraryError("conflict", "This exact source is already in the Library. Attach it to this project.", 409, duplicate);
-  const sourceId = input.sourceId ?? crypto.randomUUID(), revisionId = crypto.randomUUID(), now = Date.now();
+  const sourceId = input.sourceId ?? crypto.randomUUID();
+  const revisionId = input.revisionId ?? crypto.randomUUID(), now = Date.now();
   let revisionNo = 1;
   if (input.sourceId) {
     const existing = await env.DB.prepare(`SELECT MAX(r.revision_no) AS revisionNo FROM project_source ps
@@ -113,27 +160,57 @@ export async function addSource(env: Env, actor: Actor, projectId: string, input
     if (existing?.revisionNo == null) throw new LibraryError("not_found", "Attach this source before replacing it.", 404);
     revisionNo = existing.revisionNo + 1;
   }
-  const originalKey = `source/${revisionId}/original`;
-  await env.BUCKET.put(originalKey, input.bytes, { httpMetadata: { contentType: input.mimeType } });
+  const receipt = { sourceId, revisionId, state: "pending" as const };
+  const prefix = `source/${revisionId}/original-`;
+  const captured = () => env.DB.prepare(`SELECT r.source_id,r.original_key,r.original_sha256,r.original_size,r.original_filename,r.original_mime,r.deleted_at,s.state AS source_state
+    FROM source_revision r JOIN source s ON s.id=r.source_id WHERE r.id=?`).bind(revisionId).first<CapturedRevision>();
+  const matches = (row: CapturedRevision) => row.source_id === sourceId && row.original_sha256 === hash && row.original_size === input.bytes.byteLength
+    && row.original_filename === input.filename && row.original_mime === input.mimeType && row.deleted_at === null && row.source_state !== "deleted"
+    && row.original_key?.startsWith(prefix) && z.uuid().safeParse(row.original_key.slice(prefix.length)).success;
+  const collision = () => new LibraryError("conflict", "This revision ID already identifies a different file replacement.", 409);
+  if (input.revisionId) {
+    const prior = await captured();
+    if (prior) { if (!matches(prior)) throw collision(); return receipt; }
+  }
+  const duplicate = await env.DB.prepare(`SELECT s.id AS sourceId,s.title,r.id AS revisionId FROM source_revision r
+    JOIN source s ON s.id=r.source_id WHERE r.original_sha256=? AND r.deleted_at IS NULL AND s.state!='deleted' AND s.id!=? LIMIT 1`)
+    .bind(hash, sourceId).first<Duplicate>();
+  if (duplicate) throw new LibraryError("conflict", "This exact source is already in the Library. Attach it to this project.", 409, duplicate);
+  // Caller IDs can race. Each attempt owns a separate key; the immutable D1
+  // original_key identifies the winner even when the batch acknowledgement is lost.
+  const originalKey = input.revisionId ? prefix + crypto.randomUUID() : `source/${revisionId}/original`;
+  const stored = await env.BUCKET.put(originalKey, input.bytes, { ...(input.revisionId ? { onlyIf: { etagDoesNotMatch: "*" } } : {}),
+    httpMetadata: { contentType: input.mimeType } });
+  if (!stored) throw new LibraryError("conflict", "The original could not be saved without replacing an existing file. Select the file again.", 409);
   const statements: D1PreparedStatement[] = [];
   if (!input.sourceId) statements.push(env.DB.prepare(`INSERT INTO source(id,title,kind,origin_url,created_by,created_at,updated_at)
     SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM source_revision r JOIN source s ON s.id=r.source_id
     WHERE r.original_sha256=? AND r.deleted_at IS NULL AND s.state!='deleted')`)
     .bind(sourceId, input.title, input.kind, input.url ?? null, actor.type, now, now, hash));
   statements.push(env.DB.prepare(`INSERT INTO source_revision(id,source_id,revision_no,original_key,original_sha256,original_size,
-    original_filename,original_mime,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`)
-    .bind(revisionId, sourceId, revisionNo, originalKey, hash, input.bytes.byteLength, input.filename, input.mimeType, actor.type, now));
+    original_filename,original_mime,created_by,created_at) SELECT ?,?,?,?,?,?,?,?,?,?
+    WHERE NOT EXISTS(SELECT 1 FROM source_revision r JOIN source s ON s.id=r.source_id
+      WHERE r.original_sha256=? AND r.deleted_at IS NULL AND s.state!='deleted' AND s.id!=?)`)
+    .bind(revisionId, sourceId, revisionNo, originalKey, hash, input.bytes.byteLength, input.filename, input.mimeType, actor.type, now, hash, sourceId));
   if (!input.sourceId) statements.push(env.DB.prepare("INSERT INTO project_source(project_id,source_id,added_by,added_at) VALUES(?,?,?,?)")
     .bind(projectId, sourceId, actor.type, now));
-  try { await env.DB.batch(statements); }
+  try {
+    const saved = await env.DB.batch(statements);
+    if (!saved[input.sourceId ? 0 : 1]?.meta.changes) throw new Error("Source revision was not inserted.");
+  }
   catch (error) {
-    const inserted = await env.DB.prepare("SELECT id FROM source_revision WHERE id=?").bind(revisionId).first();
+    const inserted = await captured();
+    if (input.revisionId && inserted) {
+      if (inserted.original_key !== originalKey) await env.BUCKET.delete(originalKey).catch(() => undefined);
+      if (!matches(inserted)) throw collision();
+      if (inserted.original_key !== originalKey) return receipt; // Adopt the winner; never start its Workflow again.
+    }
     if (!inserted) {
       // This request owns the immutable key and no D1 revision points to it.
       await env.BUCKET.delete(originalKey).catch(() => undefined);
       const raced = await env.DB.prepare(`SELECT s.id AS sourceId,s.title,r.id AS revisionId FROM source_revision r
-        JOIN source s ON s.id=r.source_id WHERE r.original_sha256=? AND r.deleted_at IS NULL LIMIT 1`).bind(hash).first<Duplicate>();
-      if (raced && raced.sourceId !== input.sourceId) throw new LibraryError("conflict", "This exact source was just added to the Library. Attach it.", 409, raced);
+        JOIN source s ON s.id=r.source_id WHERE r.original_sha256=? AND r.deleted_at IS NULL AND s.state!='deleted' AND s.id!=? LIMIT 1`).bind(hash, sourceId).first<Duplicate>();
+      if (raced) throw new LibraryError("conflict", "This exact source was just added to the Library. Attach it.", 409, raced);
       if (input.sourceId) throw new LibraryError("conflict", "The source changed while replacing it. Reload and try again.", 409);
       throw error;
     }
@@ -144,10 +221,10 @@ export async function addSource(env: Env, actor: Actor, projectId: string, input
       const instance = await env.INGEST.get(`ingest-${revisionId}`);
       await instance.status();
       return { sourceId, revisionId, state: "pending" as const };
-    } catch { /* The original and failed revision remain available to the owner. */ }
-    await env.DB.prepare("UPDATE source_revision SET readable_state='failed',error=? WHERE id=?")
-      .bind("Conversion could not start. The original is saved; replace it to retry deliberately.", revisionId).run();
-    throw new LibraryError("unavailable", "The original is saved, but conversion could not start. Open the source for details.", 503);
+    } catch { /* Create may have committed even when both acknowledgements are unavailable. */ }
+    await env.DB.prepare("UPDATE source_revision SET error=? WHERE id=? AND readable_state='pending'")
+      .bind(STATUS_UNAVAILABLE, revisionId).run();
+    return { sourceId, revisionId, state: "pending" as const };
   }
   return { sourceId, revisionId, state: "pending" as const };
 }

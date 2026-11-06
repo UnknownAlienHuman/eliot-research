@@ -2,7 +2,7 @@ import { AuthError, type Actor } from "./auth";
 import { LibraryError } from "./library";
 import { scanBlocks } from "./blocks";
 import { readableTextWarning } from "./ingest";
-import { requireAvailableModel, modelTokenLimit, type ModelSpec } from "./models";
+import { requireAvailableModel, modelTokenReservation, type ModelSpec } from "./models";
 import { assertProviderAllowance } from "./model-quota";
 import { OCR_LIMITS, ocrOutputLimit, type OcrJobView, type OcrState } from "./shared/api";
 
@@ -101,7 +101,7 @@ export async function createOcrJob(env: Env, actor: Actor, input: OcrScope & {
   if (new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-" || await ocrHash(bytes) !== base.original_sha256)
     throw conflict("The stored original PDF checksum does not match.");
   const model = imageModel(await requireAvailableModel(env, input.model)), now = Date.now();
-  const bound = input.pageCount * modelTokenLimit(model);
+  const bound = input.pageCount * modelTokenReservation(model);
   if (!Number.isSafeInteger(bound)) throw invalid("OCR token bound is too large.");
   await env.DB.prepare("INSERT INTO source_ocr_job(id,project_id,source_id,base_revision_id,base_current_revision_id,model_route,model_snapshot,page_count,token_limit,created_by,created_at,updated_at) " +
     "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING")
@@ -165,7 +165,7 @@ export async function startOcrJob(env: Env, actor: Actor, scope: OcrScope): Prom
   const model = imageModel(await requireAvailableModel(env, job.model_route));
   await assertProviderAllowance(env, model);
   if (!env.OCR) throw new LibraryError("unavailable", "PDF OCR workflow is not configured.", 503);
-  const now = Date.now(), bound = job.page_count * modelTokenLimit(model);
+  const now = Date.now(), bound = job.page_count * modelTokenReservation(model);
   await env.DB.prepare("UPDATE source_ocr_job SET state='failed',error='OCR deadline elapsed; no continuation was started.',finished_at=?,updated_at=? " +
     "WHERE state IN ('queued','running') AND deadline_at<=?").bind(now, now, now).run();
   const admitted = await env.DB.prepare("UPDATE source_ocr_job SET state='queued',model_snapshot=?,token_limit=?,deadline_at=?,started_at=?,updated_at=? WHERE id=? AND state='preparing' AND pages_json=? " +

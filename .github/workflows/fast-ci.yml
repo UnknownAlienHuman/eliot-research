@@ -53,12 +53,38 @@ jobs:
           pnpm db:local
           pnpm dev > /tmp/eliot-k0.log 2>&1 &
           trap 'kill $!' EXIT
-          pnpm eval k0
+          CF_ACCESS_CLIENT_ID=synthetic-k0-client-id CF_ACCESS_CLIENT_SECRET=synthetic-k0-client-secret pnpm eval k0 || {
+            tail -n 80 /tmp/eliot-k0.log
+            exit 1
+          }
+          grep -Fx 'API authentication observed: local (12 /api/me samples)' eval/out/k0/result.txt
+          grep -Fx 'Deployed Access owner-token: NOT_RUN (K0 browser eval is loopback-only)' eval/out/k0/result.txt
+          grep -Fx 'Cloudflare browser login: NOT_RUN (K0 browser eval is loopback-only)' eval/out/k0/result.txt
+          if grep -Fq 'owner-token route exercised' eval/out/k0/result.txt; then exit 1; fi
           pnpm eval k1 --native-only
+          pnpm eval k1 --library-only
+          pnpm eval k1 --library-only --source-add-browser
+          pnpm eval k1 --library-browser
+          pnpm eval k1 --projects-browser
           pnpm eval k2 --native-only
+          pnpm eval k2 --context-only
+          pnpm eval k2 --admission-only
           pnpm eval k2 --picker-only
+          pnpm eval k2 --view-isolation
+          pnpm eval k2 --send-browser
+          pnpm eval k2 --project-browser
           pnpm eval k2 --models-only
           pnpm eval k3 --native-only
+          pnpm eval k3 --metadata-only
+          pnpm eval k3 --retry-only
+          pnpm eval k3 --overview-only
+          pnpm eval k3 --overview-browser
+          pnpm eval k3 --question-browser
+          pnpm eval k3 --understanding-browser
+      - name: Exercise existing Worker build and Durable Object alias locally
+        run: |
+          pnpm cf:production-dry-run
+          pnpm eval k4 --signed-agent-miniflare --production-build
       - name: Upload checked build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -66,6 +92,7 @@ jobs:
           path: |
             dist
             eval/out/k0
+            eval/out/k1/*-compact-citations.png
             !dist/**/.dev.vars*
             !dist/**/.env*
           if-no-files-found: error

@@ -17,6 +17,7 @@
   margin-inline: 0;
 }
 .er-project-workspace__header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--eliot-space-gutter); }
+.er-project-workspace__draft { overflow-wrap: anywhere; }
 .er-shell .er-project-workspace__header h1 {
   margin: 0;
   font-size: var(--eliot-type-title-large-size);

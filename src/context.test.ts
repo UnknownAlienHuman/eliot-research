@@ -1,14 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { scanBlocks, sliceUtf8 } from "./blocks.js";
 import { buildContext } from "./context.js";
+import { createModelHistoryReader } from "./model-history.js";
 import { resolveCitations } from "./citations.js";
 import { LibraryError } from "./library.js";
-import { modelOutputLimit } from "./models.js";
+import { modelInputLimit, modelOutputReserve } from "./models.js";
+import { estimateHistoryMessage, estimateModelInput } from "./model-input.js";
 import type { Actor } from "./auth";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
+import { readFileSync, readdirSync } from "node:fs";
 
 const NL = String.fromCharCode(10);
 const actor = { type: "owner", id: "o1", authentication: "local" } as unknown as Actor;
 const MODEL = { contextTokens: 1048576, maxOutputTokens: 2000 };
+function requestEstimate(messages: { role: string; content: string }[], question = "", instructions = "") {
+  return estimateModelInput({ instructions: [...messages.filter(m => m.role === "system").map(m => m.content), instructions].filter(Boolean).join("\n\n"),
+    messages: [...messages.filter(m => m.role !== "system").map(({ role, content }) => ({ role, content })), { role: "user", content: question }] });
+}
 
 interface MemSource {
   id: string;
@@ -58,6 +67,17 @@ interface MemText {
 function wholeBlock(text: string, id: number): MemBlock {
   return { id, type: "paragraph", start: 0, end: text.length, heading: null as string | null };
 }
+function streamObject(bytes: Uint8Array, size: number | undefined = bytes.byteLength) {
+  let offset = 0;
+  return { size, body: new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset === bytes.byteLength) { controller.close(); return; }
+      const end = Math.min(offset + 65536, bytes.byteLength);
+      controller.enqueue(bytes.subarray(offset, end));
+      offset = end;
+    },
+  }, { highWaterMark: 0 }) };
+}
 
 function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; revisions: MemRevision[]; texts: Record<string, MemText>; claims?: Record<string, MemClaim[]> }) {
   let reads = 0;
@@ -73,21 +93,22 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
                 const known = id === "p1" || opts.memberships.some((m) => m.projectId === id);
                 return known ? { id } : null;
               }
-              if (sql.includes("ps.source_id=?")) {
-                const projectId = params[0] as string;
-                const sourceId = params[1] as string;
-                const m = opts.memberships.find((x) => x.projectId === projectId && x.sourceId === sourceId);
-                if (!m) return null;
-                const s = opts.sources.find((x) => x.id === sourceId);
-                if (!s || s.state !== "active" || !s.currentRevisionId) return null;
-                const r = opts.revisions.find((x) => x.id === s.currentRevisionId);
-                return { id: s.id, title: s.title, revisionId: s.currentRevisionId, readableState: r ? r.readableState : null, readableSize: r ? r.readableSize : null, distillState: r ? r.distillState : null, guideSummary: r ? r.guideSummary : null, reportKey: r?.reportKey ?? null };
-              }
               return null;
             },
             async all() {
+              if (sql.includes("FROM json_each(?) wanted")) {
+                const ids = JSON.parse(params[0] as string) as string[], projectId = params[1] as string;
+                return { results: ids.map(id => {
+                  const membership = opts.memberships.find(m => m.projectId === projectId && m.sourceId === id);
+                  const source = membership && opts.sources.find(s => s.id === id && s.state === "active");
+                  const revision = source && opts.revisions.find(r => r.id === source.currentRevisionId);
+                  return { id: source?.id, title: source?.title, revisionId: source?.currentRevisionId,
+                    readableState: revision?.readableState, readableSize: revision?.readableSize, distillState: revision?.distillState,
+                    guideSummary: revision?.guideSummary, reportKey: revision?.reportKey ?? null, attemptId: null, claimCount: revision?.claimCount ?? 0 };
+                }) };
+              }
               if (sql.includes("FROM claim")) {
-                const rev = params[0] as string;
+                const rev = params[sql.includes("WITH owner") ? 5 : 0] as string;
                 const head = opts.revisions.find((x) => x.id === rev)?.claimCount;
                 const rows = (opts.claims?.[rev] ?? [])
                   .filter((c) => c.ambiguous === 0 && (typeof head !== "number" || c.ordinal < head))
@@ -106,7 +127,7 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
                 .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))
                 .map((s) => {
                   const r = opts.revisions.find((x) => x.id === s.currentRevisionId);
-                  return { id: s.id, title: s.title, revisionId: s.currentRevisionId as string, readableSize: r ? r.readableSize : null, distillState: r ? r.distillState : null, guideSummary: r ? r.guideSummary : null, reportKey: r?.reportKey ?? null };
+                  return { id: s.id, title: s.title, revisionId: s.currentRevisionId as string, readableSize: r ? r.readableSize : null, distillState: r ? r.distillState : null, guideSummary: r ? r.guideSummary : null, reportKey: r?.reportKey ?? null, attemptId: null, claimCount: r?.claimCount ?? 0 };
                 });
               return { results: rows };
             },
@@ -134,25 +155,25 @@ function makeEnv(opts: { memberships: MemMembership[]; sources: MemSource[]; rev
         const bytes = new TextEncoder().encode(entry.text);
         const view = byteRange ? bytes.subarray(byteRange.offset, byteRange.offset + byteRange.length) : bytes;
         const exact = Uint8Array.from(view);
-        return { arrayBuffer: async () => exact.buffer as ArrayBuffer };
+        return streamObject(exact);
       }
       if (kind === "guide.md") {
         if (entry.guide === undefined) return null;
         const data = new TextEncoder().encode(entry.guide);
-        return { arrayBuffer: async () => data.buffer as ArrayBuffer };
+        return streamObject(data);
       }
       if (kind === "checked/guide.md") {
         if (entry.checkedGuide === undefined) return null;
         const data = new TextEncoder().encode(entry.checkedGuide);
-        return { arrayBuffer: async () => data.buffer as ArrayBuffer };
+        return streamObject(data);
       }
       if (kind === "checked/distill.json") {
         if (entry.report === undefined) return null;
         const raw = typeof entry.report === "string" ? entry.report : JSON.stringify(entry.report);
         const data = new TextEncoder().encode(raw);
-        return { arrayBuffer: async () => data.buffer as ArrayBuffer };
+        return streamObject(data);
       }
-      if (kind === "blocks.json") return { json: async () => entry.blocks };
+      if (kind === "blocks.json") return streamObject(new TextEncoder().encode(JSON.stringify(entry.blocks)));
       return null;
     },
   };
@@ -257,6 +278,68 @@ function mixedScopeEnv(firstText = "Небольшой читаемый исто
 }
 
 describe("buildContext K2 whole scope", () => {
+  it.each([undefined, null, { contextTokens: 0, maxOutputTokens: 100 },
+    { contextTokens: 2000, maxOutputTokens: 100, outputReserveTokens: 0 }])("preserves invalid400 for a missing or malformed model %j", async (model) => {
+    const { env, reads } = twoSourceEnv();
+    await expect(buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: model as never }))
+      .rejects.toMatchObject({ code: "invalid", status: 400, message: "The model configuration is missing. Try again." });
+    expect(reads()).toBe(0);
+  });
+
+  it("applies a known combined window without treating an input-only ceiling as that window", async () => {
+    const text = Array(16).fill("Canonical source evidence. ".repeat(300)).join("\n\n"), blocks = scanBlocks(text);
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Canonical source", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: text.length, distillState: "none", guideSummary: null, deletedAt: null }],
+      texts: { r0: { text, blocks } } });
+    const input = { projectId: "p1", scopeMode: "explicit" as const, sourceIds: ["s0"],
+      model: { contextTokens: 1000000, maxOutputTokens: null, outputReserveTokens: 2048 } };
+    const result = await buildContext(fixture.env, actor, input);
+    expect(result.mode).toBe("whole");
+    expect(result.sources[0]?.blocks).toEqual(blocks);
+    await expect(buildContext(fixture.env, actor, { ...input, model: { ...input.model, contextWindowTokens: 40000 } }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(input.model.maxOutputTokens).toBeNull();
+  });
+
+  it("drops escape-heavy optional history by serialized cost while keeping fitting sources whole", async () => {
+    const paragraph = "Canonical source evidence. ".repeat(300);
+    const text = Array(15).fill(paragraph).join("\n\n"), blocks = scanBlocks(text);
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Canonical source", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: text.length, distillState: "none", guideSummary: null, deletedAt: null }],
+      texts: { r0: { text, blocks } } });
+    const model = { contextTokens: 44000, maxOutputTokens: 2000 };
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"], model,
+      history: [{ role: "user", content: '"'.repeat(10000) }, { role: "user", content: "Recent question" }] });
+    expect(result.mode).toBe("whole");
+    expect(result.messages.some(message => message.content === "Recent question")).toBe(true);
+    expect(result.messages.some(message => message.content.includes('"'.repeat(100)))).toBe(false);
+    expect(result.sources[0]?.blocks).toEqual(blocks);
+    expect(requestEstimate(result.messages)).toBeLessThanOrEqual(modelInputLimit(model));
+  });
+
+  it.each([
+    { bytes: 80000, context: 40000, previousCap: 24000 },
+    { bytes: 1230000, context: 1000000, previousCap: 400000 },
+  ])("keeps a canonical $bytes-byte source whole above the former $previousCap-token cap", async ({ bytes, context, previousCap }) => {
+    const paragraph = "Canonical evidence describes the method, its conditions and limitations. ".repeat(120);
+    const text = Array.from({ length: Math.ceil(bytes / paragraph.length) }, () => paragraph).join("\n\n").slice(0, bytes);
+    const blocks = scanBlocks(text);
+    expect(blocks.length).toBeGreaterThan(1);
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Canonical source", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: bytes, distillState: "none", guideSummary: null, deletedAt: null }],
+      texts: { r0: { text, blocks } } });
+    const model = { contextTokens: context, contextWindowTokens: context, maxOutputTokens: 32768, outputReserveTokens: 2048 };
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"], model, question: "Explain the source." });
+    expect(result.mode).toBe("whole");
+    expect(result.estimatedInputTokens).toBeGreaterThan(previousCap);
+    expect(result.revisionIds).toEqual(["r0"]);
+    expect(result.sources[0]?.blocks.map(block => [block.id, block.start, block.end]))
+      .toEqual(blocks.map(block => [block.id, block.start, block.end]));
+  });
+
   it("freezes enabled readable revisions with per-block labels and sourceIds", async () => {
     const { env } = twoSourceEnv();
     const res = await buildContext(env, actor, {
@@ -357,7 +440,7 @@ describe("buildContext K2 whole scope", () => {
     const estimateTokens = (value: string) => Math.ceil(new TextEncoder().encode(value).byteLength / 3);
     expect(res.messages.map((message) => message.role)).toEqual(["system", "user"]);
     expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + estimateTokens(message.content), 0));
-    expect(res.estimatedInputTokens + modelOutputLimit(MODEL)).toBeLessThanOrEqual(Math.min(Math.floor(MODEL.contextTokens * 0.6), 400000));
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(modelInputLimit(MODEL));
   });
 
   it("narrowed scope keeps answers citing only A and drops answers citing B", async () => {
@@ -398,32 +481,29 @@ describe("buildContext K2 whole scope", () => {
     const base = await buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: MODEL });
     const systemTokens = Math.ceil(new TextEncoder().encode(base.messages[0]?.content ?? "").byteLength / 3);
     const maxOutputTokens = 100;
-    const contextTokens = Math.ceil((systemTokens + maxOutputTokens) / 0.6);
-    expect(base.estimatedInputTokens + maxOutputTokens).toBeGreaterThan(Math.floor(contextTokens * 0.6));
+    const contextTokens = requestEstimate(base.messages.slice(0, 1)) + maxOutputTokens;
+    expect(requestEstimate(base.messages) + maxOutputTokens).toBeGreaterThan(contextTokens);
+    expect(systemTokens).toBeGreaterThan(0);
 
     await expect(buildContext(env, actor, {
-      projectId: "p1", scopeMode: "empty", model: { contextTokens, maxOutputTokens },
+      projectId: "p1", scopeMode: "empty", model: { contextTokens, contextWindowTokens: contextTokens, maxOutputTokens },
     })).rejects.toMatchObject({ code: "invalid", status: 400, message: "Narrow the source selection so the answer fits." });
     expect(reads()).toBe(0);
   });
 
-  it("keeps empty-scope history inside the cap after reserving its policy", async () => {
+  it("rejects instead of silently discarding the latest exchange after reserving the empty policy", async () => {
     const { env, reads } = twoSourceEnv();
     const base = await buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: MODEL });
-    const contextTokens = 2000, cap = Math.floor(contextTokens * 0.6);
-    const maxOutputTokens = cap - base.estimatedInputTokens - 10;
-    const res = await buildContext(env, actor, {
-      projectId: "p1", scopeMode: "empty", model: { contextTokens, maxOutputTokens },
+    const contextTokens = 2000;
+    const maxOutputTokens = contextTokens - requestEstimate(base.messages) - 10;
+    await expect(buildContext(env, actor, {
+      projectId: "p1", scopeMode: "empty", model: { contextTokens, contextWindowTokens: contextTokens, maxOutputTokens },
       history: [
         { role: "user", content: "q".repeat(60), revisionIds: [] },
         { role: "assistant", content: "a".repeat(60), turnId: "prior" },
       ],
-    });
-    expect(res.mode).toBe("none");
-    expect(res.revisionIds).toEqual([]);
-    expect(res.sources).toEqual([]);
-    expect(res.messages.some((message) => message.role === "assistant")).toBe(false);
-    expect(res.estimatedInputTokens + maxOutputTokens).toBeLessThanOrEqual(cap);
+    })).rejects.toMatchObject({ code: "invalid", status: 400,
+      message: expect.stringContaining("latest conversation exchange do not fit") });
     expect(reads()).toBe(0);
   });
 
@@ -541,7 +621,7 @@ describe("buildContext K2 whole scope", () => {
       ["s2", largeRevision, compactBlock.id, compactBlock.start, compactBlock.end],
     ]);
     expect(citations.invalidLabels).toBe(0);
-    expect(res.estimatedInputTokens + modelOutputLimit(model)).toBeLessThanOrEqual(Math.min(3000, 400000));
+    expect(res.estimatedInputTokens + modelOutputReserve(model)).toBeLessThanOrEqual(Math.min(3000, 400000));
     expect(requested).toContain("source/" + pageRevision + "/text.md");
     expect(requested).not.toContain("source/" + largeRevision + "/text.md");
     expect(requested.some((key) => key.startsWith("source/" + largeRevision + "/text.md#r"))).toBe(true);
@@ -566,9 +646,9 @@ describe("buildContext K2 whole scope", () => {
     expect((err as LibraryError).status).toBe(503);
   });
 
-  it("caps history at newest ten percent of context", async () => {
+  it("uses available model capacity rather than a separate ten percent history quota", async () => {
     const { env } = twoSourceEnv();
-    const pad = "y".repeat(2994);
+    const pad = "y".repeat(2800);
     const history = [1, 2, 3, 4, 5].map((n) => ({ role: "user" as const, content: "MARK" + n + " " + pad }));
     const res = await buildContext(env, actor, {
       projectId: "p1",
@@ -580,24 +660,20 @@ describe("buildContext K2 whole scope", () => {
     const body = res.messages.map((m) => m.content).join(NL);
     expect(body).toContain("MARK5");
     expect(body).toContain("MARK4");
-    expect(body).not.toContain("MARK1");
+    for (const n of [1, 2, 3, 4, 5]) expect(body).toContain("MARK" + n + " " + pad);
+    expect(res.historyNotice).toBeUndefined();
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(20000);
   });
 
 
   it("admits empty and small scopes on a high-output model via outputReserveTokens", async () => {
     const dots = { contextTokens: 512000, maxOutputTokens: 460800, outputReserveTokens: 8192 };
-    expect(modelOutputLimit({ maxOutputTokens: 460800 })).toBe(460800);
-    expect(modelOutputLimit(dots)).toBe(8192);
+    expect(modelOutputReserve({ maxOutputTokens: 460800 })).toBe(460800);
+    expect(modelOutputReserve(dots)).toBe(8192);
     const { env } = twoSourceEnv();
-    let err: unknown;
-    try {
-      await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [], model: { contextTokens: 512000, maxOutputTokens: 460800 } });
-      expect.unreachable();
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(LibraryError);
-    expect((err as LibraryError).code).toBe("invalid");
+    // An input-only ceiling does not lose the published output maximum.
+    const inputOnly = await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [], model: { contextTokens: 512000, maxOutputTokens: 460800 } });
+    expect(inputOnly.mode).toBe("none");
     const empty = await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [], model: dots });
     expect(empty.mode).toBe("none");
     expect(empty.revisionIds).toEqual([]);
@@ -647,7 +723,7 @@ describe("buildContext K3 claims fallback", () => {
 
   it("keeps readable failed and unstarted sources whole while compacting large eligible sources", async () => {
     const fixture = mixedScopeEnv();
-    const model = { contextTokens: 1048576, maxOutputTokens: 8192 };
+    const model = { contextTokens: 400000, contextWindowTokens: 408192, maxOutputTokens: 8192 };
     const res = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model });
     const compactSourceId = fixture.sourceIds[1];
     if (compactSourceId === undefined) throw new Error("Expected a second frozen source.");
@@ -685,7 +761,35 @@ describe("buildContext K3 claims fallback", () => {
     expect(fixture.requested).toContain("source/" + fixture.revisionIds[11] + "/text.md");
     expect(fixture.requested).not.toContain("source/" + fixture.revisionIds[1] + "/text.md");
     expect(fixture.requested.some((key) => key.startsWith("source/" + fixture.revisionIds[1] + "/text.md#r"))).toBe(true);
-    expect(res.estimatedInputTokens + modelOutputLimit(model)).toBeLessThanOrEqual(400000);
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(modelInputLimit(model));
+  });
+
+  it("keeps the latest exchange and all compact evidence when older history exceeds the final budget", async () => {
+    const text = "Canonical source evidence describes the finding and its conditions. ".repeat(2000), blocks = scanBlocks(text);
+    const claims = blocks.slice(0, 8).map((block, ordinal) => ({ ordinal, statement: "Finding", quote: sliceUtf8(text, block.start, block.end),
+      conditions: null, blockIndex: block.id, ambiguous: 0 }));
+    const { env, requested } = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize: text.length, distillState: "done", guideSummary: null, deletedAt: null, claimCount: claims.length }],
+      texts: { r9: { text, blocks, guide: "" } }, claims: { r9: claims } });
+    const question = "Explain that finding.";
+    const base = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens: 20000, maxOutputTokens: 100 }, question });
+    const citations = resolveCitations("[S1:2]", base.sources).citations;
+    const latest = [{ role: "user" as const, content: "Recent question", revisionIds: base.revisionIds },
+      { role: "assistant" as const, content: "Original quoted finding [S1:2]. ".repeat(20).trim(), turnId: "latest", revisionIds: base.revisionIds, citations }];
+    const cap = requestEstimate([...base.messages, ...latest], question) + 100;
+    const model = { contextTokens: 20000, contextWindowTokens: cap + 100, maxOutputTokens: 100 };
+    const before = requested.length;
+    const result = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model, question,
+      history: [{ role: "user", content: "Older question", revisionIds: base.revisionIds },
+        { role: "assistant", content: "Older answer. ".repeat(80), turnId: "older", revisionIds: base.revisionIds, citations: [] }, ...latest] });
+    expect(result.mode).toBe("claims");
+    expect(result.sources).toEqual(base.sources);
+    expect(result.messages.filter(message => message.turnId)).toEqual([expect.objectContaining({ turnId: "latest", content: latest[1]?.content })]);
+    expect(result.historyNotice).toContain("Older exchanges were omitted");
+    expect(result.messages.some(message => message.role === "system" && message.content === result.historyNotice)).toBe(true);
+    expect(requestEstimate(result.messages, question)).toBeLessThanOrEqual(cap);
+    expect(requested.slice(before)).toEqual(requested.slice(0, before)); // Same storage-only evidence work.
   });
 
   it("rejects an over-budget mixed scope after exact projection without dropping sources", async () => {
@@ -694,7 +798,7 @@ describe("buildContext K3 claims fallback", () => {
     let err: unknown;
     try {
       await buildContext(fixture.env, actor, {
-        projectId: "p1", scopeMode: "project_default", model: { contextTokens: 1048576, maxOutputTokens: 8192 },
+        projectId: "p1", scopeMode: "project_default", model: { contextTokens: 400000, maxOutputTokens: 8192 },
       });
       expect.unreachable();
     } catch (error) {
@@ -712,7 +816,7 @@ describe("buildContext K3 claims fallback", () => {
 
   it("recomputes retained history and enforces the existing output and caller budget for mixed context", async () => {
     const fixture = mixedScopeEnv();
-    const model = { contextTokens: 1048576, maxOutputTokens: 8192 };
+    const model = { contextTokens: 400000, contextWindowTokens: 408192, maxOutputTokens: 8192 };
     const smallBlock = fixture.firstBlock;
     const smallSourceId = fixture.sourceIds[0], compactSourceId = fixture.sourceIds[1];
     const smallRevisionId = fixture.revisionIds[0], compactRevisionId = fixture.revisionIds[1];
@@ -752,10 +856,11 @@ describe("buildContext K3 claims fallback", () => {
     const estimate = (value: string) => Math.ceil(new TextEncoder().encode(value).byteLength / 3);
     const callerTokens = estimate(question) + estimate(instructions);
     const historyTokens = res.messages.slice(3).reduce((sum, message) => sum + estimate(message.content), 0);
-    const cap = Math.min(Math.floor(model.contextTokens * 0.6), 400000);
+    const cap = modelInputLimit(model);
     expect(historyTokens).toBeLessThanOrEqual(Math.floor(model.contextTokens * 0.1));
     expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + estimate(message.content), 0));
-    expect(res.estimatedInputTokens + callerTokens + modelOutputLimit(model)).toBeLessThanOrEqual(cap);
+    expect(requestEstimate(res.messages, question, instructions)).toBeLessThanOrEqual(cap);
+    expect(callerTokens).toBeGreaterThan(0);
   });
 
   it("filters structural page markers from hydrated claim and guide passages", async () => {
@@ -828,7 +933,7 @@ describe("buildContext K3 claims fallback", () => {
         { ordinal: 2, statement: "A derived evaluation description.", quote: otherQuote, conditions: null, blockIndex: 2, ambiguous: 0 },
       ] },
     });
-    const model = { contextTokens: 5000, maxOutputTokens: 100 };
+    const model = { contextTokens: 3000, maxOutputTokens: 100 };
     const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s1"], model });
     expect(res.mode).toBe("claims");
     expect(res.revisionIds).toEqual(["r9"]);
@@ -852,19 +957,19 @@ describe("buildContext K3 claims fallback", () => {
     expect(orientation).not.toMatch(/\[S\d+:\d+\]/);
     expect(requested.filter((key) => key.includes("text.md"))).toEqual([]);
     expect(res.estimatedInputTokens).toBe(res.messages.reduce((sum, message) => sum + Math.ceil(new TextEncoder().encode(message.content).byteLength / 3), 0));
-    expect(res.estimatedInputTokens + model.maxOutputTokens).toBeLessThanOrEqual(Math.min(Math.floor(model.contextTokens * 0.6), 400000));
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(modelInputLimit(model));
     const resolved = resolveCitations("Original [S1:2], unseen [S1:3].", res.sources);
     expect(resolved.citations).toMatchObject([{ sourceId: "s1", revisionId: "r9", block: 2, start: 0, end: passageEnd }]);
     expect(resolved.invalidLabels).toBe(1);
   });
 
   it("reserved caller text pushes whole over cap and chooses claims", async () => {
-    const body = "T".repeat(600);
+    const body = "T".repeat(6000);
     const { env, requested } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
-      revisions: [{ id: "r9", readableState: "readable", readableSize: 600, distillState: "done", guideSummary: "Guide: G.", deletedAt: null, claimCount: 2 }],
-      texts: { r9: { text: body, guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 300, heading: null }, { id: 2, type: "paragraph", start: 300, end: 600, heading: null }] } },
+      revisions: [{ id: "r9", readableState: "readable", readableSize: 6000, distillState: "done", guideSummary: "Guide: G.", deletedAt: null, claimCount: 2 }],
+      texts: { r9: { text: body, guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 3000, heading: null }, { id: 2, type: "paragraph", start: 3000, end: 6000, heading: null }] } },
       claims: { r9: [{ ordinal: 1, statement: "Finding one", quote: "quoted one", conditions: null, blockIndex: 2, ambiguous: 0 }] },
     });
     const question = "Q" + "q".repeat(459), instructions = "I" + "i".repeat(459), outputTokens = 100;
@@ -872,19 +977,15 @@ describe("buildContext K3 claims fallback", () => {
     const measuredSystem = await buildContext(env, actor, {
       projectId: "p1", scopeMode: "empty", model: { contextTokens: 5000, maxOutputTokens: outputTokens }, question, instructions,
     });
-    const systemTokens = estimateTokens(measuredSystem.messages[0]?.content ?? "");
     const callerTokens = estimateTokens(question) + estimateTokens(instructions);
-    const wholePrefitTokens = Math.ceil(600 / 3) + systemTokens + callerTokens + outputTokens;
-    // Place the existing 60% cap one token below the current whole-prefit estimate;
-    // claims must still fit after its smaller labelled excerpts are estimated.
-    const contextTokens = Math.floor((wholePrefitTokens - 1) / 0.6);
-    const cap = Math.min(Math.floor(contextTokens * 0.6), 400000);
-    expect(cap).toBeLessThan(wholePrefitTokens);
+    const cap = requestEstimate(measuredSystem.messages.slice(0, 1), question, instructions) + 800;
+    const contextTokens = cap;
     const res = await buildContext(env, actor, {
       projectId: "p1", scopeMode: "project_default", model: { contextTokens, maxOutputTokens: outputTokens }, question, instructions,
     });
     expect(res.mode).toBe("claims");
-    expect(res.estimatedInputTokens + callerTokens + outputTokens).toBeLessThanOrEqual(cap);
+    expect(requestEstimate(res.messages, question, instructions)).toBeLessThanOrEqual(cap);
+    expect(callerTokens).toBeGreaterThan(0);
     expect(res.revisionIds).toEqual(["r9"]);
     expect(requested.some((k) => k.endsWith("text.md"))).toBe(false);
     expect(res.messages[1]).toMatchObject({ role: "user" });
@@ -959,7 +1060,7 @@ describe("buildContext K3 claims fallback", () => {
     expect(err).toBeInstanceOf(LibraryError);
     expect((err as LibraryError).code).toBe("invalid");
     expect((err as LibraryError).message).toMatch(/understood/);
-    expect(reads()).toBe(3);
+    expect(reads()).toBe(2); // The same immutable block map is reused by whole/compact attempts.
     expect(requested.filter((key) => key === "source/r1/text.md")).toHaveLength(1);
   });
   it("prints only own-revision persistent guide refs as citable passages", async () => {
@@ -1139,16 +1240,16 @@ describe("orientation from stored guides", () => {
     expect(measuredWhole.messages).toHaveLength(3);
     const baseTokens = estimateTokens(measuredWhole.messages[0]?.content ?? "") + estimateTokens(measuredWhole.messages[1]?.content ?? "");
     const orientationTokens = estimateTokens(measuredWhole.messages[2]?.content ?? "");
-    const contextTokens = Math.ceil((baseTokens + outputTokens) / 0.6);
-    const cap = Math.min(Math.floor(contextTokens * 0.6), 400000);
-    expect(baseTokens + outputTokens).toBeLessThanOrEqual(cap);
-    expect(baseTokens + orientationTokens + outputTokens).toBeGreaterThan(cap);
+    const contextTokens = requestEstimate(measuredWhole.messages.slice(0, 2));
+    const cap = contextTokens;
+    expect(requestEstimate(measuredWhole.messages)).toBeGreaterThan(cap);
     const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: { contextTokens, maxOutputTokens: outputTokens } });
     expect(res.mode).toBe("whole");
     expect(res.messages.length).toBe(2);
     expect(res.estimatedInputTokens).toBe(baseTokens);
-    expect(res.estimatedInputTokens + outputTokens).toBeLessThanOrEqual(cap);
-    expect(res.estimatedInputTokens + orientationTokens + outputTokens).toBeGreaterThan(cap);
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(cap);
+    expect(requestEstimate(measuredWhole.messages)).toBeGreaterThan(cap);
+    expect(orientationTokens).toBeGreaterThan(0);
     const body = res.messages.map((m) => m.content).join(NL);
     expect(body).not.toContain("Derived orientation");
     expect(body).not.toContain("GGGGGGGG");
@@ -1337,5 +1438,686 @@ describe("history reference continuity", () => {
     const res = await buildContext(env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
     expect(res.messages[0]?.content).toContain("conversation context, not evidence");
     expect(res.messages[0]?.content).toContain("re-ground");
+  });
+});
+
+describe("bounded context materialization", () => {
+  const limit = 16 * 1024 * 1024;
+  function scope(count = 3, text = "Evidence.", readableSize: number | null = null, distilled = false, reportKey: string | null = null) {
+    return makeEnv({
+      memberships: Array.from({ length: count }, (_, i) => ({ projectId: "p1", sourceId: "s" + i, enabled: 1 })),
+      sources: Array.from({ length: count }, (_, i) => ({ id: "s" + i, title: "Paper " + i, state: "active", currentRevisionId: "r" + i, createdAt: i })),
+      revisions: Array.from({ length: count }, (_, i) => ({ id: "r" + i, readableState: "readable", readableSize,
+        distillState: distilled ? "done" : "none", guideSummary: null, deletedAt: null, claimCount: 1, reportKey })),
+      texts: Object.fromEntries(Array.from({ length: count }, (_, i) => ["r" + i, { text, blocks: [wholeBlock(text, 1)], guide: "Guide." }])),
+      claims: Object.fromEntries(Array.from({ length: count }, (_, i) => ["r" + i,
+        [{ ordinal: 0, statement: text, quote: text, conditions: null, blockIndex: 1, ambiguous: 0 }]])),
+    });
+  }
+  function strictScope(ids: string[]) {
+    const fixture = scope(ids.length), db = new DatabaseSync(":memory:"), calls: string[] = [];
+    const transferred: Record<string, unknown>[] = [];
+    for (const file of readdirSync(new URL("../migrations/", import.meta.url)).filter(name => /^\d+_.+\.sql$/.test(name)).sort())
+      db.exec(readFileSync(new URL("../migrations/" + file, import.meta.url), "utf8"));
+    db.exec("INSERT INTO project(id,title,created_at,updated_at) VALUES('p1','Project',1,1)");
+    for (const [i, id] of ids.entries()) {
+      db.prepare("INSERT INTO source(id,title,kind,created_by,created_at,updated_at) VALUES(?,?,'text','owner',?,1)").run(id, "Paper " + i, i);
+      db.prepare("INSERT INTO source_revision(id,source_id,revision_no,readable_state,readable_size,created_by,created_at) VALUES(?,?,1,'readable',9,'owner',1)").run("r" + i, id);
+      db.prepare("UPDATE source SET current_revision_id=? WHERE id=?").run("r" + i, id);
+      db.prepare("INSERT INTO project_source(project_id,source_id,added_by,added_at) VALUES('p1',?,'owner',1)").run(id);
+    }
+    fixture.env.DB = { prepare(sql: string) {
+      const statement = db.prepare(sql);
+      return { bind(...params: SQLInputValue[]) { return {
+        async first() { calls.push(sql); return statement.get(...params) ?? null; },
+        async all() { calls.push(sql); const rows = statement.all(...params); transferred.push(...rows); return { results: rows }; },
+      }; } };
+    } } as unknown as D1Database;
+    return { ...fixture, db, calls, transferred };
+  }
+  it.each([0, 1, 1024])("freezes %i explicit sources with one bounded metadata query", async (count) => {
+    const ids = Array.from({ length: count }, (_, i) => "s" + i), fixture = strictScope(ids);
+    try {
+      const order = [...ids].reverse();
+      const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: order, model: MODEL });
+      expect(result.revisionIds).toEqual(order.map(id => "r" + id.slice(1)));
+      expect(result.sources.map(source => source.sourceId)).toEqual(order);
+      expect(fixture.calls).toHaveLength(count ? 2 : 1);
+    } finally { fixture.db.close(); }
+  });
+  it("keeps first-occurrence order, disabled membership and exact JSON string IDs", async () => {
+    const ids = ["s0", "Пример😀\"'", "s2"], fixture = strictScope(ids);
+    try {
+      fixture.db.prepare("UPDATE project_source SET enabled=0 WHERE source_id=?").run(ids[1] ?? "");
+      const input = { projectId: "p1", scopeMode: "explicit" as const, model: MODEL };
+      const result = await buildContext(fixture.env, actor, { ...input, sourceIds: [ids[2] ?? "", ids[1] ?? "", ids[2] ?? "", "s0"] });
+      expect(fixture.calls).toHaveLength(2);
+      expect(result.revisionIds).toEqual(["r2", "r1", "r0"]);
+      expect(result.sources.map(source => [source.sourceId, source.alias])).toEqual([[ids[2], "S1"], [ids[1], "S2"], [ids[0], "S3"]]);
+      expect(resolveCitations("[S1:1] [S2:1] [S3:1]", result.sources).citations.map(c => [c.revisionId, c.start, c.end]))
+        .toEqual([["r2", 0, 9], ["r1", 0, 9], ["r0", 0, 9]]);
+      expect(result).toEqual(await buildContext(fixture.env, actor, { ...input, sourceIds: [ids[2] ?? "", ids[1] ?? "", "s0"] }));
+    } finally { fixture.db.close(); }
+  });
+  it.each(["missing", "detached", "deleted", "archived", "null head", "wrong project"])("rejects %s scope before source body reads", async (kind) => {
+    const fixture = strictScope(["s0"]);
+    try {
+      if (kind === "detached") fixture.db.exec("DELETE FROM project_source");
+      if (kind === "deleted" || kind === "archived") fixture.db.prepare("UPDATE source SET state=?").run(kind);
+      if (kind === "null head") fixture.db.exec("UPDATE source SET current_revision_id=NULL");
+      if (kind === "wrong project") fixture.db.exec("INSERT INTO project(id,title,created_at,updated_at) VALUES('p2','Other',2,2)");
+      await expect(buildContext(fixture.env, actor, { projectId: kind === "wrong project" ? "p2" : "p1", scopeMode: "explicit", sourceIds: [kind === "missing" ? "no-source" : "s0"], model: MODEL }))
+        .rejects.toMatchObject({ code: "invalid", status: 400, message: "Narrow the source selection to readable sources in this project." });
+      expect(fixture.calls).toHaveLength(2);
+      expect(fixture.requested).toEqual([]);
+    } finally { fixture.db.close(); }
+  });
+  it("preserves metadata-versus-missing error order and raw-list limits", async () => {
+    const fixture = strictScope(["s0"]);
+    try {
+      fixture.db.prepare("UPDATE source SET title=?").run("x".repeat(4097));
+      for (const [sourceIds, message] of [
+        [["s0", "missing"], "Narrow the source selection so the answer fits."],
+        [["missing", "s0"], "Narrow the source selection to readable sources in this project."],
+        [["missing", "x".repeat(129)], "Narrow the source selection to readable sources in this project."],
+        [Array<string>(1025).fill("s0"), "Narrow the source selection so the answer fits."],
+      ] as const) {
+        await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: [...sourceIds], model: MODEL })).rejects.toMatchObject({ message });
+      }
+      expect(fixture.calls).toHaveLength(7);
+      expect(fixture.requested).toEqual([]);
+    } finally { fixture.db.close(); }
+  });
+  it("retains the existing explicit policy for a head deleted after assignment", async () => {
+    const fixture = strictScope(["s0"]);
+    try {
+      fixture.db.exec("UPDATE source_revision SET deleted_at=2");
+      const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"], model: MODEL });
+      expect(result.revisionIds).toEqual(["r0"]);
+      const defaults = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
+      expect(defaults.revisionIds).toEqual([]);
+    } finally { fixture.db.close(); }
+  });
+  it("bounds conservative Unicode metadata and a previously occupied allocation allowance", async () => {
+    const ids = Array.from({ length: 600 }, (_, i) => "s" + i), fixture = strictScope(ids);
+    const input = { projectId: "p1", scopeMode: "explicit" as const, sourceIds: ids, model: MODEL };
+    try {
+      fixture.db.prepare("UPDATE source_revision SET guide_summary=?").run("g".repeat(4096));
+      expect((await buildContext(fixture.env, actor, input)).revisionIds).toHaveLength(600);
+      for (const [summary, question] of [["я".repeat(4096), ""], ["g".repeat(8192), "q".repeat(1000000)]] as const) {
+        fixture.requested.length = 0; fixture.transferred.length = 0; fixture.calls.length = 0;
+        fixture.db.prepare("UPDATE source_revision SET guide_summary=?").run(summary);
+        await expect(buildContext(fixture.env, actor, { ...input, question }))
+          .rejects.toMatchObject({ message: "Narrow the source selection so the answer fits." });
+        expect(fixture.calls).toHaveLength(2);
+        expect(fixture.requested).toEqual([]);
+        expect(new TextEncoder().encode(JSON.stringify(fixture.transferred)).length).toBeLessThan(limit / 4 + 200000);
+      }
+    } finally { fixture.db.close(); }
+  });
+  it("rejects an oversized undistilled block before opening its text body", async () => {
+    const fixture = scope(3, "x".repeat(limit + 1), limit + 1);
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toEqual(["source/r0/blocks.json"]);
+  });
+  it("does not start a speculative GET when its overhead would exhaust the allowance", async () => {
+    const fixture = scope(1, "Evidence.", 9);
+    // One metadata row costs 300 bytes, leaving 300 for the block reader.
+    const question = "q".repeat((limit - 600) / 2);
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default",
+      model: { ...MODEL, contextTokens: 20000000 }, question })).rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toEqual(["source/r0/blocks.json"]);
+  });
+  it.each(["missing", "invalid", "oversized block", "oversized map"])("cancels unread speculative text after a %s block map", async (kind) => {
+    const fixture = scope(2, "Evidence.", 9);
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    let textPulls = 0, textCancels = 0, textStartedBeforeMapSize = false;
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      if (key === "source/r0/text.md") {
+        fixture.requested.push(key);
+        return { size: 9, body: new ReadableStream<Uint8Array>({
+          pull() { textPulls++; }, cancel() { textCancels++; },
+        }, { highWaterMark: 0 }) };
+      }
+      if (key !== "source/r0/blocks.json") return get(key, options);
+      fixture.requested.push(key);
+      if (kind === "oversized map") return { ...streamObject(new Uint8Array(0)), get size() {
+        textStartedBeforeMapSize = fixture.requested.includes("source/r0/text.md");
+        return limit + 1;
+      } };
+      // Text headers can arrive before block validation fails.
+      await new Promise(resolve => setTimeout(resolve, 1));
+      if (kind === "missing") return null;
+      return streamObject(new TextEncoder().encode(JSON.stringify(kind === "invalid" ? []
+        : [{ id: 1, type: "paragraph", start: 0, end: limit + 1, heading: null }])));
+    }) as typeof fixture.env.BUCKET.get;
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: kind.startsWith("oversized") ? "invalid" : "unavailable" });
+    expect(textPulls).toBe(0); expect(textCancels).toBe(1);
+    if (kind === "oversized map") expect(textStartedBeforeMapSize).toBe(true);
+    expect(fixture.requested).toEqual(["source/r0/blocks.json", "source/r0/text.md"]);
+  });
+  it.each([true, false])("preserves block-first failure order when prefetched text rejects early (map fails: %s)", async (mapFails) => {
+    const fixture = scope(2, "Evidence.", 9), failure = new Error("R2 text failed");
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      if (key === "source/r0/text.md") { fixture.requested.push(key); throw failure; }
+      if (key === "source/r0/blocks.json") {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        if (mapFails) { fixture.requested.push(key); return null; }
+      }
+      return get(key, options);
+    }) as typeof fixture.env.BUCKET.get;
+    const result = buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL });
+    if (mapFails) await expect(result).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    else await expect(result).rejects.toBe(failure);
+    expect(fixture.requested).toHaveLength(2);
+    expect(fixture.requested.some(key => key.startsWith("source/r1/"))).toBe(false);
+  });
+  it.each([null, 1])("counts unknown/understated source and object sizes (%s), cancels the stream and opens no later body", async (readableSize) => {
+    const fixture = scope(3, "x", readableSize);
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    let consumed = 0;
+    let cancelled = false;
+    const baseline = process.memoryUsage();
+    let peakHeap = baseline.heapUsed;
+    let peakBuffers = baseline.arrayBuffers;
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      if (key !== "source/r0/text.md") return get(key, options);
+      fixture.requested.push(key);
+      return { size: 1, body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = new Uint8Array(65536).fill(120);
+          consumed += chunk.byteLength;
+          const memory = process.memoryUsage();
+          peakHeap = Math.max(peakHeap, memory.heapUsed);
+          peakBuffers = Math.max(peakBuffers, memory.arrayBuffers);
+          controller.enqueue(chunk);
+          if (consumed >= limit + 65536) controller.close();
+        },
+        cancel() { cancelled = true; },
+      }, { highWaterMark: 0 }) };
+    }) as typeof fixture.env.BUCKET.get;
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(cancelled).toBe(true);
+    expect(consumed).toBeLessThanOrEqual(limit);
+    expect(fixture.requested.some((key) => key.startsWith("source/r1/"))).toBe(false);
+    console.warn("context-memory-observation", JSON.stringify({ readableSize, consumed, cancelled,
+      heapIncrease: peakHeap - baseline.heapUsed, arrayBufferIncrease: peakBuffers - baseline.arrayBuffers }));
+  });
+  it("counts projected strings cumulatively and stops before the next text body", async () => {
+    const fixture = scope(3, "x".repeat(1_000_000), null);
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toContain("source/r0/text.md");
+    expect(fixture.requested).not.toContain("source/r2/text.md");
+  });
+  it.each(["blocks.json", "guide.md", "checked/distill.json"])("bounds %s before JSON parsing/decoding or later source reads", async (artifact) => {
+    const fixture = scope(2, "Evidence.", 9_000_000, true, artifact.startsWith("checked/") ? "source/r0/checked/distill.json" : null);
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      if (key !== "source/r0/" + artifact) return get(key, options);
+      fixture.requested.push(key);
+      return streamObject(new Uint8Array(limit + 1).fill(120), 1);
+    }) as typeof fixture.env.BUCKET.get;
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested.some((key) => key.startsWith("source/r1/"))).toBe(false);
+    expect(fixture.requested).not.toContain("source/r0/text.md");
+  });
+  it("bounds explicit and default scope cardinality without returning a partial scope", async () => {
+    const fixture = scope(1025);
+    for (const scopeMode of ["explicit", "project_default"] as const) {
+      await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode, model: MODEL,
+        sourceIds: Array.from({ length: 1025 }, (_, i) => "s" + i) }))
+        .rejects.toMatchObject({ code: "invalid", status: 400 });
+    }
+    expect(fixture.requested).toEqual([]);
+  });
+  it("rejects oversized explicit IDs before binding or reading source bodies", async () => {
+    const fixture = scope();
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s".repeat(129)], model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toEqual([]);
+  });
+  it("selects newest history before copying individually fitting older exchanges", async () => {
+    const fixture = scope(1);
+    const history = Array.from({ length: 49 }, (_, i) => [
+      { role: "user" as const, content: "Old question " + i + "u".repeat(100000), revisionIds: ["r0"] },
+      { role: "assistant" as const, content: "Old answer " + i + "a".repeat(100000), revisionIds: ["r0"], citations: [] },
+    ]).flat();
+    history.push({ role: "user", content: "Newest question", revisionIds: ["r0"] },
+      { role: "assistant", content: "Newest answer", revisionIds: ["r0"], citations: [] });
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL, history });
+    expect(result.messages.at(-1)?.content).toBe("Newest answer");
+    expect(result.revisionIds).toEqual(["r0"]);
+    expect(requestEstimate(result.messages)).toBeLessThanOrEqual(modelInputLimit(MODEL));
+    expect(result.historyNotice).toBeTruthy();
+  });
+  it("keeps a latest exchange above the former quota when it fits the model", async () => {
+    const fixture = scope(1);
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL,
+      history: [{ role: "user", content: "Old question" }, { role: "assistant", content: "Old answer" },
+        { role: "user", content: "New question" }, { role: "assistant", content: "n".repeat(400000) }] });
+    expect(result.messages.at(-1)?.content).toBe("n".repeat(400000));
+    expect(result.messages.some(message => message.content === "Old answer")).toBe(true);
+    expect(result.historyNotice).toBeUndefined();
+    expect(requestEstimate(result.messages)).toBeLessThanOrEqual(modelInputLimit(MODEL));
+  });
+  it("does not jump over a latest exchange above the full model budget to reuse older history", async () => {
+    const fixture = scope(1);
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL,
+      history: [{ role: "user", content: "Old question" }, { role: "assistant", content: "Old answer" },
+        { role: "user", content: "New question" }, { role: "assistant", content: "n".repeat(4000000) }] }))
+      .rejects.toMatchObject({ code: "invalid", status: 400, message: expect.stringContaining("latest conversation exchange do not fit") });
+  });
+  it("counts separate block maps cumulatively before reading later text", async () => {
+    const fixture = scope();
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    const blocks = new TextEncoder().encode(JSON.stringify(Array.from({ length: 2000 }, (_, i) =>
+      ({ id: i + 1, type: "heading", start: 0, end: 1, heading: "h".repeat(200) }))));
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      if (!key.endsWith("blocks.json")) return get(key, options);
+      fixture.requested.push(key);
+      return streamObject(blocks);
+    }) as typeof fixture.env.BUCKET.get;
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toContain("source/r0/text.md");
+    expect(fixture.requested).toContain("source/r1/blocks.json");
+    expect(fixture.requested).not.toContain("source/r1/text.md");
+    expect(fixture.requested.some((key) => key.startsWith("source/r2/"))).toBe(false);
+  });
+  it("rejects a guide range above the remaining bound before its R2 get", async () => {
+    const revisionId = "11111111-1111-4111-8111-111111111111";
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper", state: "active", currentRevisionId: revisionId, createdAt: 1 }],
+      revisions: [{ id: revisionId, readableState: "readable", readableSize: limit + 1, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 1 }],
+      texts: { [revisionId]: { text: "Evidence.", blocks: [{ id: 1, type: "paragraph", start: 0, end: limit + 1, heading: null }], guide: "Guide [R" + revisionId + ":1]." } },
+      claims: { [revisionId]: [{ ordinal: 0, statement: "Evidence.", quote: "Evidence.", conditions: null, blockIndex: 1, ambiguous: 0 }] },
+    });
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested).toContain("source/" + revisionId + "/guide.md");
+    expect(fixture.requested.some((key) => key.includes("text.md"))).toBe(false);
+  });
+  it("caps tiny guide range fan-out without returning partial source evidence", async () => {
+    const revisionId = "11111111-1111-4111-8111-111111111111";
+    const blocks = Array.from({ length: 257 }, (_, i) => ({ id: i + 1, type: "paragraph", start: i, end: i + 1, heading: null }));
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
+      sources: [{ id: "s1", title: "Paper", state: "active", currentRevisionId: revisionId, createdAt: 1 }],
+      revisions: [{ id: revisionId, readableState: "readable", readableSize: 9000000, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 1 }],
+      texts: { [revisionId]: { text: "x".repeat(257), blocks, guide: blocks.map((block) => "[R" + revisionId + ":" + block.id + "]").join(" ") } },
+      claims: { [revisionId]: [{ ordinal: 0, statement: "x", quote: "x", conditions: null, blockIndex: 1, ambiguous: 0 }] },
+    });
+    await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "project_default", model: MODEL }))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(fixture.requested.filter((key) => key.includes("text.md#r"))).toHaveLength(256);
+  });
+  it.each(["sources", "source NUL", "summary NUL", "report NUL", "claims", "claim NUL", "source aggregate", "IDs"]
+    .flatMap(kind => (["project_default", "explicit"] as const).map(scopeMode => ({ kind, scopeMode }))))("bounds $kind for $scopeMode before transferring oversized fields", async ({ kind, scopeMode }) => {
+    const db = new DatabaseSync(":memory:");
+    const fixture = scope();
+    const transferred: Record<string, unknown>[] = [];
+    try {
+      db.exec(`CREATE TABLE project(id TEXT); INSERT INTO project VALUES('p1');
+        CREATE TABLE source(id TEXT,title TEXT,current_revision_id TEXT,state TEXT,created_at INTEGER);
+        CREATE TABLE source_revision(id TEXT,readable_state TEXT,readable_size INTEGER,distill_state TEXT,guide_summary TEXT,distill_report_key TEXT,deleted_at INTEGER,claim_count INTEGER,distill_attempt_id TEXT);
+        CREATE TABLE project_source(project_id TEXT,source_id TEXT,enabled INTEGER);
+        CREATE TABLE claim(source_revision_id TEXT,ordinal INTEGER,statement TEXT,quote TEXT,conditions TEXT,block_index INTEGER,ambiguous INTEGER);
+        INSERT INTO source VALUES('s0','Paper','r0','active',1);
+        INSERT INTO source_revision VALUES('r0','readable',9000000,'done',NULL,NULL,NULL,1,NULL);
+        INSERT INTO project_source VALUES('p1','s0',1);`);
+      if (kind === "sources" || kind === "source NUL") db.prepare("UPDATE source SET title=?").run((kind.endsWith("NUL") ? "a\0" : "") + "t".repeat(20000));
+      else if (kind === "summary NUL") db.prepare("UPDATE source_revision SET guide_summary=?").run("a\0" + "g".repeat(40000));
+      else if (kind === "report NUL") db.prepare("UPDATE source_revision SET distill_report_key=?").run("a\0" + "k".repeat(20000));
+      else if (kind === "IDs") {
+        const id = "a\0" + "i".repeat(20000);
+        db.prepare("UPDATE source SET id=?").run(id);
+        db.prepare("UPDATE project_source SET source_id=?").run(id);
+      } else if (kind === "source aggregate") {
+        db.prepare("UPDATE source_revision SET guide_summary=?").run("g".repeat(8192));
+        const source = db.prepare("INSERT INTO source VALUES(?,?,'r0','active',1)");
+        const membership = db.prepare("INSERT INTO project_source VALUES('p1',?,1)");
+        for (let i = 1; i <= 600; i++) { source.run("s" + i, "Paper"); membership.run("s" + i); }
+      } else db.prepare("INSERT INTO claim VALUES('r0',0,'Fact',?,NULL,1,0)").run((kind.endsWith("NUL") ? "a\0" : "") + "q".repeat(limit));
+      fixture.env.DB = { prepare(sql: string) {
+        const statement = db.prepare(sql);
+        return { bind(...params: SQLInputValue[]) { return {
+          async first() { return statement.get(...params) ?? null; },
+          async all() { const rows = statement.all(...params); transferred.push(...rows); return { results: rows }; },
+        }; } };
+      } } as unknown as D1Database;
+      const sourceIds = db.prepare("SELECT id FROM source ORDER BY id").all().map(row => row.id as string);
+      await expect(buildContext(fixture.env, actor, { projectId: "p1", scopeMode, sourceIds, model: MODEL }))
+        .rejects.toMatchObject({ code: "invalid", status: 400 });
+      expect(fixture.requested).toEqual([]);
+      expect(JSON.stringify(transferred).length).toBeLessThan(kind === "source aggregate" ? (scopeMode === "explicit" ? limit / 4 + 200000 : 200000) : 2000);
+    } finally { db.close(); }
+  });
+});
+
+describe("Follow-up source and history budget", () => {
+  it("keeps a reachable third question within HY3 capacity without shortening its latest exchange", async () => {
+    const paragraph = "Canonical source evidence describes the method, its conditions and limitations. ".repeat(50);
+    const text = Array(150).fill(paragraph).join("\n\n").slice(0, 555000), blocks = scanBlocks(text);
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Canonical source", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: text.length, distillState: "none", guideSummary: null, deletedAt: null }],
+      texts: { r0: { text, blocks } } });
+    const model = { contextTokens: 192000, contextWindowTokens: 256000, maxOutputTokens: 128000, outputReserveTokens: 8192 };
+    const initialInput = { projectId: "p1", scopeMode: "explicit" as const, sourceIds: ["s0"], model, question: "Summarize the method." };
+    const first = await buildContext(fixture.env, actor, initialInput);
+    const frozenCitation = resolveCitations("[S1:1]", first.sources).citations;
+    const answer = "The study describes its method and limitations. ".repeat(21) + "[S1:1]";
+    const older = [
+      { role: "user" as const, content: initialInput.question, revisionIds: first.revisionIds },
+      { role: "assistant" as const, content: answer, turnId: "older-turn", revisionIds: ["r0"], citations: frozenCitation },
+    ];
+    const latest = [
+      { role: "user" as const, content: "Explain the study design.", revisionIds: first.revisionIds },
+      { role: "assistant" as const, content: answer, turnId: "latest-turn", revisionIds: ["r0"], citations: frozenCitation },
+    ];
+    const second = await buildContext(fixture.env, actor, { ...initialInput, question: latest[0]?.content ?? "", history: older });
+    expect(second.mode).toBe("whole");
+    expect(second.messages.at(-1)).toMatchObject({ turnId: "older-turn", content: answer });
+    const followup = { ...initialInput, question: "Explain its limitations.", history: [...older, ...latest] };
+    const withoutHistory = await buildContext(fixture.env, actor, { ...followup, history: [] });
+    const latestOnly = await buildContext(fixture.env, actor, { ...followup, history: latest });
+    expect(latestOnly.mode).toBe("whole");
+    expect(latestOnly.messages.at(-1)).toMatchObject({ turnId: "latest-turn", content: answer });
+    expect(latestOnly.revisionIds).toEqual(first.revisionIds);
+    expect(latestOnly.sources).toEqual(first.sources);
+    const result = await buildContext(fixture.env, actor, followup);
+    expect(result.mode).toBe("whole");
+    expect(result.sources).toEqual(first.sources);
+    expect(result.revisionIds).toEqual(first.revisionIds);
+    expect(result.messages.at(-1)).toMatchObject({ turnId: "latest-turn", content: answer });
+    expect(result.messages.some(message => message.content === latest[0]?.content)).toBe(true);
+    expect(result.messages.some(message => message.turnId === "older-turn")).toBe(false);
+    expect(result.historyNotice).toContain("Older exchanges were omitted");
+    expect(result.messages.some(message => message.role === "system" && message.content === result.historyNotice)).toBe(true);
+    expect(requestEstimate(result.messages, followup.question)).toBeLessThanOrEqual(modelInputLimit(model));
+    expect(result.estimatedInputTokens).toBe(result.messages.reduce((sum, message) => sum + Math.ceil(new TextEncoder().encode(message.content).byteLength / 3), 0));
+    expect(first.historyNotice).toBeUndefined(); expect(second.historyNotice).toBeUndefined(); expect(latestOnly.historyNotice).toBeUndefined();
+    expect(requestEstimate([...withoutHistory.messages, ...followup.history], followup.question)).toBeGreaterThan(modelInputLimit(model));
+    // Capacity that fits both exchanges must keep them, without a misleading notice.
+    const roomy = await buildContext(fixture.env, actor, { ...followup, model: { ...model, contextTokens: 200000 } });
+    expect(roomy.messages.filter(message => message.turnId).map(message => message.turnId)).toEqual(["older-turn", "latest-turn"]);
+    expect(roomy.historyNotice).toBeUndefined();
+    // No older exchange can be removed when the latest complete answer itself does not fit.
+    await expect(buildContext(fixture.env, actor, { ...followup, history: [{ role: "user", content: "Recent question", revisionIds: first.revisionIds },
+      { ...latest[1], role: "assistant", content: answer.repeat(4) }] })).rejects.toMatchObject({ code: "invalid", status: 400 });
+  });
+});
+
+describe("History memory and model capacity", () => {
+  it("does not spend the assembly guard on optional older text before fitting evidence", async () => {
+    const text = Array(140).fill("Canonical evidence. ".repeat(200)).join("\n\n");
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Paper", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: text.length, distillState: "none", guideSummary: null, deletedAt: null }],
+      texts: { r0: { text, blocks: scanBlocks(text) } } });
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"],
+      model: { contextTokens: 1000000, maxOutputTokens: 2000 }, question: "Continue.", history: [
+        { role: "user", content: "Old question", revisionIds: ["r0"] },
+        { role: "assistant", content: "A".repeat(2500000), revisionIds: ["r0"], citations: [], turnId: "old" },
+        { role: "user", content: "Recent question", revisionIds: ["r0"] },
+        { role: "assistant", content: "Recent answer", revisionIds: ["r0"], citations: [], turnId: "new" },
+      ] });
+    expect(result.mode).toBe("whole");
+    expect(result.messages.some(message => message.turnId === "new")).toBe(true);
+    expect(result.messages.some(message => message.turnId === "old")).toBe(false);
+    expect(result.historyNotice).toBeTruthy();
+    expect(requestEstimate(result.messages, "Continue.")).toBeLessThanOrEqual(1000000);
+  });
+});
+
+describe("History shared input budget", () => {
+  function fixture(text = "Evidence.") {
+    return makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Paper", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: text.length, distillState: "none", guideSummary: null, deletedAt: null }],
+      texts: { r0: { text, blocks: scanBlocks(text) } } });
+  }
+  const model = { contextTokens: 10000, maxOutputTokens: 100 };
+  it("retains a 6000-character latest answer above the former 1000-token quota", async () => {
+    const f = fixture();
+    const result = await buildContext(f.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"], model, question: "Continue.", history: [
+      { role: "user", content: "Earlier question", revisionIds: ["r0"] },
+      { role: "assistant", content: "A".repeat(6000), revisionIds: ["r0"], turnId: "latest" },
+    ] });
+    expect(result.messages.at(-1)).toMatchObject({ content: "A".repeat(6000), turnId: "latest" });
+    expect(result.historyNotice).toBeUndefined();
+    expect(requestEstimate(result.messages, "Continue.")).toBeLessThanOrEqual(10000);
+  });
+  it("rejects a newest 30000-character answer that cannot fit instead of silently dropping it", async () => {
+    const f = fixture();
+    await expect(buildContext(f.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"], model, question: "Continue.", history: [
+      { role: "user", content: "Earlier question", revisionIds: ["r0"] },
+      { role: "assistant", content: "A".repeat(30000), revisionIds: ["r0"], turnId: "latest" },
+    ] })).rejects.toMatchObject({ code: "invalid", status: 400 });
+  });
+  it("discloses an out-of-scope pair while retaining the newest eligible pair", async () => {
+    const f = fixture();
+    const result = await buildContext(f.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"], model, question: "Continue.", history: [
+      { role: "user", content: "Foreign question", revisionIds: ["foreign"] },
+      { role: "assistant", content: "Foreign answer", revisionIds: ["foreign"], turnId: "foreign" },
+      { role: "user", content: "Earlier question", revisionIds: ["r0"] },
+      { role: "assistant", content: "Earlier answer", revisionIds: ["r0"], turnId: "latest" },
+    ] });
+    expect(result.messages.at(-1)).toMatchObject({ turnId: "latest" });
+    expect(result.messages.some(message => message.turnId === "foreign")).toBe(false);
+    expect(result.historyNotice).toBeTruthy();
+    expect(result.messages.some(message => message.role === "system" && message.content === result.historyNotice)).toBe(true);
+  });
+});
+
+describe("History-aware source preflight", () => {
+  it("does not materialize a 1.2 MB whole source before compacting for a 600 KB latest answer", async () => {
+    const text = Array(320).fill("Canonical evidence. ".repeat(200)).join("\n\n").slice(0, 1200000);
+    const blocks = scanBlocks(text);
+    const block = blocks[0];
+    if (!block) throw new Error("Expected an evidence block.");
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Paper", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: text.length, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 1 }],
+      texts: { r0: { text, blocks, guide: "" } },
+      claims: { r0: [{ ordinal: 0, statement: "Finding", quote: sliceUtf8(text, block.start, block.end), conditions: null, blockIndex: block.id, ambiguous: 0 }] } });
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"],
+      model: { contextTokens: 450000, maxOutputTokens: 100 }, question: "Continue.", history: [
+        { role: "user", content: "Earlier question", revisionIds: ["r0"] },
+        { role: "assistant", content: "A".repeat(600000), revisionIds: ["r0"], turnId: "latest" },
+      ] });
+    expect(result.mode).toBe("claims");
+    expect(result.messages.at(-1)).toMatchObject({ content: "A".repeat(600000), turnId: "latest" });
+    expect(result.revisionIds).toEqual(["r0"]);
+    expect(fixture.requested).not.toContain("source/r0/text.md");
+    expect(requestEstimate(result.messages, "Continue.")).toBeLessThanOrEqual(450000);
+    expect(result.historyNotice).toBeUndefined();
+  });
+});
+
+
+describe("History omission disclosure", () => {
+  it.each([false, true])("uses the already-loaded page boundary without retrieving more history (%s)", async (earlierHistoryExists) => {
+    const { env, reads } = twoSourceEnv();
+    const result = await buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: MODEL, earlierHistoryExists,
+      history: [{ role: "user", content: "Latest question" }, { role: "assistant", content: "Latest answer", turnId: "latest" }] });
+    expect(result.messages.at(-1)).toMatchObject({ content: "Latest answer", turnId: "latest" });
+    if (earlierHistoryExists) {
+      expect(result.historyNotice).toBeTruthy();
+      expect(result.messages.some(message => message.role === "system" && message.content === result.historyNotice)).toBe(true);
+    } else expect(result.historyNotice).toBeUndefined();
+    expect(reads()).toBe(0);
+    expect(requestEstimate(result.messages)).toBeLessThanOrEqual(modelInputLimit(MODEL));
+  });
+  it("discloses when the latest pair is excluded by scope instead of sending its source data", async () => {
+    const { env, reads } = twoSourceEnv();
+    const result = await buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: MODEL,
+      history: [{ role: "user", content: "Foreign question", revisionIds: ["r1"] },
+        { role: "assistant", content: "Foreign answer", revisionIds: ["r1"] }] });
+    expect(result.historyNotice).toBeTruthy();
+    expect(result.messages.some(message => message.content.includes("Foreign"))).toBe(false);
+    expect(result.revisionIds).toEqual([]);
+    expect(reads()).toBe(0);
+  });
+});
+
+
+describe("Optional whole-source orientation memory", () => {
+  it.each([0, 700000, 780000, 790000, 800000, 900000])("does not reject retained exchanges for optional guide allocation (%i older characters)", async (oldSize) => {
+    const text = "Canonical evidence. ".repeat(50000), blocks = scanBlocks(text);
+    const summary = "G".repeat(32768);
+    const fixture = makeEnv({ memberships: [{ projectId: "p1", sourceId: "s0", enabled: 1 }],
+      sources: [{ id: "s0", title: "Paper", state: "active", currentRevisionId: "r0", createdAt: 0 }],
+      revisions: [{ id: "r0", readableState: "readable", readableSize: text.length, distillState: "done", guideSummary: summary, deletedAt: null, claimCount: 0 }],
+      texts: { r0: { text, blocks, guide: "" } } });
+    const result = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s0"],
+      model: { contextTokens: 2000000, maxOutputTokens: 100 }, question: "Continue.", history: [
+        ...(oldSize ? [{ role: "user" as const, content: "Older question", revisionIds: ["r0"] },
+          { role: "assistant" as const, content: "A".repeat(oldSize), revisionIds: ["r0"], turnId: "old" }] : []),
+        { role: "user", content: "Newest question", revisionIds: ["r0"] },
+        { role: "assistant", content: "Newest answer", revisionIds: ["r0"], turnId: "latest" },
+      ] });
+    expect(result.mode).toBe("whole");
+    expect(result.messages.at(-1)).toMatchObject({ turnId: "latest", content: "Newest answer" });
+    expect(result.messages.some(message => message.content === "Newest question")).toBe(true);
+    expect(result.sources[0]?.blocks).toEqual(blocks);
+    expect(result.revisionIds).toEqual(["r0"]);
+    expect(fixture.requested).toEqual(["source/r0/blocks.json", "source/r0/text.md"]);
+    if (oldSize === 900000) {
+      expect(result.messages.some(message => message.turnId === "old")).toBe(false);
+      expect(result.messages.some(message => message.content === "Older question")).toBe(false);
+      expect(result.historyNotice).toBeTruthy();
+    } else {
+      expect(result.historyNotice).toBeUndefined();
+      if (oldSize) expect(result.messages.find(message => message.turnId === "old")?.content).toBe("A".repeat(oldSize));
+    }
+    expect(result.messages.some(message => message.content.includes(summary))).toBe(oldSize < 780000 || oldSize === 900000);
+    expect(requestEstimate(result.messages, "Continue.")).toBeLessThanOrEqual(2000000);
+  });
+});
+
+describe("Partial history notices follow retained exchanges", () => {
+  const partialNotice = "An earlier assistant answer was partial.";
+  it("includes one bounded notice for a retained partial, without shortening its answer", async () => {
+    const { env } = twoSourceEnv();
+    const result = await buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: MODEL,
+      history: [{ role: "user", content: "Earlier question" }, { role: "assistant", content: "Unfinished answer", turnId: "partial", partial: true }] });
+    expect(result.messages.filter(message => message.content.startsWith(partialNotice))).toHaveLength(1);
+    expect(result.messages.at(-1)).toMatchObject({ content: "Unfinished answer", partial: true, turnId: "partial" });
+    expect(result.historyNotice).toBeUndefined();
+    expect(requestEstimate(result.messages)).toBeLessThanOrEqual(modelInputLimit(MODEL));
+  });
+  it("drops the partial notice when the only partial exchange is omitted for budget", async () => {
+    const { env } = twoSourceEnv();
+    const result = await buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: { contextTokens: 2500, maxOutputTokens: 100 },
+      history: [{ role: "user", content: "Old question" }, { role: "assistant", content: "Old partial ".repeat(400), turnId: "partial", partial: true },
+        { role: "user", content: "Latest question" }, { role: "assistant", content: "Latest complete answer", turnId: "latest" }] });
+    expect(result.messages.some(message => message.content.startsWith(partialNotice))).toBe(false);
+    expect(result.messages.some(message => message.turnId === "partial")).toBe(false);
+    expect(result.messages.at(-1)?.turnId).toBe("latest");
+    expect(result.historyNotice).toBeTruthy();
+  });
+  it("does not hide the latest partial or its notice to rescue a too-small budget", async () => {
+    const { env } = twoSourceEnv();
+    const history = [{ role: "user" as const, content: "Earlier question" }, { role: "assistant" as const, content: "Unfinished answer", turnId: "latest" }];
+    const base = await buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: MODEL, history });
+    await expect(buildContext(env, actor, { projectId: "p1", scopeMode: "empty", model: { contextTokens: requestEstimate(base.messages), maxOutputTokens: 100 },
+      history: [{ role: "user", content: "Earlier question" }, { role: "assistant", content: "Unfinished answer", turnId: "latest", partial: true }] })).rejects.toMatchObject({ code: "invalid", status: 400 });
+  });
+});
+
+
+describe("Long history framing", () => {
+  it("charges every JSON array separator before reserving a history suffix", async () => {
+    const history = Array.from({ length: 1000 }, (_, i) => [
+      { role: "user" as const, content: "Question " + i + ": уточни прежний вывод." },
+      { role: "assistant" as const, content: "A".repeat(600), turnId: "turn-" + i },
+    ]).flat();
+    const charged = history.reduce((sum, message) => sum + estimateHistoryMessage(message), 0);
+    expect(charged).toBeGreaterThanOrEqual(requestEstimate(history, "Continue.") - requestEstimate([], "Continue."));
+    const { env } = twoSourceEnv();
+    const result = await buildContext(env, actor, { projectId: "p1", scopeMode: "empty", question: "Continue.",
+      model: { contextTokens: 192000, maxOutputTokens: 8192 }, history });
+    expect(result.messages.at(-1)).toMatchObject({ content: "A".repeat(600), turnId: "turn-999" });
+    const retained = result.messages.filter(message => message.turnId).length;
+    expect(retained).toBeGreaterThan(50); expect(retained).toBeLessThan(1000);
+    expect(result.historyNotice).toBeTruthy();
+    expect(requestEstimate(result.messages, "Continue.")).toBeLessThanOrEqual(192000);
+  });
+});
+
+
+describe("Stored history uses final source scope and passages", () => {
+  it.each([["s1", "s2"], ["s2", "s1"], ["s1"]])("matches direct history selection for ordered scope %j", async (...sourceIds) => {
+    const fixture = twoSourceEnv();
+    const original = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s1", "s2"], model: MODEL });
+    const citations = resolveCitations("Answer [S2:1]", original.sources).citations;
+    const history = [{ role: "user" as const, content: "Question [S2:1]", revisionIds: ["r1", "r2"] },
+      { role: "assistant" as const, content: "Answer [S2:1]", revisionIds: ["r2"], citations, turnId: "prior" }];
+    const input = { projectId: "p1", scopeMode: "explicit" as const, sourceIds, model: MODEL, question: "Continue." };
+    const expected = await buildContext(fixture.env, actor, { ...input, history });
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE turns(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL,history_version INTEGER NOT NULL); CREATE INDEX turns_by_created ON turns(created_at,id)");
+    db.prepare("INSERT INTO turns VALUES('prior',?,1,1)").run(JSON.stringify({ state: "completed", question: "Question [S2:1]", answer: "Answer [S2:1]", revisionIds: ["r1", "r2"], citations }));
+    let fragmentReads = 0;
+    const sql = { exec(query: string, ...bindings: SQLInputValue[]) {
+      if (query.includes("SELECT payload ->")) fragmentReads++;
+      const rows = db.prepare(query).all(...bindings);
+      return { toArray: () => rows };
+    } } as unknown as SqlStorage;
+    const get = fixture.env.BUCKET.get.bind(fixture.env.BUCKET);
+    fixture.env.BUCKET.get = (async (key: string, options?: R2GetOptions) => {
+      expect(fragmentReads).toBe(0); // Only scalar newest metadata precedes source loading.
+      return get(key, options);
+    }) as typeof fixture.env.BUCKET.get;
+    try {
+      const result = await buildContext(fixture.env, actor, { ...input, historyReader: createModelHistoryReader(sql, "current") });
+      expect(result).toEqual(expected);
+      expect(fragmentReads).toBe(sourceIds.includes("s2") ? 1 : 0);
+    } finally { db.close(); }
+  });
+});
+
+
+describe("Stored normalized history at the input edge", () => {
+  it.each(["reordered", "stale-range", "unverified", "still-too-large"])("budgets the actual cleaned messages (%s)", async (kind) => {
+    const fixture = twoSourceEnv();
+    const original = await buildContext(fixture.env, actor, { projectId: "p1", scopeMode: "explicit", sourceIds: ["s1", "s2"], model: MODEL });
+    const resolved = resolveCitations("[S2:1]", original.sources).citations;
+    const citations = kind === "unverified" ? [] : kind === "stale-range" ? resolved.map(citation => ({ ...citation, start: 1 })) : resolved;
+    const question = "Earlier question", answer = "Finding " + "[S2:1] ".repeat(100) + (kind === "still-too-large" ? "X".repeat(1000) : "");
+    const sourceIds = kind === "reordered" || kind === "still-too-large" ? ["s2", "s1"] : ["s1", "s2"];
+    const input = { projectId: "p1", scopeMode: "explicit" as const, sourceIds, model: { contextTokens: 1922, maxOutputTokens: 100 }, question: "Continue." };
+    const history = [{ role: "user" as const, content: question, revisionIds: ["r1", "r2"] },
+      { role: "assistant" as const, content: answer, revisionIds: citations.map(citation => citation.revisionId), citations, turnId: "prior" }];
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE turns(id TEXT PRIMARY KEY,payload TEXT NOT NULL,created_at INTEGER NOT NULL,history_version INTEGER NOT NULL); CREATE INDEX turns_by_created ON turns(created_at,id)");
+    db.prepare("INSERT INTO turns VALUES('prior',?,1,1)").run(JSON.stringify({ state: "completed", question, answer, revisionIds: ["r1", "r2"], citations }));
+    let fragmentReads = 0;
+    const sql = { exec(query: string, ...bindings: SQLInputValue[]) {
+      if (query.includes("SELECT payload ->")) fragmentReads++;
+      const rows = db.prepare(query).all(...bindings);
+      return { toArray: () => rows };
+    } } as unknown as SqlStorage;
+    try {
+      const storedInput = { ...input, historyReader: createModelHistoryReader(sql, "current") };
+      if (kind === "still-too-large") {
+        await expect(buildContext(fixture.env, actor, { ...input, history })).rejects.toMatchObject({ code: "invalid", status: 400 });
+        await expect(buildContext(fixture.env, actor, storedInput)).rejects.toMatchObject({ code: "invalid", status: 400 });
+      } else {
+        const expected = await buildContext(fixture.env, actor, { ...input, history });
+        const result = await buildContext(fixture.env, actor, storedInput);
+        expect(result).toEqual(expected);
+        expect(result.messages.at(-1)?.content).toBe("Finding");
+        expect(result.historyNotice).toBeUndefined();
+        expect(requestEstimate(result.messages, input.question)).toBeLessThanOrEqual(input.model.contextTokens);
+        expect(fragmentReads).toBe(1);
+      }
+    } finally { db.close(); }
   });
 });

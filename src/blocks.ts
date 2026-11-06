@@ -10,8 +10,8 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const continuation = (byte: number | undefined) => byte !== undefined && (byte & 0xc0) === 0x80;
 
-export function sliceUtf8(text: string, start: number, end: number): string {
-  const bytes = encoder.encode(text);
+export function sliceUtf8(text: string | Uint8Array, start: number, end: number): string {
+  const bytes = typeof text === "string" ? encoder.encode(text) : text;
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > bytes.length
     || continuation(bytes[start]) || continuation(bytes[end])) throw new RangeError("Invalid UTF-8 byte range.");
   return decoder.decode(bytes.subarray(start, end));
@@ -193,9 +193,12 @@ export function scanBlocks(text: string): Block[] {
       current = next; continue;
     }
     const tableStart = !next.done && line.body.includes("|") && /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(next.value.body);
+    const listMarker = /^\s*(?:[-*+]|(\d+)[.)])\s+/.exec(line.body);
+    const startsList = listMarker !== null && (pending?.type !== "paragraph" || listMarker[1] === undefined || Number(listMarker[1]) === 1);
     const type: Block["type"] = /^ {0,3}>/.test(line.body) ? "quote"
-      : /^\s*(?:[-*+]|\d+[.)])\s+/.test(line.body) || (pending?.type === "list" && /^(?: {2,}|\t)\S/.test(line.body)) ? "list"
-      : tableStart || (pending?.type === "table" && line.body.includes("|")) || /^\s*\|/.test(line.body) || /\|\s*$/.test(line.body) ? "table" : "paragraph";
+      : startsList || (pending?.type === "list" && /^(?: {2,}|\t)\S/.test(line.body)) ? "list"
+      : tableStart || (pending?.type === "table" && line.body.includes("|")) || /^\s*\|/.test(line.body) || /\|\s*$/.test(line.body) ? "table"
+      : pending?.type === "list" ? "list" : "paragraph";
     if (pending?.type !== type) { flush(); pending = { type, first: line, last: line }; }
     else pending.last = line;
     current = next;

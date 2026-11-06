@@ -5,18 +5,19 @@ import { getAgentByName, routeAgentRequest } from "agents";
 import { AuthError, assertOrigin, authenticate } from "./auth";
 import type { Actor } from "./auth";
 import type { ApiError, MeResponse } from "./shared/api";
-import { addSource, attachSource, createProject, getProject, getSource, LibraryError, listProjects, listSources, MAX_SOURCE_BYTES, setProjectScope, updateProject } from "./library";
+import { addSource, attachSource, availableSources, createProject, getProject, getSource, LibraryError, listProjects, listSources, MAX_SOURCE_BYTES, setProjectScope, updateProject } from "./library";
 import { readOriginal, readOutline, readText } from "./read";
 import { captureUrl, UrlGuardError } from "./url-guard";
 import { getModelConnection, getModelProviders, modelProvidersSchema, readModelCatalog, refreshModelCatalog, requireCatalogModel, saveModelProviders, validGatewayId } from "./models";
 import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
-import { getOverview, getUnderstanding } from "./understanding";
+import { getOverview, getUnderstanding, getUnderstandingHistory } from "./understanding";
 import { safeErrorLogProjection } from "./model-transport";
 import { handleMcp } from "./mcp";
 import { decideProposal, getProposal, listProposals } from "./proposals";
 import { applyOcrJob, cancelOcrJob, createOcrJob, getOcrJob, listOcrJobs, readOcrPreview, startOcrJob, uploadOcrPage } from "./ocr";
 import { OCR_LIMITS } from "./shared/api";
+import { parseTurnCursor } from "./chat";
 
 export { IngestWorkflow } from "./workflows/ingest";
 export { ChatAgent } from "./chat";
@@ -65,7 +66,8 @@ app.use("/api/*", bodyLimit({ maxSize: MAX_SOURCE_BYTES + 65_536,
 }));
 const uuid = z.uuid();
 const title = z.string().trim().min(1).max(200);
-const projectInput = z.object({ title, description: z.string().max(2000).optional() }).strict();
+const projectInput = z.object({ id: uuid.optional(), title: title.refine(value => !/[\uD800-\uDFFF]/u.test(value), "Use a valid Unicode title."),
+  description: z.string().max(2000).refine(value => !/[\uD800-\uDFFF]/u.test(value), "Use a valid Unicode description.").optional() }).strict();
 const projectPatch = z.object({ title: title.optional(), archived: z.boolean().optional() }).strict();
 async function chatRecord(env: Env, projectId: string, chatId: string) {
   const chat = await env.DB.prepare("SELECT id,project_id AS projectId,title,updated_at AS updatedAt FROM chat WHERE id=? AND project_id=? AND archived_at IS NULL")
@@ -126,15 +128,25 @@ app.get("/api/projects/:id/chats", async (c) => {
 });
 app.post("/api/projects/:id/chats", async (c) => {
   const projectId = uuid.parse(c.req.param("id")); await getProject(c.env, c.get("actor"), projectId);
-  const input = z.object({ title: title.optional() }).strict().parse(await c.req.json());
-  const id = crypto.randomUUID(), now = Date.now();
-  await c.env.DB.prepare("INSERT INTO chat(id,project_id,title,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?)").bind(id, projectId, input.title ?? "New chat", c.get("actor").type, now, now).run();
-  return c.json({ chat: { id, title: input.title ?? "New chat", updatedAt: now } }, 201);
+  const input = z.object({ id: uuid.optional(), title: title.refine(value => !/[\uD800-\uDFFF]/u.test(value), "Use a valid Unicode title.").optional() }).strict().parse(await c.req.json());
+  const id = input.id ?? crypto.randomUUID(), now = Date.now(), requestedTitle = input.title ?? "New chat";
+  const result = await c.env.DB.prepare("INSERT INTO chat(id,project_id,title,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING")
+    .bind(id, projectId, requestedTitle, c.get("actor").type, now, now).run();
+  const stored = await c.env.DB.prepare("SELECT id,title,updated_at AS updatedAt FROM chat WHERE id=? AND project_id=? AND title=? AND archived_at IS NULL")
+    .bind(id, projectId, requestedTitle).first<{ id: string; title: string; updatedAt: number }>();
+  if (!stored) throw new LibraryError("conflict", "This conversation ID cannot be reused with these inputs.", 409);
+  return c.json({ chat: stored }, result.meta.changes === 1 ? 201 : 200);
 });
 app.get("/api/projects/:id/chats/:chatId", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId"));
   const chat = await chatRecord(c.env, projectId, chatId), agent = await getAgentByName(c.env.CHAT, chatId);
   return c.json({ chat, ...await agent.getSnapshot(projectId) });
+});
+app.get("/api/projects/:id/chats/:chatId/turns", async (c) => {
+  const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId"));
+  await chatRecord(c.env, projectId, chatId);
+  const cursor = c.req.query("cursor"); parseTurnCursor(cursor, chatId);
+  return c.json(await (await getAgentByName(c.env.CHAT, chatId)).getTurnPage(projectId, cursor));
 });
 app.post("/api/projects/:id/chats/:chatId/turns", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), chatId = uuid.parse(c.req.param("chatId")); await chatRecord(c.env, projectId, chatId);
@@ -157,12 +169,14 @@ app.post("/api/projects/:id/pages/from-turn", async (c) => {
   const input = z.object({ chatId: uuid, turnId: uuid, title, mutationId: uuid }).strict().parse(await c.req.json());
   return c.json({ page: await saveAnswer(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...input }) }, 201);
 });
-app.get("/api/projects/:id/pages", async (c) => c.json(await listPages(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), ...(c.req.query("cursor") ? { cursor: uuid.parse(c.req.query("cursor")) } : {}) })));
+app.get("/api/projects/:id/pages", async (c) => c.json(await listPages(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), cursor: c.req.query("cursor") })));
 app.get("/api/projects/:id/pages/:pageId", async (c) => c.json({ page: await getPage(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")), pageId: uuid.parse(c.req.param("pageId")) }) }));
-app.get("/api/projects", async (c) => c.json(await listProjects(c.env, c.get("actor"), uuid.optional().parse(c.req.query("cursor")))));
+app.get("/api/projects", async (c) => c.json(await listProjects(c.env, c.get("actor"), uuid.optional().parse(c.req.query("cursor")),
+  z.enum(["false", "true"]).default("false").parse(c.req.query("archived")) === "true")));
 app.post("/api/projects", async (c) => {
   const input = projectInput.parse(await c.req.json());
-  return c.json({ project: await createProject(c.env, c.get("actor"), { title: input.title, ...(input.description === undefined ? {} : { description: input.description }) }) }, 201);
+  return c.json({ project: await createProject(c.env, c.get("actor"), { title: input.title,
+    ...(input.id === undefined ? {} : { id: input.id }), ...(input.description === undefined ? {} : { description: input.description }) }) }, 201);
 });
 app.get("/api/projects/:id", async (c) => c.json({ project: await getProject(c.env, c.get("actor"), uuid.parse(c.req.param("id"))) }));
 app.patch("/api/projects/:id", async (c) => {
@@ -172,6 +186,7 @@ app.patch("/api/projects/:id", async (c) => {
   }) });
 });
 app.get("/api/projects/:id/sources", async (c) => c.json(await listSources(c.env, c.get("actor"), uuid.parse(c.req.param("id")), uuid.optional().parse(c.req.query("cursor")))));
+app.get("/api/projects/:id/sources/available", async (c) => c.json(await availableSources(c.env, c.get("actor"), uuid.parse(c.req.param("id")), c.req.query("cursor"))));
 app.post("/api/projects/:id/sources/attach", async (c) => {
   const input = z.object({ sourceId: uuid }).strict().parse(await c.req.json());
   return c.json(await attachSource(c.env, c.get("actor"), uuid.parse(c.req.param("id")), input.sourceId));
@@ -184,9 +199,11 @@ app.post("/api/projects/:id/sources/file", async (c) => {
   }
   if (file.size > MAX_SOURCE_BYTES) throw new LibraryError("invalid", "The file exceeds 25 MiB.", 413);
   const sourceId = uuid.optional().parse(form.get("sourceId") ?? undefined);
+  const revisionId = uuid.optional().parse(form.get("revisionId") ?? undefined);
+  if (revisionId && !sourceId) throw new LibraryError("invalid", "A replacement revision ID requires an attached source.", 400);
   return c.json(await addSource(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
     title: title.parse((form.get("title") ?? file.name).toString().slice(0, 200)), kind: "file", bytes: await file.arrayBuffer(),
-    filename: file.name.slice(0, 255), mimeType: file.type || "application/octet-stream", ...(sourceId ? { sourceId } : {}),
+    filename: file.name.slice(0, 255), mimeType: file.type || "application/octet-stream", ...(sourceId ? { sourceId } : {}), ...(revisionId ? { revisionId } : {}),
   }), 202);
 });
 app.post("/api/projects/:id/sources/text", async (c) => {
@@ -246,12 +263,18 @@ app.post(ocrBase + "/:jobId/apply", async (c) => {
     projectId: uuid.parse(c.req.param("id")), sourceId: uuid.parse(c.req.param("sourceId")), jobId: uuid.parse(c.req.param("jobId")), ...input,
   }));
 });
-app.get("/api/sources/:id/understanding", async (c) => c.json(await getUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), revisionId: uuid.optional().parse(c.req.query("revisionId")) })));
+app.get("/api/sources/:id/understanding", async (c) => c.json(await getUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), revisionId: uuid.optional().parse(c.req.query("revisionId")), attemptId: uuid.optional().parse(c.req.query("attemptId")), requestId: uuid.optional().parse(c.req.query("requestId")) })));
+app.get("/api/sources/:id/understanding/history", async (c) => c.json(await getUnderstandingHistory(c.env, {
+  sourceId: uuid.parse(c.req.param("id")), revisionId: uuid.parse(c.req.query("revisionId")), cursor: z.string().max(512).optional().parse(c.req.query("cursor")),
+})));
 app.post("/api/sources/:id/understanding", async (c) => {
-  const input = z.object({ revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional() }).strict().parse(await c.req.json());
-  return c.json(await requestUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), ...input }), 202);
+  const input = z.object({ revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional(), retry: z.object({ attemptId: uuid, previousAttemptId: uuid }).strict().optional() }).strict().parse(await c.req.json());
+  const result = await requestUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), ...input });
+  return c.json(result, "rejected" in result ? 200 : 202);
 });
-app.get("/api/projects/:id/overview", async (c) => c.json(await getOverview(c.env, c.get("actor"), { projectId: uuid.parse(c.req.param("id")) })));
+app.get("/api/projects/:id/overview", async (c) => c.json(await getOverview(c.env, c.get("actor"), {
+  projectId: uuid.parse(c.req.param("id")), cursor: z.string().max(512).optional().parse(c.req.query("cursor")),
+})));
 app.get("/api/revisions/:id/text", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id"))));
 app.get("/api/revisions/:id/range", async (c) => readText(c.env, c.get("actor"), uuid.parse(c.req.param("id")), {
   start: z.coerce.number().int().nonnegative().parse(c.req.query("start")), end: z.coerce.number().int().positive().parse(c.req.query("end")),

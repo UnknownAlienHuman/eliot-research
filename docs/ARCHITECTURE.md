@@ -34,8 +34,10 @@ quality and deployed Access remain unverified. This does not establish owner sem
    functions: list, outline, read, find claims, search, get page and propose page.
 5. **Code controls risk.** Scope, permissions, byte ranges, citation resolution, quote verification, call limits and
    spend admission are deterministic code. Models decide prose and semantic classification, not authority.
-6. **Paid effects are explicit and bounded.** Every model/search job has a caller, hard call/token/time bounds,
-   recorded usage and a visible failure state. Provider allowances and billing remain provider-owned. A failed or
+6. **Paid effects are explicit and bounded.** Every model/search job has a caller, hard call bounds,
+   declared token capacity when known, recorded usage and a visible failure state. Unknown capacity is not an invented
+   local maximum. Ordinary chat uses explicit Stop and platform/provider execution limits;
+   background jobs retain their documented time bounds. Provider allowances and billing remain provider-owned. A failed or
    rejected call stops the job; continuation requires another explicit owner action.
 7. **Cloudflare-native first; optional services behind gates.** Use one Worker, D1, R2, Durable Objects, Workflows and
    Workers AI directly. AI Search and Browser Run arrive only after their contour proves a need and a cost/quality win.
@@ -82,8 +84,8 @@ citations or starts understanding. AI Search can be deleted and rebuilt without 
 the answer, and never invents page numbers, labels or source names. Every accepted citation is server-resolved.
 
 **No hidden paid work.** Opening, listing, reading, reconnecting and saving existing output are storage operations only.
-An ordinary answer is one model call in whole/claim mode or a short capped tool loop in search mode. Distillation runs
-at most once for an unchanged revision. Research is an explicit job. Failed streams are not automatically continued.
+An ordinary answer is one model call in whole/claim mode or a short capped tool loop in search mode. Distillation reuses an unchanged revision by default. A confirmed failed or partial attempt can be retried only by an explicit
+owner request, preserving its previous output and usage. Research is an explicit job. Failed streams are not automatically continued.
 
 **Graceful degradation.** Reading works without any model. Whole/claim answering works without AI Search. When a paid
 service is unavailable or the budget is exhausted, the UI shows the blocked operation and the cheaper available path.

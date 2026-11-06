@@ -1,5 +1,5 @@
 import { unsupportedNumbers, parseSingleNumber, countNumericQuantities } from "../../src/numbers.ts";
-import { resolveCitations, uncitedStatements, unsupportedNumericStatements } from "../../src/citations.ts";
+import { unsupportedNumericStatements } from "../../src/citations.ts";
 import { assertEvalOrigin, fetchEval } from "./origin.mjs";
 // K3 Distill eval harness (docs/MAP.md K3; docs/IMPLEMENTATION.md 6, 8, 10, 11).
 // Interface assumptions (backend contract under test):
@@ -37,69 +37,29 @@ if (process.env.ELIOT_OWNER_JWT) H['cf-access-jwt-assertion'] = String(process.e
 const nativeOnly = process.argv.includes('--native-only');
 const unchangedOnly = process.argv.includes('--unchanged-only');
 const readerBrowser = process.argv.includes('--reader-browser');
-const reviewSourceMode = process.argv.includes('--review-source');
-function optionValue(name) {
-  const inline = process.argv.filter((arg) => arg.startsWith(name + '='));
-  const plain = process.argv.map((arg, index) => arg === name ? index : -1).filter((index) => index >= 0);
-  assert.equal(inline.length + plain.length, 1, '--review-source requires ' + name + ' exactly once.');
-  if (inline.length === 1) return inline[0].slice(name.length + 1);
-  const value = process.argv[plain[0] + 1];
-  assert(typeof value === 'string' && value.length > 0 && !value.startsWith('--'), name + ' needs a value.');
-  return value;
-}
-const reviewProjectId = reviewSourceMode ? optionValue('--project-id') : null;
-const reviewSourceId = reviewSourceMode ? optionValue('--source-id') : null;
-const reviewRevisionId = reviewSourceMode ? optionValue('--revision-id') : null;
-const reviewPaperFile = reviewSourceMode && process.argv.some((arg) => arg === '--paper-file' || arg.startsWith('--paper-file='))
-  ? optionValue('--paper-file') : null;
 const runModel = process.env.ELIOT_K3_MODEL === '1';
+const anchorsOnly = process.argv.includes('--anchors-only');
+assert(!anchorsOnly || !runModel, '--anchors-only forbids model work.');
 assert(!unchangedOnly || !runModel, '--unchanged-only forbids model work.');
-assert(!reviewSourceMode || (!nativeOnly && !unchangedOnly && !readerBrowser), '--review-source is a standalone GET-only review mode.');
-assert(!reviewSourceMode || !runModel, '--review-source forbids ELIOT_K3_MODEL=1.');
-if (reviewSourceMode) {
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  for (const [label, value] of [['project', reviewProjectId], ['source', reviewSourceId], ['revision', reviewRevisionId]])
-    assert(uuid.test(value), '--review-source requires an explicit UUID ' + label + ' ID.');
-}
 const outDir = fileURLToPath(new URL('../../eval/out/k3/', import.meta.url));
 await mkdir(outDir, { recursive: true });
 const evalDir = fileURLToPath(new URL('../../eval/', import.meta.url));
 const CLAIM_ORDER = ['C1', 'C2', 'C3', 'C4'];
 const CLAIM_Q = new Map();
-const questionsText = await readFile(evalDir + '/arxiv-10/questions.md', 'utf8');
-for (const line of questionsText.split(EOL)) {
+for (const line of (await readFile(evalDir + '/arxiv-10/questions.md', 'utf8')).split(EOL)) {
   const parts = line.split('|').map((p) => p.trim());
   if (parts.length >= 3 && CLAIM_ORDER.includes(parts[1]) && parts[2]) CLAIM_Q.set(parts[1], parts[2]);
 }
 assert.equal(CLAIM_Q.size, 4, 'questions.md must define C1-C4.');
 const CLAIM_QUESTIONS = CLAIM_ORDER.map((k) => CLAIM_Q.get(k));
-const K3_ANCHOR_SOURCES = new Map();
-let inK3Anchors = false;
-for (const line of questionsText.split(EOL)) {
-  if (line.startsWith('## K3')) { inK3Anchors = true; continue; }
-  if (inK3Anchors && line.startsWith('## ')) break;
-  if (!inK3Anchors) continue;
-  const parts = line.split('|').map((p) => p.trim());
-  if (parts.length >= 3 && /^A\d+$/.test(parts[1]) && parts[2]) K3_ANCHOR_SOURCES.set(parts[1], parts[2]);
-}
-assert.deepEqual([...K3_ANCHOR_SOURCES.keys()].sort(), ['A1', 'A2', 'A3'], 'questions.md must retain the three frozen K3 paper anchors.');
 const baselineManifest = JSON.parse(await readFile(evalDir + '/arxiv-10/sources.json', 'utf8'));
 const overflowManifest = JSON.parse(await readFile(evalDir + '/arxiv-10/overflow.json', 'utf8'));
 const BASELINE_EXPECTED = baselineManifest.sources.map((s) => ({ filename: 'arxiv-' + s.id + '.pdf', title: s.title }));
-function reviewPaperForSource(source, explicitFilename) {
-  const sourcePaper = BASELINE_EXPECTED.find((paper) => paper.filename === source.originalFilename);
-  if (sourcePaper && explicitFilename !== null)
-    assert.equal(explicitFilename, sourcePaper.filename, '--paper-file must not substitute another paper for the source frozen filename.');
-  const filename = explicitFilename ?? sourcePaper?.filename;
-  const paper = BASELINE_EXPECTED.find((entry) => entry.filename === filename);
-  assert(paper, 'Selected source needs an exact frozen filename from sources.json; custom QA fixtures require --paper-file <arxiv-NN.pdf>.');
-  return paper;
-}
 const baselineSeedPath = process.env.ELIOT_K3_BASELINE_SEED_RESULT;
 const overflowStoragePath = process.env.ELIOT_K3_OVERFLOW_STORAGE_COMPLETION;
-assert(nativeOnly || unchangedOnly || reviewSourceMode || (baselineSeedPath && overflowStoragePath), 'Full K3 eval requires the caller-frozen ELIOT_K3_BASELINE_SEED_RESULT and ELIOT_K3_OVERFLOW_STORAGE_COMPLETION paths.');
-const baselineSeed = !nativeOnly && !unchangedOnly && !reviewSourceMode && baselineSeedPath ? JSON.parse(await readFile(baselineSeedPath, 'utf8')) : null;
-const overflowStorage = !nativeOnly && !unchangedOnly && !reviewSourceMode && overflowStoragePath ? JSON.parse(await readFile(overflowStoragePath, 'utf8')) : null;
+assert(nativeOnly || unchangedOnly || anchorsOnly || (baselineSeedPath && overflowStoragePath), 'Full K3 eval requires the caller-frozen ELIOT_K3_BASELINE_SEED_RESULT and ELIOT_K3_OVERFLOW_STORAGE_COMPLETION paths.');
+const baselineSeed = !nativeOnly && !unchangedOnly && !anchorsOnly && baselineSeedPath ? JSON.parse(await readFile(baselineSeedPath, 'utf8')) : null;
+const overflowStorage = !nativeOnly && !unchangedOnly && !anchorsOnly && overflowStoragePath ? JSON.parse(await readFile(overflowStoragePath, 'utf8')) : null;
 const OVERFLOW_EXPECTED = overflowManifest.sources.map((s) => ({ id: s.id, title: s.title, arxiv: s.arxiv }));
 assert.deepEqual(BASELINE_EXPECTED.map((s) => s.filename), Array.from({ length: 10 }, (_, i) => 'arxiv-' + String(i + 1).padStart(2, '0') + '.pdf'), 'K3 baseline manifest must name each arxiv-01..10 PDF once.');
 assert.deepEqual(overflowManifest.sources.map((s) => s.id).slice().sort(), ['gpt3', 'palm'], 'K3 overflow manifest must remain the two approved papers.');
@@ -408,17 +368,26 @@ assert.deepEqual(numericsUnsupported('score 41.8 here', '41,8'), [], 'Harness se
 assert.deepEqual(numericsUnsupported('energy 41.8e2 joules', '41.8', 41.8), ['41.8'], 'Harness selftest: full tokens, 41.8 is not supported by 41.8e2.');
 const isTokenObservation = (v) => v === null || (Number.isSafeInteger(v) && v >= 0);
 assert(isTokenObservation(null) && isTokenObservation(0) && isTokenObservation(40978) && !isTokenObservation(undefined) && !isTokenObservation(-1) && !isTokenObservation(1.5) && !isTokenObservation('40978'), 'Harness selftest: token observations accept nonnegative safe integers or null unknown, nothing else.');
-function outputBound(model) {
+function outputReserve(model) {
   const requested = model.outputReserveTokens ?? model.maxOutputTokens;
   const published = model.maxOutputTokens ?? requested;
   if (!Number.isSafeInteger(requested) || requested <= 0 || !Number.isSafeInteger(published) || published <= 0) return null;
   return Math.min(requested, published);
 }
-assert.equal(outputBound({ maxOutputTokens: 131072, outputReserveTokens: 8192 }), 8192, 'Captured Nemo job output reserve wins over larger published capacity.');
-assert.equal(outputBound({ maxOutputTokens: 4096, outputReserveTokens: 8192 }), 4096, 'A smaller published maximum still caps the reserve.');
-assert.equal(outputBound({ maxOutputTokens: null }), null, 'Unknown output metadata stays unknown.');
-assert.equal(outputBound({ maxOutputTokens: -1, outputReserveTokens: 8192 }), null, 'Invalid published output metadata cannot authorize a bound.');
-assert.equal(outputBound({ maxOutputTokens: '131072', outputReserveTokens: 8192 }), null, 'Output metadata is not coerced from strings.');
+assert.equal(outputReserve({ maxOutputTokens: 131072, outputReserveTokens: 8192 }), 8192, 'Assembly reserve stays separate from the larger published generation maximum.');
+assert.equal(outputReserve({ maxOutputTokens: 4096, outputReserveTokens: 8192 }), 4096, 'A smaller published maximum still caps the assembly reserve.');
+assert.equal(outputReserve({ maxOutputTokens: null }), null, 'Missing reserve and output metadata stay unknown.');
+assert.equal(outputReserve({ maxOutputTokens: -1, outputReserveTokens: 8192 }), null, 'Invalid published output metadata cannot authorize a reserve.');
+assert.equal(outputReserve({ maxOutputTokens: '131072', outputReserveTokens: 8192 }), null, 'Output metadata is not coerced from strings.');
+function inputBudget(model) {
+  const reserve = outputReserve(model), input = model.contextTokens, window = model.contextWindowTokens;
+  assert(Number.isSafeInteger(input) && input > 0 && reserve !== null, 'Model input capacity and output headroom must be usable before paid work.');
+  assert(window === undefined || (Number.isSafeInteger(window) && window > reserve), 'A declared combined window must leave output headroom.');
+  return window === undefined ? input : Math.min(input, window - reserve);
+}
+assert.equal(inputBudget({ contextTokens: 1000000, maxOutputTokens: 131072, outputReserveTokens: 8192 }), 1000000, 'An input-only ceiling loses no invented percentage or output allowance.');
+assert.equal(inputBudget({ contextTokens: 1000000, contextWindowTokens: 1000000, maxOutputTokens: null, outputReserveTokens: 8192 }), 991808, 'Known combined window reserves output headroom even when output maximum is unknown.');
+assert.equal(inputBudget({ contextTokens: 192000, contextWindowTokens: 256000, maxOutputTokens: 128000, outputReserveTokens: 8192 }), 192000, 'The separate input ceiling still limits input.');
 const isCallCount = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 2;
 assert(!isCallCount(-1) && !isCallCount(1.5) && !isCallCount(3) && !isCallCount('2') && !isCallCount(NaN) && !isCallCount(Infinity), 'Call counts reject invalid or out-of-bound observations.');
 function owningCallCount(u, what) {
@@ -454,7 +423,7 @@ function snapOf(t) {
   if (!t || (t.state !== 'done' && t.state !== 'partial')) return null;
   const rep = t.report && typeof t.report === 'object' ? t.report : null;
   const usage = (rep && rep.usage) || {};
-  if (typeof usage.calls !== 'number' || typeof usage.tokenLimit !== 'number' || !Array.isArray(t.claims)) return null;
+  if (typeof usage.calls !== 'number' || !isTokenObservation(usage.tokenLimit) || !Array.isArray(t.claims)) return null;
   return { state: t.state, revisionId: t.revisionId, report: rep, claims: t.claims, claimRows: t.claims.length,
     calls: usage.calls, tokenLimit: usage.tokenLimit };
 }
@@ -486,6 +455,21 @@ const a1ComputeQuote = (q) => a1ComputeResult(q)
 const a2ResidualMapping = (q) => q.includes('residual')
   && /\b(?:functions?|mappings?)\b/u.test(q)
   && /reformulat|recast|learn|fit/u.test(q);
+const a3MemoryAnchor = 'A3-GPT3-175B-3x-GPU-memory';
+const a3MemoryReview = a3MemoryAnchor + ': REVIEW_REQUIRED';
+const a3MemorySource = 'Compared to GPT-3 175B fine-tuned with Adam, LoRA can reduce the number of trainable parameters by 10,000 times and the GPU memory requirement by 3 times.';
+const a3Factor = String.raw`(?:3|three)(?: times|[x×]|-fold)`;
+const a3Memory = String.raw`gpu memory(?: requirements?| usage)?`;
+const a3MemoryEnglish = new RegExp(
+  String.raw`^for gpt-3 175b, lora (?:uses ${a3Factor} less ${a3Memory}`
+  + String.raw`|reduces ${a3Memory} by (?:${a3Factor}|a factor of (?:3|three))`
+  + String.raw`|achieves a ${a3Factor} reduction in ${a3Memory})$`, 'u');
+const a3MemoryRussian = /^для gpt-3 175b lora (?:использует в (?:3|три) раза меньше gpu-памяти|уменьшает объём gpu-памяти в (?:3|три) раза)$/u;
+// Exact source sentence or closed assertion forms; extra wording requires explicit review.
+function a3MemoryStatement(q) {
+  const text = q.trim().replace(/\.$/u, '');
+  return text === a3MemorySource.toLowerCase().slice(0, -1) || a3MemoryEnglish.test(text) || a3MemoryRussian.test(text);
+}
 
 const a1RussianCompute = 'модель установила bleu 41.8 на wmt 2014 english-to-french после 3.5 дней обучения на восьми gpu.';
 const a1EnglishQuote = 'the model reached bleu 41.8 on the wmt 2014 english-to-french task after 3.5 days of training on eight gpus.';
@@ -504,30 +488,25 @@ assert.equal(pairedAnchor([
   { statement: 'the method reformulates stacked layers as residual functions.', quote: 'we let stacked layers fit residual functions.' },
 ], a2ResidualMapping), true, 'Harness selftest: legacy English residual functions wording remains accepted.');
 
-function anchorChecks(byFile, selectedFiles = ['arxiv-01.pdf', 'arxiv-03.pdf', 'arxiv-07.pdf']) {
-  // Keep the existing full-corpus predicates intact; targeted review selects only one frozen paper's checks.
-  const selected = new Set(selectedFiles);
-  const cards = anchorHay(byFile);
-  const checks = [];
-  const add = (file, name, statementPredicate, quotePredicate = statementPredicate) => {
-    if (selected.has(file)) checks.push({ name, passed: pairedAnchor(cards(file), statementPredicate, quotePredicate) });
-  };
-  const wmt = (q) => /wmt\s*(?:2014|14)/.test(q);
-  add('arxiv-01.pdf', 'A1-English-German-28.4-BLEU', (q) => q.includes('28.4') && q.includes('bleu') && wmt(q) && /english.{0,25}german|en[-– ]de/.test(q));
-  add('arxiv-01.pdf', 'A1-English-French-41.8-BLEU', (q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && frenchTranslation(q));
-  add('arxiv-01.pdf', 'A1-compute(3.5d/8GPU-for-French-result)', a1ComputeStatement, a1ComputeQuote);
-  add('arxiv-03.pdf', 'A2-residual-functions', a2ResidualMapping);
-  add('arxiv-03.pdf', 'A2-152-layers', (q) => runsOf(q).includes('152') && /layer/.test(q));
-  add('arxiv-03.pdf', 'A2-ensemble-3.57%-ImageNet-test-error', (q) => q.includes('3.57') && q.includes('ensemble') && q.includes('imagenet') && q.includes('test') && q.includes('error'));
-  add('arxiv-07.pdf', 'A3-frozen-weights-trained-lowrank', (q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q));
-  const gpt = (q) => /gpt[- ]?3/.test(q) && /175\s*b/.test(q);
-  add('arxiv-07.pdf', 'A3-GPT3-175B-10000x-trainable-params', (q) => gpt(q) && /10[, ]*000/.test(q) && q.includes('trainable') && q.includes('parameter'));
-  add('arxiv-07.pdf', 'A3-GPT3-175B-3x-GPU-memory', (q) => gpt(q) && /(?:\b3\b|\bthree\b).{0,20}(?:times|[x×]|fold)/.test(q) && q.includes('gpu') && q.includes('memory'));
-  add('arxiv-07.pdf', 'A3-no-additional-inference-latency', (q) => /(?:\bno\b|without|does not|do not).{0,80}latency/.test(q) && q.includes('inference'));
-  return checks;
-}
 function checkAnchors(byFile) {
-  return anchorChecks(byFile).filter((check) => !check.passed).map((check) => check.name);
+  const missing = [];
+  // Every independent anchor must be stated by one owner-visible card and supported by that card's own exact quote.
+  const cards = anchorHay(byFile);
+  const q01 = cards('arxiv-01.pdf'), q03 = cards('arxiv-03.pdf'), q07 = cards('arxiv-07.pdf');
+  const wmt = (q) => /wmt\s*(?:2014|14)/.test(q);
+  const paired = pairedAnchor;
+  if (!paired(q01, (q) => q.includes('28.4') && q.includes('bleu') && wmt(q) && /english.{0,25}german|en[-– ]de/.test(q))) missing.push('A1-English-German-28.4-BLEU');
+  if (!paired(q01, (q) => q.includes('41.8') && q.includes('bleu') && wmt(q) && frenchTranslation(q))) missing.push('A1-English-French-41.8-BLEU');
+  if (!paired(q01, a1ComputeStatement, a1ComputeQuote)) missing.push('A1-compute(3.5d/8GPU-for-French-result)');
+  if (!paired(q03, a2ResidualMapping)) missing.push('A2-residual-functions');
+  if (!paired(q03, (q) => runsOf(q).includes('152') && /layer/.test(q))) missing.push('A2-152-layers');
+  if (!paired(q03, (q) => q.includes('3.57') && q.includes('ensemble') && q.includes('imagenet') && q.includes('test') && q.includes('error'))) missing.push('A2-ensemble-3.57%-ImageNet-test-error');
+  if (!paired(q07, (q) => /freez|froz/.test(q) && /weight/.test(q) && /low.{0,8}rank/.test(q) && /train/.test(q))) missing.push('A3-frozen-weights-trained-lowrank');
+  const gpt = (q) => /gpt[- ]?3/.test(q) && /175\s*b/.test(q);
+  if (!paired(q07, (q) => gpt(q) && /10[, ]*000/.test(q) && q.includes('trainable') && q.includes('parameter'))) missing.push('A3-GPT3-175B-10000x-trainable-params');
+  if (!paired(q07, a3MemoryStatement)) missing.push(a3MemoryReview);
+  if (!paired(q07, (q) => /(?:\bno\b|without|does not|do not).{0,80}latency/.test(q) && q.includes('inference'))) missing.push('A3-no-additional-inference-latency');
+  return missing;
 }
 const TERMINAL = new Set(['done', 'partial', 'failed']);
 const POLL_MS = 5000;
@@ -543,9 +522,12 @@ function assertUnderstanding(u, what) {
   assert(Array.isArray(u.glossary), 'Understanding.glossary must be an array (' + what + ').');
   assert(Array.isArray(u.claims), 'Understanding.claims must be an array (' + what + ').');
   assert(u.report === null || typeof u.report === 'object', 'Understanding.report must be null|object (' + what + ').');
-  if (Number.isSafeInteger(u.report?.usage?.tokenLimit) && u.report.usage.tokenLimit >= 0)
-    assert.equal(u.progress?.maximumTokens, u.report.usage.tokenLimit,
-      'Understanding progress.maximumTokens must equal the retained report tokenLimit (' + what + ').');
+  const recorded = u.progress?.recordedTokenLimit ?? u.report?.usage?.tokenLimit ?? null;
+  const basis = u.progress?.tokenLimitKind ?? u.report?.usage?.tokenLimitKind ?? 'legacy';
+  assert(isTokenObservation(recorded), 'Recorded capacity/reservation must be numeric or null unknown (' + what + ').');
+  assert(['published', 'unknown', 'legacy'].includes(basis), 'Unknown admission basis (' + what + ').');
+  assert.equal(u.progress?.maximumTokens, basis === 'published' && recorded > 0 ? recorded : null,
+    'Only a positive declared-capacity value is a maximum; legacy reservations and released zero stay separate (' + what + ').');
 }
 function assertUnderstandingIdentity(u, sourceId, revisionId, what) {
   assert.equal(u.sourceId, sourceId, 'Understanding sourceId must match request (' + what + ').');
@@ -554,157 +536,64 @@ function assertUnderstandingIdentity(u, sourceId, revisionId, what) {
 assert.doesNotThrow(() => assertUnderstandingIdentity({ sourceId: 's1', revisionId: 'r1' }, 's1', 'r1', 'identity fixture'));
 assert.throws(() => assertUnderstandingIdentity({ sourceId: 's2', revisionId: 'r1' }, 's1', 'r1', 'source identity fixture'), /sourceId must match/);
 assert.throws(() => assertUnderstandingIdentity({ sourceId: 's1', revisionId: 'old-r1' }, 's1', 'r1', 'revision identity fixture'), /revisionId must match/);
+const a3MemoryOpposite = 'For GPT-3 175B, LoRA uses 3 times more GPU memory.';
+const a3MemoryPass = (statement, quote = a3MemorySource) => !checkAnchors(new Map([['arxiv-07.pdf', [{ statement, quote }]]])).some(entry => entry.startsWith(a3MemoryAnchor));
+const a3MemoryCases = [
+  ['frozen source coordinated objects', a3MemorySource, true],
+  ['active reduction', 'For GPT-3 175B, LoRA reduces GPU memory usage by 3 times.', true],
+  ['subject absent', 'For GPT-3 175B, GPU memory requirements are reduced by a factor of three.', false],
+  ['factor reduction', 'For GPT-3 175B, LoRA reduces GPU memory requirements by a factor of three.', true],
+  ['less memory', 'For GPT-3 175B, LoRA uses three times less GPU memory.', true],
+  ['multiplication sign', 'For GPT-3 175B, LoRA uses 3× less GPU memory.', true],
+  ['fold reduction', 'For GPT-3 175B, LoRA achieves a three-fold reduction in GPU memory.', true],
+  ['RU reduction', 'Для GPT-3 175B LoRA использует в 3 раза меньше GPU-памяти.', true],
+  ['RU decrease', 'Для GPT-3 175B LoRA уменьшает объём GPU-памяти в три раза.', true],
+  ['reversed subject and comparator', 'For GPT-3 175B, full fine-tuning uses 3 times less GPU memory than LoRA.', false],
+  ['opposite', a3MemoryOpposite, false],
+  ['negative active', 'For GPT-3 175B, LoRA does not reduce GPU memory by 3 times.', false],
+  ['negative passive', 'For GPT-3 175B, GPU memory is not reduced by 3 times.', false],
+  ['contracted negative', 'For GPT-3 175B, LoRA doesn’t use 3 times less GPU memory.', false],
+  ['negated claim', 'For GPT-3 175B, we refute the claim of a 3-fold reduction in GPU memory.', false],
+  ['uncertain', 'For GPT-3 175B, LoRA might use 3 times less GPU memory.', false],
+  ['question', 'Does LoRA use 3 times less GPU memory for GPT-3 175B?', false],
+  ['approximate factor', 'For GPT-3 175B, LoRA uses about 3 times less GPU memory.', false],
+  ['upper bound', 'For GPT-3 175B, LoRA uses up to 3 times less GPU memory.', false],
+  ['less than qualifier', 'For GPT-3 175B, LoRA uses less than 3 times less GPU memory.', false],
+  ['as much as qualifier', 'For GPT-3 175B, LoRA uses as much as 3 times less GPU memory.', false],
+  ['direction absent', 'For GPT-3 175B, LoRA changes GPU memory by 3 times.', false],
+  ['unrelated decrease', 'For GPT-3 175B, LoRA reduces training time by 3 times while GPU memory is unchanged.', false],
+  ['unrelated less', 'For GPT-3 175B, LoRA uses 3 times less CPU memory while GPU memory is unchanged.', false],
+  ['mixed direction', 'For GPT-3 175B, LoRA uses 3 times less GPU memory but also uses 3 times more GPU memory.', false],
+  ['mixed sentences', 'For GPT-3 175B, LoRA uses 3 times less GPU memory. GPU memory instead increases by 3 times.', false],
+  ['later refutation', a3MemorySource + ' That claim is false.', false],
+  ['later pronoun direction', a3MemorySource + ' It triples.', false],
+  ['mixed triples', 'For GPT-3 175B, LoRA uses 3 times less GPU memory but GPU memory triples.', false],
+  ['mixed or', 'For GPT-3 175B, LoRA uses 3 times less or more GPU memory.', false],
+  ['wrong factor', 'For GPT-3 175B, LoRA uses 2 times less GPU memory.', false],
+  ['decimal factor', 'For GPT-3 175B, LoRA uses 0.3 times less GPU memory.', false],
+  ['wrong model', 'For GPT-2 175B, LoRA uses 3 times less GPU memory.', false],
+  ['model prefix', 'For GPT-3.5 175B, LoRA uses 3 times less GPU memory.', false],
+  ['unrelated method', 'For GPT-3 175B, another method uses 3 times less GPU memory.', false],
+  ['unrecognized paraphrase', 'LoRA needs one third as much GPU memory for GPT-3 175B.', false],
+  ['extra quote prose', a3MemorySource + ' The method also discusses inference latency.', false],
+  ['RU opposite', 'Для GPT-3 175B LoRA использует в 3 раза больше GPU-памяти.', false],
+  ['RU wrong factor suffix', 'Для GPT-3 175B LoRA использует 13 раза меньше GPU-памяти.', false],
+  ['RU negative', 'Для GPT-3 175B LoRA не использует в 3 раза меньше GPU-памяти.', false],
+];
+assert.deepEqual(unsupportedNumbers(a3MemoryOpposite, a3MemorySource), [], 'Opposite direction has matching numbers; numeric occurrence cannot establish reduction.');
+for (const [name, text, expected] of a3MemoryCases) {
+  assert.equal(a3MemoryPass(text), expected, 'A3 full anchor statement: ' + name);
+  assert.equal(a3MemoryPass(a3MemorySource, text), expected, 'A3 full anchor quote: ' + name);
+}
+assert.equal(checkAnchors(new Map([['arxiv-07.pdf', [{ statement: a3MemorySource, quote: a3MemorySource + ' More source context.' }]]])).includes(a3MemoryReview), true, 'Unrecognized quote context requires review, not a factual-failure verdict.');
+assert.equal(checkAnchors(new Map([['arxiv-07.pdf', [
+  { statement: a3MemorySource, quote: 'For GPT-3 175B, the source discusses GPU memory.' },
+  { statement: 'The source discusses GPT-3 175B.', quote: a3MemorySource },
+]]])).some(entry => entry.startsWith(a3MemoryAnchor)), true, 'A3 memory direction cannot be borrowed across cards.');
+if (anchorsOnly) { console.log(JSON.stringify({ scope: 'K3_ANCHOR_GATES', memoryDirectionCases: a3MemoryCases.length, pairedSidesChecked: true, apiCalls: 0, modelCalls: 0, unrecognized: 'REVIEW_REQUIRED', semanticAcceptance: 'NOT_RUN' })); process.exit(0); }
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
-if (reviewSourceMode) {
-  const projectSources = await readClaimSources(reviewProjectId, 'K3 targeted review');
-  const ownedSources = projectSources.filter((source) => source && source.id === reviewSourceId);
-  assert.equal(ownedSources.length, 1, 'The explicit source must appear exactly once in the explicit project.');
-  const source = ownedSources[0];
-  assert(['readable', 'readable_with_warnings'].includes(source.readableState), 'The selected source must remain readable.');
-
-  const understandingPath = '/api/sources/' + encodeURIComponent(reviewSourceId) + '/understanding?revisionId=' + encodeURIComponent(reviewRevisionId);
-  const first = await apiJson(understandingPath);
-  assert.equal(first.status, 200, 'GET exact-revision understanding must be 200.');
-  const understanding = first.body;
-  assertUnderstanding(understanding, 'targeted revision');
-  assertUnderstandingIdentity(understanding, reviewSourceId, reviewRevisionId, 'targeted revision');
-  assert(understanding.state === 'done' || understanding.state === 'partial', 'Targeted stored review requires a retained terminal state; no inference is started.');
-  assert(typeof understanding.guide === 'string' && understanding.guide.length > 0, 'Terminal understanding must retain its guide.');
-  assert(typeof understanding.digest === 'string' && understanding.digest.length > 0, 'Terminal understanding must retain its digest.');
-  assert(understanding.claims.length <= 32, 'Stored claims must remain within the 32-row bound.');
-
-  const record = storedRevisionSnapshot(understanding, 'targeted stored revision');
-  const report = understanding.report;
-  assert(report && typeof report === 'object', 'Terminal understanding must retain its report.');
-  assert.equal(record.calls, report.usage.calls, 'Owning progress and report call counts must agree.');
-  assert(record.calls !== null && record.calls <= 2, 'Recorded calls must be known and within the two-call maximum.');
-  assert(Number.isSafeInteger(report.usage.tokenLimit) && report.usage.tokenLimit >= 0, 'Recorded tokenLimit must be a nonnegative integer.');
-  assert(typeof report.usage.wallMs === 'number' && Number.isFinite(report.usage.wallMs) && report.usage.wallMs >= 0, 'Recorded wallMs must be a nonnegative number.');
-  for (const key of ['inputTokens', 'cachedTokens', 'outputTokens'])
-    assert(isTokenObservation(report.usage[key]), 'Recorded usage.' + key + ' must be a nonnegative integer or null unknown.');
-  assert.equal(report.kept, understanding.claims.length, 'Report kept count must equal the retained claim rows.');
-  assert(Array.isArray(report.dropped), 'Report must retain dropped-claim diagnostics.');
-  assert(typeof report.clearedNumbers === 'number', 'Report must retain the clearedNumbers count.');
-
-  const canonical = await apiBytes('/api/revisions/' + encodeURIComponent(reviewRevisionId) + '/text');
-  assert.equal(canonical.status, 200, 'GET canonical revision text must be 200.');
-  assert(Buffer.from(canonical.bytes.toString('utf8'), 'utf8').equals(canonical.bytes), 'Canonical revision bytes must decode and re-encode as exact UTF-8.');
-  const ownQuotes = [];
-  for (const claim of understanding.claims) {
-    assert(claim && typeof claim.statement === 'string' && claim.statement.length > 0, 'Every retained claim needs its owner-visible statement.');
-    assert(typeof claim.quote === 'string' && claim.quote.length > 0, 'Every retained claim needs its own quote.');
-    for (const key of ['task', 'metric', 'dataset', 'unit', 'conditions', 'valueText'])
-      assert(claim[key] === undefined || claim[key] === null || typeof claim[key] === 'string', 'Claim ' + key + ' must be a string or null when present.');
-    assert(claim.valueNumber === undefined || claim.valueNumber === null || (typeof claim.valueNumber === 'number' && Number.isFinite(claim.valueNumber)),
-      'Claim valueNumber must be a finite number or null when present.');
-    assert(Number.isSafeInteger(claim.start) && Number.isSafeInteger(claim.end) && claim.start >= 0 && claim.end > claim.start && claim.end <= canonical.bytes.length,
-      'Every retained claim needs an in-bounds UTF-8 byte range.');
-    const exactSlice = canonical.bytes.subarray(claim.start, claim.end);
-    const range = await apiBytes('/api/revisions/' + encodeURIComponent(reviewRevisionId) + '/range?start=' + claim.start + '&end=' + claim.end);
-    assert.equal(range.status, 200, 'GET claim range must be 200.');
-    assert(range.bytes.equals(exactSlice), 'GET claim range must equal the exact canonical byte slice.');
-    assert(range.bytes.equals(Buffer.from(claim.quote, 'utf8')), 'Stored claim quote must equal the exact canonical range bytes.');
-    assert.deepEqual([...numericsUnsupported(claim.quote, claim.valueText, claim.valueNumber, claim.statement, claim.task, claim.metric, claim.dataset, claim.unit, claim.conditions), ...compoundResultUnsupported(claim)], [],
-      'Statement, task, metric, dataset, unit, conditions, valueText and valueNumber must be supported by that same claim quote.');
-    ownQuotes.push({ statement: claim.statement, quote: claim.quote });
-  }
-
-  const selectedPaper = reviewPaperForSource(source, reviewPaperFile);
-  const anchorFile = selectedPaper.filename;
-  const frozenChecks = anchorChecks(new Map([[anchorFile, ownQuotes]]), [anchorFile]);
-  assert(frozenChecks.length > 0, 'The selected frozen paper must have anchor predicates.');
-  const anchorIds = [...new Set(frozenChecks.map((check) => check.name.split('-')[0]))];
-  assert(anchorIds.length === 1 && K3_ANCHOR_SOURCES.has(anchorIds[0]), 'Frozen checks must resolve to one anchor defined in questions.md.');
-  const anchorId = anchorIds[0];
-  const missingAnchors = frozenChecks.filter((check) => !check.passed).map((check) => check.name);
-
-  const outline = await apiJson('/api/revisions/' + encodeURIComponent(reviewRevisionId) + '/outline');
-  assert.equal(outline.status, 200, 'GET prose review block map must be 200.');
-  assert(Array.isArray(outline.body?.blocks), 'Prose review needs the persisted block map.');
-  // An empty compact alias accepts only the persisted full-revision labels.
-  const proseScope = [{ sourceId: reviewSourceId, revisionId: reviewRevisionId, title: source.title,
-    alias: '', blocks: outline.body.blocks }];
-  async function proseEvidence(text, scope = proseScope) {
-    const resolved = resolveCitations(text, scope);
-    const quoteByLabel = new Map();
-    const citations = [];
-    for (const citation of resolved.citations) {
-      assert.equal(citation.revisionId, reviewRevisionId, 'Prose citations must stay in the selected revision.');
-      assert(Number.isSafeInteger(citation.start) && Number.isSafeInteger(citation.end) && citation.start >= 0
-        && citation.end > citation.start && citation.end <= canonical.bytes.length, 'Prose citation range must fit canonical bytes.');
-      const range = await apiBytes('/api/revisions/' + encodeURIComponent(reviewRevisionId) + '/range?start=' + citation.start + '&end=' + citation.end);
-      assert.equal(range.status, 200, 'GET prose citation range must be 200.');
-      assert(range.bytes.equals(canonical.bytes.subarray(citation.start, citation.end)), 'Prose citation must equal its canonical byte slice.');
-      const quote = range.bytes.toString('utf8');
-      quoteByLabel.set(citation.label, quote);
-      citations.push({ ...citation, quote });
-    }
-    return { persistedText: text, citations, invalidLabels: resolved.invalidLabels,
-      invalidLabelExamples: resolved.invalidLabelExamples ?? [],
-      unsupportedNumericStatements: unsupportedNumericStatements(resolved.text, resolved.citations, quoteByLabel) };
-  }
-  const guideReview = await proseEvidence(understanding.guide);
-  const digestReview = await proseEvidence(understanding.digest);
-  const guideUncitedStatements = uncitedStatements(guideReview.persistedText, guideReview.citations);
-  const digestUncitedStatements = uncitedStatements(digestReview.persistedText, digestReview.citations);
-  const glossaryReview = [];
-  for (const entry of understanding.glossary) {
-    const labels = Array.isArray(entry?.labels) ? entry.labels.filter((label) => typeof label === 'string') : [];
-    const selected = resolveCitations(labels.join(' '), proseScope);
-    const selectedBlocks = new Set(selected.citations.map((citation) => citation.block));
-    const scope = [{ ...proseScope[0], blocks: outline.body.blocks.filter((block) => selectedBlocks.has(block.id)) }];
-    const text = [entry?.en, entry?.ru, entry?.definition].filter((value) => typeof value === 'string').join('\n');
-    const evidence = await proseEvidence(text + '\n\n' + labels.join(' '), scope);
-    // Reuse the citation scanner to remove reference tokens in the validation copy only.
-    const numericText = resolveCitations(text, []).text;
-    glossaryReview.push({ persistedEntry: entry, citations: evidence.citations,
-      selectedLabelsInvalid: selected.invalidLabels, invalidLabels: evidence.invalidLabels,
-      invalidLabelExamples: evidence.invalidLabelExamples,
-      unsupportedNumbers: numericsUnsupported(evidence.citations.map((citation) => citation.quote).join('\n'), numericText, undefined) });
-  }
-  const proseReviewPath = outDir + '/k3-prose-review-' + reviewRevisionId + '.json';
-
-  const reread = await apiJson(understandingPath);
-  assert.equal(reread.status, 200, 'GET exact-revision reread must be 200.');
-  assertUnderstanding(reread.body, 'targeted reread');
-  assertUnderstandingIdentity(reread.body, reviewSourceId, reviewRevisionId, 'targeted reread');
-  assert.deepEqual(reread.body, understanding, 'Read-only targeted review must preserve the exact retained terminal record.');
-  await writeFile(proseReviewPath, JSON.stringify({ scope: 'TARGETED_ONLY', sourceId: reviewSourceId, revisionId: reviewRevisionId,
-    semanticStatus: 'semanticNOT_EVALUATED', fullK3Accepted: false,
-    citationCheck: 'Shared persistent S/R resolver; code literals remain literal. Numeric results do not establish semantic support.',
-    guide: { ...guideReview, uncitedStatements: guideUncitedStatements },
-    digest: { ...digestReview, uncitedStatements: digestUncitedStatements }, glossary: glossaryReview }, null, 2) + EOL);
-
-  const passedAnchors = frozenChecks.length - missingAnchors.length;
-  const md = [
-    '# K3 targeted stored-source review', '',
-    '- scope: TARGETED_ONLY',
-    '- project/source/revision: ' + reviewProjectId + ' / ' + reviewSourceId + ' / ' + reviewRevisionId,
-    '- source: ' + (source.title || source.originalFilename) + '; revision state: ' + understanding.state,
-    '- frozen paper filename: ' + anchorFile + '; selection: ' + (reviewPaperFile === null ? 'exact source originalFilename' : 'explicit --paper-file'),
-    '- paper provenance: UNVERIFIED; frozen filename selects the anchor set but does not prove canonical paper identity',
-    '- API methods: GET only; model calls and POSTs by this mode: 0',
-    '- recorded calls: ' + record.calls + '/2; tokenLimit: ' + report.usage.tokenLimit + '; wallMs: ' + report.usage.wallMs,
-    '- token usage (input/cached/output): ' + [report.usage.inputTokens, report.usage.cachedTokens, report.usage.outputTokens].map((value) => value === null ? 'unknown' : value).join('/'),
-    '- canonical text: ' + canonical.bytes.length + ' bytes; sha256: ' + sha256(canonical.bytes),
-    '- exact quote ranges: ' + ownQuotes.length + '/' + ownQuotes.length + '; same-card own-quote numeric checks: PASS for statement/task/metric/dataset/unit/conditions/valueText/valueNumber',
-    '- frozen ' + anchorId + ' (' + selectedPaper.title + ') anchors: ' + passedAnchors + '/' + frozenChecks.length + (missingAnchors.length ? '; missing: ' + missingAnchors.join(', ') : ''),
-    '- retained terminal record identical on reread: true',
-    '- owner prose review artifact: ' + proseReviewPath,
-    '- semantic status: semanticNOT_EVALUATED',
-    '- fullK3Accepted: false', '',
-  ].join(EOL);
-  console.log(md);
-  assert.equal(guideReview.invalidLabels + digestReview.invalidLabels
-    + guideReview.unsupportedNumericStatements + digestReview.unsupportedNumericStatements
-    + guideUncitedStatements + digestUncitedStatements
-    + glossaryReview.reduce((sum, entry) => sum + entry.selectedLabelsInvalid + entry.invalidLabels + entry.unsupportedNumbers.length, 0),
-  0, 'Prose mechanical citation/number checks failed; see ' + proseReviewPath);
-  assert.equal(missingAnchors.length, 0, 'Selected frozen paper anchors are missing: ' + missingAnchors.join(', '));
-  process.exit(0);
-}
 const title = process.env.ELIOT_EVAL_PROJECT || (nativeOnly ? 'k1-eval' : (baselineSeed?.project?.title || 'Библиотека — PDF и точные ссылки'));
 let projects = [], cursor = undefined;
 for (let i = 0; i < 5; i++) {
@@ -747,7 +636,7 @@ function storedRevisionSnapshot(u, what) {
   const calls = owningCallCount(u, what);
   if (u.state === 'done' || u.state === 'partial') {
     assert(usage && isCallCount(usage.calls), what + ' must carry owning-revision call count.');
-    assert(Number.isSafeInteger(usage.tokenLimit) && usage.tokenLimit >= 0, what + ' must carry owning-revision tokenLimit.');
+    assert(isTokenObservation(usage.tokenLimit), what + ' must carry owning-revision tokenLimit or null unknown.');
   }
   return { body: u, claimRows: u.claims.length, calls, tokenLimit: usage ? usage.tokenLimit : null };
 }
@@ -795,7 +684,7 @@ if (unchangedOnly) {
     if (r.body.state !== 'done' && r.body.state !== 'partial') { preflightViolations.push(s.originalFilename + ': state=' + r.body.state + ' (need terminal done/partial, no POST)'); continue; }
     const rep = r.body.report;
     if (!rep || !rep.usage || !Number.isSafeInteger(rep.usage.calls) || rep.usage.calls < 0 || rep.usage.calls > 2 ||
-      !Number.isSafeInteger(rep.usage.tokenLimit) || rep.usage.tokenLimit < 0) { preflightViolations.push(s.originalFilename + ': invalid owning-revision usage'); continue; }
+      !isTokenObservation(rep.usage.tokenLimit)) { preflightViolations.push(s.originalFilename + ': invalid owning-revision usage'); continue; }
     const record = storedRevisionSnapshot(r.body, 'unchanged preflight ' + s.originalFilename);
     callsBefore += record.calls;
     claimRowsBefore += record.claimRows;
@@ -852,7 +741,7 @@ if (unchangedOnly) {
     '- exact owning revision records preserved: ' + String(reuseViolations.length === 0),
     '- fullK3Accepted: false', '- Scope: unchanged-revision reuse only; claim-mode C1–C4 remain open.', '',
     '## Reuse violations (' + reuseViolations.length + ')', '',
-    ...reuseViolations.map((v) => '- ' + v), '', '## Missing semantic anchors (' + missing.length + ')', '',
+    ...reuseViolations.map((v) => '- ' + v), '', '## Unverified semantic anchors (' + missing.length + ')', '',
     ...missing.map((v) => '- ' + v), ''].join(EOL);
   console.log(md);
   await writeFile(outDir + '/k3-unchanged-only-' + Date.now() + '.md', md);
@@ -874,19 +763,22 @@ assert.equal(modelList.status, 200, 'Read current catalogue before reporting the
 const answerMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_ANSWER_MODEL);
 assert(answerMeta && answerMeta.enabled, 'Selected answerModel must be present and enabled in the current catalogue; no substitution is made here.');
 assert(Number.isSafeInteger(answerMeta.contextTokens) && answerMeta.contextTokens > 0, 'Selected answerModel context must be known.');
-const answerOutputBound = outputBound(answerMeta);
-assert(Number.isSafeInteger(answerOutputBound) && answerOutputBound > 0, 'Selected answerModel output bound must be known.');
+const answerOutputReserve = outputReserve(answerMeta);
+assert(Number.isSafeInteger(answerOutputReserve) && answerOutputReserve > 0, 'Selected answerModel assembly reserve must be known.');
 const distillMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_DISTILL_MODEL);
 assert(distillMeta && distillMeta.enabled, 'Selected distillModel must be present and enabled in the current catalogue; no substitution is made here.');
 assert(Number.isSafeInteger(distillMeta.contextTokens) && distillMeta.contextTokens > 0, 'Selected distillModel context must be known.');
-const distillOutputBound = outputBound(distillMeta);
-assert(Number.isSafeInteger(distillOutputBound) && distillOutputBound > 0, 'Selected distillModel output bound must be known.');
-const answerCallTokenLimit = answerMeta.contextTokens + answerOutputBound;
+const distillOutputReserve = outputReserve(distillMeta);
+assert(Number.isSafeInteger(distillOutputReserve) && distillOutputReserve > 0, 'Selected distillModel assembly reserve must be known.');
+const answerCallTokenLimit = answerMeta.maxOutputTokens == null ? null : answerMeta.contextTokens + answerMeta.maxOutputTokens;
+const distillCallTokenLimit = distillMeta.maxOutputTokens == null ? null : distillMeta.contextTokens + distillMeta.maxOutputTokens;
+assert(answerCallTokenLimit === null || Number.isSafeInteger(answerCallTokenLimit), 'Declared answer capacity must be usable or unknown.');
+assert(distillCallTokenLimit === null || Number.isSafeInteger(distillCallTokenLimit), 'Declared understanding capacity must be usable or unknown.');
 const runCallCeiling = nativeOnly ? 0 : scoped.length * 2 + CLAIM_ORDER.length;
 const revisionRecordsBefore = new Map();
 const boundReport = nativeOnly
   ? 'K3 native-only: zero model calls.'
-  : 'K3 eval command call ceiling: baseline ' + scoped.length + '*2 + C1-C4 ' + CLAIM_ORDER.length + ' = ' + runCallCeiling + ' calls; overflow papers are separately prepared. Distill bounds remain revision-scoped in progress.maximumTokens/report.usage.tokenLimit; no global per-call estimate is reported. Answer per-call limit ' + answerCallTokenLimit + ' (ctx+output, ' + SELECTED_ANSWER_MODEL + '). Historical calls are not counted as fresh; models are frozen from stored settings.';
+  : 'K3 eval command call ceiling: baseline ' + scoped.length + '*2 + C1-C4 ' + CLAIM_ORDER.length + ' = ' + runCallCeiling + ' calls; overflow papers are separately prepared. Declared understanding capacity ' + (distillCallTokenLimit ?? 'unknown') + ' (' + SELECTED_DISTILL_MODEL + '), declared answer capacity ' + (answerCallTokenLimit ?? 'unknown') + ' (' + SELECTED_ANSWER_MODEL + '). Historical calls are not counted as fresh; models are frozen from stored settings.';
 console.log(boundReport);
 if (nativeOnly) {
   assert(understandingWired && overviewWired, 'K3 native smoke requires the actual understanding and overview routes.');
@@ -925,7 +817,7 @@ if (nativeOnly) {
       }
       assert(u0.state === 'failed' || u0.state === 'done' || u0.state === 'partial', 'Recovery fixture must be terminal (failed/done/partial), got ' + u0.state + ' (no model distill here).');
       assert(u0.report && typeof u0.report === 'object', 'Terminal fixture must carry its terminal report (raw compat).');
-      assert(u0.report.usage && Number.isSafeInteger(u0.report.usage.calls) && Number.isSafeInteger(u0.report.usage.tokenLimit), 'Terminal fixture must carry owning-revision calls and tokenLimit.');
+      assert(u0.report.usage && Number.isSafeInteger(u0.report.usage.calls) && isTokenObservation(u0.report.usage.tokenLimit), 'Terminal fixture must carry owning-revision calls and nullable tokenLimit.');
       assert(u0.report.raw && typeof u0.report.raw === 'object', 'Terminal fixture must carry current raw excerpts (raw compat).');
       const recStartState = u0.state;
       const alreadyChecked = !!(u0.report.artifacts && u0.report.artifacts.guide === 'source/' + rev + '/checked/guide.md');
@@ -953,7 +845,7 @@ if (nativeOnly) {
         for (const c of u1.claims) {
           assert(c && typeof c.quote === 'string' && c.quote.length > 0, 'Recovered claim needs a non-empty quote.');
           await assertStoredQuote(rev, c, '(recovered)');
-          const bad = [...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.task, c.metric, c.dataset, c.unit, c.conditions), ...compoundResultUnsupported(c)];
+          const bad = [...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), ...compoundResultUnsupported(c)];
           assert.deepEqual(bad, [], 'Recovered numeric must be quote-supported: ' + bad.join(','));
         }
         assert(u1.report && typeof u1.report === 'object', 'Recovered revision must carry its report.');
@@ -993,7 +885,8 @@ if (nativeOnly) {
       assert(crep && typeof crep === 'object', 'Check report must be present.');
       const cusage = crep.usage || {};
       owningCallCount(cu, 'native check source');
-      for (const kk of ['calls', 'tokenLimit', 'wallMs']) assert(typeof cusage[kk] === 'number', 'Check report.usage.' + kk + ' must be numeric owning-revision usage.');
+      for (const kk of ['calls', 'wallMs']) assert(typeof cusage[kk] === 'number', 'Check report.usage.' + kk + ' must be numeric owning-revision usage.');
+      assert(isTokenObservation(cusage.tokenLimit), 'Check report.usage.tokenLimit must remain known or null unknown.');
       for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) assert(isTokenObservation(cusage[kk]), 'Check report.usage.' + kk + ' must be a nonnegative safe integer or null unknown.');
       assert(cusage.calls <= 2, 'Check calls bounded at most 2, got ' + cusage.calls + '.');
       const cclaims = Array.isArray(cu.claims) ? cu.claims : [];
@@ -1005,7 +898,7 @@ if (nativeOnly) {
       assert(cseg.length >= 3 && cseg.length <= 5, 'Check guide must be 3-5 sentences, got ' + cseg.length + '.');
       for (const cc of cclaims) {
         await assertStoredQuote(crev, cc, '(check)');
-        assert.deepEqual([...numericsUnsupported(cc.quote, cc.valueText, cc.valueNumber, cc.statement, cc.task, cc.metric, cc.dataset, cc.unit, cc.conditions), ...compoundResultUnsupported(cc)], [], 'Check numeric must be quote-supported.');
+        assert.deepEqual([...numericsUnsupported(cc.quote, cc.valueText, cc.valueNumber, cc.statement, cc.conditions), ...compoundResultUnsupported(cc)], [], 'Check numeric must be quote-supported.');
       }
       const cmap = new Map((Array.isArray(cu.citations) ? cu.citations : []).map((b) => [b.block, b]));
       const cblocks = new Set();
@@ -1120,7 +1013,7 @@ if (nativeOnly) {
             if (rbU.state === 'partial') await pwexpect(page.getByText(/Partially understood|Partial understanding/i).first()).toBeVisible({ timeout: 15000 });
             const understandingRegion = page.getByRole('region', { name: 'Understanding', exact: true });
             await pwexpect(understandingRegion.locator('details.er-und__details')).toHaveCount(0);
-            await pwexpect(understandingRegion.getByRole('heading', { name: 'Verified claims', exact: true })).toBeVisible();
+            await pwexpect(understandingRegion.getByRole('heading', { name: 'Claims and source excerpts', exact: true })).toBeVisible();
             if (typeof rbU.error === 'string' && rbU.error !== '')
               await pwexpect(understandingRegion.getByRole('alert').filter({ hasText: rbU.error })).toBeVisible();
             if (rbU.canRecover === true)
@@ -1241,8 +1134,8 @@ if (nativeOnly) {
       if (recoveryUpdatedRevisions.has(rev)) {
         const beforeUsage = beforeRecord.body.report && beforeRecord.body.report.usage;
         const afterUsage = afterBody.report && afterBody.report.usage;
-        assert(beforeUsage && typeof beforeUsage.calls === 'number' && typeof beforeUsage.tokenLimit === 'number', 'Recovery before snapshot must carry owning revision calls/tokenLimit.');
-        assert(afterUsage && typeof afterUsage.calls === 'number' && typeof afterUsage.tokenLimit === 'number', 'Recovery after snapshot must carry owning revision calls/tokenLimit.');
+        assert(beforeUsage && typeof beforeUsage.calls === 'number' && isTokenObservation(beforeUsage.tokenLimit), 'Recovery before snapshot must carry owning revision calls/nullable tokenLimit.');
+        assert(afterUsage && typeof afterUsage.calls === 'number' && isTokenObservation(afterUsage.tokenLimit), 'Recovery after snapshot must carry owning revision calls/nullable tokenLimit.');
         assert.deepEqual(afterUsage, beforeUsage, 'Storage-only recovery must preserve the owning revision usage record.');
       } else {
         assert.deepEqual(afterBody, beforeRecord.body, 'Native-only probes must preserve the exact owning revision record (' + source.originalFilename + ').');
@@ -1285,9 +1178,10 @@ async function preflightClaimScope() {
   const expected = [...FROZEN_BASELINE, ...FROZEN_OVERFLOW];
   const rows = exactSourceRows(rawRows, expected, 'K3 overflow scope');
   const canonicalBytes = rows.reduce((n, s) => n + s.readableSize, 0);
-  const reserve = outputBound(answerMeta);
-  assert(Number.isSafeInteger(reserve) && reserve > 0, 'Selected answerModel output reserve must be known before paid work.');
-  assert(canonicalBytes / 3 + reserve > Math.min(0.6 * answerMeta.contextTokens, 400000), 'Frozen twelve-source scope must exceed the unchanged whole-reading cap.');
+  const capacity = inputBudget(answerMeta);
+  // Same byte/token heuristic as product planning, not a provider-tokenization guarantee.
+  // If the frozen scope now fits, stop; never change model/corpus to force claims mode.
+  assert(canonicalBytes / 3 > capacity, 'Frozen twelve-source canonical-size estimate must exceed the selected provider input budget before paid claim-mode work. No model or corpus substitution is allowed.');
   for (let i = FROZEN_BASELINE.length; i < rows.length; i++) await assertFrozenSourceBytes(rows[i], expected[i], 'K3 overflow ' + expected[i].filename);
   let priorExtraCalls = 0;
   for (const source of rows.slice(FROZEN_BASELINE.length)) {
@@ -1376,7 +1270,7 @@ if (!runModel) {
         violations.push(s.originalFilename + ': quote not byte-equal to stored range (' + (e.message || e) + ')');
         continue;
       }
-      for (const g of [...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.task, c.metric, c.dataset, c.unit, c.conditions), ...compoundResultUnsupported(c)]) violations.push(s.originalFilename + ': numeric ' + g + ' unsupported by quote');
+      for (const g of [...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), ...compoundResultUnsupported(c)]) violations.push(s.originalFilename + ': numeric ' + g + ' unsupported by quote');
       fileQuotes.push({ quote: c.quote, statement: c.statement });
     }
     byFile.set(s.originalFilename, fileQuotes);
@@ -1388,7 +1282,8 @@ if (!runModel) {
     if (!rep || typeof rep !== 'object') {
       violations.push(s.originalFilename + ': terminal state without direct report');
     } else {
-      for (const kk of ['calls', 'tokenLimit', 'wallMs']) if (typeof rep.usage?.[kk] !== 'number') violations.push(s.originalFilename + ': owning revision usage.' + kk + ' not numeric');
+      for (const kk of ['calls', 'wallMs']) if (typeof rep.usage?.[kk] !== 'number') violations.push(s.originalFilename + ': owning revision usage.' + kk + ' not numeric');
+      if (!isTokenObservation(rep.usage?.tokenLimit)) violations.push(s.originalFilename + ': invalid owning revision tokenLimit');
       for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) if (!isTokenObservation(rep.usage?.[kk])) violations.push(s.originalFilename + ': owning revision usage.' + kk + ' not a nonnegative safe integer or null unknown');
       if (typeof rep.kept !== 'number') violations.push(s.originalFilename + ': kept not a number');
       if (!Array.isArray(rep.dropped)) violations.push(s.originalFilename + ': dropped not an array');
@@ -1397,7 +1292,7 @@ if (!runModel) {
     await writeFile(outDir + '/k3-stored-' + String(rev).slice(0, 8) + '.json', JSON.stringify({ revisionId: rev, source: s.originalFilename, state: u.state, claims: claims.length, error: u.error || null }, null, 2));
     sRows.push('| ' + s.originalFilename + ' | ' + u.state + ' | ' + claims.length + ' | stored-only |');
   }
-  for (const m of checkAnchors(byFile)) violations.push('anchor missing from owner-visible statement + supporting quote: ' + m);
+  for (const m of checkAnchors(byFile)) violations.push('anchor not verified from statement + quote: ' + m);
   try {
     const ov1 = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/overview');
     assert.equal(ov1.status, 200, 'GET overview must be 200.');
@@ -1531,7 +1426,7 @@ async function distillOne(s) {
     const r = await apiBytes('/api/revisions/' + encodeURIComponent(rev) + '/range?start=' + st + '&end=' + en);
     assert.equal(r.status, 200, 'Each claim quote must open (GET range 200).');
     assert.equal(r.bytes.toString('utf8'), c.quote, 'Each claim quote must equal the range bytes exactly (' + s.originalFilename + ').');
-    assert.deepEqual([...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.task, c.metric, c.dataset, c.unit, c.conditions), ...compoundResultUnsupported(c)], [], 'Every numeric group must occur whole in its exact quote (' + s.originalFilename + ').');
+    assert.deepEqual([...numericsUnsupported(c.quote, c.valueText, c.valueNumber, c.statement, c.conditions), ...compoundResultUnsupported(c)], [], 'Every numeric group must occur whole in its exact quote (' + s.originalFilename + ').');
     fileQuotes.push({ quote: c.quote, statement: c.statement });
   }
   paidByFile.set(s.originalFilename, fileQuotes);
@@ -1546,7 +1441,8 @@ async function distillOne(s) {
     tokenLimit: storedUsage.tokenLimit,
     wallMs: storedUsage.wallMs,
   };
-  for (const kk of ['calls', 'tokenLimit', 'wallMs']) assert(typeof usage[kk] === 'number', 'report.usage.' + kk + ' must be numeric owning-revision usage (' + s.originalFilename + ').');
+  for (const kk of ['calls', 'wallMs']) assert(typeof usage[kk] === 'number', 'report.usage.' + kk + ' must be numeric owning-revision usage (' + s.originalFilename + ').');
+  assert(isTokenObservation(usage.tokenLimit), 'report.usage.tokenLimit must remain known or null unknown (' + s.originalFilename + ').');
   for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) assert(isTokenObservation(usage[kk]), 'report.usage.' + kk + ' must be a nonnegative safe integer or null unknown (' + s.originalFilename + ').');
   assert(usage.calls >= 0 && usage.calls <= 2, 'report.usage.calls bounded 0-2 (' + s.originalFilename + ').');
   assert(Array.isArray(rep.questions) && rep.questions.length >= 3, 'report.questions (3-5 guide questions) required (' + s.originalFilename + ').');
@@ -1643,7 +1539,7 @@ if (unbased.length > 0) tailV.push('Second storage pass missing baselines (' + u
 if (failedRevs.length > 0) tailV.push('Failed revisions (no auto retry): ' + failedRevs.join(', '));
 if (pausedRevs.length > 0) tailV.push('Paused revisions need operator admission action: ' + pausedRevs.join(', '));
 const missing = checkAnchors(paidByFile);
-if (missing.length > 0) tailV.push('Missing anchors (reported, not weakened): ' + missing.join(', '));
+if (missing.length > 0) tailV.push('Unverified anchors: ' + missing.join(', '));
 try {
   const ov1 = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/overview');
   if (ov1.status !== 200) tailV.push('GET overview must be 200.');

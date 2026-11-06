@@ -28,6 +28,25 @@ does not close them.
 PDFs are downloaded from `sources.json`; do not commit them. Cache downloads under `eval/cache/` (git-ignored) by
 SHA-256 so repeated runs do not redownload unchanged material.
 
+### Comparison evidence
+
+`arxiv-10/baseline.md` is a tracked summary, not the full NotebookLM answer export. The full 2026-10-26 export was
+retained in ignored `eval/out/notebooklm-20261026/answers.md` and is absent from a clean checkout. K2 reads that path
+or `ELIOT_K2_NOTEBOOKLM_ANSWERS`; if missing, it uses recorded summaries and placeholders for missing question text.
+This fallback keeps automated fact/citation checks runnable but is not a complete answer-by-answer comparison.
+
+The exact retained export and all six sidecars were copied to the owner's local archive; originals remain
+unchanged. The existing [baseline access section](arxiv-10/baseline.md#private-retained-export-access-and-completeness-verified-2026-11-03)
+records the private path, nontrivial file hashes and a content-free independent second-checkout check of unique IDs,
+frozen questions and answer bodies against `runs.json`. K2's parser also loads twelve entries, but can overwrite
+duplicate IDs and silently fall back to summaries; it does not perform that independent check. Archive contents were
+not published; only access/hash/completeness metadata is recorded here. The one-byte probe digest is withheld.
+This is local owner access, not cross-machine delivery or semantic acceptance. The Transformer citation probe is a
+one-byte incomplete capture;
+the citation-target audit remains incomplete. A remote checkout needs a separately authorized private transfer and
+hash check. If the archive is unavailable, mark comparison evidence incomplete; do not reconstruct answers from the
+summary or substitute a new run under the old date. Report full-export versus summary-only evidence per question.
+
 ## Runtime
 
 The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `pnpm eval`. Implemented scripts are
@@ -38,21 +57,32 @@ The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `
 |---|---|
 | `pnpm eval k0` | Worker/Access/Material browser journey, zero model calls |
 | `pnpm eval k1 --native-only` | native-text ingest/reader/browser fixtures; PDF conversion not run |
+| `pnpm eval k1 --library-only` | strict Workerd/D1/R2 Library paging/attachment, archived-project restore, retained evidence and identity/commit-fault controls; synthetic Workflow counter, zero model/conversion calls |
+| `pnpm eval k1 --library-only --source-add-browser` | desktop/phone text/URL draft retention and pending-submit guards through native ingest; URL responses are bounded `text/plain` fixtures, with zero external/model calls |
+| `pnpm eval k1 --library-browser` | desktop/phone Add sources/Library paging, Retry/Refresh, native Attach/Reader and route isolation; zero model calls |
+| `pnpm eval k1 --projects-browser` | desktop/phone project pages, late reads/Retry, Archive/Rename/Unarchive, second-page Rename/Create, external refetch and late Save preserving the editor, restored source/history; native localhost setup, model calls blocked |
 | `pnpm eval k1` | full K1 corpus and browser checks; document conversion may use the live service |
 | `pnpm eval k2 --native-only` | limited reader/history smoke, zero model calls |
+| `pnpm eval k2 --admission-only` | real HTTP acceptance before first payload, persistent Workerd restart and readonly Agents reconnect; exact input and zero-usage recovery, repeated IDs/read paths and no model dispatch; not semantic acceptance |
+| `pnpm eval k2 --send-browser` | desktop/phone explicit create/Send replay after lost/malformed acknowledgements, unchanged IDs/input/target, source navigation, changed-input controls and read-only reload recovery through History; real Workerd stored pre-model rejection, zero model calls, not paid-stream acceptance |
 | `pnpm eval k2 --models-only` | disconnected Gateway consent/admission and 390px Settings/understanding; no credential enable or provider call, not external-model acceptance |
 | `pnpm eval k2 --picker-only` | empty-project chat readiness, dynamic model/provider selection and intercepted Send payloads; zero inference, unchanged stored turns/usage, frontend proof only |
+| `pnpm eval k2 --view-isolation` | loopback desktop/phone reused workspace, delayed Send/Reader responses and replacement locks; native stored sources, intercepted model/delayed replacement writes plus real zero-conversion Markdown controls, unchanged stored turns; frontend ownership only |
 | `pnpm eval k2 --stored-only` | existing chat hard-gate revalidation; requires `ELIOT_EVAL_CHAT`, no new chat or turn |
 | `pnpm eval k2` without model opt-in | limited storage smoke, not full K2 acceptance |
+| `pnpm eval k2 --context-only` | isolated Workerd/D1/R2 explicit-scope query fixture; counts 0/1/1024 source reads, checks ordered scope and canonical ranges; 1024 stops at token cap before R2; no model calls or semantic acceptance |
+| `pnpm eval k3 --anchors-only` | local synthetic full-anchor selftests, including paired A3 GPU-memory reduction direction; exits before API/model calls, rejects model opt-in; unrecognized whole-field input REVIEW_REQUIRED, no production or semantic acceptance |
 | `pnpm eval k3 --native-only` | explicitly limited storage smoke, zero model calls; optional cached-output checks are separate fixtures |
+| `pnpm eval k3 --metadata-only` | isolated Workerd/Workflows/D1/R2 fixture with synthetic outputs and paid producers skipped; checks metadata/head, Unicode ranges, reference/code boundaries and 512-block canonical byte reuse through storage/GET/Save; zero new model calls, no semantic acceptance |
+| `pnpm eval k3 --overview-only` | isolated Workerd/D1/R2 overview pages, stable cursors, scoped filters and per-page report reads; no writes, models or outbound network |
+| `pnpm eval k3 --overview-browser` | desktop/phone Studio-to-overview navigation, controlled response races/Retry/Refresh, real local native-text replacement and revision-pinned Reader; zero model calls |
+| `pnpm eval k2 --project-browser` | desktop/phone project/chat switching through real paged project reads, archived exclusion, Retry/Refresh, History/New chat/project discard confirmation and cancel preserving draft/scope, current/blank choices, Escape/focus, delayed close/reopen and Settings navigation; native local setup, browser writes blocked, zero model calls |
+| `pnpm eval k3 --question-browser` | desktop/phone stored-question drafting, existing-draft confirmation, visible single-source scope and delayed Send/view isolation; waits for committed chat/revision state and the phone Chat redirect; native local setup with stored-output fixtures and intercepted turn POSTs, zero model calls |
+| `pnpm eval k3 --understanding-browser` | desktop/phone uncertain Understand/Save outcomes, status recovery after network/HTTP/malformed replies, failed reads, storage-only Reload, polling and route isolation; native setup and intercepted POSTs, zero model calls |
 | `pnpm eval k3` without model opt-in | stored hard-gate validation; nonzero on missing/failed work, unsupported quotes/numbers, missing anchors or unverified claim-mode C1–C4 |
 | `pnpm eval k3 --unchanged-only` | preflight ten terminal revisions, submit each exact revision once and verify unchanged reports, claims, call counts and usage; no inference |
-| `pnpm eval k3 --review-source --project-id <id> --source-id <id> --revision-id <id>` | GET-only checks of one retained revision's quotes, numbers, usage and frozen paper anchors; exports persisted prose with exact cited excerpts and fails invalid/missing citations or unsupported numbers; `TARGETED_ONLY`, source provenance unverified and semantic quality not evaluated; not full K3 acceptance |
 | `pnpm eval k4 --signed-agent-miniflare` | signed test-JWKS protocol and proposal fixture with no AI binding; not deployed Access acceptance |
 | `pnpm eval k4 --serve-signed-agent` | keep that fixture available to an external client for up to 30 minutes; explicit `ELIOT_MCP_ORIGIN=http://127.0.0.1:<port>` and `ELIOT_ORIGIN=http://localhost:<same-port>` are required; private credentials go only to ignored `eval/out/k4/session.json`; no automatic seeding, model calls or acceptance |
-
-Targeted source review selects the anchor set by the exact frozen filename in `sources.json`. Custom QA fixtures
-require an explicit `--paper-file arxiv-NN.pdf`; this selects checks without proving paper provenance.
 
 The model opt-ins `ELIOT_K2_MODEL=1` and `ELIOT_K3_MODEL=1` enable paid paths only when the root explicitly releases
 that run. K2/K3 reuse existing readable corpus revisions; they do not repeat ingestion/conversion to fill missing

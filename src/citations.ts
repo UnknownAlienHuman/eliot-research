@@ -1,3 +1,4 @@
+import { fencedRanges, inlineCodeRanges } from "./code-ranges.ts";
 import type { Block } from "./blocks.js";
 import { numbersSupported } from "./numbers.ts";
 import type { AnswerWarning } from "./shared/api.js";
@@ -49,40 +50,6 @@ const UUID_RE =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const LABEL_RE = /\[(?:S\d+:[^\]\n[]*|R[^:\]\n[]*:[^\]\n[]*|S\d+)\]/g;
 const DIGITS_RE = /^\d+$/;
-
-interface Fence {
-  char: string;
-  count: number;
-}
-
-/** Char ranges covered by ```/~~~ fenced code; labels inside never resolve. */
-function fencedRanges(text: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
-  const parts = text.split("\n");
-  let fence: Fence | undefined;
-  let fenceStart = 0;
-  let pos = 0;
-  for (let i = 0; i < parts.length; i++) {
-    const line = parts[i] ?? "";
-    const lineEnd = pos + line.length + (i < parts.length - 1 ? 1 : 0);
-    if (fence === undefined) {
-      const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-      if (open !== undefined) {
-        fence = { char: open[0] ?? "`", count: open.length };
-        fenceStart = pos;
-      }
-    } else {
-      const trimmed = line.trim();
-      if (trimmed.startsWith(fence.char.repeat(fence.count)) && new RegExp(`^${fence.char}+$`).test(trimmed)) {
-        ranges.push({ start: fenceStart, end: lineEnd });
-        fence = undefined;
-      }
-    }
-    pos = lineEnd;
-  }
-  if (fence !== undefined) ranges.push({ start: fenceStart, end: text.length });
-  return ranges;
-}
 
 interface ScopeMaps {
   aliasGroups: Map<string, number[]>;
@@ -160,12 +127,18 @@ function splitAdjacentPairToken(token: string): [string, string] | undefined {
   return [`[${first}]`, `[${second}]`];
 }
 
-function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean): ResolvedAnswer {
+export function resolveCitations(answer: string, sources: LabelSource[]): ResolvedAnswer {
   const maps = scopeMaps(sources);
   const fences = fencedRanges(answer);
   const inline = inlineCodeRanges(answer, fences);
   const code = [...fences, ...inline].sort((a, b) => a.start - b.start);
-  const inside = (at: number): boolean => code.some((range) => at >= range.start && at < range.end);
+  // Label matches advance monotonically; each sorted code range is visited once.
+  let codeIndex = 0;
+  const inside = (at: number): boolean => {
+    while ((code[codeIndex]?.end ?? Infinity) <= at) codeIndex++;
+    const range = code[codeIndex];
+    return range !== undefined && at >= range.start;
+  };
   const seen = new Map<string, string>();
   const citations: Citation[] = [];
   const parts: string[] = [];
@@ -206,8 +179,7 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
     parts.push(answer.slice(last, at));
     for (const { parsed, source, atom } of resolved) {
       const key = `${source.revisionId}:${parsed.block}`;
-      const candidate = rewriteCompact && atom[1] === "S" ? `[R${source.revisionId}:${parsed.block}]` : atom;
-      const outToken = seen.get(key) ?? candidate;
+      const outToken = seen.get(key) ?? atom;
       if (!seen.has(key)) {
         seen.set(key, outToken);
         citations.push({
@@ -232,14 +204,6 @@ function resolve(answer: string, sources: LabelSource[], rewriteCompact: boolean
     invalidLabels,
     ...(invalidExamples.length > 0 ? { invalidLabelExamples: invalidExamples } : {}),
   };
-}
-
-export function resolveCitations(answer: string, sources: LabelSource[]): ResolvedAnswer {
-  return resolve(answer, sources, false);
-}
-
-export function persistentAnswer(text: string, sources: LabelSource[]): ResolvedAnswer {
-  return resolve(text, sources, true);
 }
 
 /**
@@ -296,54 +260,6 @@ const sectionHeadings = new Set([
   "\u043a\u0440\u0430\u0442\u043a\u043e", "\u043c\u0435\u0442\u043e\u0434\u044b", "\u043e\u0431\u0441\u0443\u0436\u0434\u0435\u043d\u0438\u0435",
   "\u043e\u0441\u043d\u043e\u0432\u043d\u043e\u0435", "\u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b", "\u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0438",
 ]);
-
-function inlineCodeRanges(text: string, fences: TextRange[]): TextRange[] {
-  const ranges: TextRange[] = [];
-  let i = 0;
-  while (i < text.length) {
-    const fence = fences.find((range) => i >= range.start && i < range.end);
-    if (fence !== undefined) {
-      i = fence.end;
-      continue;
-    }
-    if (text[i] !== "`") {
-      i += 1;
-      continue;
-    }
-
-    let openLength = 1;
-    while (text[i + openLength] === "`") openLength += 1;
-    let j = i + openLength;
-    let closeStart = -1;
-    while (j < text.length) {
-      const containingFence = fences.find((range) => j >= range.start && j < range.end);
-      if (containingFence !== undefined) {
-        j = containingFence.end;
-        continue;
-      }
-      if (text[j] !== "`") {
-        j += 1;
-        continue;
-      }
-      let closeLength = 1;
-      while (text[j + closeLength] === "`") closeLength += 1;
-      if (closeLength === openLength) {
-        closeStart = j;
-        break;
-      }
-      j += closeLength;
-    }
-
-    if (closeStart < 0) {
-      i += openLength;
-      continue;
-    }
-    const end = closeStart + openLength;
-    ranges.push({ start: i, end });
-    i = end;
-  }
-  return ranges;
-}
 
 function maskRanges(text: string, ranges: TextRange[]): string {
   if (ranges.length === 0) return text;
@@ -461,12 +377,26 @@ function statementBlocks(text: string, analyzed: string, fences: TextRange[]): S
     }
 
     const kind = blockKind(line.replace(/\r$/, ""));
+    // Keep an explicitly indented continuation in its list item before sentence
+    // segmentation. A new item/quote is a boundary, not evidence for its parent.
+    if (current?.kind === "list" && kind === undefined
+      && /^(?: {2,}|\t)\S/.test(line)
+      && !/^\s*(?:(?:[-+*]|\d+[.)]|#{1,6})\s+|>|`{3,}|~{3,})/.test(line)) {
+      current.end = lineEnd;
+      continue;
+    }
     if (kind !== undefined) {
       flush();
-      blocks.push({ start: lineStart, end: lineEnd, kind });
+      if (kind === "list") current = { start: lineStart, end: lineEnd, kind };
+      else blocks.push({ start: lineStart, end: lineEnd, kind });
     } else if (current === undefined) {
       current = { start: lineStart, end: lineEnd, kind: "prose" };
     } else {
+      if (current.kind === "list") {
+        flush();
+        current = { start: lineStart, end: lineEnd, kind: "prose" };
+        continue;
+      }
       current.end = lineEnd;
     }
   }
@@ -479,7 +409,15 @@ function sentenceRanges(block: StatementBlock, analyzed: string): TextRange[] {
   if (block.kind === "table") {
     sentences = [{ start: block.start, end: block.end }];
   } else {
-    const text = analyzed.slice(block.start, block.end);
+    const raw = analyzed.slice(block.start, block.end);
+    // ICU treats soft wraps as boundaries, but may miss a period followed by a
+    // lowercase sentence. Keep existing boundaries on lines containing sentence
+    // punctuation or ending in markup/citations; normalize only plain soft wraps.
+    // The analysis view keeps one code unit per original code unit.
+    const text = block.kind === "list" ? raw
+      .replace(/^ {0,3}(?:[-+*]|\d+[.)])[ \t]+/, (marker) => " ".repeat(marker.length))
+      .replace(/([^\r\n]*)(\r\n|\r|\n)/g, (_match, line: string, newline: string) =>
+        line + (/[.!?…]/.test(line) || /["'”’»)\]*_~`>][ \t]*$/.test(line) ? newline : " ".repeat(newline.length))) : raw;
     const labels = [...text.matchAll(LABEL_RE)];
     // ICU may split "fact.[S1:1]" after the opening bracket. A citation
     // token must remain atomic without changing the answer or its offsets.
