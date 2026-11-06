@@ -64,6 +64,7 @@ The entry point is [`scripts/eval/run.ts`](../scripts/eval/run.ts), invoked by `
 | `pnpm eval k1` | full K1 corpus and browser checks; document conversion may use the live service |
 | `pnpm eval k2 --native-only` | limited reader/history smoke, zero model calls |
 | `pnpm eval k2 --admission-only` | real HTTP acceptance before first payload, persistent Workerd restart and readonly Agents reconnect; exact input and zero-usage recovery, repeated IDs/read paths and no model dispatch; not semantic acceptance |
+| `pnpm eval k2 --scroll-browser` | desktop/phone saved-chat initial position, delayed fonts/catalogue, deliberate reading during catalogue load, Reader/Back, late snapshots, keyboard Latest, earlier-page anchor and reload; controlled stored snapshots plus native local source/Reader, zero model calls |
 | `pnpm eval k2 --send-browser` | desktop/phone explicit create/Send replay after lost/malformed acknowledgements, unchanged IDs/input/target, source navigation, changed-input controls and read-only reload recovery through History; real Workerd stored pre-model rejection, zero model calls, not paid-stream acceptance |
 | `pnpm eval k2 --models-only` | disconnected Gateway consent/admission and 390px Settings/understanding; no credential enable or provider call, not external-model acceptance |
 | `pnpm eval k2 --picker-only` | empty-project chat readiness, dynamic model/provider selection and intercepted Send payloads; zero inference, unchanged stored turns/usage, frontend proof only |

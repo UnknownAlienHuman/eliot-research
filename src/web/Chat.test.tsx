@@ -30,7 +30,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.stubGlobal('ResizeObserver', class {
     constructor(private callback: (entries: unknown[]) => void) {}
-    observe() { this.callback([{ contentRect: { width: 800, height: 600 } }]); }
+    observe(target: Element) { this.callback([{ target, contentRect: { width: 800, height: 600 } }]); }
     disconnect() {}
   });
   vi.stubGlobal('WebSocket', class { close() {} });
@@ -548,5 +548,157 @@ describe('Chat snapshot source selection', () => {
     expect(router.state.location.pathname).toMatch(/\/chat\/[^/]+$/);
     await receiveSnapshot(); await resolveHistory();
     expect(currentScope).toEqual({ scopeMode: 'explicit', sourceIds: ['s2'] });
+  });
+});
+
+// Regression for the live audit: saved chats opened at their oldest loaded turn.
+// These controlled scroll metrics test lifecycle ordering, not browser geometry.
+describe('Saved chat reading position', () => {
+  let container: HTMLDivElement, top: number, height: number, viewportHeight: number, visible: boolean;
+  let resize: (entries: Array<{ target: Element; contentRect: { width: number; height: number } }>) => void;
+  let reply: (response: Response) => void;
+  let message: (event: { data: string }) => void;
+  const snapshot = () => ({ turns: [1, 2, 3].map(id => ({ ...turn('t' + id), createdAt: id, historyVersion: 1 })),
+    nextCursor: null, queued: null, stateVersion: 1 });
+  const http = async () => { await act(async () => reply(json({ chat: { id: 'c1' }, ...snapshot() }))); await settle(); };
+  const socketHead = async () => { await act(async () => message({ data: JSON.stringify({ type: 'snapshot', ...snapshot() }) })); };
+  const scroll = async (value: number) => { await act(async () => {
+    container.scrollTop = value; container.dispatchEvent(new Event('scroll'));
+  }); };
+  const show = async (value: boolean) => { await act(async () => {
+    visible = value; resize([{ target: container, contentRect: { width: value ? 800 : 0, height: value ? 200 : 0 } }]);
+  }); };
+  const latest = () => host.querySelector<HTMLButtonElement>('[aria-label="Jump to latest message"]');
+  beforeEach(async () => {
+    visible = true; top = 0; height = 1200; viewportHeight = 200;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: typeof resize) { resize = callback; }
+      observe(target: Element) { resize([{ target, contentRect: { width: 800, height: 200 } }]); }
+      disconnect() {}
+    });
+    vi.stubGlobal('WebSocket', class {
+      set onmessage(callback: typeof message) { message = callback; }
+      close() {}
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(init?.method ?? 'GET').toBe('GET');
+      const url = String(input);
+      if (url === '/api/models') return json({ models: [], warnings: [] });
+      if (url === '/api/projects/p1/chats') return json({ chats: [], nextCursor: null });
+      return new Promise<Response>(resolve => { reply = resolve; });
+    }));
+    function Subject() {
+      const { '*': path } = useParams();
+      const chatId = path?.startsWith('chat/') ? path.slice('chat/'.length) : 'c1';
+      const [selection, setSelection] = useState<SourceSelection>({ scopeMode: 'project_default', sourceIds: [] });
+      return <ChatView projectId='p1' chatId={chatId} selection={selection} question=''
+        onQuestionChange={() => {}} onSelectionChange={setSelection} onNewChat={() => {}} onSavedPage={() => {}} />;
+    }
+    router = createMemoryRouter([{ path: '/p/:projectId/*', element: <Subject /> }], { initialEntries: ['/p/p1/chat/c1'] });
+    await act(async () => { root.render(<RouterProvider router={router} />); }); await settle();
+    const conversation = host.querySelector<HTMLDivElement>('.er-chat__conversation');
+    if (!conversation) throw new Error('Missing conversation');
+    container = conversation;
+    Object.defineProperties(container, {
+      clientHeight: { get: () => visible ? viewportHeight : 0 }, scrollHeight: { get: () => height },
+      scrollTop: { get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, height - viewportHeight)); } },
+    });
+  });
+  it.each(['HTTP first', 'socket first'])('opens latest once when %s, without late head/reconnect jumps', async order => {
+    if (order === 'HTTP first') await http(); else await socketHead();
+    expect(top).toBe(1000); expect(latest()).toBeNull();
+    await scroll(325);
+    expect(latest()).not.toBeNull();
+    if (order === 'HTTP first') await socketHead(); else await http();
+    await socketHead();
+    expect(top).toBe(325);
+  });
+  it('waits for a hidden chat to become visible, then preserves Reader/Back position', async () => {
+    await show(false); await http();
+    expect(top).toBe(0);
+    await show(true);
+    expect(top).toBe(1000);
+    await scroll(325);
+    await act(async () => { await router.navigate('/p/p1/source/s1'); });
+    await show(false); await socketHead();
+    await act(async () => { await router.navigate(-1); });
+    await show(true);
+    expect(top).toBe(325); expect(latest()).not.toBeNull();
+  });
+  it('keeps the initial bottom aligned when asynchronous controls shrink the viewport', async () => {
+    await http(); expect(top).toBe(1000);
+    viewportHeight = 180;
+    await show(true);
+    expect(top).toBe(1020); expect(latest()).toBeNull();
+  });
+  it('preserves deliberate reading when asynchronous controls shrink the viewport', async () => {
+    await http(); await scroll(325); viewportHeight = 180;
+    await show(true);
+    expect(top).toBe(325); expect(latest()).not.toBeNull();
+  });
+  it('keeps the bottom aligned for late text reflow but leaves an older reader in place', async () => {
+    await http(); height = 1220;
+    const list = host.querySelector('.er-chat__turns');
+    if (!list) throw new Error('Missing turn list');
+    await act(async () => resize([{ target: list, contentRect: { width: 800, height } }]));
+    expect(top).toBe(1020); expect(latest()).toBeNull();
+    await scroll(325); height = 1400;
+    await act(async () => resize([{ target: list, contentRect: { width: 800, height } }]));
+    expect(top).toBe(325); expect(latest()).not.toBeNull();
+  });
+  it('does not mistake a queued scroll after reflow for the reader moving away', async () => {
+    await http(); height = 1220;
+    await act(async () => container.dispatchEvent(new Event('scroll')));
+    await show(true);
+    expect(top).toBe(1020); expect(latest()).toBeNull();
+  });
+  it('honors an upward reading gesture before the resize observer settles new geometry', async () => {
+    await http(); viewportHeight = 180;
+    await scroll(325); await show(true);
+    expect(top).toBe(325); expect(latest()).not.toBeNull();
+  });
+  it('recognizes later manual scrolling when content outside the observed list changes height', async () => {
+    await http(); height = 1220;
+    await act(async () => container.dispatchEvent(new Event('scroll')));
+    await scroll(325);
+    await show(true);
+    expect(top).toBe(325); expect(latest()).not.toBeNull();
+  });
+  it('retains Reader/Back position even when hidden output grows after leaving the bottom', async () => {
+    await http(); expect(top).toBe(1000);
+    await show(false); height = 1800; await socketHead();
+    await show(true);
+    expect(top).toBe(1000); expect(latest()).not.toBeNull();
+  });
+  it('starts another chat at its latest turn instead of carrying over the previous reading position', async () => {
+    await http(); await scroll(325);
+    await act(async () => { await router.navigate('/p/p1/chat/c2'); }); await settle();
+    await socketHead();
+    expect(top).toBe(1000); expect(latest()).toBeNull();
+  });
+  it('does not pull a reader down for streamed growth; Latest restores the end and focus', async () => {
+    await http(); await scroll(325); height = 1800;
+    await act(async () => message({ data: JSON.stringify({ type: 'turn',
+      turn: { ...turn('t3'), createdAt: 3, historyVersion: 2, answer: 'Updated answer' } }) }));
+    expect(top).toBe(325);
+    await act(async () => { latest()?.click(); });
+    expect(top).toBe(1600);
+    expect(document.activeElement).toBe(host.querySelector('[data-turn-id="t3"]'));
+    expect(latest()).toBeNull();
+  });
+  it('keeps the first-open jump pending after a failed read, but does not repeat it on later Retry', async () => {
+    await act(async () => reply(json({ error: { message: 'History unavailable' } }, 503))); await settle();
+    expect(top).toBe(0);
+    const retry = () => {
+      const button = [...host.querySelectorAll('button')].find(button => button.textContent === 'Retry');
+      if (!button) throw new Error('Missing Retry');
+      return button;
+    };
+    await act(async () => retry().click()); await settle(); await http();
+    expect(top).toBe(1000); await scroll(325);
+    await act(async () => message({ data: JSON.stringify({ type: 'queued', stateVersion: 2,
+      queued: null, settlementError: 'Status read unavailable' }) }));
+    await act(async () => retry().click()); await settle(); await http();
+    expect(top).toBe(325);
   });
 });

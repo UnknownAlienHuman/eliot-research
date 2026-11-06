@@ -72,6 +72,7 @@ jobs:
           pnpm eval k2 --picker-only
           pnpm eval k2 --view-isolation
           pnpm eval k2 --send-browser
+          pnpm eval k2 --scroll-browser
           pnpm eval k2 --project-browser
           pnpm eval k2 --models-only
           pnpm eval k3 --native-only
@@ -93,6 +94,7 @@ jobs:
             dist
             eval/out/k0
             eval/out/k1/*-compact-citations.png
+            eval/out/k2/chat-*.png
             !dist/**/.dev.vars*
             !dist/**/.env*
           if-no-files-found: error
