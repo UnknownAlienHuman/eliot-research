@@ -253,6 +253,8 @@ metadata. Context reserve is separate from the published generation maximum; unk
 Admission has its own claim; a missing numeric capacity never permits another call for the same turn.
 Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
 across corpora, with no fixed-paper coaching or JSON sentence/label enum. The server resolves labels and byte ranges.
+Adjacent user input parts share one message without changing their text; assistant history and system instructions
+keep their boundaries. The same message assembly governs context estimation and the single model dispatch.
 Markdown reference definitions cannot redirect exact registered citation tokens in chat or saved answers, including
 adjacent tokens parsed as one link; ordinary explicit links and unregistered labels retain their Markdown behavior.
 Groups of fully specified labels may normalize to separate inline references after every member passes the same

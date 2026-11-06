@@ -8,7 +8,7 @@ import { answerWarnings, numericCitationLabels, persistentResolvedAnswer, resolv
 import type { LabelSource } from "./citations";
 import { admitTurn } from "./cost";
 import { modelInputLimit, modelOutputLimit, requireAvailableModel } from "./models";
-import { estimateModelInput } from "./model-input";
+import { chatModelMessages, estimateModelInput } from "./model-input";
 import type { ModelSpec } from "./models";
 import { modelFailure, resolveModelTransport } from "./model-transport";
 import { turnUsageProjection } from "./chat-usage";
@@ -440,9 +440,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const transport = await resolveModelTransport(this.env, model, this.name);
       const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions]
         .filter(Boolean).join("\n\n");
-      const messages = context.messages.filter((message) => message.role !== "system")
-        .map(({ role, content }) => ({ role: role as "user" | "assistant", content }));
-      messages.push({ role: "user", content: input.question });
+      const messages = chatModelMessages(context.messages, input.question);
       const inputTokens = estimateModelInput({ instructions, messages });
       if (inputTokens > modelInputLimit(model)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
       const maxOutputTokens = modelOutputLimit(model, inputTokens);

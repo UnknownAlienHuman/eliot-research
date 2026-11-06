@@ -796,6 +796,13 @@ quotes from the same block. Keep derived claim statements and conditions in a se
 non-evidence; only original quoted passages provide evidence and citation labels. Source and orientation text both
 count toward the same context budget.
 
+Join adjacent user-message parts (evidence, optional orientation and questions) with two newlines before dispatch;
+keep assistant history boundaries and all supplied text unchanged. System instructions remain separate. The same
+assembly is used for input estimation. A 2026-11-06 Crouton Alpha control returned empty `stop` completions for
+`system,user,user` in both streaming and non-streaming modes. Joining only those user parts returned the requested
+cited Atlas plan; restoring streaming and the original published output maximum also succeeded in one call.
+This is request formatting, not a model-specific fallback, changed source scope or permission to retry.
+
 Estimate the final instructions/messages JSON as UTF-8 bytes / 3 plus existing per-message and fixed framing overhead.
 Assembly and dispatch use the same estimate without copying the full source JSON. This is a heuristic, not a guaranteed
 token upper bound or proof that a provider will accept the request. Unknown output defaults can also exceed the reserved
