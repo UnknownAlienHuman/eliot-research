@@ -38,6 +38,7 @@ quotas.
 - Context assembly, final chat framing and source understanding use the provider input ceiling plus output headroom only inside an explicitly known combined window; the separate 16 MiB materialization allowance still applies.
 - Whole-reading overlaps at most the current source's block-map/text GETs while consuming bodies serially; missing maps and budget failures cancel unused text without opening later sources. The storage-only K2 context eval covers this bound; production latency and K2 semantic acceptance remain separate.
 - K2 has a local Markdown chat path with frozen source scope, server-resolved citations, Stop/reconnect and storage-only Save, plus the R2 model snapshot with the owner-only refresh route. K2 and K3 are not fully accepted; their remaining quality and claim-mode gates stay open in their contour sections below.
+- K3 now drafts guide/digest/glossary before its review call and selects their short IDs with fixed original citations. Historical Save remains storage-only. This unreviewed-prose repair does not close semantic, full-corpus or latency acceptance.
 - K4 is implemented in main. Its signed-agent read, proposal and owner-decision path is verified locally with test
   JWKS; deployed Access remains unverified. K6 is frozen until K2/K3 acceptance.
 - The existing `eliotr-core.kleymor-metal.workers.dev` address is retained per owner decision; the replacement is not deployed over it.

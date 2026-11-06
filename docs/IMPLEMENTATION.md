@@ -528,8 +528,8 @@ not model quality or paid-step replay.
 
 `DistillWorkflow` uses two bounded calls:
 
-1. labelled canonical text → metadata, draft guide, 3–5 questions and candidate claims;
-2. verified original excerpts → supported claim selection, final 3–5 sentence guide, digest and EN/RU glossary.
+1. labelled canonical text → draft guide, digest, EN/RU glossary, 3–5 questions and candidate claims;
+2. verified original excerpts → supported claim and prose-draft selection, with at most eight additional atomic claims.
 
 Each input block is a separate JSON record containing its exact `quoteBlock` and text, so a label does not implicitly
 name following blocks or an entire section. The first output requests the source guide before detailed claims.
@@ -538,18 +538,25 @@ it to the full original block as its own quote, preserving PDF line-break hyphen
 the model does not transcribe canonical evidence. Claim quote/range and numeric checks remain against that one block,
 and a statement that adds numbers absent from it is rejected.
 
-Draft guide items use `{ labels, text }`, with the closed `labels` array of 1–4 source-block selections before `text`.
-Code resolves every declared label to its exact canonical block and checks references and numbers against only the
-union of those selected quotes. It splits authored prose and retains at most the first numerically supported sentence
-per item, yielding at most five draft sentences; an early paragraph cannot consume the whole guide allowance.
-`Verified.guide` retains these `{ labels, text }` records as hypotheses. Call two receives them directly alongside
-candidate claims, with original excerpts as the sole evidence. The retained excerpt pool is exactly the union of
-declared claim `quoteBlock` selections and guide `labels`; code adds no inferred evidence bindings. Final guide and
-digest items also use `{ labels, text }` with 1–4 selected excerpts; glossary records likewise select labels first.
-Historical cached synthesis rechecks do not consume `Verified.guide` or expand its frozen evidence pool, so this new
-producer shape does not rebind or rewrite old artifacts. Raw selections are retained in R2, stored labels use the full
-revision UUID, and a final user task explicitly states the English/Russian response language in both calls. These
-request/validation changes do not establish paid-service or quality acceptance.
+Draft guide/digest items use `{ labels, text }` and glossary entries select the same closed 1–4-label set.
+Code resolves every declared label to its exact canonical block and checks references and numbers against only
+those selected quotes. A fresh draft is retained or rejected whole, never shortened to a numerically valid sentence
+that could omit its qualifier. The frozen evidence pool is the union of declared claim and prose selections.
+
+Call two receives the validated drafts with short section-specific IDs (`G`, `D`, `T`). Its schema returns only
+`supportedGuide`, `supportedDigest` and `supportedGlossary` ID arrays, not repeated prose or new citation labels.
+The server resolves each selected ID to the complete original draft and labels, deduplicating selections. The reviewer
+must reject a draft that needs different evidence or wording; it cannot silently rebind its citation or mix glossary
+fields. Empty selections are allowed. Missing required guide/digest drafts stop before call two; empty final selections
+produce no usable understanding rather than promoting unreviewed call-one output. Fewer than three guide entries are
+partial. Final rendering retains each selected item's complete text and does not truncate it at a sentence boundary.
+
+Historical full-text call-two artifacts keep their existing storage-only validation and Save shape; they do not need
+new draft fields. The same attempt-scoped keys isolate drafts, output and usage during explicit retries. No historical
+artifact or canonical byte is rewritten, and the two-call bound, admission, materialization budget and no-paid-retry
+rule are unchanged. The storage eval covers ID selection through Workflow, D1/R2, GET and repeated Save without models.
+This repairs the unreviewed-prose producer path; fresh semantic quality and latency remain unaccepted until real runs.
+The earlier #459 PaLM HTTP 408 does not establish schema size as its cause, and no speedup is claimed from schema size.
 
 Code verifies quotes and numbers between calls. Draft statements are hypotheses, not evidence: the second call checks
 each retained candidate against its own quote and can add a small number of atomic facts from the same frozen excerpts.

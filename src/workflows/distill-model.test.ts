@@ -236,11 +236,11 @@ describe("DistillWorkflow admitted model snapshot", () => {
       .map(text => ({ labels: ["[S1:1]"], text }));
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
     vi.mocked(generateText)
-      .mockResolvedValueOnce({ output: { guide, questions: ["Which method?", "Which evidence?", "Which conditions?"],
+      .mockResolvedValueOnce({ output: { guide, digest: [guide[0]], glossary: [], questions: ["Which method?", "Which evidence?", "Which conditions?"],
         claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: guide[0]?.text,
           task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] },
         totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
-      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], guide, digest: [guide[0]], glossary: [] },
+      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["G0", "G1", "G2"], supportedDigest: ["D0"], supportedGlossary: [] },
         totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
     const original = new Map(f.bodies);
     try {
@@ -261,6 +261,70 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(f.bodies.get(prefix + "digest.md")).toContain(guide[0]?.text);
       expect(f.bodies.get(prefix + "glossary.json")).toBe("[]");
       for (const [key, body] of original) expect(f.bodies.get(key)).toBe(body);
+    } finally { f.db.close(); }
+  });
+
+  it.each(["selected", "duplicate", "unknown", "wrong section", "retargeted", "empty"])("resolves reviewed prose IDs without rewriting text or evidence: %s", async (mode) => {
+    const document = documentWithBlocks([
+      { type: "paragraph", text: "The method adds positional encodings to input embeddings. Both have the same dimension.\n" },
+      { type: "paragraph", text: "In this work, we use sine and cosine functions of different frequencies.\n" },
+    ]);
+    const f = fixture(snapshot.route, document);
+    const guide = [
+      { labels: ["[S1:1]"], text: "The method has 9999 dimensions." },
+      { labels: ["[S1:1]"], text: "The method adds positional encodings to input embeddings." },
+      { labels: ["[S1:1]"], text: "Both have the same dimension." },
+      { labels: ["[S1:2]"], text: "The method uses sine and cosine functions of different frequencies." },
+    ];
+    const [bad, first, second, third] = guide;
+    if (!bad || !first || !second || !third) throw new Error("Missing draft fixture.");
+    const digest = { labels: ["[S1:1]", "[S1:2]"], text: first.text + " " + third.text };
+    const term = { labels: ["[S1:1]"], en: "Positional encoding", ru: "Позиционное кодирование", definition: first.text };
+    const extraction = { guide, digest: [{ labels: ["[S1:1]"], text: "There are 9999 dimensions." }, digest],
+      glossary: [{ ...term, definition: "There are 9999 dimensions." }, term],
+      questions: ["Which encodings?", "Where are they added?", "Which dimension?"],
+      claims: [{ quoteBlock: "[S1:2]", kind: "method", statement: third.text,
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] };
+    const selection = { supportedClaims: ["C0"], additionalClaims: [],
+      supportedGuide: mode === "duplicate" ? ["G0", "G0", "G1"] : mode === "unknown" ? ["G3"]
+        : mode === "wrong section" ? ["D0"] : ["G0", "G1", "G2"],
+      supportedDigest: mode === "empty" ? [] : ["D0"], supportedGlossary: ["T0"],
+      ...(mode === "retargeted" ? { guide: [{ labels: ["[S1:2]"], text: first.text }] } : {}) };
+    const usage = { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } };
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText).mockResolvedValueOnce({ output: extraction, totalUsage: usage } as never)
+      .mockResolvedValueOnce({ output: selection, totalUsage: usage } as never);
+    try {
+      await run(f);
+      expect(generateText).toHaveBeenCalledTimes(2); expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+      const options = vi.mocked(generateText).mock.calls[1]?.[0];
+      const content = options?.messages?.[0]?.content, instructions = options?.instructions;
+      if (typeof content !== "string" || typeof instructions !== "string") throw new Error("Missing review input.");
+      const context = JSON.parse(content);
+      expect(context.proseDrafts.guide).toEqual(guide.slice(1).map((item, i) => ({ id: "G" + i, ...item })));
+      expect(context.proseDrafts.digest).toEqual([{ id: "D0", ...digest }]);
+      expect(context.proseDrafts.glossary).toEqual([{ id: "T0", ...term }]);
+      const schema = JSON.parse(instructions.split("Return one JSON object conforming to this schema: ")[1] ?? "null");
+      expect(schema.properties).not.toHaveProperty("guide"); expect(schema.properties).not.toHaveProperty("glossary");
+      expect(JSON.stringify(schema)).not.toContain(digest.text);
+      expect(schema.properties.supportedGuide.items.enum).toEqual(["G0", "G1", "G2"]);
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      const valid = ["selected", "duplicate"].includes(mode);
+      expect(report.state).toBe(mode === "selected" ? "done" : mode === "duplicate" ? "partial" : "failed");
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(valid);
+      if (valid) {
+        expect(f.bodies.get(prefix + "digest.md")).toBe(digest.text + `\n\n[R${revisionId}:1] [R${revisionId}:2]`);
+        expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual([{ ...term, labels: [`[R${revisionId}:1]`] }]);
+        expect(f.db.prepare("SELECT statement FROM claim WHERE source_revision_id=?").get(revisionId)).toEqual({ statement: third.text });
+        // Invalid digest/glossary draft indexes must not shift retained claim lineage.
+        expect(report.dropped).toEqual(expect.arrayContaining([{ index: 0, reason: "digest-unsupported-statement-numbers" }, { index: 0, reason: "glossary-unsupported-output" }]));
+        const original = new Map(f.bodies), beforeUsage = report.usage;
+        await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true });
+        await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true });
+        for (const [key, value] of original) expect(f.bodies.get(key)).toBe(value);
+        expect(JSON.parse(f.bodies.get(prefix + "checked/distill.json") ?? "null").usage).toEqual(beforeUsage);
+        expect(generateText).toHaveBeenCalledTimes(2);
+      } else expect(f.bodies.has(prefix + "guide.md")).toBe(false);
     } finally { f.db.close(); }
   });
 
@@ -825,6 +889,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
     vi.mocked(Output.object).mockClear();
     const extraction = {
+      digest: [{ labels: ["[S1:1]"], text: "Method Alpha uses a low-rank update." }], glossary: [],
       guide: [
         { labels: ["[S1:1]"], text: "The source describes method Alpha." },
         { labels: ["[S1:3]"], text: "The source notes a limitation." },
