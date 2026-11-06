@@ -777,6 +777,36 @@ try {
     await page.getByRole('link', { name: 'Clear passage', exact: true }).click(); await expect(mark).toHaveCount(0);
     assert.equal(await page.locator('.er-lib__text').textContent(), canonical);
     assert(await page.locator('.er-lib__text').evaluate(el => document.activeElement === el), 'Clear must keep keyboard focus in the full text.');
+    // Find searches this immutable text locally, then reuses the exact Reader link.
+    const find = page.getByRole('search', { name: 'Find in source' });
+    const findInput = find.getByRole('searchbox', { name: 'Find in source' });
+    const searchReads: string[] = [];
+    const recordSearchRead = (request: import('@playwright/test').Request) => { if (new URL(request.url()).pathname.startsWith('/api/')) searchReads.push(request.method() + ' ' + new URL(request.url()).pathname); };
+    page.on('request', recordSearchRead);
+    await findInput.fill('РУССКИЙ ТЕКСТ С EMOJI 🧪'); await findInput.press('Enter');
+    await expect(mark).toHaveText(inside); await expect(findInput).toBeFocused();
+    const foundUrl = new URL(page.url());
+    assert.equal(foundUrl.searchParams.get('revisionId'), revisionId);
+    assert.equal(foundUrl.searchParams.get('start'), String(Buffer.byteLength(canonical.slice(0, insideStart))));
+    assert.equal(foundUrl.searchParams.get('end'), String(Buffer.byteLength(canonical.slice(0, insideStart + inside.length))));
+    assert(await mark.evaluate(el => { const r = el.getBoundingClientRect(), toolbar = document.querySelector('.er-lib__find')!.getBoundingClientRect(); return r.top >= toolbar.bottom && r.bottom <= innerHeight; }), 'Found passage must be visible below the search controls.');
+    await find.getByRole('button', { name: 'Next match' }).click(); await expect(mark).toHaveText(inside);
+    await find.getByRole('button', { name: 'Previous match' }).click(); await expect(mark).toHaveText(inside);
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await page.getByRole('button', { name: 'Copy link to selection', exact: true }).click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), foundUrl.href);
+    await findInput.fill('phrase-not-present-in-this-paper'); await findInput.press('Enter');
+    await expect(find.getByRole('status')).toHaveText('No matches in this revision.');
+    await expect(mark).toHaveText(inside); // A miss must not erase the current evidence.
+    await findInput.fill('context sentence.'); await findInput.press('Enter');
+    const nextMatch = page.url();
+    await find.getByRole('button', { name: 'Next match' }).click(); assert.notEqual(page.url(), nextMatch);
+    await find.getByRole('button', { name: 'Previous match' }).click(); assert.equal(page.url(), nextMatch);
+    await page.goBack(); await expect(mark).toHaveText('context sentence.');
+    await page.goForward(); assert.equal(page.url(), nextMatch);
+    assert.deepEqual(searchReads, [], 'Find/copy/history within one revision must not issue API calls.');
+    page.off('request', recordSearchRead);
+    assert.equal(await page.locator('.er-lib__text').textContent(), canonical);
     const invalid = new URL(reader), emojiByte = Buffer.byteLength(canonical.slice(0, canonical.indexOf('🧪')));
     invalid.searchParams.set('start', String(emojiByte + 1)); invalid.searchParams.set('end', String(emojiByte + 2));
     await page.goto(invalid.href); await expect(page.locator('.er-lib__excerpt [role="alert"]')).toBeVisible(); await expect(mark).toHaveCount(0);

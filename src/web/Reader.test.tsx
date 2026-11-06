@@ -122,6 +122,39 @@ describe("Reader failed citation recovery", () => {
 });
 
 describe("Reader historical passage navigation", () => {
+  it("finds and copies a highlighted passage without another read, then resets search on revision change", async () => {
+    await open();
+    const input = host.querySelector<HTMLInputElement>('input[type="search"]');
+    const form = host.querySelector<HTMLFormElement>('form[role="search"]');
+    if (!input || !form) throw new Error("Missing Find in source");
+    const clipboard = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: clipboard } });
+    const reads = requests.length;
+    const find = async (query: string) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, query);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      input.focus();
+      await act(async () => { form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }); await settle();
+    };
+    await find("ТОЧНЫЙ ТЕКСТ");
+    expect(host.querySelector("mark")?.textContent).toBe("Точный текст");
+    expect(document.activeElement).toBe(input);
+    const search = router.state.location.search;
+    await find("not in this source");
+    expect(form.textContent).toContain("No matches in this revision.");
+    expect(router.state.location.search).toBe(search);
+    const copy = [...host.querySelectorAll("button")].find(button => button.textContent === "Copy link to selection");
+    if (!copy) throw new Error("Missing copy action");
+    await click(copy);
+    expect(clipboard).toHaveBeenCalledWith(window.location.origin + window.location.pathname + search);
+    expect(requests).toHaveLength(reads);
+    await navigate("s1", "r2");
+    expect(input.value).toBe("");
+    expect(form.textContent).not.toContain("No matches");
+  });
+
   it.each(["pending", "failed"])("keeps the cited revision when clearing a passage during a %s metadata read", async state => {
     await open();
     const historical = "d795f9c9-10d0-435c-8e3e-c244aca85ded";

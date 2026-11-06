@@ -1320,6 +1320,12 @@ uncaptured web result. Check stop/budget before every external call and preserve
 
 ## 13. Owner interface
 
+Reader's Find in source scans the loaded immutable text on explicit Next/Previous only, without API/model/search
+calls or a separate index. Matching uses original-string Unicode indices before UTF-8 conversion; literal punctuation
+is escaped, EN/RU case is ignored, and only the selected range is retained. Search does not alter canonical bytes.
+The existing URL/highlight/copy flow keeps historical revisions pinned and supports Back/Forward. Native K1 checks
+desktop/phone navigation, no-match retention, copied UTF-8 ranges and zero additional API calls.
+
 Move the accepted Material 3 Expressive UI; do not redraw it. `src/web/ui/` owns tokens/primitives/features. Raw colours,
 font stacks, radii or timings outside tokens are defects. Move each feature with the contour that makes it live and
 replace legacy adapters rather than copying old runtime/query layers.

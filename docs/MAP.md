@@ -154,6 +154,8 @@ its text preview, and Apply a new readable revision while retaining the original
    Flag unexpected non-printing text characters without rewriting evidence; older readable revisions show the same
    reader warning on load without mutating their metadata or starting conversion.
 6. Implement outline, whole text, exact UTF-8 range and original download. Reading must not call a model.
+   Find in source navigates literal case-insensitive matches in the loaded revision, wrapping forward/backward and
+   reusing exact passage links. Copy also accepts the highlighted passage; a missing term leaves that passage intact.
    Failed text/outline reads have an explicit retry without losing the selected citation. Text, outline and revision
    identity publish together; navigation fences pending retry responses. The Reader component regression injects both
    read failures and verifies UTF-8 selection, repeated retry and cross-revision/source navigation.

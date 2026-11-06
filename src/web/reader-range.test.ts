@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitReaderRange } from "./reader-range";
+import { findReaderRange, splitReaderRange } from "./reader-range";
 
 describe("splitReaderRange", () => {
   const text = "\uFEFFa😀\r\nБ";
@@ -25,5 +25,30 @@ describe("splitReaderRange", () => {
   });
   it.each([[-1, 3], [0, 13], [4, 4], [8, 4], [0.5, 4], [NaN, 4], [0, Infinity]])("rejects invalid range [%s,%s)", (start, end) => {
     expect(() => splitReaderRange(text, start, end)).toThrow(RangeError);
+  });
+});
+
+describe("findReaderRange", () => {
+  const text = "İ 🧪 Текст 1.2 [x] текст 1.2";
+  it("preserves exact bytes after Unicode case folding and wraps in both directions", () => {
+    const first = findReaderRange(text, "ТЕКСТ");
+    const second = findReaderRange(text, "текст", text.indexOf("Текст") + 5);
+    if (!first || !second) throw new Error("Expected both source matches");
+    expect(first).not.toEqual(second);
+    expect(splitReaderRange(text, first.start, first.end).selected).toBe("Текст");
+    expect(splitReaderRange(text, second.start, second.end).selected).toBe("текст");
+    expect(findReaderRange(text, "текст", text.length)).toEqual(first);
+    expect(findReaderRange(text, "текст", 0, true)).toEqual(second);
+    expect(findReaderRange(text, "текст", text.lastIndexOf("текст"), true)).toEqual(first);
+  });
+  it.each(["1.2", "[x]", "🧪"])("finds literal %s without changing source text", query => {
+    const match = findReaderRange(text, query);
+    if (!match) throw new Error("Expected literal source match");
+    const parts = splitReaderRange(text, match.start, match.end);
+    expect(parts.selected).toBe(query);
+    expect(parts.before + parts.selected + parts.after).toBe(text);
+  });
+  it.each(["", "  ", "1x2", "missing"])("does not invent a match for %j", query => {
+    expect(findReaderRange(text, query)).toBeNull();
   });
 });
