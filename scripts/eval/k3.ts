@@ -838,29 +838,9 @@ assert(typeof storedSettings.answerModel === 'string' && storedSettings.answerMo
 SELECTED_ANSWER_MODEL = storedSettings.answerModel;
 SELECTED_DISTILL_MODEL = storedSettings.distillModel;
 assert(typeof SELECTED_DISTILL_MODEL === 'string' && SELECTED_DISTILL_MODEL.length > 0, 'Stored settings.distillModel must be a non-empty route.');
-const modelList = await apiJson('/api/models');
-assert.equal(modelList.status, 200, 'Read current catalogue before reporting the acceptance bound.');
-const answerMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_ANSWER_MODEL);
-assert(answerMeta && answerMeta.enabled, 'Selected answerModel must be present and enabled in the current catalogue; no substitution is made here.');
-assert(Number.isSafeInteger(answerMeta.contextTokens) && answerMeta.contextTokens > 0, 'Selected answerModel context must be known.');
-const answerOutputReserve = outputReserve(answerMeta);
-assert(Number.isSafeInteger(answerOutputReserve) && answerOutputReserve > 0, 'Selected answerModel assembly reserve must be known.');
-const distillMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_DISTILL_MODEL);
-assert(distillMeta && distillMeta.enabled, 'Selected distillModel must be present and enabled in the current catalogue; no substitution is made here.');
-assert(Number.isSafeInteger(distillMeta.contextTokens) && distillMeta.contextTokens > 0, 'Selected distillModel context must be known.');
-const distillOutputReserve = outputReserve(distillMeta);
-assert(Number.isSafeInteger(distillOutputReserve) && distillOutputReserve > 0, 'Selected distillModel assembly reserve must be known.');
-const answerCallTokenLimit = answerMeta.maxOutputTokens == null ? null : answerMeta.contextTokens + answerMeta.maxOutputTokens;
-const distillCallTokenLimit = distillMeta.maxOutputTokens == null ? null : distillMeta.contextTokens + distillMeta.maxOutputTokens;
-assert(answerCallTokenLimit === null || Number.isSafeInteger(answerCallTokenLimit), 'Declared answer capacity must be usable or unknown.');
-assert(distillCallTokenLimit === null || Number.isSafeInteger(distillCallTokenLimit), 'Declared understanding capacity must be usable or unknown.');
-const runCallCeiling = nativeOnly ? 0 : scoped.length * 2 + CLAIM_ORDER.length;
 const revisionRecordsBefore = new Map();
-const boundReport = nativeOnly
-  ? 'K3 native-only: zero model calls.'
-  : 'K3 eval command call ceiling: baseline ' + scoped.length + '*2 + C1-C4 ' + CLAIM_ORDER.length + ' = ' + runCallCeiling + ' calls; overflow papers are separately prepared. Declared understanding capacity ' + (distillCallTokenLimit ?? 'unknown') + ' (' + SELECTED_DISTILL_MODEL + '), declared answer capacity ' + (answerCallTokenLimit ?? 'unknown') + ' (' + SELECTED_ANSWER_MODEL + '). Historical calls are not counted as fresh; models are frozen from stored settings.';
-console.log(boundReport);
 if (nativeOnly) {
+  console.log('K3 native-only: zero model calls.');
   assert(understandingWired && overviewWired, 'K3 native smoke requires the actual understanding and overview routes.');
   {
     for (const source of scoped) {
@@ -1235,6 +1215,25 @@ if (nativeOnly) {
   }
   process.exit(0);
 }
+const modelList = await apiJson('/api/models');
+assert.equal(modelList.status, 200, 'Read current catalogue before reporting the acceptance bound.');
+const answerMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_ANSWER_MODEL);
+assert(answerMeta && answerMeta.enabled, 'Selected answerModel must be present and enabled in the current catalogue; no substitution is made here.');
+assert(Number.isSafeInteger(answerMeta.contextTokens) && answerMeta.contextTokens > 0, 'Selected answerModel context must be known.');
+const answerOutputReserve = outputReserve(answerMeta);
+assert(Number.isSafeInteger(answerOutputReserve) && answerOutputReserve > 0, 'Selected answerModel assembly reserve must be known.');
+const distillMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_DISTILL_MODEL);
+assert(distillMeta && distillMeta.enabled, 'Selected distillModel must be present and enabled in the current catalogue; no substitution is made here.');
+assert(Number.isSafeInteger(distillMeta.contextTokens) && distillMeta.contextTokens > 0, 'Selected distillModel context must be known.');
+const distillOutputReserve = outputReserve(distillMeta);
+assert(Number.isSafeInteger(distillOutputReserve) && distillOutputReserve > 0, 'Selected distillModel assembly reserve must be known.');
+const answerCallTokenLimit = answerMeta.maxOutputTokens == null ? null : answerMeta.contextTokens + answerMeta.maxOutputTokens;
+const distillCallTokenLimit = distillMeta.maxOutputTokens == null ? null : distillMeta.contextTokens + distillMeta.maxOutputTokens;
+assert(answerCallTokenLimit === null || Number.isSafeInteger(answerCallTokenLimit), 'Declared answer capacity must be usable or unknown.');
+assert(distillCallTokenLimit === null || Number.isSafeInteger(distillCallTokenLimit), 'Declared understanding capacity must be usable or unknown.');
+const runCallCeiling = scoped.length * 2 + CLAIM_ORDER.length;
+const boundReport = 'K3 eval command call ceiling: baseline ' + scoped.length + '*2 + C1-C4 ' + CLAIM_ORDER.length + ' = ' + runCallCeiling + ' calls; overflow papers are separately prepared. Declared understanding capacity ' + (distillCallTokenLimit ?? 'unknown') + ' (' + SELECTED_DISTILL_MODEL + '), declared answer capacity ' + (answerCallTokenLimit ?? 'unknown') + ' (' + SELECTED_ANSWER_MODEL + '). Historical calls are not counted as fresh; models are frozen from stored settings.';
+console.log(boundReport);
 async function readClaimSources(projectId, what) {
   return readBoundedProjectSources(projectId, what);
 }
