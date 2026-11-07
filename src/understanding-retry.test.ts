@@ -107,10 +107,10 @@ describe("explicit understanding retry", () => {
       const previous = await getUnderstanding(f.env, actor, { sourceId, revisionId });
       const extraction = JSON.parse(f.bodies.get(`source/${revisionId}/distill-call1.json`) ?? "null").output;
       extraction.glossary = [];
-      extraction.guide = extraction.guide.map((item: { labels: string[]; text: string }) => ({ ...item, qualifiers: [] }));
+      extraction.guide = extraction.guide.map((item: { labels: string[]; text: string }) => ({ labels: item.labels, scope: null, assertion: item.text }));
       const synthesis = {
         supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"],
-        digestPlan: { methods: ["C0"], findings: [], limits: [] },
+        digestPlan: [{ id: "C0", group: "methods" }],
         supportedGlossary: [],
       };
       extraction.claims[0].statement = "The method retains evidence.";

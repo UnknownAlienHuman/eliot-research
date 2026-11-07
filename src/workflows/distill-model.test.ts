@@ -239,14 +239,14 @@ describe("DistillWorkflow admitted model snapshot", () => {
     const model = { ...snapshot, contextTokens: 1000000, contextWindowTokens: 1000000 };
     f.db.prepare("UPDATE source_revision SET distill_token_limit=NULL,distill_token_limit_kind='unknown' WHERE id=?").run(revisionId);
     const guide = ["The method preserves source evidence and its conditions.", "The source retains canonical text.", "The source describes its method."]
-      .map(text => ({ labels: ["[S1:1]"], qualifiers: [], text }));
+      .map(text => ({ labels: ["[S1:1]"], scope: null, assertion: text }));
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
     vi.mocked(generateText)
       .mockResolvedValueOnce({ output: { guide, glossary: [], questions: ["Which method?", "Which evidence?", "Which conditions?"],
-        claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: guide[0]?.text,
+        claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: guide[0]?.assertion,
           task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] },
         totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
-      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"], digestPlan: { methods: ["C0"], findings: [], limits: [] }, supportedGlossary: [] },
+      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"], digestPlan: [{ id: "C0", group: "methods" }], supportedGlossary: [] },
         totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
     const original = new Map(f.bodies);
     try {
@@ -265,10 +265,10 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(report).toMatchObject({ state: "done", usage: { calls: 2, inputTokens: 36, outputTokens: 17, tokenLimit: null, tokenLimitKind: "unknown" } });
       expect(f.bodies.get(prefix + "guide.md")).toContain(`[R${revisionId}:1]`);
       expect(f.bodies.get(prefix + "digest.md")).toContain("Methods");
-      expect(f.bodies.get(prefix + "digest.md")).toContain(guide[0]?.text);
+      expect(f.bodies.get(prefix + "digest.md")).toContain(guide[0]?.assertion);
       expect(f.bodies.get(prefix + "digest.md")).toContain("[R" + revisionId + ":1]");
       const call2 = JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null") as { format: string };
-      expect(call2.format).toBe("claim-plan-guide-v1");
+      expect(call2.format).toBe("claim-plan-guide-v2");
       expect(f.bodies.get(prefix + "glossary.json")).toBe("[]");
       for (const [key, body] of original) expect(f.bodies.get(key)).toBe(body);
     } finally { f.db.close(); }
@@ -846,9 +846,9 @@ describe("DistillWorkflow admitted model snapshot", () => {
     vi.mocked(Output.object).mockClear();
     const extraction = {
       guide: [
-        { labels: ["[S1:1]"], qualifiers: [], text: "The source describes method Alpha." },
-        { labels: ["[S1:3]"], qualifiers: [], text: "The source notes a limitation." },
-        { labels: ["[S1:4]"], qualifiers: [], text: "The source describes a related condition." },
+        { labels: ["[S1:1]"], scope: null, assertion: "The source describes method Alpha." },
+        { labels: ["[S1:3]"], scope: null, assertion: "The source notes a limitation." },
+        { labels: ["[S1:4]"], scope: null, assertion: "The source describes a related condition." },
       ],
       glossary: [],
       claims: [
@@ -922,6 +922,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
         oneOf?: JsonSchemaNode[];
         allOf?: JsonSchemaNode[];
         enum?: string[];
+        maxItems?: number;
+        maxLength?: number;
       };
       const generatedSchema = (instructions: unknown): JsonSchemaNode => {
         if (typeof instructions !== "string") throw new Error("Structured request instructions were not captured.");
@@ -968,17 +970,22 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const digestPlan = resolve(secondSchema.properties?.digestPlan, secondSchema);
       const partialDigestItem = resolve(secondSchema.properties?.partialDigest?.items, secondSchema);
       const glossaryItem = resolve(firstSchema.properties?.glossary?.items, firstSchema);
-      expect(Object.keys(guideItem?.properties ?? {})).toEqual(["labels", "qualifiers", "text"]);
+      expect(Object.keys(guideItem?.properties ?? {})).toEqual(["labels", "scope", "assertion"]);
+      expect(guideItem?.properties?.assertion?.maxLength).toBe(800);
+      const scope = guideItem?.properties?.scope?.anyOf?.find((node) => node.type === "object");
+      expect(scope?.properties?.text?.maxLength).toBe(300);
       expect(secondSchema.properties).not.toHaveProperty("guide");
       expect(secondSchema.required).toContain("supportedGuide");
-      expect(Object.keys(digestPlan?.properties ?? {})).toEqual(["methods", "findings", "limits"]);
+      expect(digestPlan).toMatchObject({ type: "array", maxItems: 8 });
+      expect(Object.keys(digestPlan?.items?.properties ?? {})).toEqual(["id", "group"]);
       expect(Object.keys(partialDigestItem?.properties ?? {})).toEqual(["labels", "text"]);
       expect(Object.keys(glossaryItem?.properties ?? {})).toEqual(["labels", "en", "ru", "definition"]);
       expect(guideItem?.required).toContain("labels");
-      expect(digestPlan?.required).toEqual(["methods", "findings", "limits"]);
-      expect((digestPlan?.properties?.methods?.items as { enum?: string[] } | undefined)?.enum).toContain("C0");
-      expect((digestPlan?.properties?.methods?.items as { enum?: string[] } | undefined)?.enum).toContain("A7");
-      expect((digestPlan?.properties?.methods?.items as { enum?: string[] } | undefined)?.enum).not.toContain("A8");
+      expect(digestPlan?.items?.required).toEqual(["id", "group"]);
+      expect(digestPlan?.items?.properties?.group?.enum).toEqual(["methods", "findings", "limits"]);
+      expect(digestPlan?.items?.properties?.id?.enum).toContain("C0");
+      expect(digestPlan?.items?.properties?.id?.enum).toContain("A7");
+      expect(digestPlan?.items?.properties?.id?.enum).not.toContain("A8");
       expect(glossaryItem?.required).toContain("labels");
     } finally { f.db.close(); }
 
@@ -1077,7 +1084,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
       { type: "paragraph", text: "The source reports a result.\n" },
       { type: "paragraph", text: "The source notes a limitation.\n" },
     ]);
-    const prepareCached = (output: unknown, format: string | undefined) => {
+    const oldGuideText = "Method Alpha uses a low-rank update. The source reports a result. The source notes a limitation.";
+    const prepareCached = (output: unknown, format: string | undefined, claimCount = 1) => {
       const f = fixture(snapshot.route, document);
       const encoder = new TextEncoder();
       const bytes = encoder.encode(document.text);
@@ -1085,11 +1093,14 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const [block1, block2, block3] = document.blocks;
       if (!block1 || !block2 || !block3) throw new Error("Fixture requires three blocks.");
       f.bodies.set(prefix + "distill-verified.json", JSON.stringify({
-        claims: [{
+        claims: Array.from({ length: claimCount }, () => ({
           kind: "method", statement: "Method Alpha uses a low-rank update.", quote: quote(block1), block: block1.id,
           task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null,
           start: block1.start, end: block1.end, ambiguous: false, valueNumber: null,
-        }],
+        })),
+        ...(format === "claim-plan-guide-v1" ? { glossaryCandidates: [], guideCandidates: [{
+          id: "H4", labels: ["[S1:1]", "[S1:2]", "[S1:3]"], qualifiers: [], text: oldGuideText,
+        }] } : {}),
         guide: [
           { labels: ["[S1:1]"], text: "The source describes method Alpha." },
           { labels: ["[S1:2]"], text: "The source reports a result." },
@@ -1116,6 +1127,27 @@ describe("DistillWorkflow admitted model snapshot", () => {
       { labels: ["[S1:3]"], text: "The source notes a limitation." },
     ];
     const good = { supportedClaims: ["C0"], additionalClaims: [], guide, digestPlan: { methods: ["C0"], findings: [], limits: [] }, glossary: [] };
+    for (const overflow of [false, true]) {
+      const output = { supportedClaims: Array.from({ length: overflow ? 12 : 1 }, (_, i) => "C" + i),
+        additionalClaims: overflow ? Array.from({ length: 8 }, () => ({ quoteBlock: "[S1:1]", kind: "method",
+          statement: "Method Alpha uses a low-rank update.", task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null })) : [],
+        supportedGuide: ["H4"], supportedGlossary: [], digestPlan: overflow ? {
+          methods: ["C0", "C2", "C3", "C4", "A2", "A3"],
+          findings: ["C1", "C5", "C6", "C7", "C8", "C9", "A1", "A0"], limits: ["C10", "C11", "A7"],
+        } : good.digestPlan };
+      const { f, flow } = prepareCached(output, "claim-plan-guide-v1", overflow ? 12 : 1);
+      const before = new Map(f.bodies);
+      try {
+        expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(!overflow);
+        await flow();
+        const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+        expect(report.state).toBe(overflow ? "failed" : "partial");
+        if (overflow) expect(f.bodies.has(prefix + "digest.md")).toBe(false);
+        else expect(f.bodies.get(prefix + "guide.md")).toBe(oldGuideText + "\n\n" + [1, 2, 3].map((block) => "[R" + revisionId + ":" + block + "]").join(" "));
+        for (const [key, body] of before) expect(f.bodies.get(key)).toBe(body);
+        expect(generateText).not.toHaveBeenCalled();
+      } finally { f.db.close(); }
+    }
     {
       const { f, flow } = prepareCached(good, "claim-plan-v1");
       try {
@@ -1270,66 +1302,88 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
-  it.each(["complete", "over-five", "insufficient", "zero-claim", "unknown", "duplicate", "missing", "malformed"] as const)(
-    "freezes complete qualified guide units and selects them without clipping: %s", async (mode) => {
+  it.each(["complete", "questions", "over-five", "insufficient", "zero-claim", "unknown", "duplicate", "duplicate-digest", "missing", "malformed"] as const)(
+    "assembles complete source-bound scope before whole-guide review: %s", async (mode) => {
       const document = documentWithBlocks([
-        { type: "paragraph", text: "The adapter uses 4 layers only for short sequences. The update is compact. The configuration is fixed. The scope is narrow.\n" },
-        { type: "paragraph", text: "The evaluation considers one request at a time.\n" },
-        { type: "paragraph", text: "The source retains canonical evidence. The source describes normalization.\n" },
+        { type: "paragraph", text: "Compared to GPT-3 175B fine-tuned with Adam, the method reduces GPU memory. (Version 2)"
+          + (mode === "questions" ? " The source asks whether r=1 always suffices?" : "") + "\n" },
+        { type: "paragraph", text: "Adaptation proceeds while keeping the pre-trained weights frozen.\n" },
+        { type: "paragraph", text: "The model reduces deployment storage if r is smaller than dmodel. This bound is conditional. The condition concerns rank. The base weights remain shared.\n" },
       ]);
       const f = fixture(snapshot.route, document);
-      const text = "The adapter uses 4 layers only for short sequences,\nwith one request at a time."
-        + (mode === "over-five" ? " The update is compact. The configuration is fixed. The scope is narrow." : "");
+      const caseScope = { labels: ["[S1:1]"], text: "Compared to GPT-3 175B fine-tuned with Adam; (Version 2)" };
+      const paraphrasedScope = { labels: ["[S1:2]"], text: "while keeping the pre-trained weights frozen" };
+      const omittedScope = { labels: ["[S1:3]"], text: "if r is smaller than dmodel" };
       const guide = [
-        { labels: ["[S1:1]"], qualifiers: [{ labels: ["[S1:1]"], text: "only for short sequences" }],
-          text: "The adapter uses 4 layers." },
-        { labels: ["[S1:1]", "[S1:2]"], qualifiers: [
-          { labels: ["[S1:1]"], text: "only for short sequences" }, { labels: ["[S1:2]"], text: "one request at a time" },
-        ], text },
-        { labels: ["[S1:1]", "[S1:2]"], qualifiers: [{ labels: ["[S1:2]"], text: "4 layers" }],
-          text: "The adapter uses 4 layers only for short sequences." },
-        { labels: ["[S1:3]"], qualifiers: [], text: "The source retains canonical evidence." },
-        { labels: ["[S1:3]"], qualifiers: [], text: "The source describes normalization." },
+        { labels: ["[S1:1]"], scope: mode === "questions" ? null : paraphrasedScope,
+          assertion: mode === "questions" ? "r=1 always suffices?" : "The method reduces GPU memory" },
+        { labels: ["[S1:1]"], scope: caseScope,
+          assertion: "The method reduces GPU memory compared to GPT-3 175B fine-tuned with Adam in Version 2" },
+        { labels: ["[S1:1]", "[S1:2]"], scope: mode === "questions" ? null : { labels: ["[S1:2]"], text: "using 175B parameters" },
+          assertion: mode === "questions" ? "r=1 always suffices？！" : "The pre-trained weights remain fixed during adaptation" },
+        { labels: ["[S1:2]"], scope: paraphrasedScope,
+          assertion: "The pre-trained weights remain fixed during adaptation" + (mode === "questions" ? "." : "") },
+        { labels: ["[S1:3]"], scope: omittedScope, assertion: "The model reduces deployment storage"
+          + (mode === "over-five" ? ". This bound is conditional. The condition concerns rank. The base weights remain shared" : "") },
       ];
+      const frozen = [
+        { id: "H1", labels: ["[S1:1]"], qualifiers: [caseScope],
+          text: "The method reduces GPU memory compared to GPT-3 175B fine-tuned with Adam in Version 2 (Compared to GPT-3 175B fine-tuned with Adam; (Version 2))." },
+        { id: "H3", labels: ["[S1:2]"], qualifiers: [paraphrasedScope],
+          text: "The pre-trained weights remain fixed during adaptation (while keeping the pre-trained weights frozen)." },
+        { id: "H4", labels: ["[S1:3]"], qualifiers: [omittedScope], text: mode === "over-five"
+          ? "The model reduces deployment storage. This bound is conditional. The condition concerns rank. The base weights remain shared (if r is smaller than dmodel)."
+          : "The model reduces deployment storage (if r is smaller than dmodel)." },
+      ];
+      for (const i of [1, 3, 4]) expect(guide[i]?.assertion).not.toContain(guide[i]?.scope?.text);
       const ids = mode === "unknown" ? ["H0"] : mode === "duplicate" ? ["H1", "H1", "H3"]
         : mode === "insufficient" ? ["H1"] : ["H1", "H3", "H4"];
-      const zero = mode === "zero-claim", invalid = ["unknown", "duplicate", "missing", "malformed"].includes(mode);
+      const zero = mode === "zero-claim", invalid = ["unknown", "duplicate", "duplicate-digest", "missing", "malformed"].includes(mode);
       vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
       vi.mocked(generateText)
         .mockResolvedValueOnce({ output: { guide, glossary: [], questions: ["Which scope?", "What method?", "What evidence?"],
-          claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The adapter uses 4 layers only for short sequences.",
+          claims: [{ quoteBlock: "[S1:2]", kind: "method", statement: "The pre-trained weights remain fixed during adaptation.",
             task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] },
           totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
         .mockResolvedValueOnce({ output: { supportedClaims: zero ? [] : ["C0"], additionalClaims: [], supportedGlossary: [],
-          ...(mode === "missing" ? { guide: [guide[1], guide[3], guide[4]] } : { supportedGuide: mode === "malformed" ? "H1" : ids }),
-          digestPlan: { methods: zero ? [] : ["C0"], findings: [], limits: [] },
-          ...(zero ? { partialDigest: [{ labels: ["[S1:3]"], text: "The source retains canonical evidence." }] } : {}) },
+          ...(mode === "missing" ? { guide: frozen } : { supportedGuide: mode === "malformed" ? "H1" : ids }),
+          digestPlan: zero ? [] : mode === "duplicate-digest" ? [{ id: "C0", group: "methods" }, { id: "C0", group: "findings" }]
+            : [{ id: "C0", group: "methods" }],
+          ...(zero ? { partialDigest: [{ labels: ["[S1:2]"], text: "Adaptation keeps the pre-trained weights frozen." }] } : {}) },
           totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
       try {
         await run(f);
         expect(generateText).toHaveBeenCalledTimes(2);
         expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
         const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
-        expect(verified.guideCandidates).toEqual([1, 3, 4].map((i) => ({ id: "H" + i, ...guide[i] })));
-        expect(verified.dropped).toContainEqual({ index: 0, reason: "guide-candidate-qualifier-missing-from-text" });
-        expect(verified.dropped).toContainEqual({ index: 2, reason: "guide-candidate-unsupported-qualifier" });
+        expect(verified.format).toBe("claim-plan-guide-v2");
+        expect(verified.guideCandidates).toEqual(frozen);
+        expect(verified.dropped).toContainEqual({ index: 0, reason: mode === "questions"
+          ? "guide-candidate-question-assertion" : "guide-candidate-qualifier-outside-scope" });
+        expect(verified.dropped).toContainEqual({ index: 2, reason: mode === "questions"
+          ? "guide-candidate-question-assertion" : "guide-candidate-unsupported-qualifier" });
         const request = vi.mocked(generateText).mock.calls[1]?.[0].messages?.[0]?.content;
-        if (typeof request !== "string") throw new Error("The qualified guide context was not captured.");
+        if (typeof request !== "string") throw new Error("The assembled guide context was not captured.");
         const context = JSON.parse(request);
-        expect(context.guideCandidates[0]).toEqual({ id: "H1", ...guide[1], evidence: verified.evidence.slice(0, 2) });
-        expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null").format).toBe("claim-plan-guide-v1");
+        expect(context.guideCandidates).toEqual(frozen.map((item) => ({ ...item,
+          evidence: item.labels.map((label) => verified.evidence.find((e: { label: string }) => e.label === label)) })));
+        if (mode === "questions") expect(context.guideCandidates.map((item: { text: string }) => item.text).join("\n"))
+          .not.toContain("r=1 always suffices");
+        expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null").format).toBe("claim-plan-guide-v2");
         const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
-        expect(report.state).toBe(invalid ? "failed" : mode === "complete" ? "done" : "partial");
+        expect(report.state).toBe(invalid ? "failed" : mode === "complete" || mode === "questions" ? "done" : "partial");
         expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(!invalid);
         if (invalid) expect(f.bodies.has(prefix + "guide.md")).toBe(false);
         else {
           const expected = ids.map((id) => {
-            const item = guide[Number(id.slice(1))];
-            if (!item) throw new Error("The expected guide must select an original unit.");
+            const item = frozen.find((item) => item.id === id);
+            if (!item) throw new Error("The expected guide must select a frozen unit.");
             return item.text + "\n\n" + item.labels.map((label) => label.replace("S1:", "R" + revisionId + ":")).join(" ");
           }).join("\n\n");
           expect(f.bodies.get(prefix + "guide.md")).toBe(expected);
+          expect(expected).not.toContain("Scope:");
           expect(report.kept).toBe(zero ? 0 : 1);
+          if (!zero) expect(f.bodies.get(prefix + "digest.md")).toContain("## Methods\n\nStatement:\n> The pre-trained weights remain fixed during adaptation.");
           if (zero) {
             const beforeSave = new Map(f.bodies);
             await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true });
@@ -1354,9 +1408,9 @@ describe("DistillWorkflow admitted model snapshot", () => {
     ]);
     const f = fixture(snapshot.route, document);
     const guide = [
-      { labels: ["[S1:1]"], qualifiers: [], text: "The source describes Method Alpha." },
-      { labels: ["[S1:1]"], qualifiers: [], text: "Method Alpha uses normalization." },
-      { labels: ["[S1:1]"], qualifiers: [], text: "The method is named Alpha." },
+      { labels: ["[S1:1]"], scope: null, assertion: "The source describes Method Alpha." },
+      { labels: ["[S1:1]"], scope: null, assertion: "Method Alpha uses normalization." },
+      { labels: ["[S1:1]"], scope: null, assertion: "The method is named Alpha." },
     ];
     const questions = ["What method?", "Which condition?", "What comparison?"];
     const unit = { labels: ["[S1:2]", "[S1:3]"], en: "Compact adapter", ru: "Компактный адаптер",
@@ -1369,7 +1423,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
         guide, questions, glossary: empty ? [] : [invalid, unit] },
         totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
       .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"],
-        digestPlan: { methods: ["C0"], findings: [], limits: [] }, supportedGlossary: empty ? [] : ["G1"] },
+        digestPlan: [{ id: "C0", group: "methods" }], supportedGlossary: empty ? [] : ["G1"] },
         totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
     try {
       await run(f);
@@ -1393,7 +1447,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(schema.properties).not.toHaveProperty("glossary");
       expect(schema.properties.supportedGlossary.maxItems).toBe(empty ? 0 : 1);
       const rawCall2 = JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null");
-      expect(rawCall2.format).toBe("claim-plan-guide-v1");
+      expect(rawCall2.format).toBe("claim-plan-guide-v2");
       expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual(empty ? [] : [{
         ...unit, labels: ["[R" + revisionId + ":2]", "[R" + revisionId + ":3]"],
       }]);

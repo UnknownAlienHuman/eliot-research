@@ -549,10 +549,13 @@ not model quality or paid-step replay.
 2. Verified excerpts → supported claim selection, whole guide-unit selection, digest selection and, for frozen glossary candidates,
    a glossary selection.
 
-Fresh call one and call two use raw marker `claim-plan-guide-v1`. `Verified.guideCandidates` freezes original H0–H4
+Fresh call one and call two use raw marker `claim-plan-guide-v2`, also recorded on the new verified artifact.
+`Verified.guideCandidates` keeps the existing frozen representation with original H0–H4
 identities, complete text, qualifiers and source labels. Call two returns strict `supportedGuide` IDs, not replacement
 guide prose. Missing/malformed, unknown or duplicate selections reject the fresh plan without a prose fallback.
-Legacy verified artifacts without H candidates continue the previous producer: `claim-plan-glossary-v1` selects
+Legacy `claim-plan-guide-v1` keeps its previously frozen guide units and nested digest plan; no assertion/scope assembly
+or promotion of old dropped guide candidates occurs during GET/history/Save. Verified artifacts without H candidates
+continue the previous producer: `claim-plan-glossary-v1` selects
 frozen glossary candidates, while `claim-plan-v1` also retains prose glossary generation when those candidates are absent.
 Fresh call two and the retained `claim-plan-glossary-v1` branch return strict
 `supportedGlossary` G IDs only, not replacement glossary text; code maps those IDs to the frozen original candidates,
@@ -567,12 +570,15 @@ when an ambiguous pronoun changes the referent, a predicate is assigned to anoth
 unsupported. It must not rewrite the definition to repair it. These are semantic review contracts, not a heuristic
 classifier or deterministic entailment proof.
 
-Fresh call two also returns ordered `methods`/`findings`/`limits` `digestPlan` groups with at most eight unique IDs total.
+Fresh call two returns one flat `digestPlan` array of `{ id, group }`, where group is `methods|findings|limits`.
+Its provider JSON schema encodes `maxItems: 8` globally; code also checks ID uniqueness and final fact survival.
+Reader grouping preserves each selected complete fact and its order within the group. Legacy nested group formats
+retain their old reader/validation behavior: an over-eight-total plan is rejected, never truncated or rewritten.
 The closed selection set is the exact C candidate indexes supplied to call two plus A0–A7, the original zero-based
 `additionalClaims` indexes. After final claim validation, code renders each selected surviving checked unit with its
 complete statement isolated as a blockquote, qualifying structured scope fields intact and its authority citation
 outside authored content; it does not paraphrase, renumber or substitute. Unknown or rejected IDs reject the fresh
-plan. If no claim survives, all digest groups are empty and a validated `partialDigest` is stored only as partial with
+plan. If no claim survives, the flat array is empty (empty groups for legacy formats) and a validated `partialDigest` is stored only as partial with
 zero claims. `claim-plan-v1` remains the digest-only continuation for legacy `Verified` artifacts lacking frozen
 glossary candidates; it keeps their existing prose glossary. Markerless cached call two retains the full legacy prose
 digest/Save path. The call count remains two, with no retry or third call.
@@ -586,24 +592,29 @@ the model does not transcribe canonical evidence. Claim quote/range and numeric 
 and a statement that adds numbers absent from it is rejected. Each call-two candidate carries that exact verified quote
 beside its statement and structured fields; `quoteBlock` remains its source identity.
 
-Fresh guide items declare `{ labels, qualifiers: [{ labels, text }], text }` in that order: 1–4 source-block labels,
-at most eight qualifying phrases, then the complete owner-facing text. Every qualifier's labels must be a subset of
-the item's labels. Each phrase requires meaningful content and reference/numeric support from only its own declared
-quotes, and must occur intact in the complete draft text after whitespace normalization. The whole draft text is
-checked against its declared canonical quotes; a failed unit is dropped without clipping or rewriting. H IDs retain
-their original call-one indexes through drops. Call two receives each frozen unit with its exact original excerpts
-and must reject missing/wrong source scope, conditions, comparisons or limitations even when `qualifiers` is empty.
-Declared phrase retention is structural verification, not proof of semantic completeness.
+Fresh guide items declare `{ labels, scope: { labels, text } | null, assertion }`: 1–4 source-block labels, at most one
+combined domain scope clause, then one coherent independently scoped assertion, without mixing unrelated experiments.
+The assertion is structurally bounded to 800 characters and scope text to 300, keeping the assembled sentence below
+the existing 1200-character bound. Scope labels must be a subset of assertion labels; its meaningful content,
+references and numbers are checked against only its own declared canonical quotes. Before freezing or call two,
+code normalizes the assertion's terminal punctuation and appends the complete scope in parentheses, with no technical
+field heading in the owner text. No verbatim echo in the assertion, case folding or semantic guess is required.
+The assembled text is checked as a complete unit and frozen using the existing `{id,labels,qualifiers,text}` shape,
+with the combined scope retained as its single qualifier (or an empty array for null scope). H IDs retain original
+call-one indexes through drops. Call two reviews that exact assembled text, scope and original excerpts, and must
+reject missing/wrong source scope, conditions, comparisons or limitations even when scope is absent. These checks
+do not establish semantic completeness.
 Final code rechecks selected complete units and copies their text and original bindings into the existing public
 guide Markdown, converting only declared citations to persistent labels. It counts all actual sentences without
 trimming text: fewer than three, more than five or ambiguous markup stays readable `partial`; an empty guide fails.
 The retained excerpt pool remains the union of declared claim `quoteBlock` selections, guide `labels` and original
 valid glossary-candidate labels, including valid selections from later dropped candidates. No bindings are inferred.
-Legacy raw call one without the new marker retains its old first-supported-sentence verifier; legacy verified/cached
-prose guide paths keep their existing GET/history/Save behavior. Missing qualifiers are never treated as a fresh empty
-array, and historical H/C/G identities are never synthesized or renumbered.
-Glossary candidates use `{ labels, en, ru, definition }`; fresh `claim-plan-guide-v1` and retained `claim-plan-glossary-v1` call two see those frozen
-units with their exact excerpts and returns only `supportedGlossary` G IDs. Code rechecks the selected full candidates
+Legacy raw call one keeps its original verifier: `claim-plan-guide-v1` retains its complete-text/qualifier checks,
+and pre-H raw output retains first-supported-sentence handling. Legacy verified/cached guide paths keep their existing
+GET/history/Save behavior. Missing new scope/assertion fields do not opt old output into the fresh protocol, and
+historical H/C/G identities are never synthesized or renumbered.
+Glossary candidates use `{ labels, en, ru, definition }`; fresh `claim-plan-guide-v2` and retained guide/glossary plans see those frozen
+units with their exact excerpts and return only `supportedGlossary` G IDs. Code rechecks the selected full candidates
 and copies their fields and label bindings; it does not request, accept or substitute free glossary prose in this
 branch. `claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without frozen glossary
 candidates, and markerless cached output retains the full legacy prose path. Legacy prose digests and zero-claim
