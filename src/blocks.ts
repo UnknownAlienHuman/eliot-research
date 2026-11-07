@@ -110,9 +110,14 @@ function joinAdjacentTableCaptions(text: string, blocks: Block[], characterRange
 function* lines(text: string): Generator<Line> {
   let charStart = 0, start = 0;
   while (charStart < text.length) {
-    const lf = text.indexOf("\n", charStart), cr = text.indexOf("\r", charStart);
-    const newline = lf < 0 ? cr : cr < 0 ? lf : Math.min(lf, cr);
-    const charEnd = newline < 0 ? text.length : newline + (text[newline] === "\r" && text[newline + 1] === "\n" ? 2 : 1);
+    let separator = charStart;
+    while (separator < text.length) {
+      const code = text.charCodeAt(separator);
+      if (code === 10 || code === 13) break;
+      separator++;
+    }
+    const charEnd = separator === text.length ? text.length
+      : separator + (text.charCodeAt(separator) === 13 && text.charCodeAt(separator + 1) === 10 ? 2 : 1);
     const raw = text.slice(charStart, charEnd);
     const end = start + encoder.encode(raw).byteLength;
     yield { body: raw.replace(/(?:\r\n|\r|\n)$/, ""), start, end, charStart, charEnd };

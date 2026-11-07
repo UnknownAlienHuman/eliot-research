@@ -1,7 +1,37 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { isCitableBlock, MAX_BLOCK_BYTES, scanBlocks, sliceUtf8 } from "./blocks.js";
 import type { Block } from "./blocks.js";
 const TE = new TextEncoder();
+
+function scanBlocksWithWork(text: string): { blocks: Block[]; delimiterSearchSpan: number; charCodeAtVisits: number } {
+  const originalIndexOf = String.prototype.indexOf;
+  const originalCharCodeAt = String.prototype.charCodeAt;
+  let collecting = false, delimiterSearchSpan = 0, charCodeAtVisits = 0;
+  const indexOfSpy = vi.spyOn(String.prototype, "indexOf").mockImplementation(function (this: string, search: string, position?: number) {
+    const result = originalIndexOf.call(this, search, position);
+    if (collecting && (search === "\n" || search === "\r")) {
+      const start = Math.min(this.length, Math.max(0, position ?? 0));
+      const end = result < 0 ? this.length : result + search.length;
+      delimiterSearchSpan += Math.max(0, end - start);
+    }
+    return result;
+  });
+  const charCodeAtSpy = vi.spyOn(String.prototype, "charCodeAt").mockImplementation(function (this: string, index: number) {
+    if (collecting) charCodeAtVisits++;
+    return originalCharCodeAt.call(this, index);
+  });
+  let blocks: Block[];
+  try {
+    collecting = true;
+    blocks = scanBlocks(text);
+  } finally {
+    collecting = false;
+    charCodeAtSpy.mockRestore();
+    indexOfSpy.mockRestore();
+  }
+  return { blocks, delimiterSearchSpan, charCodeAtVisits };
+}
+
 function byteLength(value: string): number {
   return TE.encode(value).byteLength;
 }
@@ -238,6 +268,36 @@ describe("scanBlocks", () => {
     const blocks = scanBlocks(text);
     expect(blocks.map((block) => block.type)).toEqual(["heading", "paragraph"]);
     checkInvariants(text, blocks);
+  });
+  it.each(["\n", "\r"])("keeps delimiter work linear for short %j-only lines", (separator) => {
+    const text = `a${separator}`.repeat(8_192);
+    const work = scanBlocksWithWork(text);
+    checkInvariants(text, work.blocks);
+    expect(work.blocks.every((block) => block.type === "paragraph")).toBe(true);
+    expect(work.blocks.map((block) => sliceUtf8(text, block.start, block.end)).join("")).toBe(text);
+    expect(work.delimiterSearchSpan).toBeLessThanOrEqual(text.length * 4);
+    expect(work.charCodeAtVisits).toBeLessThanOrEqual(text.length * 4);
+  });
+  it("preserves exact UTF-8 ranges across mixed CRLF, LF and CR endings", () => {
+    const firstHeading = "# Заголовок 🌿\r\n";
+    const firstParagraph = "Первый 🙂\r\nвторой β\n";
+    const secondHeading = "## Глава два 🌙\r";
+    const finalParagraph = "Финал 🧪\n";
+    const text = firstHeading + "\r\n" + firstParagraph + "\r" + secondHeading + finalParagraph;
+    const blocks = scanBlocks(text);
+    const secondHeadingStart = byteLength(firstHeading + "\r\n" + firstParagraph + "\r");
+    const secondHeadingEnd = secondHeadingStart + byteLength(secondHeading);
+
+    checkInvariants(text, blocks);
+    expect(blocks).toEqual([
+      { id: 1, type: "heading", start: 0, end: byteLength(firstHeading), heading: "Заголовок 🌿" },
+      { id: 2, type: "paragraph", start: byteLength(firstHeading + "\r\n"), end: byteLength(firstHeading + "\r\n" + firstParagraph), heading: "Заголовок 🌿" },
+      { id: 3, type: "heading", start: secondHeadingStart, end: secondHeadingEnd, heading: "Глава два 🌙" },
+      { id: 4, type: "paragraph", start: secondHeadingEnd, end: byteLength(text), heading: "Глава два 🌙" },
+    ]);
+    expect(blocks.map((block) => sliceUtf8(text, block.start, block.end))).toEqual([
+      firstHeading, firstParagraph, secondHeading, finalParagraph,
+    ]);
   });
   it("tracks the nearest heading and keeps byte-exact order", () => {
     const text = "Preamble text.\n\n# Глава\n\nАбзац под главой.\n\n## Детали\n\n- пункт один\n- пункт два\n";
