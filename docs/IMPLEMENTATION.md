@@ -166,8 +166,10 @@ Migrations own schema names:
 | `0010_source_ocr.sql` | owner-requested `source_ocr_job`, frozen PDF/model inputs, bounded page progress/usage, preview identity and applied revision |
 | `0011_studio_pages.sql` | published-page index on immutable creation time and ID for Studio pagination |
 | `0012_model_admission.sql` | chat admission claim independent of nullable capacity, revision capacity basis; old terminal receipts remain unchanged |
+| `0013_understanding_retry.sql` | attempt identities and immutable predecessor history for explicit retry |
+| `0014_distill_attempt_switch_guard.sql` | replaces the switch guard to allow archived completed predecessors; no tables, columns or states added |
 
-Apply all active `migrations/*.sql` in filename order: currently `0001`–`0003` and `0005`–`0012`.
+Apply all active `migrations/*.sql` in filename order: currently `0001`–`0003` and `0005`–`0014`.
 The unaccepted `0004_agents.sql` draft is preserved at `infra/legacy-migrations/0004_agents.sql`, outside that selection.
 
 Store identities, relationships, states and compact claims in D1; bodies in R2:
@@ -710,7 +712,7 @@ are retained but excluded by readers, context and later FTS queries. No original
 Calls, tokens, estimated cost, original model wall time and retained provider usage telemetry remain unchanged.
 A repeated save of the checked head returns the same result. GET exposes `canRecover` from compatible stored output
 only; failed output is never re-queued.
-**Explicit failed/partial-attempt retry.** Migration `0013_understanding_retry.sql` adds nullable current
+**Explicit terminal-attempt retry.** Migration `0013_understanding_retry.sql` adds nullable current
 `distill_attempt_id` and canonical `distill_request_json` to `source_revision`; the revision remains the sole active
 state/counter owner. Null means the original revision-scoped attempt. `distill_history` is an immutable terminal
 archive with a real reader: GET `/api/sources/:id/understanding/history?revisionId=...` pages stable archived identities;
@@ -718,21 +720,29 @@ GET understanding with `attemptId` opens their exact saved receipt, claims and a
 `source/<revision>/understanding/<attemptId>/` for raw output, verification, bodies and checked reports. Canonical
 original/text/block keys and citation identities do not change. Future K9 source-prefix export/cleanup must include
 these paths; this change implements no lifecycle mutation.
+Forward migration `0014_distill_attempt_switch_guard.sql` replaces only `distill_attempt_switch_guard`: failed,
+partial and done predecessors require an archived snapshot pointer and an unused nonnull new identity. Applied `0013`
+is unchanged. Ordinary Understand and repeated reads still reuse done output; only an explicit retry body opts into
+a new attempt under the existing two-call bound.
 
 POST understanding accepts `retry:{attemptId,previousAttemptId}` separately from `saveAvailable`. The client retains
 that UUID and exact body in session storage before dispatch. Server replay checks current and archived identities
 before model lookup or admission work; a reused identity with a different canonical body conflicts. New acceptance
-requires the expected current failed or partial predecessor. Paid predecessors require confirmed `complete|errored|terminated`
-Workflow status; unknown, active or unreadable status blocks retry, including retention cases that cannot be
-distinguished from a transient failure. A failed zero-call predecessor may switch despite uncertain instance create:
-its terminal state and the new identity fence the old dispatch CAS. No elapsed-time guess proves quiescence.
+requires the exact expected current failed, partial or done predecessor. Every done predecessor requires confirmed
+`complete|errored|terminated` [Workflow status](https://developers.cloudflare.com/workflows/build/workers-api/#instancestatus),
+even when its legacy call counter is zero; paid failed/partial predecessors require the same check.
+Unknown, active or unreadable status blocks retry, including retention cases that cannot be distinguished from a
+transient failure. The existing failed/partial zero-call exception uses its state and new identity to fence an uncertain
+old dispatch. It never applies to done, and no elapsed-time guess proves quiescence. If the settled reread newly needs
+terminal confirmation, reject that intent rather than switch through the zero-call exception.
 
 Before switching, immutable `history/<retryRequestId>.json` beneath the predecessor attempt prefix preserves the exact owning revision row (including legacy cost/pricing,
 unknown token counts and zero sentinels) and current claims. It contains no request-time timestamp or newly generated value; the caller request ID makes a distinct snapshot key when a competing Save changes that predecessor.
 The owning row is reread after confirmed Workflow quiescence so an in-flight legacy settlement cannot be lost.
 `Understanding.recordedUsage` exposes that exact current/archived D1 accounting separately from unchanged R2
-`report.usage`; nulls, zeros and legacy currency/date fields are retained verbatim. Snapshot failure or unequal existing bytes blocks retry. A single D1 batch archives that pointer and changes the current
-identity/projection; the old attempt's fields are never reconstructed from current model defaults. A lost batch reply
+`report.usage`; nulls, zeros and legacy currency/date fields are retained verbatim. Snapshot failure or unequal existing bytes blocks retry. A single [D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch) archives that pointer and changes the current
+identity/projection with the settled state, attempt identity and report head as CAS predicates; a concurrent state/head
+change cannot publish the earlier snapshot. The old attempt's fields are never reconstructed from current model defaults. A lost batch reply
 rereads the same identity; cron can admit only the already accepted queued attempt. Finish captures the owning claim count in its initial attempt-scoped SQL snapshot, before R2 waits; later claims from another attempt cannot enter the old report. Every admission, dispatch, failure,
 verification, claim publication, finish and Save publication is fenced by the owning attempt. Old artifacts remain
 immutable and late old writes cannot publish into the new current attempt. Context freezes attempt, report, claim count,
@@ -742,7 +752,7 @@ The reader distinguishes Retry understanding (a new model run under the existing
 A lost/malformed retry reply stays unresolved across remount; GET with `requestId` returns that exact `knownRequestId` only when it is
 already current or archived; an older cached acknowledgement cannot clear a later pending request. Reading its old predecessor does not clear the pending identity. After a successful status
 read, Send same request explicitly resends the retained body; it may start that run if never accepted. Only a confirmed
-receipt permits a later explicit new retry. Previous-attempt controls perform reads only. Partial retry archives the working prior guide/claims/report before
+receipt permits a later explicit new retry. Previous-attempt controls perform reads only. Partial and done retry archive the working prior guide/claims/report before
 switching, so that result remains readable in history. Terminal pre-admission rejections use the same immutable
 `distill_history` table with `rejection` instead of a snapshot pointer; they do not appear as model runs in history.
 The rejection insert refuses an accepted current identity, while acceptance refuses any rejected identity, so the

@@ -180,4 +180,70 @@ describe('Source claim evidence presentation', () => {
       host.remove(); client.clear(); vi.unstubAllGlobals();
     }
   });
+
+  it('explicitly reruns a done understanding without a POST on ordinary mount', async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    sessionStorage.clear();
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const done: Understanding = {
+      sourceId: 's1', revisionId: 'r1', state: 'done', error: null, canRecover: false,
+      attemptId: 'attempt-1', currentAttemptId: 'attempt-1', authors: '', published: null,
+      recordedUsage: { tokenLimit: null, tokenLimitKind: 'unknown', calls: 0, inputTokens: null,
+        cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, pricingCheckedOn: null, startedAt: null, wallMs: null },
+      progress: { attempts: 0, limit: 2, maximumTokens: null, model: null, configuredModel: 'gateway:test/test-model' },
+      guide: 'Done guide', digest: null, glossary: [], report: null, claims: [], citations: [] };
+    const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+    const posts: Array<{ url: string; method: string; body: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost');
+      if ((init?.method ?? 'GET') === 'POST') {
+        const body = String(init?.body ?? '');
+        posts.push({ url: url.pathname, method: 'POST', body });
+        const parsed = JSON.parse(body) as { retry?: { attemptId?: string } };
+        return json({ revisionId: 'r1', attemptId: parsed.retry?.attemptId });
+      }
+      if (url.pathname === '/api/models') return json({ models: [{
+        route: 'gateway:test/test-model', id: 'test-model', label: 'Test model', enabled: true,
+        contextTokens: 1024, maxOutputTokens: 128, checkedOn: null,
+      }] });
+      if (url.pathname === '/api/sources/s1/understanding') return json(done);
+      return json({});
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const waitFor = async (predicate: () => boolean): Promise<void> => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (predicate()) return;
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+      }
+      throw new Error('Timed out waiting for the done retry control.');
+    };
+    try {
+      await act(async () => { root.render(<QueryClientProvider client={client}><MemoryRouter>
+        <SourceUnderstanding projectId='p1' sourceId='s1' revisionId='r1' sourceTitle='BERT' />
+      </MemoryRouter></QueryClientProvider>); });
+      await waitFor(() => Array.from(host.querySelectorAll('button'))
+        .some(button => button.textContent === 'Run understanding again'));
+      expect(posts).toEqual([]);
+      const button = Array.from(host.querySelectorAll('button'))
+        .find(candidate => candidate.textContent === 'Run understanding again');
+      expect(button).toBeDefined();
+      expect((button as HTMLButtonElement).disabled).toBe(false);
+      await act(async () => { (button as HTMLButtonElement).click(); });
+      await waitFor(() => posts.length === 1);
+      expect(sessionStorage.getItem('understanding-retry:s1:r1')).toBe(posts[0]?.body);
+      const stored = JSON.parse(sessionStorage.getItem('understanding-retry:s1:r1') ?? 'null') as
+        { revisionId: string; retry: { attemptId: string; previousAttemptId: string } };
+      expect(stored.revisionId).toBe('r1');
+      expect(stored.retry.previousAttemptId).toBe('attempt-1');
+      expect(stored.retry.attemptId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+      expect(posts[0]).toMatchObject({ url: '/api/sources/s1/understanding', method: 'POST' });
+      expect(JSON.parse(posts[0]?.body ?? '{}')).toEqual(stored);
+    } finally {
+      sessionStorage.removeItem('understanding-retry:s1:r1');
+      await act(async () => root.unmount());
+      host.remove(); client.clear(); vi.unstubAllGlobals();
+    }
+  });
 });

@@ -597,22 +597,24 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: { sour
     };
     const known = await replay();
     if (known) return known;
-    if (!["failed", "partial"].includes(row.distill_state) || (attemptId ?? row.id) !== retry.previousAttemptId)
+    if (!["failed", "partial", "done"].includes(row.distill_state) || (attemptId ?? row.id) !== retry.previousAttemptId)
       return reject("The previous attempt changed. Reload before starting another model run.");
-    // With zero dispatched calls the failed state and identity CAS fence even an uncertain create.
-    // For paid predecessors require confirmed terminal platform state; elapsed time is no proof.
-    if (row.distill_calls > 0) {
+    // Failed/partial zero-call predecessors retain their state/identity dispatch fence.
+    // Done always requires terminal platform status, including legacy zero-call counters.
+    let terminalConfirmed = false;
+    if (row.distill_state === "done" || row.distill_calls > 0) {
       let status;
       try { status = await (await env.DISTILL.get(understandingWorkflowId(row.id, attemptId))).status(); }
       catch { return reject("The previous Workflow status could not be confirmed. No retry was started. Reload before trying again."); }
       if (!["complete", "errored", "terminated"].includes(status.status))
         return reject("The previous Workflow has not confirmed it stopped. No retry was started.");
+      terminalConfirmed = true;
     }
     // A legacy Workflow may have settled accounting while its status read was in flight.
     // Snapshot the final owning row only after quiescence (or the zero-call fence) is established.
-    const settled = await env.DB.prepare("SELECT * FROM source_revision WHERE id=? AND distill_attempt_id IS ? AND distill_state IN ('failed','partial')")
+    const settled = await env.DB.prepare("SELECT * FROM source_revision WHERE id=? AND distill_attempt_id IS ? AND distill_state IN ('failed','partial','done')")
       .bind(row.id, attemptId).first<AttemptRevision>();
-    if (!settled) {
+    if (!settled || (!terminalConfirmed && (settled.distill_state === "done" || settled.distill_calls > 0))) {
       const known = await replay(); if (known) return known;
       return reject("The previous attempt changed while checking its Workflow. Reload the stored result.");
     }
@@ -629,17 +631,17 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: { sour
       await env.DB.batch([
         env.DB.prepare(`INSERT INTO distill_history(attempt_id,source_revision_id,request_json,snapshot_key,archived_at)
           SELECT coalesce(distill_attempt_id,id),id,distill_request_json,?,? FROM source_revision
-          WHERE id=? AND distill_attempt_id IS ? AND distill_state IN ('failed','partial') AND distill_report_key IS ?
+          WHERE id=? AND distill_attempt_id IS ? AND distill_state=? AND distill_report_key IS ?
           AND NOT EXISTS(SELECT 1 FROM distill_history WHERE attempt_id=?) ON CONFLICT(attempt_id) DO NOTHING`)
-          .bind(snapshotKey, Date.now(), row.id, attemptId, row.distill_report_key, retry.attemptId),
+          .bind(snapshotKey, Date.now(), row.id, attemptId, row.distill_state, row.distill_report_key, retry.attemptId),
         env.DB.prepare(`UPDATE source_revision SET distill_attempt_id=?,distill_request_json=?,distill_state='queued',distill_model=?,
           distill_calls=0,distill_started_at=NULL,distill_ms=NULL,distill_error=NULL,distill_input_tokens=NULL,distill_cached_tokens=NULL,
           distill_output_tokens=NULL,distill_token_limit=NULL,distill_token_limit_kind=NULL,distill_estimated_cost_microusd=NULL,
           distill_pricing_checked_on=NULL,distill_report_key=NULL,guide_summary=NULL,claim_count=0
-          WHERE id=? AND distill_attempt_id IS ? AND distill_state IN ('failed','partial') AND distill_report_key IS ?
+          WHERE id=? AND distill_attempt_id IS ? AND distill_state=? AND distill_report_key IS ?
           AND EXISTS(SELECT 1 FROM distill_history WHERE attempt_id=? AND source_revision_id=? AND snapshot_key=?)
           AND NOT EXISTS(SELECT 1 FROM distill_history WHERE attempt_id=?)`)
-          .bind(retry.attemptId, request, model.route, row.id, attemptId, row.distill_report_key, retry.previousAttemptId, row.id, snapshotKey, retry.attemptId),
+          .bind(retry.attemptId, request, model.route, row.id, attemptId, row.distill_state, row.distill_report_key, retry.previousAttemptId, row.id, snapshotKey, retry.attemptId),
       ]);
     } catch (error) {
       const known = await replay(); if (known) return known;

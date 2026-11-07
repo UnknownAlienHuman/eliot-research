@@ -64,8 +64,151 @@ function retainedOutput(f: ReturnType<typeof fixture>) {
   f.bodies.set(prefix + "distill-call2.json", JSON.stringify({ output: { supportedClaims: ["C0"], additionalClaims: [], guide, digest: [guide[0]], glossary: [] }, usage }));
 }
 
+function completedOutput(f: ReturnType<typeof fixture>) {
+  retainedOutput(f);
+  const prefix = `source/${revisionId}/`, text = f.bodies.get(prefix + "text.md") ?? "";
+  const guide = "Completed prior guide", digest = "Completed prior digest";
+  const glossary = [{ en: "method", ru: "метод", definition: "Метод источника.", labels: [`[R${revisionId}:1]`] }];
+  f.db.prepare("INSERT INTO claim(id,source_revision_id,ordinal,kind,statement,quote,block_index,start_byte,end_byte,created_at) VALUES('completed-card',?,0,'method',?,?,1,0,?,1)")
+    .run(revisionId, text, text, text.length);
+  f.db.prepare(`UPDATE source_revision SET distill_state='done',distill_error=NULL,guide_summary=?,claim_count=1,
+    distill_started_at=1,distill_ms=19,distill_input_tokens=42,distill_cached_tokens=0,distill_output_tokens=9,
+    distill_pricing_checked_on='2025-01-02' WHERE id=?`).run(guide, revisionId);
+  const report = JSON.parse(f.original);
+  f.original = JSON.stringify({ ...report, state: "done", kept: 1, error: null,
+    raw: { first: prefix + "distill-call1.json", second: prefix + "distill-call2.json" },
+    usage: { ...report.usage, inputTokens: 17, cachedTokens: 0, outputTokens: 8 } });
+  for (const [name, body] of [["guide.md", guide], ["digest.md", digest], ["glossary.json", JSON.stringify(glossary)], ["distill.json", f.original]] as const)
+    f.bodies.set(prefix + name, body);
+  return { guide, digest, glossary };
+}
+
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(requireAvailableModel).mockResolvedValue(model); });
 describe("explicit understanding retry", () => {
+  it.each([0, 2])("reuses done output with recorded calls=%s on ordinary Understand and repeated reads without model work", async calls => {
+    const f = fixture(calls); completedOutput(f);
+    try {
+      const before = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId), bodies = new Map(f.bodies);
+      const first = await getUnderstanding(f.env, actor, { sourceId, revisionId });
+      for (let index = 0; index < 2; index++) {
+        expect(await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: "workers-ai:other" })).toEqual({ revisionId });
+        expect(await getUnderstanding(f.env, actor, { sourceId, revisionId })).toEqual(first);
+      }
+      expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId)).toEqual(before);
+      expect(f.bodies).toEqual(bodies); expect((await getUnderstandingHistory(f.env, { sourceId, revisionId })).attempts).toEqual([]);
+      expect(f.status).not.toHaveBeenCalled(); expect(f.create).not.toHaveBeenCalled();
+      expect(requireAvailableModel).not.toHaveBeenCalled(); expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+  it("explicitly retries done within two calls and keeps its exact result, claims and usage in history", async () => {
+    const f = fixture(2), output = completedOutput(f);
+    try {
+      const before = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId), bodies = new Map(f.bodies);
+      const previous = await getUnderstanding(f.env, actor, { sourceId, revisionId });
+      const extraction = JSON.parse(f.bodies.get(`source/${revisionId}/distill-call1.json`) ?? "null").output;
+      const synthesis = JSON.parse(f.bodies.get(`source/${revisionId}/distill-call2.json`) ?? "null").output;
+      extraction.claims[0].statement = "The method retains evidence.";
+      expect(await requestUnderstanding(f.env, actor, input)).toEqual({ revisionId, attemptId: retryId });
+      expect(f.status).toHaveBeenCalledTimes(1); expect(f.create).toHaveBeenCalledTimes(1);
+      const snapshot = JSON.parse(f.bodies.get(`source/${revisionId}/history/${retryId}.json`) ?? "null");
+      expect(snapshot.revision).toEqual(before); expect(snapshot.claims).toEqual(previous.claims);
+      vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+      const totalUsage = { inputTokens: 17, inputTokenDetails: { cacheReadTokens: 0 }, outputTokens: 8 };
+      vi.mocked(generateText).mockResolvedValueOnce({ output: extraction, totalUsage } as never).mockResolvedValueOnce({ output: synthesis, totalUsage } as never);
+      await new DistillWorkflow({} as ExecutionContext, f.env).run({ payload: { revisionId, attemptId: retryId, model } } as never,
+        { do: async (_name: string, _options: unknown, callback: () => unknown) => callback() } as never);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(generateText).mock.calls.map(([options]) => options.maxRetries)).toEqual([0, 0]);
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_attempt_id AS attempt FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "done", calls: 2, attempt: retryId });
+      const current = await getUnderstanding(f.env, actor, { sourceId, revisionId });
+      expect(current.claims[0]?.statement).toBe("The method retains evidence.");
+      const archived = await getUnderstanding(f.env, actor, { sourceId, revisionId, attemptId: revisionId });
+      expect(archived).toMatchObject({ state: "done", ...output, claims: previous.claims, report: previous.report, recordedUsage: previous.recordedUsage });
+      expect(archived.recordedUsage).toMatchObject({ inputTokens: 42, cachedTokens: 0, outputTokens: 9, estimatedCostMicrousd: 73, pricingCheckedOn: "2025-01-02" });
+      for (const [key, body] of bodies) expect(f.bodies.get(key)).toBe(body);
+      expect((await getUnderstandingHistory(f.env, { sourceId, revisionId })).attempts.map(row => row.attemptId)).toEqual([revisionId]);
+      const lookups = vi.mocked(requireAvailableModel).mock.calls.length;
+      f.status.mockRejectedValue(new Error("Status is now unavailable")); vi.mocked(requireAvailableModel).mockRejectedValue(new Error("Model is now unavailable"));
+      expect(await requestUnderstanding(f.env, actor, input)).toEqual({ revisionId, attemptId: retryId });
+      expect(await requestUnderstanding(f.env, actor, { sourceId, revisionId })).toEqual({ revisionId });
+      expect(requireAvailableModel).toHaveBeenCalledTimes(lookups); expect(f.status).toHaveBeenCalledTimes(1);
+      expect(f.create).toHaveBeenCalledTimes(1); expect(generateText).toHaveBeenCalledTimes(2);
+    } finally { f.db.close(); }
+  });
+  it.each(["unknown", "running", "paused", "waiting", "queued", "waitingForPause", "rollingBack"])("blocks legacy zero-call done output with %s Workflow status regardless of age", async status => {
+    const f = fixture(0); completedOutput(f); f.status.mockResolvedValue({ status });
+    try {
+      const before = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId);
+      const rejected = await requestUnderstanding(f.env, actor, input); expect(rejected).toHaveProperty("rejected");
+      expect(await requestUnderstanding(f.env, actor, input)).toEqual(rejected);
+      expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId)).toEqual(before);
+      expect(f.status).toHaveBeenCalledTimes(1); expect(f.create).not.toHaveBeenCalled(); expect(requireAvailableModel).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+  it.each(["get", "status"])("blocks zero-call done output when Workflow %s is unreadable", async phase => {
+    const f = fixture(0); completedOutput(f);
+    if (phase === "get") f.env.DISTILL.get = vi.fn(async () => { throw new Error("Workflow not found"); });
+    else f.status.mockRejectedValue(new Error("Status unavailable"));
+    try {
+      expect(await requestUnderstanding(f.env, actor, input)).toHaveProperty("rejected");
+      expect(f.create).not.toHaveBeenCalled(); expect(requireAvailableModel).not.toHaveBeenCalled();
+      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).state).toBe("done");
+    } finally { f.db.close(); }
+  });
+  it.each(["complete", "errored", "terminated"])("requires confirmed %s Workflow status even for zero-call done output", async status => {
+    const f = fixture(0); completedOutput(f); f.status.mockResolvedValue({ status });
+    try {
+      expect(await requestUnderstanding(f.env, actor, input)).not.toHaveProperty("rejected");
+      expect(f.status).toHaveBeenCalledTimes(1); expect(f.create).toHaveBeenCalledTimes(1);
+      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId, attemptId: revisionId })).state).toBe("done");
+    } finally { f.db.close(); }
+  });
+  it.each(["settled read", "snapshot write"])("rejects a done transition during %s without reusing the zero-call exception", async phase => {
+    const f = fixture(0); completedOutput(f); let changed = false;
+    f.db.prepare("UPDATE source_revision SET distill_state='partial' WHERE id=?").run(revisionId);
+    const change = () => { changed = true; f.db.prepare("UPDATE source_revision SET distill_state='done' WHERE id=?").run(revisionId); };
+    if (phase === "settled read") {
+      const prepare = f.env.DB.prepare.bind(f.env.DB);
+      f.env.DB.prepare = ((sql: string) => {
+        if (!changed && sql.startsWith("SELECT * FROM source_revision WHERE id=? AND distill_attempt_id IS ? AND distill_state IN")) change();
+        return prepare(sql);
+      }) as typeof f.env.DB.prepare;
+    } else {
+      const put = f.env.BUCKET.put.bind(f.env.BUCKET);
+      f.env.BUCKET.put = (async (key: string, body: string, options: R2PutOptions) => {
+        const result = await put(key, body, options); if (!changed && key.endsWith(`history/${retryId}.json`)) change(); return result;
+      }) as typeof f.env.BUCKET.put;
+    }
+    try {
+      expect(await requestUnderstanding(f.env, actor, input)).toHaveProperty("rejected"); expect(changed).toBe(true);
+      expect(f.status).not.toHaveBeenCalled(); expect(f.create).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state AS state,distill_attempt_id AS attempt FROM source_revision WHERE id=?").get(revisionId)).toEqual({ state: "done", attempt: null });
+      expect((await getUnderstandingHistory(f.env, { sourceId, revisionId })).attempts).toEqual([]);
+      const orphan = f.bodies.get(`source/${revisionId}/history/${retryId}.json`);
+      expect(await requestUnderstanding(f.env, actor, { ...input, retry: { ...input.retry, attemptId: otherId } })).not.toHaveProperty("rejected");
+      expect(f.status).toHaveBeenCalledTimes(1); expect(f.create).toHaveBeenCalledTimes(1);
+      expect(f.bodies.get(`source/${revisionId}/history/${retryId}.json`)).toBe(orphan);
+    } finally { f.db.close(); }
+  });
+  it("keeps the forward switch guard dependent on an archived terminal predecessor and an unused target", () => {
+    const f = fixture(0); completedOutput(f);
+    const change = (attempt: string | null) => f.db.prepare("UPDATE source_revision SET distill_attempt_id=? WHERE id=?").run(attempt, revisionId);
+    try {
+      expect(() => change(retryId)).toThrow("distill_attempt_requires_archived_terminal");
+      f.db.prepare("INSERT INTO distill_history(attempt_id,source_revision_id,rejection,archived_at) VALUES(?,?,'Rejected intent',1)").run(revisionId, revisionId);
+      expect(() => change(retryId)).toThrow("distill_attempt_requires_archived_terminal");
+      f.db.prepare("DELETE FROM distill_history WHERE attempt_id=?").run(revisionId);
+      f.db.prepare("INSERT INTO distill_history(attempt_id,source_revision_id,snapshot_key,archived_at) VALUES(?,?,'snapshot',1)").run(revisionId, revisionId);
+      f.db.prepare("UPDATE source_revision SET distill_state='running' WHERE id=?").run(revisionId);
+      expect(() => change(retryId)).toThrow("distill_attempt_requires_archived_terminal");
+      f.db.prepare("UPDATE source_revision SET distill_state='done' WHERE id=?").run(revisionId);
+      f.db.prepare("INSERT INTO distill_history(attempt_id,source_revision_id,rejection,archived_at) VALUES(?,?,'Rejected intent',1)").run(retryId, revisionId);
+      expect(() => change(retryId)).toThrow("distill_attempt_requires_archived_terminal");
+      expect(() => change(otherId)).not.toThrow();
+      expect(() => change(null)).toThrow("distill_attempt_requires_archived_terminal");
+    } finally { f.db.close(); }
+  });
   it("retries partial output while keeping its working guide and exact receipt accessible", async () => {
     const f = fixture(2); retainedOutput(f);
     try {
@@ -225,8 +368,8 @@ describe("explicit understanding retry", () => {
     try { expect(await requestUnderstanding(broken.env, actor, input)).toHaveProperty("rejected"); expect(broken.db.prepare("SELECT count(*) AS n FROM distill_history WHERE rejection IS NULL").get()).toEqual({ n: 0 }); expect(broken.create).not.toHaveBeenCalled(); }
     finally { broken.db.close(); }
   });
-  it.each([false, true])("recovers a committed=%s ambiguous batch without duplicate dispatch", async committed => {
-    const f = fixture();
+  it.each([false, true].flatMap(committed => ["failed", "done"].map(state => ({ committed, state }))))("recovers a committed=$committed $state batch without duplicate dispatch", async ({ committed, state }) => {
+    const f = fixture(); if (state === "done") completedOutput(f);
     try {
       if (committed) f.loseBatchReply(); else f.rollbackBatch();
       const result = await requestUnderstanding(f.env, actor, input);
@@ -237,8 +380,8 @@ describe("explicit understanding retry", () => {
       expect(f.create).toHaveBeenCalledTimes(1); expect(f.db.prepare("SELECT count(*) AS n FROM distill_history WHERE rejection IS NULL").get()).toEqual({ n: 1 });
     } finally { f.db.close(); }
   });
-  it("chooses one competing predecessor CAS and preserves archived identity replay", async () => {
-    const f = fixture();
+  it.each(["failed", "done"])("chooses one competing %s predecessor CAS and preserves archived identity replay", async state => {
+    const f = fixture(); if (state === "done") completedOutput(f);
     try {
       const result = await Promise.allSettled([requestUnderstanding(f.env, actor, input), requestUnderstanding(f.env, actor, { ...input, retry: { ...input.retry, attemptId: otherId } })]);
       expect(result.filter(r => r.status === "fulfilled" && !("rejected" in r.value))).toHaveLength(1); expect(f.create).toHaveBeenCalledTimes(1);

@@ -146,7 +146,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     }
     let retryInput = pendingRetry;
     if (retryFailed && !retryInput) {
-      if (!view || !['failed', 'partial'].includes(view.state) || !view.attemptId) return;
+      if (!view || !['done', 'failed', 'partial'].includes(view.state) || !view.attemptId) return;
       retryInput = { revisionId, ...(modelChoice ? { model: modelChoice } : {}), retry: { attemptId: crypto.randomUUID(), previousAttemptId: view.attemptId } };
       try { sessionStorage.setItem(pendingKey, JSON.stringify(retryInput)); }
       catch { setNote('This browser cannot keep the pending request. Allow site storage before retrying.'); return; }
@@ -189,7 +189,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const active = view.state === 'queued' || view.state === 'running';
   const statusReady = statusReadKey === statusKey && failure === '' && !understanding.isFetching;
   const historical = historyAttempt !== '';
-  const canRetry = !historical && !pendingRetry && !awaitingStatus && statusReady && (view.state === 'failed' || view.state === 'partial') && typeof view.attemptId === 'string';
+  const canRetry = !historical && !pendingRetry && !awaitingStatus && statusReady && (view.state === 'done' || view.state === 'failed' || view.state === 'partial') && typeof view.attemptId === 'string';
   const canConfirm = !historical && !!pendingRetry && !awaitingStatus && statusReady;
   const canStart = !historical && !pendingRetry && !awaitingStatus && statusReady && !active && (view.state === 'none' || view.state === 'paused');
   const canSaveAvailable = !historical && !pendingRetry && !awaitingStatus && statusReady && !active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial');
@@ -234,13 +234,13 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
       </div> : null}
       {canStart || canRetry || canConfirm || failure !== '' || note !== '' || awaitingStatus || canSaveAvailable ? <div className='er-und__actions'>
         {canStart ? <button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void request()}>Understand source</button> : null}
-        {canRetry ? <button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void request(false, true)}>Retry understanding</button> : null}
+        {canRetry ? <button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void request(false, true)}>{view.state === 'done' ? 'Run understanding again' : 'Retry understanding'}</button> : null}
         {canConfirm ? <button className='er-button er-button--tonal' type='button' disabled={busy || understanding.isFetching} onClick={() => void request(false, true)}>Send same request</button> : null}
         {failure !== '' || note !== '' || awaitingStatus || pendingRetry ? <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={() => void reload()}>Reload understanding</button> : null}
         {canSaveAvailable ? <button className='er-button er-button--tonal' type='button' disabled={busy || understanding.isFetching} onClick={() => void request(true)}>{view.state === 'failed' ? 'Save available output' : 'Recheck saved output'}</button> : null}
       </div> : null}
       {note !== '' ? <p className='er-und__error' role='alert'>{note}</p> : null}
-      {canRetry ? <p className='er-und__hint'>Starts a new model run on this same source text and uses provider allowance. Previous output stays in history.</p> : null}
+      {canRetry ? <p className='er-und__hint'>{view.state === 'done' ? 'Starts a new model run on this same source text and uses provider allowance. The current output is archived in previous attempts.' : 'Starts a new model run on this same source text and uses provider allowance. Previous output stays in history.'}</p> : null}
       {pendingRetry ? <p className='er-und__hint'>The last request has not been confirmed. Reload checks its status. Send same request may start that run if it was never accepted.</p> : null}
       <div className='er-und__actions'>
         <button className='er-button er-button--text' type='button' disabled={busy || understanding.isFetching} onClick={toggleHistory}>Previous attempts</button>

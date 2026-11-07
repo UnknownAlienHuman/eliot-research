@@ -343,7 +343,7 @@ re-distilled automatically.
 
 **Build**
 
-1. Apply `migrations/0003_distill.sql`, `0007_manual_understanding.sql` and `0013_understanding_retry.sql`; add `DistillWorkflow` and quote/number verification.
+1. Apply `migrations/0003_distill.sql`, `0007_manual_understanding.sql`, `0013_understanding_retry.sql` and forward guard `0014_distill_attempt_switch_guard.sql`; add `DistillWorkflow` and quote/number verification.
 2. Ingest makes a revision readable without queueing understanding. Understand explicitly requests one revision;
    unchanged completed or partial output is returned without another model call.
 3. An Understand request admits only its requested revision while concurrency and provider allowance permit.
@@ -351,7 +351,9 @@ re-distilled automatically.
    Unavailable models or provider allowance leave work visibly `paused` until another explicit request. Cron also
    reconciles stale `running` rows against deterministic Workflow IDs without restarting uncertain or paid work.
    Keep an already queued model selection on repeat; reject a conflicting explicit model before dispatch.
-   Failed and partial attempts support explicit Retry understanding with a stable request ID and predecessor compare-and-set.
+   Failed, partial and completed attempts support explicit Retry understanding with a stable request ID and predecessor compare-and-set.
+   Completed predecessors require confirmed terminal Workflow status even when a legacy call counter is zero.
+   Only a retry body opts into rerunning completed output; normal Understand and repeated reads reuse it with zero new calls.
    Archive the exact old receipt and claim projection before switching; previous attempts remain readable without
    models. Reload and Save existing output remain storage only. Unknown retry replies retain the same request across
    reload/remount; a successful read of its old predecessor cannot authorize a different retry ID. A durable rejected intent enables a fresh explicit model choice without an in-flight duplicate later accepting that rejected ID.
