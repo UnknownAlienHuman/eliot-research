@@ -15,7 +15,7 @@ import type { ChatRow } from './use-chat-history';
 import type { Citation } from '../citations';
 import { ModelSettings } from './ModelSettings';
 import { ProposalsInbox } from './Proposals';
-import { ModelPicker } from './ModelPicker';
+import { ChatComposer } from './ChatComposer';
 import type { ModelRoute } from './ModelPicker';
 import './chat.css';
 
@@ -809,64 +809,36 @@ export function ChatView({
         </ol>
       </div>
 
-      <form className='er-chat__composer' onSubmit={(event) => { event.preventDefault(); void send(); }}>
-        <div className='er-chat__options' data-expanded={controlsExpanded} data-show-latest={showLatest && turns.length > 0}>
-          <button className='er-button er-button--text er-chat__options-toggle' type='button'
-            aria-label={'Sources and model: ' + scopeSummary + ' · ' + modelSummary}
-            title={scopeSummary + ' · ' + modelSummary}
-            aria-expanded={controlsExpanded} aria-controls={controlsId} onClick={() => setControlsExpanded(value => !value)}>
-            <span className='er-chat__options-summary'>{scopeSummary} · {modelSummary}</span>
-            <span aria-hidden='true'>{controlsExpanded ? 'Hide' : 'Change'}</span>
-          </button>
-          {showLatest && turns.length > 0 ? <button className='er-button er-button--tonal er-chat__latest' type='button'
-            aria-label='Jump to latest message' onClick={jumpToLatest}>Latest <span aria-hidden='true'>↓</span></button> : null}
-          <div className='er-chat__options-controls' id={controlsId} onFocusCapture={() => setControlsExpanded(true)}>
-            <p className='er-chat__hint er-chat__scope'>Sources: {selection.scopeMode === 'project_default' ? 'project default' : selection.scopeMode === 'empty' ? 'none' : selection.sourceIds.length + ' selected'}.{' '}
-              <Link to={'/p/' + encodeURIComponent(projectId) + '/sources'}>Change sources</Link></p>
-            <div className='er-chat__model'>
-              <ModelPicker
-                label='Model'
-                choices={models}
-                value={modelRoute}
-                onChange={setModelRoute}
-                defaultRoute={inheritedModel}
-                loading={modelsLoading}
-                error={modelsError}
-                emptyLabel='Project default'
-                compact
-                warnings={modelsWarnings}
-                onRoutePendingChange={setModelSelectionPending}
-              />
-            </div>
-          </div>
-        </div>
-        <label className='er-field er-chat__question-field' htmlFor='er-chat-q'>
-          <span className='er-chat__asklabel'>Question</span>
-          <textarea
-            id='er-chat-q'
-            value={question}
-            onChange={(event) => { draftSequence.current++; setQuestion(event.currentTarget.value); }}
-            rows={3}
-            maxLength={4000}
-            placeholder='Ask in Russian or English…'
-          />
-        </label>
-        <button
-          className='er-button er-button--primary'
-          type='submit'
-          disabled={busy || question.trim() === '' || !chatReady || queued !== null || modelSelectionPending}
-        >
-          {busy ? 'Sending…' : 'Send'}
-        </button>
-        {queued !== null ? (
-          <p className='er-chat__hint' role='status'>
-            Next question: {queued.question}{' '}
-            <button className='er-button er-button--text' type='button' onClick={() => void stopTurn(queued.turnId)}>Cancel question</button>
-          </p>
-        ) : null}
-        {sendError !== '' ? <p className='er-chat__error' role='alert'>{sendError}</p> : null}
-        {saveNote !== '' ? <p className='er-chat__hint' role='status'>{saveNote}</p> : null}
-      </form>
+      <ChatComposer
+        projectId={projectId}
+        selection={selection}
+        scopeSummary={scopeSummary}
+        modelSummary={modelSummary}
+        models={models}
+        modelRoute={modelRoute}
+        onModelRouteChange={setModelRoute}
+        inheritedModel={inheritedModel}
+        modelsLoading={modelsLoading}
+        modelsError={modelsError}
+        modelsWarnings={modelsWarnings}
+        onModelSelectionPendingChange={setModelSelectionPending}
+        controlsExpanded={controlsExpanded}
+        controlsId={controlsId}
+        onToggleControls={() => setControlsExpanded(value => !value)}
+        onFocusControls={() => setControlsExpanded(true)}
+        showLatest={showLatest}
+        hasTurns={turns.length > 0}
+        onJumpToLatest={jumpToLatest}
+        question={question}
+        onQuestionChange={event => { draftSequence.current++; setQuestion(event.currentTarget.value); }}
+        onSubmit={event => { event.preventDefault(); void send(); }}
+        sendDisabled={busy || question.trim() === '' || !chatReady || queued !== null || modelSelectionPending}
+        busy={busy}
+        queuedQuestion={queued?.question ?? null}
+        onCancelQuestion={() => { if (queued !== null) void stopTurn(queued.turnId); }}
+        sendError={sendError}
+        saveNote={saveNote}
+      />
     </section>
   );
 }

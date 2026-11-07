@@ -1505,9 +1505,13 @@ with provider addresses and Gateway routing in connection dialogs. Both owner bi
 Unknown metadata stays visible, and model-job admission remains separate
 from selection.
 
-**Conversation decomposition — open.** Keep the active conversation's HTTP/socket/history/version/cursor/scroll
-lifecycle together when separating it from presentational composer/actions. Each route, connection and source selection
-keeps one state owner; preserve stale-response cancellation, queued status and current Material layout. Use existing
+**Conversation decomposition — UI extraction complete; Sol audit passed; real-browser Cancel/focus verification pending.** The composer
+presentation lives in `web/ChatComposer.tsx` and receives existing values and callbacks; it owns no state or refs. Chrome
+spot-check observed the composer/draft rendering, History opening and native discard confirmation; Cancel/focus
+verification and the user Cancel handoff remain pending after extension focus timeouts. Keep the active conversation's
+HTTP/socket/history/version/cursor/scroll lifecycle together. Each route, connection and source selection keeps one state
+owner; preserve stale-response cancellation, queued status and current Material layout. This UI slice does not close the
+K2/K3 quality gates. Use existing
 React/QueryClient facilities where they remove current duplication. In `ChatAgent.runTurn`, keep admission → frozen
 context → dispatch → settlement visible in one orchestrator; extract only deterministic citation/completion and usage
 projection helpers, keeping stop/deadline ordering intact. Then review `SourcesPane`, `OcrDialog` and `ModelSettings`
@@ -1516,8 +1520,8 @@ quota or justification for a hook hierarchy, generic lifecycle framework, new pr
 
 `web/use-chat-history.ts` owns project chat-list reads, paging and created-row insertion. Both page paths merge by ID,
 so a delayed first page cannot erase a newly created chat. Failure retains loaded rows/cursor; initial failure offers
-Retry. Cleanup aborts the current read. Conversation HTTP/socket/version/cursor/scroll and Send/Stop/Save remain in
-`ChatView`.
+Retry. Cleanup aborts the current read. `ChatView` owns all active-conversation state and refs, the HTTP/socket/history/
+version/cursor/scroll lifecycle, and Send/Stop/Save async work and event callbacks; `ChatComposer` owns presentation only.
 Its memoized turn content retains unchanged answers across streamed frames. The existing conversation box's resize
 observer pauses content rendering while CSS hides that pane on desktop or phone, retaining its DOM/details and the
 owning socket/history/action state; revealing it renders the latest received turn without replaying hidden frames.
