@@ -732,7 +732,12 @@ try {
     const firstBox = await inlineCitations.nth(0).boundingBox(), secondBox = await inlineCitations.nth(1).boundingBox();
     assert(firstBox && secondBox && (secondBox.y >= firstBox.y + firstBox.height || secondBox.x >= firstBox.x + firstBox.width),
       'Adjacent citation targets must not overlap.');
-    await inlineCitations.nth(0).hover(); await expect(inlineCitations.nth(0)).toHaveCSS('text-decoration-line', 'underline');
+    await expect.poll(async () => {
+      await inlineCitations.nth(0).hover({ timeout: 5000 });
+      return inlineCitations.nth(0).evaluate(el => ({
+        hovered: el.matches(':hover'), decoration: getComputedStyle(el).textDecorationLine,
+      }));
+    }, { timeout: 5000 }).toEqual({ hovered: true, decoration: 'underline' });
     await inlineCitations.nth(0).focus(); await page.keyboard.press('Tab');
     await expect(inlineCitations.nth(1)).toBeFocused();
     assert(await inlineCitations.nth(1).evaluate(el => el.matches(':focus-visible') && getComputedStyle(el).outlineStyle !== 'none'
