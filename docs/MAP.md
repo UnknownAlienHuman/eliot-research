@@ -262,7 +262,10 @@ stop/reconnect, reopen chat and save an answer as a page.
 metadata. Context reserve is separate from the published generation maximum; unknown maxima retain provider/SDK defaults.
 Admission has its own claim; a missing numeric capacity never permits another call for the same turn.
 Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
-across corpora, with no fixed-paper coaching or JSON sentence/label enum. The server resolves labels and byte ranges.
+across corpora, with no fixed-paper coaching or JSON sentence/label enum. Each whole or compact evidence block is one
+JSON `{label,text}` record with literal brackets escaped, and its label applies only to that block's text. The label
+inventory and derived claim statements/conditions remain separate orientation, not evidence. The server resolves
+labels and byte ranges.
 Adjacent user input parts share one message without changing their text; assistant history and system instructions
 keep their boundaries. The same message assembly governs context estimation and the single model dispatch.
 Markdown reference definitions cannot redirect exact registered citation tokens in chat or saved answers, including
@@ -357,8 +360,9 @@ re-distilled automatically.
    Archive the exact old receipt and claim projection before switching; previous attempts remain readable without
    models. Reload and Save existing output remain storage only. Unknown retry replies retain the same request across
    reload/remount; a successful read of its old predecessor cannot authorize a different retry ID. A durable rejected intent enables a fresh explicit model choice without an in-flight duplicate later accepting that rejected ID.
-4. Use at most two bounded calls: labelled canonical text produces guide and candidate claims; code verifies
-   quotes/ranges/numbers; the second call receives only verified material and produces digest/glossary. Store raw
+4. Use at most two bounded calls: labelled canonical text produces atomic claim cards before guide prose, with card
+   coverage independent of guide/digest and deduplication only among cards; code verifies quotes/ranges/numbers. The
+   second call receives each verified candidate with its exact quote and produces digest/glossary. Store raw
    output/report in R2 and compact claims in D1. Paid calls do not retry.
    Preserve a safe failure reason for the reader without retaining raw provider errors or credentials.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy

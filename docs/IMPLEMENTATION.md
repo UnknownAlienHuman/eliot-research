@@ -541,22 +541,25 @@ not model quality or paid-step replay.
 
 `DistillWorkflow` uses two bounded calls:
 
-1. labelled canonical text → metadata, draft guide, 3–5 questions and candidate claims;
+1. labelled canonical text → candidate claims, draft guide and 3–5 questions;
 2. verified original excerpts → supported claim selection, final 3–5 sentence guide, digest and EN/RU glossary.
 
 Each input block is a separate JSON record containing its exact `quoteBlock` and text, so a label does not implicitly
-name following blocks or an entire section. The first output requests the source guide before detailed claims.
+name following blocks or an entire section. The first-call schema and instructions draft atomic claim cards before guide
+prose; claim coverage is independent of guide/digest content and deduplication applies only among claim cards.
 Each claim still selects one `quoteBlock` from the closed compact label set for that immutable revision. Code resolves
 it to the full original block as its own quote, preserving PDF line-break hyphens, brackets and Markdown bytes;
 the model does not transcribe canonical evidence. Claim quote/range and numeric checks remain against that one block,
-and a statement that adds numbers absent from it is rejected.
+and a statement that adds numbers absent from it is rejected. Each call-two candidate carries that exact verified quote
+beside its statement and structured fields; `quoteBlock` remains its source identity.
 
 Draft guide items use `{ labels, text }`, with the closed `labels` array of 1–4 source-block selections before `text`.
 Code resolves every declared label to its exact canonical block and checks references and numbers against only the
 union of those selected quotes. It splits authored prose and retains at most the first numerically supported sentence
 per item, yielding at most five draft sentences; an early paragraph cannot consume the whole guide allowance.
 `Verified.guide` retains these `{ labels, text }` records as hypotheses. Call two receives them directly alongside
-candidate claims, with original excerpts as the sole evidence. The retained excerpt pool is exactly the union of
+candidate claims with their own exact quotes, plus the original excerpts as the sole
+evidence. The retained excerpt pool is exactly the union of
 declared claim `quoteBlock` selections and guide `labels`; code adds no inferred evidence bindings. Final guide and
 digest items also use `{ labels, text }` with 1–4 selected excerpts; glossary records likewise select labels first.
 Call two asks the model to reread only each guide/digest/glossary item's declared excerpts, check every factual clause
@@ -790,6 +793,9 @@ rejected before either existing product function runs. These tools never grant a
 
 Each source context declares its exact citable-label inventory from the resolver's same block set. Block IDs can have
 gaps and are never page numbers; the inventory is included in the existing input-token estimate.
+Each original block in whole or compact evidence is one JSON `{label,text}` record; model-facing serialization escapes literal
+source brackets, and each label applies only to its record's text. The inventory and derived claim statements remain
+separate orientation, not evidence; aliases, resolution and canonical byte ranges are unchanged.
 
 Freeze readable revision IDs at turn start. Context modes are whole labelled text, verified K3 guides/claims when whole
 text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. The input estimate must fit the published input/assembly ceiling. Only when an explicit combined

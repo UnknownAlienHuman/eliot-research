@@ -129,6 +129,7 @@ export async function readContextJson<T>(env: Env, assembly: Materialization, ke
 const SYSTEM_PROMPT =
   "Answer in the user's language with ordinary Markdown. Attach all atomic [Sx:N] markers needed to support the full adjacent claim, including every fact, condition and qualifier; when one block covers only part, include the other supporting markers. Mark unsupported content as inference or omit it. Never shorten or invent labels. " +
   "Answer directly and keep detail proportional to the question; omit unrelated background and repetition while preserving every requested fact, condition, uncertainty and supporting citation. " +
+  "The inventory lists labels, not evidence. Each JSON record's label covers only its own text, never neighboring records, headings or surrounding sections. " +
   "The N in [Sx:N] is an exact source block ID, not a page, section, footnote or bibliography number; gaps are intentional. Copy each label verbatim as one atomic [Sx:N] marker from that source's available-label inventory beside its supporting passage; keep explanatory comments and footnote prose outside the brackets. If no listed label supports a claim, omit it rather than infer an ID. " +
   "Treat Sx in source headers as lookup aliases. Use a source's displayed title in prose for paper-level attribution; never use bare [Sx] as a citation. Before attributing a claim to a named paper, verify that the cited current source's title and passage support it. Preserve source-reported formula operators, signs and exponents exactly; do not silently rederive or rewrite them. " +
   "Mark inference and uncertainty; abstain when evidence is absent. Compare measurements with their stated architecture, dataset, split, units and protocol; don't attribute mismatched results to one factor. " +
@@ -149,6 +150,14 @@ const bomDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 function estimateTokens(text: string): number {
   return Math.ceil(utf8Bytes(text) / 3);
+}
+function joinSourceSections(assembly: Materialization, sections: string[]): string {
+  return joinContext(assembly, [SOURCES_HEADER.slice(0, -2), ...sections], "\n\n");
+}
+function estimateSourceSections(sections: string[]): number {
+  let bytes = utf8Bytes(SOURCES_HEADER.slice(0, -2)) + 2 * sections.length;
+  for (const section of sections) bytes += utf8Bytes(section);
+  return Math.ceil(bytes / 3);
 }
 function requestTokens(messages: ContextMessage[], caller: Pick<ContextInput, "question" | "instructions">): number {
   const instructions = [...messages.filter(message => message.role === "system").map(message => message.content), caller.instructions ?? ""]
@@ -193,6 +202,40 @@ function sourceHeader(alias: string, title: string): string {
 function citableLabelInventory(source: LabelSource): string {
   const labels = source.blocks.map((block) => "[" + source.alias + ":" + block.id + "]");
   return "Citable labels for " + source.alias + " (block IDs; gaps are intentional): " + labels.join(", ") + ".";
+}
+function sourceEvidenceJsonLength(text: string): number {
+  let length = text.length + 2; // JSON string quotes
+  for (const char of text) {
+    const code = char.charCodeAt(0);
+    if (char === "[" || char === "]") length += 5;
+    else if (char === '"' || char === "\\") length++;
+    else if (code < 32) length += code === 8 || code === 9 || code === 10 || code === 12 || code === 13 ? 1 : 5;
+    else if (char.length === 1 && code >= 0xd800 && code <= 0xdfff) length += 5;
+  }
+  return length;
+}
+function sourceEvidenceRecord(
+  assembly: Materialization,
+  alias: string,
+  blockId: number,
+  text: string,
+  workspace: number,
+): { record: string; workspace: number } {
+  const label = "[" + alias + ":" + blockId + "]";
+  const prefixLength = label.length + 19;
+  const encodedLength = sourceEvidenceJsonLength(text);
+  const recordLength = prefixLength + encodedLength + 1;
+  // Match sourceContextJson's bracket escaping for this text token. JSON.stringify
+  // and its replacement coexist briefly, so reserve both before serialization.
+  const nextWorkspace = 4 * (encodedLength + 64);
+  reserve(assembly, Math.max(0, nextWorkspace - workspace));
+  reserve(assembly, 2 * recordLength);
+  const prefix = '{"label":' + JSON.stringify(label) + ',"text":';
+  const encodedText = JSON.stringify(text).replaceAll("[", "\\u005b").replaceAll("]", "\\u005d");
+  return {
+    record: [prefix, encodedText, "}"].join(""),
+    workspace: Math.max(workspace, nextWorkspace),
+  };
 }
 
 interface Frozen {
@@ -472,6 +515,7 @@ async function loadSourceText(env: Env, frozen: Frozen, index: number, assembly:
   }
   const lines = [sourceHeader(alias, frozen.title)];
   const citableBlocks: Block[] = [];
+  let sourceJsonWorkspace = 0;
   for (const block of blocks) {
     if (!Number.isSafeInteger(block.id) || block.id < 1 || !Number.isSafeInteger(block.start)
       || !Number.isSafeInteger(block.end) || block.start < 0 || block.end <= block.start || block.end > bytes.byteLength) {
@@ -487,7 +531,9 @@ async function loadSourceText(env: Env, frozen: Frozen, index: number, assembly:
     if (!slice.trim()) continue;
     if (isCitableBlock(block, slice)) {
       citableBlocks.push(block);
-      lines.push(joinContext(assembly, ["[", alias, ":", String(block.id), "] ", slice]));
+      const evidence = sourceEvidenceRecord(assembly, alias, block.id, slice, sourceJsonWorkspace);
+      sourceJsonWorkspace = evidence.workspace;
+      lines.push(evidence.record);
     }
   }
   if (lines.length === 1) throw new LibraryError("unavailable", UNAVAILABLE, 503);
@@ -589,10 +635,13 @@ async function loadClaimContextPart(env: Env, entry: Frozen, index: number, asse
   const quoted = new Set<string>();
   const lines = [sourceHeader(alias, entry.title)];
   const claimsOrientation = [sourceHeader(alias, entry.title)];
+  let sourceJsonWorkspace = 0;
   for (const guide of await loadGuideBlocks(env, entry, byId, assembly)) {
     used.add(guide.id);
     quoted.add(JSON.stringify([guide.id, guide.passage]));
-    lines.push(joinContext(assembly, ["[", alias, ":", String(guide.id), "] ", guide.passage]));
+    const evidence = sourceEvidenceRecord(assembly, alias, guide.id, guide.passage, sourceJsonWorkspace);
+    sourceJsonWorkspace = evidence.workspace;
+    lines.push(evidence.record);
   }
   for (const claim of supported) {
     used.add(claim.blockIndex);
@@ -602,7 +651,9 @@ async function loadClaimContextPart(env: Env, entry: Frozen, index: number, asse
     const key = JSON.stringify([claim.blockIndex, claim.quote]);
     if (quoted.has(key)) continue;
     quoted.add(key);
-    lines.push(joinContext(assembly, ["[", alias, ":", String(claim.blockIndex), "] ", claim.quote]));
+    const evidence = sourceEvidenceRecord(assembly, alias, claim.blockIndex, claim.quote, sourceJsonWorkspace);
+    sourceJsonWorkspace = evidence.workspace;
+    lines.push(evidence.record);
   }
   const source: LabelSource = { sourceId: entry.sourceId, revisionId: entry.revisionId, title: entry.title, blocks: blocks.filter((block) => used.has(block.id)), alias };
   reserve(assembly, source.blocks.length * 128);
@@ -632,8 +683,7 @@ async function buildMixedContext(
   let projectedTokens = wholePrefitTokens;
   if (preloadedWhole) {
     const sections = wholeParts.map((part) => part?.section ?? "");
-    projectedTokens = systemTokens + estimateTokens(joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]))
-      + callerTokens;
+    projectedTokens = systemTokens + estimateSourceSections(sections) + callerTokens;
   } else {
     projectedTokens += estimateTokens(SOURCES_HEADER) + Math.max(0, frozen.length - 1) * estimateTokens("\n\n");
     for (let i = 0; i < frozen.length; i++) {
@@ -679,7 +729,7 @@ async function buildMixedContext(
       sources.push(part.source);
       if (compact) orientations.push(compact.orientation);
     }
-    const sourcesText = joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]);
+    const sourcesText = joinSourceSections(assembly, sections);
     const claimOrientation = orientations.length ? joinContext(assembly, [CLAIMS_ORIENTATION_HEADER, joinContext(assembly, orientations, "\n\n")]) : "";
     const evidence: ContextMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: sourcesText },
       ...(claimOrientation ? [{ role: "user" as const, content: claimOrientation }] : [])];
@@ -785,7 +835,7 @@ export async function buildContext(env: Env, _actor: Actor, input: ContextInput)
       sections.push(loaded.section);
       sources.push(loaded.source);
     }
-    const sourcesText = joinContext(assembly, [SOURCES_HEADER, joinContext(assembly, sections, "\n\n")]);
+    const sourcesText = joinSourceSections(assembly, sections);
     const sourceTokens = estimateTokens(sourcesText);
     const evidence: ContextMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: sourcesText }];
     const historyFinal = fitHistory(selectHistory(historyPlan, frozenSet, cap - requestTokens(evidence, input), sources, assembly), evidence, input, cap);

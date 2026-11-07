@@ -800,7 +800,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
-  it("requires nullable additional-result metadata for new call two but still saves historical optional call-two output", async () => {
+  it("binds call-two candidates to exact quotes and preserves nullable and historical metadata", async () => {
     const withBatch = (target: ReturnType<typeof fixture>) => {
       const db = target.env.DB as unknown as {
         batch(statements: Array<{ run(): Promise<{ meta: { changes: number } }> }>): Promise<{ meta: { changes: number } }[]>;
@@ -837,6 +837,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
         { quoteBlock: "[S1:2]", kind: "result", task: "synthetic scoring task", metric: "QScore",
           dataset: "Set 2021", valueText: "9.4", unit: "QScore", conditions: "Variant Alpha",
           statement: "On Set 2021 Variant Alpha, the model scores 9.4 QScore, improving over the baseline by 1.7 QScore." },
+        { quoteBlock: "[S1:4]", kind: "other", task: null, metric: null, dataset: null,
+          valueText: null, unit: null, conditions: null, statement: "The source describes a related condition." },
       ],
       questions: ["What method is described?", "What result is reported?", "What limitation is noted?"],
       authors: "", published: null,
@@ -856,18 +858,23 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const call2SourceContext = call2Messages?.[0]?.content;
       if (typeof call2SourceContext !== "string") throw new Error("Call two source context was not captured.");
       const capturedContext = JSON.parse(call2SourceContext) as {
-        candidates: Array<{ id: string; statement: string }>;
+        candidates: Array<{ id: string; statement: string; quote: string; quoteBlock: string; [key: string]: unknown }>;
         evidence: Array<{ label: string; quote: string }>;
       };
-      expect(capturedContext.candidates).toEqual([{ id: "C0", statement: "Method Alpha uses a low-rank update.", quoteBlock: "[S1:1]", kind: "method",
-        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }]);
+      expect(capturedContext.candidates).toEqual([
+        { id: "C0", statement: "Method Alpha uses a low-rank update.", quote: "Method Alpha uses a low-rank update.\n",
+          quoteBlock: "[S1:1]", kind: "method", task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null },
+        { id: "C1", statement: "The source describes a related condition.", quote: "The source describes a related condition.\n",
+          quoteBlock: "[S1:4]", kind: "other", task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null },
+      ]);
       expect(capturedContext.evidence).toContainEqual({ label: "[S1:2]", block: 2,
         quote: "The source reports 3 and 5 examples. On Set 2021 Variant Alpha, the model scores 9.4 QScore, improving over the baseline by 1.7 QScore.\n" });
       const verifiedBody = f.bodies.get(prefix + "distill-verified.json");
       if (!verifiedBody) throw new Error("Fresh verified stage was not retained before call two.");
       const verified = JSON.parse(verifiedBody);
-      expect(verified.claims).toHaveLength(1);
-      expect(verified.claims[0].statement).toBe("Method Alpha uses a low-rank update.");
+      expect(verified.claims.map(({ block, quote }: { block: number; quote: string }) => [block, quote])).toEqual([
+        [1, "Method Alpha uses a low-rank update.\n"], [4, "The source describes a related condition.\n"],
+      ]);
       expect(verified.dropped).toContainEqual({ index: 0, reason: "unsupported-statement-numbers" });
       expect(verified.dropped).toContainEqual({ index: 1, reason: "pre-synthesis-missing-or-unsupported-primary-result" });
       expect(verified.dropped).toContainEqual({ index: 3, reason: "pre-synthesis-missing-or-unsupported-primary-result" });
@@ -893,6 +900,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const firstSchema = generatedSchema(callInstructions[0]);
       expect(firstSchema.properties).not.toHaveProperty("authors");
       expect(firstSchema.properties).not.toHaveProperty("published");
+      const extractionFields = Object.keys(firstSchema.properties ?? {});
+      expect(extractionFields.indexOf("claims")).toBeLessThan(extractionFields.indexOf("guide"));
       const secondSchema = generatedSchema(callInstructions[1]);
       const firstClaim = firstSchema.properties?.claims?.items;
       const additionalClaim = secondSchema.properties?.additionalClaims?.items;
@@ -1011,6 +1020,53 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(cached.db.prepare("SELECT statement FROM claim WHERE source_revision_id=? ORDER BY ordinal").all(revisionId))
         .toEqual([{ statement: "Method Alpha uses a low-rank update." }, { statement: "The method uses a low-rank update." }]);
     } finally { cached.db.close(); }
+  });
+
+  it("charges repeated call-two quote escaping before dispatch at the materialization boundary", async () => {
+    const model = { ...snapshot, contextTokens: 10000000 };
+    const prepare = (quote: string) => {
+      const document = documentWithBlocks([{ type: "paragraph", text: quote }]);
+      const f = fixture(model.route, document);
+      f.db.prepare("UPDATE source_revision SET distill_calls=1 WHERE id=?").run(revisionId);
+      f.bodies.set(prefix + "distill-verified.json", JSON.stringify({
+        claims: Array.from({ length: 3 }, () => ({
+          kind: "method", statement: "The method is retained.", quote, block: 1,
+          task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null,
+          start: 0, end: quote.length, ambiguous: false, valueNumber: null,
+        })),
+        guide: [], evidence: [{ label: "[S1:1]", block: 1, quote }], questions: [], dropped: [], clearedNumbers: 0,
+      }));
+      return f;
+    };
+    const synthesizeCached = async (f: ReturnType<typeof fixture>) => {
+      const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) =>
+        name === "extract source" || name === "verify source excerpts" ? undefined : callback());
+      await new DistillWorkflow({} as ExecutionContext, f.env).run(
+        { payload: { revisionId, model } } as WorkflowEvent<DistillInput>, { do: stepDo } as unknown as WorkflowStep);
+    };
+
+    const oversized = prepare("[]".repeat(50000));
+    try {
+      await synthesizeCached(oversized);
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+      expect(oversized.dispatchCAS).not.toHaveBeenCalled();
+      expect(oversized.db.prepare("SELECT distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId)).toEqual({ calls: 1 });
+    } finally { oversized.db.close(); }
+
+    const fitting = prepare("[]".repeat(40000));
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("Stop after capturing the bounded request."));
+    try {
+      await synthesizeCached(fitting);
+      expect(resolveModelTransport).toHaveBeenCalledTimes(1);
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(fitting.dispatchCAS).toHaveBeenCalledTimes(1);
+      const content = vi.mocked(generateText).mock.calls[0]?.[0].messages?.[0]?.content;
+      if (typeof content !== "string") throw new Error("The fitting call-two context was not captured.");
+      expect((JSON.parse(content) as { candidates: Array<{ quote: string }> }).candidates.map(({ quote }) => quote))
+        .toEqual(Array(3).fill("[]".repeat(40000)));
+    } finally { fitting.db.close(); }
   });
 
   it("passes the exact admitted context, reserve and checked date to transport without rediscovery", async () => {
