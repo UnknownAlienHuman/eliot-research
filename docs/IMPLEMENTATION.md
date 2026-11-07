@@ -712,8 +712,13 @@ provider response bodies, request headers and credentials remain excluded.
 At catch entry, each call snapshots whether its own existing deadline signal has expired and persists a fixed
 "Local model-call deadline expiry observed" reason before Workflow serialization. This observes the local deadline,
 not a provider/server timeout cause or completed billing; elapsed wall time alone never supplies that classification.
-Known typed structured-output usage/artifacts are still retained; unknown usage stays unknown. The 180 s call and
-4 minute step bounds are unchanged, and historical generic failures are not reclassified or rewritten.
+Known typed structured-output usage/artifacts are still retained; unknown usage stays unknown. The 6-minute call and
+7-minute step bounds are a product-owned, UNQUALIFIED completion-tail experiment. Each call uses
+`min(6 minutes, remaining 15-minute recovery ceiling)`, with at most two calls and zero paid retries.
+These are local execution bounds, not Cloudflare hard maxima or a quality pass. The absolute 15-minute ceiling
+remains unchanged and wins when less than 6 minutes remain. Historical 180 s failures are not reclassified or rewritten.
+The K3 eval observer waits up to 16 minutes: the existing 15-minute recovery ceiling plus one minute for
+storage/reconciliation observation. This grace does not extend paid execution or start a continuation.
 `done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal
 filtering and remains diagnostic. `partial` records a missing required component, ambiguous Markdown visibility or an interrupted/error outcome,
 not a nonzero drop percentage. The same exact-quote, numeric-support and anchor gates apply to both states.
@@ -772,7 +777,7 @@ Completed or unchanged work is not automatically re-distilled, and failed paid w
 pipeline uses at most two bounded model calls with zero paid-step retries. Completed/partial revisions return existing
 artifacts on repeat. Budget-paused work resumes
 only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
-Each background distillation call has a 180 s deadline (native paid-step deadline 4 minutes). Ordinary chat uses Stop
+Each background distillation call has a 6-minute deadline (native paid-step deadline 7 minutes). Ordinary chat uses Stop
 and platform/provider limits; its K2 latency gate remains separate from execution. The owner reader shows availability,
 progress, useful model names and verification caveats. Calls, reservations,
 token counts and wall time remain in API/eval diagnostics rather than the reading interface. Long papers can use the

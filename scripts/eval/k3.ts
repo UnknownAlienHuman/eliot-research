@@ -579,7 +579,9 @@ function checkAnchors(byFile) {
 }
 const TERMINAL = new Set(['done', 'partial', 'failed']);
 const POLL_MS = 5000;
-const REV_TIMEOUT_MS = 600000;
+// Observation only: 15-minute recovery ceiling plus 1 minute for storage/reconciliation.
+// This observer grace does not extend any paid execution deadline.
+const REV_TIMEOUT_MS = 16 * 60_000;
 const DISTILL_STATES = ['none', 'queued', 'running', 'paused', 'done', 'partial', 'failed'];
 function assertUnderstanding(u, what) {
   assert(u && typeof u === 'object', 'GET understanding must return the direct Understanding object (' + what + ').');

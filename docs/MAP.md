@@ -362,7 +362,10 @@ re-distilled automatically.
    Archive the exact old receipt and claim projection before switching; previous attempts remain readable without
    models. Reload and Save existing output remain storage only. Unknown retry replies retain the same request across
    reload/remount; a successful read of its old predecessor cannot authorize a different retry ID. A durable rejected intent enables a fresh explicit model choice without an in-flight duplicate later accepting that rejected ID.
-4. Use at most two bounded calls: labelled canonical text produces atomic claim cards, draft guide and at most twelve
+4. Use at most two bounded calls with zero paid retries. The product-owned 6-minute call/7-minute step bounds are an
+   UNQUALIFIED completion-tail experiment: each call uses min(6 minutes, remaining absolute 15-minute recovery
+   ceiling). These are not Cloudflare hard maxima or quality acceptance. Historical 180 s failures remain unchanged.
+   Labelled canonical text produces atomic claim cards, draft guide and at most twelve
    glossary candidates. Fresh guide items declare source labels, a required scope array of zero or one non-null
    combined domain clause (at most 300 characters, with subset source labels) and one coherent assertion (at most 800 characters). Before review,
    code prefixes the complete scope in parentheses, preserves the assertion apart from outer whitespace, adds only

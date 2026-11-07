@@ -1877,7 +1877,11 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
-  it.each([true, false])("classifies only observed owned deadline expiry through a serialized Workflow failure: %s", async (expired) => {
+  it.each([
+    { name: "fresh six-minute call", expired: true, remainingMs: 15 * 60_000, effectiveMs: 360_000 },
+    { name: "only 60 seconds left in the absolute ceiling", expired: true, remainingMs: 60_000, effectiveMs: 60_000 },
+    { name: "provider failure before its deadline", expired: false, remainingMs: 15 * 60_000, effectiveMs: 360_000 },
+  ])("classifies owned deadline expiry without changing history: $name", async ({ expired, remainingMs, effectiveMs }) => {
     vi.useFakeTimers();
     // Native Node AbortSignal.timeout does not use Vitest's fake clock.
     const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
@@ -1886,6 +1890,27 @@ describe("DistillWorkflow admitted model snapshot", () => {
       return controller.signal;
     });
     const f = fixture(snapshot.route);
+    const startedAt = Date.now() - 15 * 60_000 + remainingMs;
+    f.db.prepare("UPDATE source_revision SET distill_started_at=? WHERE id=?").run(startedAt, revisionId);
+    const historicalId = explicitlySelectedRevisionId;
+    const historicalReportKey = prefix + "understanding/" + historicalId + "/distill.json";
+    const historicalSnapshotKey = prefix + "understanding/" + historicalId + "/history/" + revisionId + ".json";
+    const owningRow = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId);
+    if (!owningRow) throw new Error("The owning revision fixture is missing.");
+    const historicalSnapshot = JSON.stringify({ revision: { ...owningRow, distill_attempt_id: historicalId,
+      distill_state: "failed", distill_calls: 1, distill_started_at: startedAt - 60_000 - 180091,
+      distill_ms: 180091, distill_error: "Model stream failed.", distill_report_key: historicalReportKey,
+      distill_token_limit: null, distill_token_limit_kind: "unknown", distill_estimated_cost_microusd: null,
+      distill_pricing_checked_on: null }, claims: [] });
+    const historicalReport = JSON.stringify({ state: "failed", error: "Model stream failed.", questions: [],
+      kept: 0, dropped: [], clearedNumbers: 0, raw: { first: null, second: null },
+      usage: { calls: 1, inputTokens: null, cachedTokens: null, outputTokens: null, wallMs: 180091,
+        tokenLimit: null, tokenLimitKind: "unknown", providerUsage: [] } });
+    f.bodies.set(historicalSnapshotKey, historicalSnapshot);
+    f.bodies.set(historicalReportKey, historicalReport);
+    f.db.prepare("INSERT INTO distill_history(attempt_id,source_revision_id,request_json,snapshot_key,archived_at) VALUES (?,?,NULL,?,?)")
+      .run(historicalId, revisionId, historicalSnapshotKey, startedAt - 60_000);
+    const historicalRow = f.db.prepare("SELECT * FROM distill_history WHERE attempt_id=?").get(historicalId);
     const privateText = "private-provider-response-and-request-marker";
     const wrapped = new Error("Wrapped stream failure " + privateText, {
       cause: Object.assign(new Error(privateText), { name: "TimeoutError" }),
@@ -1907,24 +1932,38 @@ describe("DistillWorkflow admitted model snapshot", () => {
     try {
       const pending = run(f, true);
       await dispatched;
-      expect(timeout).toHaveBeenCalledExactlyOnceWith(180_000);
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(effectiveMs);
       expect(observedSignal?.aborted).toBe(false);
-      if (expired) await vi.advanceTimersByTimeAsync(180_000);
+      const callStartedAt = Date.now();
+      if (expired) {
+        await vi.advanceTimersByTimeAsync(effectiveMs - 1);
+        expect(observedSignal?.aborted).toBe(false);
+        expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId))
+          .toEqual({ state: "running", calls: 1 });
+        await vi.advanceTimersByTimeAsync(1);
+      }
       const steps = await pending;
       const failure = expired ? "Local model-call deadline expiry observed. No retry was started." : "Model stream failed.";
       expect(observedSignal?.aborted).toBe(expired);
       expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
-      expect(steps.mock.calls[0]?.[1]).toMatchObject({ retries: { limit: 0 }, timeout: "4 minutes" });
+      expect(steps.mock.calls[0]?.[1]).toMatchObject({ retries: { limit: 0 }, timeout: "7 minutes" });
       expect(generateText).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ abortSignal: observedSignal, maxRetries: 0 }));
       expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      expect(Date.now() - callStartedAt).toBe(expired ? effectiveMs : 0);
       if (expired) expect(modelFailure).not.toHaveBeenCalled();
       else expect(modelFailure).toHaveBeenCalledExactlyOnceWith(wrapped, snapshot);
       expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_error AS error FROM source_revision WHERE id=?").get(revisionId))
         .toEqual({ state: "failed", calls: 1, error: failure });
       const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
       expect(report).toMatchObject({ state: "failed", error: failure,
-        usage: { calls: 1, inputTokens: null, cachedTokens: null, outputTokens: null, providerUsage: [] },
+        usage: { calls: 1, inputTokens: null, cachedTokens: null, outputTokens: null, providerUsage: [],
+          wallMs: 15 * 60_000 - remainingMs + (expired ? effectiveMs : 0) },
         raw: { first: null, second: null } });
+      expect(f.db.prepare("SELECT distill_started_at FROM source_revision WHERE id=?").get(revisionId)).toEqual({ distill_started_at: startedAt });
+      expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
+      expect(f.bodies.get(historicalSnapshotKey)).toBe(historicalSnapshot);
+      expect(f.bodies.get(historicalReportKey)).toBe(historicalReport);
+      expect(f.db.prepare("SELECT * FROM distill_history WHERE attempt_id=?").get(historicalId)).toEqual(historicalRow);
       for (const body of f.bodies.values()) expect(body).not.toContain(privateText);
     } finally { f.db.close(); vi.clearAllTimers(); timeout.mockRestore(); vi.useRealTimers(); }
   });

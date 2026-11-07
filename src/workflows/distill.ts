@@ -20,7 +20,7 @@ import type { Actor } from "../auth";
 import type { DistillReport, GlossaryEntry } from "../understanding";
 import { understandingKey, understandingWorkflowId, readUnderstandingClaims, type AttemptRevision } from "../understanding-attempts";
 
-const once = { retries: { limit: 0, delay: "1 second" }, timeout: "4 minutes" } as const;
+const once = { retries: { limit: 0, delay: "1 second" }, timeout: "7 minutes" } as const;
 const store = { retries: { limit: 2, delay: "1 second" }, timeout: "30 seconds" } as const;
 // Product recovery ceiling, not a Cloudflare platform limit. No model dispatch after it.
 const DISTILL_DEADLINE_MS = 15 * 60_000;
@@ -302,7 +302,7 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   if (!dispatch.meta.changes) throw new Error("This model call was already dispatched; it will not be repeated.");
   const artifactName = `distill-call${ordinal}.json`;
   let result: Awaited<ReturnType<typeof generateText>> | undefined;
-  const deadlineSignal = AbortSignal.timeout(Math.min(180_000, remaining));
+  const deadlineSignal = AbortSignal.timeout(Math.min(6 * 60_000, remaining));
   try {
     result = await generateText({ model: transport,
       instructions: modelInstructions, messages, output: Output.object({ schema }),
