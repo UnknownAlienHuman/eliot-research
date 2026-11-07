@@ -14,6 +14,12 @@ const total = (a: number | null, b: number | null) => a === null || b === null ?
 const storedCount = (value: string | undefined) => value === undefined || value === "unknown" ? null : count(Number(value));
 const safeFailure = (error: unknown) => error instanceof LibraryError ? error.message
   : "OCR could not finish. Saved output is retained; no paid call is retried.";
+async function checkpointPageUsage(env: Env, id: string, ordinal: number, metadata: {
+  inputTotal: string; cachedTotal: string; outputTotal: string;
+}) {
+  await env.DB.prepare("UPDATE source_ocr_job SET input_tokens=?,cached_tokens=?,output_tokens=?,updated_at=? WHERE id=? AND calls=? AND completed_pages=?")
+    .bind(storedCount(metadata.inputTotal), storedCount(metadata.cachedTotal), storedCount(metadata.outputTotal), Date.now(), id, ordinal, ordinal - 1).run();
+}
 async function retainStepFailure<T>(env: Env, id: string, operation: () => Promise<T>): Promise<T> {
   try { return await operation(); }
   catch (error) {
@@ -98,10 +104,11 @@ async function runPage(env: Env, id: string, ordinal: number): Promise<number> {
   try { await putOcrArtifact(env, outputKey, generated.text, metadata); }
   catch (error) {
     // Known usage survives an output-storage failure, without claiming page progress.
-    await env.DB.prepare("UPDATE source_ocr_job SET input_tokens=?,cached_tokens=?,output_tokens=?,updated_at=? WHERE id=? AND calls=? AND completed_pages=?")
-      .bind(storedCount(metadata.inputTotal), storedCount(metadata.cachedTotal), storedCount(metadata.outputTotal), Date.now(), id, ordinal, ordinal - 1).run();
+    await checkpointPageUsage(env, id, ordinal, metadata);
     throw error instanceof LibraryError ? error : fail("OCR page output could not be stored. No paid call will be repeated.");
   }
+  // Persist cumulative usage while the page result is in hand; this guarded SET is safe to replay.
+  await checkpointPageUsage(env, id, ordinal, metadata);
   const object = await env.BUCKET.get(outputKey);
   if (!object) throw fail("OCR page output was not retained.");
   await settlePage(env, job, ordinal, object);

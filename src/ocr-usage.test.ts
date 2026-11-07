@@ -16,7 +16,10 @@ vi.mock("./model-transport", async () => ({
 }));
 
 import { generateText } from "ai";
+import type { Actor } from "./auth";
 import { LibraryError } from "./library";
+import { resolveModelTransport } from "./model-transport";
+import { getOcrJob } from "./ocr";
 import { OcrWorkflow } from "./workflows/ocr";
 
 const prefix = "source/revision/ocr/job/";
@@ -25,12 +28,20 @@ function fixture({ pageCount = 2, state = "failed", calls = 1, completedPages = 
   pageCount?: number; state?: "running" | "failed"; calls?: number; completedPages?: number; error?: string | null;
 } = {}) {
   const db = new DatabaseSync(":memory:", { enableForeignKeyConstraints: false });
+  db.exec(readFileSync(new URL("../migrations/0001_library.sql", import.meta.url), "utf8"));
   db.exec(readFileSync(new URL("../migrations/0010_source_ocr.sql", import.meta.url), "utf8"));
+  db.prepare("INSERT INTO project(id,title,created_at,updated_at) VALUES('project','OCR fixture',0,0)").run();
+  db.prepare("INSERT INTO source(id,title,kind,created_by,created_at,updated_at) VALUES('source','OCR fixture','file','owner',0,0)").run();
+  db.prepare("INSERT INTO source_revision(id,source_id,revision_no,original_key,original_sha256,original_size,original_mime,readable_state,created_by,created_at) "
+    + "VALUES('revision','source',1,'source/revision/original','fixture',1,'application/pdf','readable','owner',0)").run();
+  db.prepare("UPDATE source SET current_revision_id='revision' WHERE id='source'").run();
+  db.prepare("INSERT INTO project_source(project_id,source_id,added_by,added_at) VALUES('project','source','owner',0)").run();
   db.prepare("INSERT INTO source_ocr_job(id,project_id,source_id,base_revision_id,model_route,model_snapshot,page_count,state,calls,completed_pages,"
     + "token_limit,input_tokens,cached_tokens,output_tokens,error,deadline_at,created_by,created_at,updated_at) "
     + "VALUES('job','project','source','revision','fixture','{}',?,?,?,?,?,NULL,NULL,NULL,?,?,'owner',0,0)")
     .run(pageCount, state, calls, completedPages, pageCount * 4096, error, Date.now() + 60_000);
   const settled: unknown[] = [], objects = new Map<string, SavedObject>();
+  let readFailureAfterPut: { key: string; error: unknown } | null = null, readFailureCount = 0;
   const progress = () => db.prepare("SELECT state,error,calls,completed_pages,input_tokens,cached_tokens,output_tokens FROM source_ocr_job WHERE id='job'").get();
   const prepare = vi.fn((sql: string) => ({ bind: (...args: SQLInputValue[]) => ({
     first: async () => db.prepare(sql).get(...args) ?? null,
@@ -41,6 +52,12 @@ function fixture({ pageCount = 2, state = "failed", calls = 1, completedPages = 
     },
   }) }));
   const get = vi.fn(async (key: string) => {
+    if (readFailureAfterPut?.key === key && objects.has(key)) {
+      const failure = readFailureAfterPut.error;
+      readFailureAfterPut = null;
+      readFailureCount++;
+      throw failure;
+    }
     const object = objects.get(key);
     return object ? { customMetadata: object.customMetadata, size: object.bytes.length,
       arrayBuffer: async () => object.bytes.buffer,
@@ -63,11 +80,12 @@ function fixture({ pageCount = 2, state = "failed", calls = 1, completedPages = 
     if (!object) throw new Error("OCR report was not retained.");
     return JSON.parse(new TextDecoder().decode(object.bytes)) as Record<string, unknown>;
   };
-  return { db, env, settled, progress, prepare, objects, get, put, save, report };
+  const failReadAfterPut = (key: string, error: unknown) => { readFailureAfterPut = { key, error }; };
+  return { db, env, settled, progress, prepare, objects, get, put, save, report, failReadAfterPut, readFailureCount: () => readFailureCount };
 }
 beforeEach(() => { vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation")); });
 
-it("settles saved page usage after terminal failure without reviving the job or dispatching its next page", async () => {
+it("settles saved page usage once after terminal failure without reviving the job or dispatching its next page", async () => {
   const f = fixture();
   f.save("page-1.md", "Saved OCR page.", { finish: "stop", failure: "",
     inputTotal: "120", cachedTotal: "5", outputTotal: "30" });
@@ -78,8 +96,10 @@ it("settles saved page usage after terminal failure without reviving the job or 
     // Replay the completed begin step; page 1 was dispatched before the job failed.
     name === "begin OCR" ? 2 : callback());
   try {
-    await new OcrWorkflow({} as never, f.env).run({ payload: { jobId: "job" } } as WorkflowEvent<{ jobId: string }>,
+    const run = () => new OcrWorkflow({} as never, f.env).run({ payload: { jobId: "job" } } as WorkflowEvent<{ jobId: string }>,
       { do: stepDo } as unknown as WorkflowStep);
+    await run();
+    await run();
 
     expect(f.settled).toEqual([{ state: "failed", error: "Deadline elapsed", calls: 1, completed_pages: 1,
       input_tokens: 120, cached_tokens: 5, output_tokens: 30 }]);
@@ -90,6 +110,47 @@ it("settles saved page usage after terminal failure without reviving the job or 
     expect(stepDo.mock.calls.some(([name]) => name === "OCR page 2")).toBe(true);
     expect(f.prepare.mock.calls.some(([sql]) => sql.includes("SET calls=calls+1"))).toBe(false);
     expect(generateText).not.toHaveBeenCalled();
+  } finally { f.db.close(); }
+});
+
+it("retains known usage when page artifact readback fails after PUT and fails without continuing", async () => {
+  const f = fixture({ state: "running", calls: 0, completedPages: 0, error: null });
+  const model = { route: "gateway:fixture/vision", id: "fixture/vision", label: "Fixture OCR", contextTokens: 4096,
+    maxOutputTokens: 4096, outputReserveTokens: 4096, supportsImages: true, enabled: true };
+  const image = f.save("page-1.png", "fixture image bytes");
+  f.db.prepare("UPDATE source_ocr_job SET pages_json=?,model_route=?,model_snapshot=?,token_limit=?,input_tokens=0,cached_tokens=0,output_tokens=0 WHERE id='job'")
+    .run(JSON.stringify({ 1: { sha256: image.customMetadata.sha256, bytes: image.bytes.length, width: 1, height: 1 } }),
+      model.route, JSON.stringify(model), 2 * (model.contextTokens + model.outputReserveTokens));
+  vi.mocked(resolveModelTransport).mockReset().mockResolvedValue({} as never);
+  vi.mocked(generateText).mockReset().mockResolvedValue({ text: "Transcribed page", finishReason: "stop",
+    totalUsage: { inputTokens: 120, inputTokenDetails: { cacheReadTokens: 5 }, outputTokens: 30 } } as never);
+  const reason = new LibraryError("unavailable", "Stored OCR page readback failed.", 503);
+  f.failReadAfterPut(prefix + "page-1.md", reason);
+  const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) =>
+    name === "begin OCR" ? 2 : callback());
+
+  try {
+    await new OcrWorkflow({} as never, f.env).run({ payload: { jobId: "job" } } as WorkflowEvent<{ jobId: string }>,
+      { do: stepDo } as unknown as WorkflowStep);
+
+    const expected = { state: "failed", error: reason.message, calls: 1, completed_pages: 0,
+      input_tokens: 120, cached_tokens: 5, output_tokens: 30 };
+    expect(f.readFailureCount()).toBe(1);
+    expect(f.progress()).toEqual(expected);
+    expect(f.report()).toMatchObject({ state: "failed", error: reason.message, calls: 1, completedPages: 0,
+      inputTokens: 120, cachedTokens: 5, outputTokens: 30 });
+    expect(f.objects.get(prefix + "page-1.md")?.customMetadata).toMatchObject({
+      inputTotal: "120", cachedTotal: "5", outputTotal: "30", finish: "stop", failure: "",
+    });
+    expect(f.objects.has(prefix + "preview.md")).toBe(false);
+    const ownerJob = await getOcrJob(f.env, { type: "owner" } as Actor, { projectId: "project", sourceId: "source", jobId: "job" });
+    expect(ownerJob).toMatchObject({ state: "failed", calls: 1, completedPages: 0, error: reason.message,
+      inputTokens: 120, cachedTokens: 5, outputTokens: 30 });
+    expect(f.put.mock.calls.map(([key]) => key)).toEqual([prefix + "page-1.md", prefix + "report.json"]);
+    expect(stepDo.mock.calls.some(([name]) => name === "OCR page 2" || name === "assemble OCR preview")).toBe(false);
+    expect(f.prepare.mock.calls.filter(([sql]) => sql.includes("SET calls=calls+1"))).toHaveLength(1);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(resolveModelTransport)).toHaveBeenCalledTimes(1);
   } finally { f.db.close(); }
 });
 
@@ -161,7 +222,8 @@ it.each([
       { do: stepDo } as unknown as WorkflowStep);
 
     expect(atBoundary).toEqual([expect.objectContaining({ error: expected, calls: 1, completed_pages: 0 })]);
-    expect(f.progress()).toMatchObject({ state: "failed", error: expected, calls: 1, completed_pages: 0 });
+    expect(f.progress()).toMatchObject({ state: "failed", error: expected, calls: 1, completed_pages: 0,
+      input_tokens: null, cached_tokens: null, output_tokens: null });
     expect(f.report()).toMatchObject({ state: "failed", error: expected, calls: 1, completedPages: 0 });
     const retained = JSON.stringify(f.progress()) + [...f.objects.values()].map((object) => new TextDecoder().decode(object.bytes)).join("\n");
     expect(retained).not.toContain("synthetic-provider-body");
