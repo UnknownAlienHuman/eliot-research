@@ -376,8 +376,14 @@ re-distilled automatically.
    no replay/partial streams or eager content getters, and only final strict `onEnd.output` may be stored. The full
    unchanged schema remains in the prompt/input estimate while upstream JSON Mode is omitted. Existing 16 MiB,
    admission/call/time/error/unknown-usage guards remain; reported usage survives invalid/interrupted output. Many
-   small chunks test the public single-consumer contract, not exact V8 heap retention. Earlier HTTP 408 cause and
-   real delivery/semantic qualification remain open. External generation and native chat/OCR are unchanged.
+   small chunks test the public single-consumer contract, not exact V8 heap retention. A Nov 7 one-call control recorded
+   288,119 ms, 15,071 input / 20,133 output / 0 cached / 35,204 total tokens and no HTTP 408, then failed generically
+   before call two; absent final text/flags leave its cause UNKNOWN. Future final-parser failures retain fixed safe
+   syntax/schema/empty-text categories through the same one-pass public validator, separately from finish failures.
+   Schema details are limited to the first actual Zod issue code and a schema-owned top-level field; raw finish may
+   expose only the fixed known `stream-truncated` subreason, with all other data/messages omitted.
+   Historical output is unchanged. Earlier HTTP 408 cause and delivery/semantic qualification remain open; this is not
+   K3 acceptance or a global HTTP 408 fix. External generation and native chat/OCR are unchanged.
    Labelled canonical text produces atomic claim cards, draft guide and at most twelve
    glossary candidates. Fresh guide items declare source labels, a required scope array of zero or one non-null
    combined domain clause (at most 300 characters, with subset source labels) and one coherent assertion (at most 800 characters). Before review,

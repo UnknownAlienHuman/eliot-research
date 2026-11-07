@@ -1,7 +1,7 @@
 import { numbersSupported } from "../numbers";
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import { NoObjectGeneratedError, NoOutputGeneratedError, generateText, experimental_streamTextLowMemory, Output } from "ai";
+import { JSONParseError, TypeValidationError, NoObjectGeneratedError, NoOutputGeneratedError, generateText, experimental_streamTextLowMemory, Output } from "ai";
 import type { JSONObject } from "@ai-sdk/provider";
 import { z } from "zod";
 import { isCitableBlock, type Block } from "../blocks";
@@ -318,11 +318,29 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   let result: Awaited<ReturnType<typeof generateText>> | undefined;
   const streamed: { usage: GeneratedUsage | undefined; finishReason: string | null } | undefined = native ? { usage: undefined, finishReason: null } : undefined;
   let responseBudgetExceeded = false;
+  let nativeValidationCause: string | undefined;
   const deadlineSignal = AbortSignal.timeout(Math.min(6 * 60_000, remaining));
   try {
     if (streamed) {
-      let output: T | undefined, streamError: unknown, complete = false;
-      const response = experimental_streamTextLowMemory({ model: transport, instructions: modelInstructions, messages, output: Output.object({ schema }),
+      let output: T | undefined, streamError: unknown, complete = false, streamTruncated = false;
+      const objectOutput = Output.object({ schema });
+      const observedOutput = { ...objectOutput, async parseCompleteOutput(...args: Parameters<typeof objectOutput.parseCompleteOutput>) {
+        if (!/\S/u.test(args[0].text)) nativeValidationCause = "Native final output contained no text.";
+        try { return await objectOutput.parseCompleteOutput(...args); }
+        catch (error) {
+          const cause = NoObjectGeneratedError.isInstance(error) ? error.cause : error;
+          nativeValidationCause ??= JSONParseError.isInstance(cause) ? "Native final output could not be parsed as JSON."
+            : TypeValidationError.isInstance(cause) ? "Native final JSON did not match the required schema."
+            : "Native final output validation failed (unclassified SDK error).";
+          if (TypeValidationError.isInstance(cause) && cause.cause instanceof z.ZodError) {
+            const issue = cause.cause.issues[0], field = issue?.path[0];
+            if (issue && typeof field === "string" && jsonSchema.properties && Object.hasOwn(jsonSchema.properties, field))
+              nativeValidationCause += ` Field: ${field}; code: ${issue.code}.`;
+          }
+          throw error;
+        }
+      } };
+      const response = experimental_streamTextLowMemory({ model: transport, instructions: modelInstructions, messages, output: observedOutput,
         ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0, streamRetries: 0,
         ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: deadlineSignal,
         // Charge before SDK text/partial parsing; the single consumer retains no replay snapshots.
@@ -340,6 +358,7 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
           if (chunk.type !== "finish-step") return;
           streamed.finishReason = chunk.finishReason;
           streamed.usage = chunk.usage.raw ? chunk.usage : undefined;
+          streamTruncated = chunk.rawFinishReason === "stream-truncated";
           complete = chunk.finishReason === "stop" && chunk.rawFinishReason !== undefined;
         },
         onEnd: event => { output = event.output; },
@@ -347,8 +366,15 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
       });
       await response.consumeStream({ onError: error => { streamError ??= error; } });
       deadlineSignal.throwIfAborted();
+      if (!complete) nativeValidationCause = streamed.finishReason === "length" ? "model reached output bound before complete output"
+        : streamed.finishReason === null || streamed.finishReason === "stop" ? "Native output is missing an explicit normal finish."
+        : streamTruncated ? "Native output ended with a non-normal finish (stream-truncated)."
+        : "Native output ended with a non-normal finish.";
       if (streamError !== undefined) throw streamError;
-      if (!complete || output === undefined) throw new NoOutputGeneratedError({ message: "The native stream did not produce complete validated output." });
+      if (!complete || output === undefined) {
+        nativeValidationCause ??= "Native final validation result is unavailable.";
+        throw new NoOutputGeneratedError({ message: "The native stream did not produce complete validated output." });
+      }
       return { output, usage: toStoredUsage(streamed.usage, tokenLimit, tokenLimitKind) };
     }
     result = await generateText({ model: transport,
@@ -369,8 +395,8 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
     if (responseBudgetExceeded) {
       failure = "Local response materialization budget exceeded. No retry was started.";
     } else if (detail) {
-      failure = detail.finishReason === "length" ? "model reached output bound before complete output"
-        : "model returned incomplete or invalid structured output";
+      failure = nativeValidationCause ?? (detail.finishReason === "length" ? "model reached output bound before complete output"
+        : "model returned incomplete or invalid structured output");
     } else {
       // Provider errors can contain credentials; retain only the fixed safe projection.
       failure = localDeadlineObserved ? "Local model-call deadline expiry observed. No retry was started." : modelFailure(error, model);

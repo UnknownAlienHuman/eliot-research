@@ -562,7 +562,21 @@ the same owned deadline through full consumption and final validation. A local r
 fixed local reason rather than becoming a provider error. No manual collector, JSON/SSE parser or repair call is added.
 The offline many-small-chunk regression verifies the public single-consumer/no-replay boundary, final callback,
 strict schema and reported usage; it does not measure V8 heap bytes or independently prove the SDK's exact retained
-memory. This delivery experiment is unqualified until a real run; the cause of earlier HTTP 408s remains unknown.
+memory. Delivery and semantic qualification remain open; the cause of earlier HTTP 408s remains unknown.
+The 2026-11-07 one-call native control `dcecc316…` on `d461…` recorded 288,119 ms and provider-reported
+15,071 input / 20,133 output / 0 cached / 35,204 total tokens, with no HTTP 408 observed in that control.
+It failed with the generic incomplete/invalid structured-output reason before call two. Final text and finish flags
+were not retained, so its specific cause is UNKNOWN; this does not establish invalid JSON, a global HTTP 408 fix or
+K3 acceptance. That result and its history are not rewritten or regraded.
+For future attempts, the existing public `Output.object.parseCompleteOutput` is delegated exactly once. Its public
+JSON-parse/schema-validation error classes and an observed blank final text supply fixed safe categories; absent or
+non-normal finish is classified separately without weakening its guard. The fixed `stream-truncated` subreason is
+included only when the public raw finish equals that adapter constant. SDK-swallowed final-parse errors therefore
+reach the existing `distill_error`/report/reader rather than an undifferentiated failure. No extra parse, validation,
+repair call or raw record field is added. A public TypeValidationError with an actual ZodError cause may additionally
+retain only its first issue code and top-level field, and only if that field is an own property of the generated
+schema's `properties`; otherwise the schema reason stays generic. No model text, reasoning, arbitrary response keys,
+values, full paths, exception messages, request headers or bodies are retained; unknown SDK errors stay unclassified.
 
 Fresh call one and call two use raw marker `claim-plan-guide-v4`, also recorded on the new verified artifact.
 `Verified.guideCandidates` keeps the existing frozen representation with original H0–H4

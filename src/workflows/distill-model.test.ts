@@ -231,9 +231,11 @@ function finished(f: ReturnType<typeof fixture>, error: string) {
 }
 
 describe("DistillWorkflow admitted model snapshot", () => {
-  it.each(["valid", "invalid final schema", "reported usage then failure", "missing finish", "length with valid output", "SDK placeholder zeros", "response budget"] as const)(
+  it.each(["valid", "malformed final JSON", "invalid final schema", "no final text", "reported usage then failure", "missing finish", "length with valid output", "SDK placeholder zeros", "response budget"] as const)(
     "stores only final native onEnd output and preserves usage/guards: %s", async mode => {
-      const model: ModelSpec = { ...snapshot, route: "workers-ai:fixture", id: "fixture", nativeReasoningEffort: "high" };
+      const realParser = ["valid", "malformed final JSON", "invalid final schema", "no final text", "missing finish"].includes(mode);
+      const id = realParser ? "@cf/zai-org/glm-5.3-flash" : "fixture";
+      const model: ModelSpec = { ...snapshot, route: "workers-ai:" + id, id, nativeReasoningEffort: "high" };
       delete model.responseFormat;
       const f = fixture(model.route);
       f.db.prepare("UPDATE source_revision SET distill_token_limit_kind='unknown',distill_token_limit=NULL WHERE id=?").run(revisionId);
@@ -242,11 +244,12 @@ describe("DistillWorkflow admitted model snapshot", () => {
         guide: ["The method uses normalization.", "The source retains its passage.", "The source describes a method."]
           .map(assertion => ({ labels: ["[S1:1]"], scope: [], assertion })), glossary: [], questions: ["Which method?", "Which evidence?", "Which passage?"] };
       const second = { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"], supportedGlossary: [], digestPlan: { C0: "methods" } };
-      const unknown = mode === "SDK placeholder zeros" || mode === "missing finish";
+      const unknown = mode === "SDK placeholder zeros";
       const usage = { inputTokens: unknown ? 0 : 71, outputTokens: unknown ? 0 : 19, inputTokenDetails: { cacheReadTokens: 0 },
         ...(unknown ? {} : { raw: { prompt_tokens: 71, completion_tokens: 19, prompt_tokens_details: { cached_tokens: 0 } } }) };
       const privateText = "Private provider details must not escape";
-      let ordinal = 0, acceptedChunks = 0;
+      const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+      let ordinal = 0, acceptedChunks = 0, finalParses = 0, bindingCalls = 0;
       vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
       vi.mocked(modelFailure).mockReturnValue("Model stream failed (HTTP 408).");
       vi.mocked(experimental_streamTextLowMemory).mockImplementation(options => {
@@ -270,6 +273,27 @@ describe("DistillWorkflow admitted model snapshot", () => {
           await options.onEnd({ output: mode === "invalid final schema" ? undefined : output, totalUsage: usage } as never);
         } } as never;
       });
+      if (realParser) {
+        const sdk = await vi.importActual<typeof AISDK>("ai");
+        const transport = await vi.importActual<typeof ModelTransport>("../model-transport");
+        vi.mocked(experimental_streamTextLowMemory).mockImplementation(sdk.experimental_streamTextLowMemory);
+        vi.mocked(resolveModelTransport).mockImplementation(transport.resolveModelTransport);
+        vi.mocked(Output.object).mockImplementation(options => {
+          const spec = sdk.Output.object(options);
+          return { ...spec, parseCompleteOutput: (...args: Parameters<typeof spec.parseCompleteOutput>) => { finalParses++; return spec.parseCompleteOutput(...args); } };
+        });
+        Object.assign(f.env, { AI: { run: async () => {
+          bindingCalls++;
+          const output = bindingCalls === 1 ? first : second;
+          const content = mode === "malformed final JSON" ? '{"claims":' + privateText : mode === "no final text" ? ""
+            : JSON.stringify(mode === "invalid final schema" ? { ...first, questions: privateText, [privateText]: privateText } : output);
+          const frame = (value: unknown) => "data: " + JSON.stringify(value) + "\n\n";
+          let body = frame({ choices: [{ index: 0, delta: { content }, finish_reason: null }] })
+            + frame({ choices: [], usage: usage.raw });
+          if (mode !== "missing finish") body += frame({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }) + "data: [DONE]\n\n";
+          return new Response(body, { headers: { "content-type": "text/event-stream" } });
+        } } });
+      }
       try {
         await run(f, true, model);
         const succeeds = mode === "valid" || mode === "SDK placeholder zeros";
@@ -296,8 +320,25 @@ describe("DistillWorkflow admitted model snapshot", () => {
         }
         if (mode === "reported usage then failure") expect(report.error).toBe("Model stream failed (HTTP 408).");
         if (mode === "length with valid output") expect(report.error).toBe("model reached output bound before complete output");
+        if (realParser) {
+          expect(bindingCalls).toBe(mode === "valid" ? 2 : 1); expect(finalParses).toBe(mode === "valid" ? 2 : 1); expect(modelFailure).not.toHaveBeenCalled();
+          expect(network).not.toHaveBeenCalled();
+          if (mode === "valid") {
+            expect(report).toMatchObject({ state: "done", error: null, kept: 1, usage: { calls: 2, inputTokens: 142, outputTokens: 38, cachedTokens: 0 } });
+            expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null")).toMatchObject({ format: "claim-plan-guide-v4", output: second,
+              usage: { inputTokens: 71, outputTokens: 19, cachedTokens: 0 } });
+            expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,claim_count AS kept,distill_input_tokens AS inputTokens,distill_output_tokens AS outputTokens,distill_cached_tokens AS cachedTokens FROM source_revision WHERE id=?").get(revisionId))
+              .toEqual({ state: "done", calls: 2, kept: 1, inputTokens: 142, outputTokens: 38, cachedTokens: 0 });
+          } else {
+            const expected = mode === "malformed final JSON" ? "Native final output could not be parsed as JSON."
+              : mode === "invalid final schema" ? "Native final JSON did not match the required schema. Field: questions; code: invalid_type."
+              : mode === "no final text" ? "Native final output contained no text." : "Native output ended with a non-normal finish (stream-truncated).";
+            expect(report.error).toBe(expected);
+            expect(f.db.prepare("SELECT distill_error AS error FROM source_revision WHERE id=?").get(revisionId)).toEqual({ error: expected });
+          }
+        }
         for (const body of f.bodies.values()) expect(body).not.toContain(privateText);
-      } finally { f.db.close(); }
+      } finally { if (realParser) vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
     });
 
   it.each(["scanner >400k", "legacy >4096-byte block"])("completes both synthetic producers and actual verify/store for %s", async (shape) => {
