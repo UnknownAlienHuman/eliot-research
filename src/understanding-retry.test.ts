@@ -107,8 +107,9 @@ describe("explicit understanding retry", () => {
       const previous = await getUnderstanding(f.env, actor, { sourceId, revisionId });
       const extraction = JSON.parse(f.bodies.get(`source/${revisionId}/distill-call1.json`) ?? "null").output;
       extraction.glossary = [];
+      extraction.guide = extraction.guide.map((item: { labels: string[]; text: string }) => ({ ...item, qualifiers: [] }));
       const synthesis = {
-        supportedClaims: ["C0"], additionalClaims: [], guide: extraction.guide,
+        supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"],
         digestPlan: { methods: ["C0"], findings: [], limits: [] },
         supportedGlossary: [],
       };

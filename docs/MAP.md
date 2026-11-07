@@ -363,10 +363,17 @@ re-distilled automatically.
    models. Reload and Save existing output remain storage only. Unknown retry replies retain the same request across
    reload/remount; a successful read of its old predecessor cannot authorize a different retry ID. A durable rejected intent enables a fresh explicit model choice without an in-flight duplicate later accepting that rejected ID.
 4. Use at most two bounded calls: labelled canonical text produces atomic claim cards, draft guide and at most twelve
+   glossary candidates. Fresh guide items declare source labels and bounded qualifying phrases with their own labels
+   before complete owner text. Code checks phrase content/references/numbers against its own declared quotes, subset
+   label scope and intact whitespace-normalized inclusion in that text, freezing whole units as original H0–H4 IDs
+   through drops. Fresh `claim-plan-guide-v1` call two selects whole supported H units without rewriting; semantic
+   review must reject missing/wrong source qualifiers even when the declared array is empty. Final code rechecks and
+   copies complete text/bindings into guide Markdown. DONE requires 3–5 actual sentences; insufficient, ambiguous or
+   over-five coverage stays readable PARTIAL without trimming, and the guide must remain nonempty. It also freezes
    glossary candidates with `{labels,en,ru,definition}`; code verifies quotes/ranges/numbers. Candidate glossary IDs
    are frozen as their original G0–G11 indexes before invalid candidates are dropped, leaving intentional gaps. Fresh
-   call two uses `claim-plan-glossary-v1` when those candidates exist and returns `supportedGlossary` G IDs only; it
-   does not rewrite glossary entries. Code rechecks and copies each selected frozen candidate with its original
+   call two returns `supportedGlossary` G IDs only; retained `claim-plan-glossary-v1` continues old verified artifacts
+   without H candidates. It does not rewrite glossary entries. Code rechecks and copies each selected frozen candidate with its original
    citation binding. Russian mathematical definitions name source objects/symbols and operands explicitly, preserving
    operation/composition/sum relationships and conditions; call-two selection must reject whole units with unsupported
    roles or ambiguous referents without rewriting them. The same response uses an ordered methods/findings/limits
@@ -419,6 +426,10 @@ re-distilled automatically.
   also be supported by that quote; numeric occurrence alone does not pass the semantic quality gate.
 - A result's `valueText` contains at most one numeric quantity. Compound lists are rejected rather than split or
   silently retained with `valueNumber=null`; scientific notation remains one quantity.
+- `valueText`/`unit` hold only the primary result scalar and its unit/scale; non-result kinds require both to be null,
+  with formulas/configurations in statement/conditions and secondary results in separate cards. Code rejects whole
+  cards with non-result measurement fields or semicolon-separated measurement clauses before synthesis and at final
+  rechecks, preserving scientific/dimensional/normalization units. Other field-role semantics remain call-two review.
 - Formatting preserves the selected statement's qualifiers and conditions. Missing structured numeric context rejects
   the card rather than rewriting it into a bare scalar; the primary numeric value must occur in the stored statement.
 - Transformer, ResNet and LoRA anchor expectations in `eval/arxiv-10/questions.md` are present with correct conditions;
@@ -442,7 +453,7 @@ re-distilled automatically.
 
 K3 is not fully accepted or deployed. Historical retained runs recorded the ten baseline papers as `done`, an
 unchanged-revision reuse with no new inference, and four overflow answers in `claims` mode. Those runs predate the
-current `claim-plan-glossary-v1` producer and do not qualify the exact current baseline corpus or producer. Required
+current `claim-plan-guide-v1` producer and do not qualify the exact current baseline corpus or producer. Required
 conditions for the French Transformer result and some LoRA anchors remain unresolved; statement-local numeric,
 citation and semantic-support gates remain open. Storage-only Save/recheck does not dispatch inference and does not
 qualify K3.
@@ -466,7 +477,7 @@ an unmatched backtick inside a fence cannot mask later prose references. Quote v
 bytes and folds only fallback slices; this reduces repeated work without changing evidence or quality gates.
 Repair defective PDF text only through the existing reviewed OCR/immutable Apply path; preserve old bytes and citations.
 For correct input, keep candidate statements atomic and complete, then review each against its own frozen evidence
-within the existing two calls. Fresh `claim-plan-glossary-v1` selects original G0–G11 glossary candidates by ID and
+within the existing two calls. Fresh `claim-plan-guide-v1` selects original qualified H0–H4 guide and G0–G11 glossary candidates by ID and
 rechecks the copied `{labels,en,ru,definition}` units; fresh claim-plan digests use the closed C/A indexes above.
 `claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without glossary candidates, while
 markerless cached output retains the full legacy prose path. These producer checks do not establish semantic support

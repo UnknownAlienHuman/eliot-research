@@ -543,13 +543,18 @@ not model quality or paid-step replay.
 
 `DistillWorkflow` uses two bounded calls:
 
-1. Labelled canonical text → candidate claims, draft guide, 3–5 questions and at most twelve glossary candidates shaped
+1. Labelled canonical text → candidate claims, complete qualified guide candidates, 3–5 questions and at most twelve glossary candidates shaped
    `{ labels, en, ru, definition }`. The first verifier freezes each accepted candidate with its original G0–G11
    index before dropped entries can leave gaps.
-2. Verified excerpts → supported claim selection, final guide, digest selection and, for frozen glossary candidates,
+2. Verified excerpts → supported claim selection, whole guide-unit selection, digest selection and, for frozen glossary candidates,
    a glossary selection.
 
-Fresh call two uses raw marker `claim-plan-glossary-v1` when `Verified.glossaryCandidates` exists. It returns strict
+Fresh call one and call two use raw marker `claim-plan-guide-v1`. `Verified.guideCandidates` freezes original H0–H4
+identities, complete text, qualifiers and source labels. Call two returns strict `supportedGuide` IDs, not replacement
+guide prose. Missing/malformed, unknown or duplicate selections reject the fresh plan without a prose fallback.
+Legacy verified artifacts without H candidates continue the previous producer: `claim-plan-glossary-v1` selects
+frozen glossary candidates, while `claim-plan-v1` also retains prose glossary generation when those candidates are absent.
+Fresh call two and the retained `claim-plan-glossary-v1` branch return strict
 `supportedGlossary` G IDs only, not replacement glossary text; code maps those IDs to the frozen original candidates,
 rechecks labels/content/numbers, and copies the complete `{ labels, en, ru, definition }` units with their exact
 selected-label binding converted to persistent revision citations. G IDs remain their original extraction indexes;
@@ -581,16 +586,23 @@ the model does not transcribe canonical evidence. Claim quote/range and numeric 
 and a statement that adds numbers absent from it is rejected. Each call-two candidate carries that exact verified quote
 beside its statement and structured fields; `quoteBlock` remains its source identity.
 
-Draft guide items use `{ labels, text }`, with the closed `labels` array of 1–4 source-block selections before `text`.
-Code resolves every declared label to its exact canonical block and checks references and numbers against only the
-union of those selected quotes. It splits authored prose and retains at most the first numerically supported sentence
-per item, yielding at most five draft sentences; an early paragraph cannot consume the whole guide allowance.
-`Verified.guide` retains these `{ labels, text }` records as hypotheses. Call two receives them directly alongside
-candidate claims with their own exact quotes, plus the original excerpts as the sole
-evidence. The retained excerpt pool is exactly the union of declared claim `quoteBlock` selections, guide `labels` and original
-valid declared glossary-candidate labels. Valid labels from candidates later dropped by numeric/content checks remain
-in that pool; code adds no inferred evidence bindings. Final guide items use `{ labels, text }`.
-Glossary candidates use `{ labels, en, ru, definition }`; fresh `claim-plan-glossary-v1` call two sees those frozen
+Fresh guide items declare `{ labels, qualifiers: [{ labels, text }], text }` in that order: 1–4 source-block labels,
+at most eight qualifying phrases, then the complete owner-facing text. Every qualifier's labels must be a subset of
+the item's labels. Each phrase requires meaningful content and reference/numeric support from only its own declared
+quotes, and must occur intact in the complete draft text after whitespace normalization. The whole draft text is
+checked against its declared canonical quotes; a failed unit is dropped without clipping or rewriting. H IDs retain
+their original call-one indexes through drops. Call two receives each frozen unit with its exact original excerpts
+and must reject missing/wrong source scope, conditions, comparisons or limitations even when `qualifiers` is empty.
+Declared phrase retention is structural verification, not proof of semantic completeness.
+Final code rechecks selected complete units and copies their text and original bindings into the existing public
+guide Markdown, converting only declared citations to persistent labels. It counts all actual sentences without
+trimming text: fewer than three, more than five or ambiguous markup stays readable `partial`; an empty guide fails.
+The retained excerpt pool remains the union of declared claim `quoteBlock` selections, guide `labels` and original
+valid glossary-candidate labels, including valid selections from later dropped candidates. No bindings are inferred.
+Legacy raw call one without the new marker retains its old first-supported-sentence verifier; legacy verified/cached
+prose guide paths keep their existing GET/history/Save behavior. Missing qualifiers are never treated as a fresh empty
+array, and historical H/C/G identities are never synthesized or renumbered.
+Glossary candidates use `{ labels, en, ru, definition }`; fresh `claim-plan-guide-v1` and retained `claim-plan-glossary-v1` call two see those frozen
 units with their exact excerpts and returns only `supportedGlossary` G IDs. Code rechecks the selected full candidates
 and copies their fields and label bindings; it does not request, accept or substitute free glossary prose in this
 branch. `claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without frozen glossary
@@ -610,6 +622,13 @@ The `dataset` field names only a reported dataset, corpus or benchmark, never a 
 when no such data identity is stated. Source-stated model/configuration and other qualifiers belong in `conditions`.
 Extraction and additional-claim schema descriptions and generation share that role contract. Call two must reject a
 candidate with wrong field roles even when its literal field values occur in the quote; it does not reassign fields.
+`valueText` is the primary reported scalar and `unit` only its unit/scale; secondary results require separate cards.
+Both fields must be `null` for non-result kinds; source-stated formulas/configurations stay in statement/conditions.
+Extraction and additional-claim schemas and prompts share these roles, and call-two review rejects wrong roles.
+Before call-two candidate creation and during final retained/additional rechecks, code rejects whole cards with
+non-null non-result measurement fields or multiple nonblank semicolon-separated clauses in `valueText`/`unit`, rather
+than clearing or rewriting them. This delimiter check preserves scientific, dimensional and normalization units;
+it is not a general unit parser or semantic classifier. Existing scalar numeric-support checks remain unchanged.
 Fresh candidates that already fail the scalar-result projection are excluded before the second call. Their originally
 selected source blocks remain in the same declared evidence pool; code neither splits a compound candidate nor creates
 facts from it. Historical verified candidate IDs are not recomputed during cached-output rechecks.
@@ -671,7 +690,8 @@ filtering and remains diagnostic. `partial` records a missing required component
 not a nonzero drop percentage. The same exact-quote, numeric-support and anchor gates apply to both states.
 In particular, a nonempty validated final guide and zero-claim `partialDigest` may be stored as `partial`; missing
 claims alone must not discard those readable artifacts. Zero claims never produces `done`: both normal finish and storage-only
-Save available output require at least three guide sentences and at least one kept final claim for `done`. Only the
+Save available output require at least three guide sentences and at least one kept final claim for `done`; fresh H-unit
+guides require three to five actual sentences and retain whole overlong units as `partial`. Only the
 second call's supported selections/additions become cards; first-call draft candidates are never promoted to fill an
 empty final claim set. A readable zero-claim partial result is not full K3 acceptance or proof of semantic quality.
 Known empty claim statements (whitespace or punctuation/formatting wrappers around declared references) do not count

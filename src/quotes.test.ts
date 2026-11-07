@@ -28,6 +28,37 @@ function claim(overrides: Partial<CandidateClaim> & { quote: string; block: numb
 }
 
 describe("verifyClaims", () => {
+  it.each([
+    { kind: "method", valueText: "A ~ N(0, σ²); B = 0; scale ΔWx by α/r", unit: null,
+      reason: "non-result-measurement-fields" },
+    { kind: "method", valueText: null, unit: "layers", reason: "non-result-measurement-fields" },
+    { kind: "result", valueText: "10,000", unit: "times reduction (trainable parameters); 3 times reduction (GPU memory)",
+      reason: "compound-primary-measurement" },
+    { kind: "result", valueText: "10,000; trainable parameters", unit: "times reduction",
+      reason: "compound-primary-measurement" },
+  ] as const)("rejects the whole $kind card with malformed valueText/unit: $valueText / $unit", ({ kind, valueText, unit, reason }) => {
+    const quote = "The update uses A ~ N(0, σ²); B = 0; scale ΔWx by α/r. Trainable parameters decrease by 10,000 times and GPU memory by 3 times.";
+    const candidate = claim({ kind, quote, block: 1, statement: "Trainable parameters decrease by 10,000 times.", valueText, unit });
+    const out = verifyClaims(quote, [blockFor(1, quote, quote)], [candidate]);
+    expect(out).toEqual({ claims: [], dropped: [{ index: 0, reason }], clearedNumbers: 0 });
+    expect(resultStatement({ ...candidate, start: 0, end: TE.encode(quote).byteLength, ambiguous: false, valueNumber: null })).toBeNull();
+    expect(candidate).toMatchObject({ valueText, unit });
+  });
+
+  it.each(["m/s²", "×10^9 FLOPs", "cases per 100000 person-years"])("retains a primary result with unit %s", (unit) => {
+    const quote = `Workload 2 reports 2 ${unit}.`;
+    const out = verifyClaims(quote, [blockFor(1, quote, quote)], [claim({
+      quote, block: 1, statement: quote, task: "Workload 2", metric: "measurement", valueText: "2", unit,
+    })]);
+    expect(out.dropped).toEqual([]);
+    expect(out.clearedNumbers).toBe(0);
+    expect(out.claims).toHaveLength(1);
+    const stored = out.claims[0];
+    if (!stored) throw new Error("The valid primary measurement must survive.");
+    expect(stored).toMatchObject({ quote, valueText: "2", valueNumber: 2, unit, start: 0, end: TE.encode(quote).byteLength });
+    expect(resultStatement(stored)).toBe(quote);
+  });
+
   it("charges a legacy fold map before allocating it and preserves the ordinary quote contract", () => {
     const text = 'The \u201cexact quote\u201d is retained. ' + "x".repeat(900000), bytes = TE.encode(text);
     const blocks = [{ id: 1, type: "paragraph" as const, start: 0, end: bytes.length, heading: null }];
@@ -885,10 +916,10 @@ describe("resultStatement", () => {
       resultStatement({ ...base, statement: "epsilon 10^-7", metric: "epsilon", quote: "Optimizer epsilon 10^-7.", valueText: "10^-7", unit: null, valueNumber: null }),
     ).toBe("epsilon 10^-7");
   });
-  it("passes a non-result qual fact even with compound numbers", () => {
+  it("rejects non-result measurement metadata instead of ignoring it", () => {
     expect(
       resultStatement({ ...syntheticClaim, kind: "other", statement: "Qualitative note about training.", valueText: "+12.7% / 5.4%", unit: "%", valueNumber: null }),
-    ).toBe("Qualitative note about training.");
+    ).toBeNull();
   });
   it("preserves the 4.6% absolute improvement with its qualifier", () => {
     const statement = "System Alpha obtains a 4.6% absolute improvement in validation accuracy.";

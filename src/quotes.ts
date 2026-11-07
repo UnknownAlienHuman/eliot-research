@@ -320,6 +320,16 @@ function singleDataSplit(value: string | null, quoted: boolean): string | undefi
   return splits.size === 1 ? splits.values().next().value : undefined;
 }
 
+function measurementRoleFailure(claim: CandidateClaim): string | undefined {
+  if (claim.kind !== "result" && [claim.valueText, claim.unit].some((value) => value !== null && value !== undefined))
+    return "non-result-measurement-fields";
+  // Delimiter structure only: dimensional/scientific units are not parsed or rewritten.
+  if ([claim.valueText, claim.unit].some((value) => typeof value === "string"
+    && value.split(/[;；]/u).filter((part) => part.trim() !== "").length > 1))
+    return "compound-primary-measurement";
+  return undefined;
+}
+
 export function verifyClaims(
   text: string | Uint8Array,
   blocks: readonly Block[],
@@ -333,6 +343,8 @@ export function verifyClaims(
   const bytes = typeof text === "string" ? encoder.encode(text) : text;
   const slices = loadSlices(bytes, blocks, allocate);
   candidates.forEach((candidate, index) => {
+    const roleFailure = measurementRoleFailure(candidate);
+    if (roleFailure) { dropped.push({ index, reason: roleFailure }); return; }
     if (typeof candidate.quote === "string") allocate?.(2 * candidate.quote.length);
     if (typeof candidate.quote !== "string" || candidate.quote.replace(/[\s\u00AD]/gu, "") === "") {
       dropped.push({ index, reason: "empty-quote" });
@@ -407,7 +419,7 @@ export function verifyClaims(
 
 /**
  * Format one stored result card after the normal verify step. Non-result
- * claims keep their original statement. A result claim must carry its
+ * claims with null measurement fields keep their original statement. A result claim must carry its
  * single scalar valueText (one numeric quantity; valueNumber stays optional
  * because parseSingleNumber leaves unparsed literals null). The card
  * preserves the original validated statement only when the structured
@@ -422,6 +434,7 @@ export function verifyClaims(
  * not re-admit or infer conditions.
  */
 export function resultStatement(claim: VerifiedClaim): string | null {
+  if (measurementRoleFailure(claim)) return null;
   if (claim.kind !== "result") return claim.statement;
   if (typeof claim.valueText !== "string" || claim.valueText.trim() === "") return null;
   if (
