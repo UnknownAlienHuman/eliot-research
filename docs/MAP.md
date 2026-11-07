@@ -365,8 +365,10 @@ re-distilled automatically.
 4. Use at most two bounded calls: labelled canonical text produces atomic claim cards, draft guide and at most twelve
    glossary candidates. Fresh guide items declare source labels, one optional combined domain scope clause (at most
    300 characters, with subset source labels) and one coherent assertion (at most 800 characters). Before review,
-   code appends the complete scope in parentheses and freezes the checked full sentence as its original H0–H4 unit,
-   preserving ID gaps and the existing qualifier representation. No assertion echo or semantic classifier is used.
+   code prefixes the complete scope in parentheses, preserves the assertion apart from outer whitespace, adds only
+   missing sentence punctuation and freezes the checked full sentence as its original H0–H4 unit. Authored symbols
+   are never deleted; question-ending assertions are rejected. It preserves
+   ID gaps and the existing qualifier representation. No assertion echo or semantic classifier is used.
    Fresh `claim-plan-guide-v2` call two selects whole supported H units without rewriting; semantic
    review must reject missing/wrong source scope even when no clause was declared. Final code rechecks and
    copies complete text/bindings into guide Markdown. DONE requires 3–5 actual sentences; insufficient, ambiguous or

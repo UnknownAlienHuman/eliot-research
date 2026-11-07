@@ -1328,12 +1328,12 @@ describe("DistillWorkflow admitted model snapshot", () => {
       ];
       const frozen = [
         { id: "H1", labels: ["[S1:1]"], qualifiers: [caseScope],
-          text: "The method reduces GPU memory compared to GPT-3 175B fine-tuned with Adam in Version 2 (Compared to GPT-3 175B fine-tuned with Adam; (Version 2))." },
+          text: "(Compared to GPT-3 175B fine-tuned with Adam; (Version 2)) The method reduces GPU memory compared to GPT-3 175B fine-tuned with Adam in Version 2." },
         { id: "H3", labels: ["[S1:2]"], qualifiers: [paraphrasedScope],
-          text: "The pre-trained weights remain fixed during adaptation (while keeping the pre-trained weights frozen)." },
+          text: "(while keeping the pre-trained weights frozen) The pre-trained weights remain fixed during adaptation." },
         { id: "H4", labels: ["[S1:3]"], qualifiers: [omittedScope], text: mode === "over-five"
-          ? "The model reduces deployment storage. This bound is conditional. The condition concerns rank. The base weights remain shared (if r is smaller than dmodel)."
-          : "The model reduces deployment storage (if r is smaller than dmodel)." },
+          ? "(if r is smaller than dmodel) The model reduces deployment storage. This bound is conditional. The condition concerns rank. The base weights remain shared."
+          : "(if r is smaller than dmodel) The model reduces deployment storage." },
       ];
       for (const i of [1, 3, 4]) expect(guide[i]?.assertion).not.toContain(guide[i]?.scope?.text);
       const ids = mode === "unknown" ? ["H0"] : mode === "duplicate" ? ["H1", "H1", "H3"]
@@ -1396,6 +1396,42 @@ describe("DistillWorkflow admitted model snapshot", () => {
         expect(f.bodies.get(prefix + "text.md")).toBe(document.text);
       } finally { f.db.close(); }
     });
+
+  it("preserves authored factorial and ellipsis symbols through guide construction and whole-unit selection", async () => {
+    const document = documentWithBlocks([{ type: "paragraph", text:
+      "For distinct items, the number of permutations is n!. The estimate remains open... During adaptation, the method keeps the pre-trained weights fixed.\n" }]);
+    const f = fixture(snapshot.route, document);
+    const scope = { labels: ["[S1:1]"], text: "for distinct items" }, context = { labels: ["[S1:1]"], text: "during adaptation" };
+    const guide = [
+      { labels: ["[S1:1]"], scope, assertion: "  The number of permutations is n!  " },
+      { labels: ["[S1:1]"], scope: null, assertion: " The estimate remains open... " },
+      { labels: ["[S1:1]"], scope: context, assertion: "The method keeps the pre-trained weights fixed." },
+    ];
+    const frozen = [
+      { id: "H0", labels: ["[S1:1]"], qualifiers: [scope], text: "(for distinct items) The number of permutations is n!" },
+      { id: "H1", labels: ["[S1:1]"], qualifiers: [], text: "The estimate remains open..." },
+      { id: "H2", labels: ["[S1:1]"], qualifiers: [context], text: "(during adaptation) The method keeps the pre-trained weights fixed." },
+    ];
+    const totalUsage = { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } };
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ output: { guide, glossary: [], questions: ["Which items?", "What estimate?", "Which method?"],
+        claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The method keeps the pre-trained weights fixed during adaptation.",
+          task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] }, totalUsage } as never)
+      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], supportedGlossary: [],
+        supportedGuide: ["H0", "H1", "H2"], digestPlan: [{ id: "C0", group: "methods" }] }, totalUsage } as never);
+    try {
+      await run(f);
+      expect(JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null").guideCandidates).toEqual(frozen);
+      const content = vi.mocked(generateText).mock.calls[1]?.[0].messages?.[0]?.content;
+      if (typeof content !== "string") throw new Error("The guide review request was not captured.");
+      expect(JSON.parse(content).guideCandidates).toEqual(frozen.map((item) => ({ ...item,
+        evidence: [{ label: "[S1:1]", block: 1, quote: document.text }] })));
+      expect(f.bodies.get(prefix + "guide.md")).toBe(frozen.map((item) => item.text + "\n\n[R" + revisionId + ":1]").join("\n\n"));
+      expect(JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null")).toMatchObject({ state: "done", kept: 1 });
+      expect(generateText).toHaveBeenCalledTimes(2);
+    } finally { f.db.close(); }
+  });
 
   it.each([
     { name: "whole G1 unit after an earlier drop", empty: false },

@@ -45,7 +45,7 @@ function guideDraftSchema(label: z.ZodType<string>) {
   return z.object({ labels: z.array(label).min(1).max(4),
     scope: z.object({ labels: z.array(label).min(1).max(4), text: z.string().min(1).max(300) })
       .nullable().describe("One combined source-stated domain scope/condition/comparison clause in natural language, with labels drawn only from this item's labels. Use null only when no scope clause is needed; no field headings or debugging labels."),
-    assertion: z.string().min(1).max(800).describe("One coherent, independently scoped source assertion without terminal punctuation. Do not mix unrelated experiments or results. The server will append the complete scope clause before review; no verbatim echo of that clause is required here.") });
+    assertion: z.string().min(1).max(800).describe("One coherent, independently scoped source assertion, preserving authored notation and punctuation. Do not mix unrelated experiments or results. The server preserves the assertion apart from outer whitespace and prefixes the complete scope clause before review; no verbatim echo of that clause is required here.") });
 }
 function extractionSchema(labels: [string, ...string[]]) {
   const quoteBlock = z.enum(labels).describe("Select the exact labelled source block to quote in full. The server resolves its original bytes; do not transcribe or paraphrase the quote.");
@@ -375,7 +375,7 @@ async function extract(env: Env, revisionId: string, model: ModelSpec, attemptId
     "Choose quoteBlock from the printed labels. The full block is the exact quote shown to the owner and must support the entire statement, every number and every condition. Never combine facts from separate blocks into one claim. " +
     "Each result claim describes one scalar result for one task, dataset, metric and model condition. Split different result rows into separate claims; do not put multiple results in valueText. Copy source digits and units without conversion. " +
     DATASET_ROLE + " " + CONDITIONS_ROLE + " " + VALUE_ROLE + " " + UNIT_ROLE + " " +
-    "Then draft 3–5 complete owner-facing source-guide sentences about the source's contribution or purpose, methods, assumptions, reported findings or results, relevant conditions and limitations when stated. For each item select all supporting labels, declare at most one combined scope clause with its own labels, then write one coherent, independently scoped central assertion. Scope labels must be a subset of the item's labels. The assertion is at most 800 characters and the scope clause at most 300. Preserve all necessary source-stated domain scope, conditions, comparisons and limitations in that clause, using natural owner-facing language without field headings. Use null only when no scope clause is needed; it never waives source completeness. Do not mix unrelated experiments or results in one assertion. The server assembles the complete sentence with the visible scope before review; do not attempt a verbatim phrase echo in the assertion. Do not infer a whole section from its first block. " +
+    "Then draft 3–5 complete owner-facing source-guide sentences about the source's contribution or purpose, methods, assumptions, reported findings or results, relevant conditions and limitations when stated. For each item select all supporting labels, declare at most one combined scope clause with its own labels, then write one coherent, independently scoped central assertion. Scope labels must be a subset of the item's labels. The assertion is at most 800 characters and the scope clause at most 300. Preserve all necessary source-stated domain scope, conditions, comparisons and limitations in that clause, using natural owner-facing language without field headings. Use null only when no scope clause is needed; it never waives source completeness. Do not mix unrelated experiments or results in one assertion. The server preserves the assertion apart from outer whitespace, prefixes the complete visible scope and adds only missing sentence punctuation before review; no verbatim scope echo in the assertion is needed. Do not infer a whole section from its first block. " +
     "Then create 3–5 useful follow-up questions grounded in the supplied text without assuming a discipline or checklist. " +
     "Draft at most 12 glossary candidates with English and Russian term pairs and complete Russian definitions. Select each candidate's 1–4 supporting source labels before writing it. Each whole definition must retain the source's scope, conditions, comparisons and limitations; do not shorten a qualified definition into a broader one. The declared blocks must support both terms and every clause of that definition. Treat each term pair, complete definition and original labels as one independent candidate unit. " + GLOSSARY_MATH_ROLE + " " +
     "Keep task, metric, dataset and valueText in the source language; do not convert units or generalize a particular result.",
@@ -423,16 +423,16 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec, at
       let unit: z.infer<ReturnType<typeof guideUnitSchema>>;
       if ("assertion" in item) {
         reserve(memory, 12 * (item.assertion.length + (item.scope?.text.length ?? 0) + 64));
-        const draft = item.assertion.trim();
-        if (/[?？][.!?。！？\s]*$/u.test(draft)) {
+        const assertion = item.assertion.trim();
+        if (/[?？][.!?。！？\s]*$/u.test(assertion)) {
           guideDropped.push({ index, reason: "guide-candidate-question-assertion" }); return [];
         }
-        const assertion = draft.replace(/[.!。！]+$/u, "");
         if (checkDistillContent(assertion, item.labels, revisionId).empty) {
           guideDropped.push({ index, reason: "guide-candidate-empty-assertion" }); return [];
         }
         unit = { labels: item.labels, qualifiers: item.scope === null ? [] : [item.scope],
-          text: assertion + (item.scope === null ? "" : " (" + item.scope.text + ")") + "." };
+          text: (item.scope === null ? "" : "(" + item.scope.text + ") ") + assertion
+            + (/[.!。！…]$/u.test(assertion) ? "" : ".") };
       } else unit = item;
       const candidate = { id: "H" + index, ...unit };
       const checked = checkGuideUnit(candidate, revisionId, (labels) => joinContext(memory, labels.map((label) => evidence(label).quote), "\n"), memory);

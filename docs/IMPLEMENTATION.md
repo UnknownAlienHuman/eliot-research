@@ -597,8 +597,10 @@ combined domain scope clause, then one coherent independently scoped assertion, 
 The assertion is structurally bounded to 800 characters and scope text to 300, keeping the assembled sentence below
 the existing 1200-character bound. Scope labels must be a subset of assertion labels; its meaningful content,
 references and numbers are checked against only its own declared canonical quotes. Before freezing or call two,
-code normalizes the assertion's terminal punctuation and appends the complete scope in parentheses, with no technical
-field heading in the owner text. No verbatim echo in the assertion, case folding or semantic guess is required.
+code preserves the assertion verbatim apart from outer whitespace and prefixes the complete scope in parentheses,
+with no technical field heading in the owner text. It deletes no authored symbols, operators or punctuation; it adds
+a terminal period only when the assertion lacks an ending period, exclamation mark or ellipsis. Question-ending
+assertions are rejected before construction. No verbatim scope echo, case folding or semantic guess is required.
 The assembled text is checked as a complete unit and frozen using the existing `{id,labels,qualifiers,text}` shape,
 with the combined scope retained as its single qualifier (or an empty array for null scope). H IDs retain original
 call-one indexes through drops. Call two reviews that exact assembled text, scope and original excerpts, and must
