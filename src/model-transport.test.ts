@@ -128,7 +128,8 @@ describe("native fallback reasoning request", () => {
     } finally { network.mockRestore(); }
   });
 
-  it.each(["many small chunks", "invalid schema", "truncated JSON", "reported usage then error", "no finish or usage", "HTTP 408"] as const)(
+  it.each(["many small chunks", "legacy response with DONE", "non-SSE JSON fallback", "legacy response with truncated EOF",
+    "invalid schema", "truncated JSON", "reported usage then error", "no finish or usage", "HTTP 408"] as const)(
     "uses the real pinned single-consumer SDK and final v4 validation: %s", async mode => {
       const seed = MODELS.find(model => model.route === DEFAULT_MODEL);
       if (!seed) throw new Error("The native factory fixture is missing.");
@@ -153,15 +154,23 @@ describe("native fallback reasoning request", () => {
           unknownOutputOmitted: !Object.hasOwn(inputs, "max_tokens") && !Object.hasOwn(inputs, "max_completion_tokens"),
           fullSchemaPrompt: (inputs.messages as Array<{ content: unknown }>).some(item => typeof item.content === "string" && item.content.includes(schemaText)) };
         if (mode === "HTTP 408") return new Response(JSON.stringify({ error: { message: privateBody } }), { status: 408, headers: { "content-type": "application/json" } });
+        if (mode === "non-SSE JSON fallback") return new Response(JSON.stringify({ response: text, usage }),
+          { headers: { "content-type": "application/json" } });
         const base = { id: "offline-low-memory", object: "chat.completion.chunk", created: 0, model: id };
         const frame = (data: unknown) => "data: " + JSON.stringify(data) + "\n\n";
         const chunks: string[] = [];
-        for (let at = 0; at < wireText.length; at += 16) chunks.push(frame({ ...base, choices: [{ index: 0, delta: { content: wireText.slice(at, at + 16) }, finish_reason: null }] }));
-        sourceChunks = chunks.length;
-        if (mode !== "no finish or usage") {
-          chunks.push(frame({ ...base, choices: [{ index: 0, delta: {}, finish_reason: mode === "truncated JSON" ? "length" : "stop" }] }), frame({ ...base, choices: [], usage }));
-          if (mode === "reported usage then error") chunks.push(frame({ error: { message: privateBody, statusCode: 408 } }));
-          chunks.push("data: [DONE]\n\n");
+        if (mode === "legacy response with DONE" || mode === "legacy response with truncated EOF") {
+          chunks.push(frame({ response: text, usage }));
+          sourceChunks = chunks.length;
+          if (mode === "legacy response with DONE") chunks.push("data: [DONE]\n\n");
+        } else {
+          for (let at = 0; at < wireText.length; at += 16) chunks.push(frame({ ...base, choices: [{ index: 0, delta: { content: wireText.slice(at, at + 16) }, finish_reason: null }] }));
+          sourceChunks = chunks.length;
+          if (mode !== "no finish or usage") {
+            chunks.push(frame({ ...base, choices: [{ index: 0, delta: {}, finish_reason: mode === "truncated JSON" ? "length" : "stop" }] }), frame({ ...base, choices: [], usage }));
+            if (mode === "reported usage then error") chunks.push(frame({ error: { message: privateBody, statusCode: 408 } }));
+            chunks.push("data: [DONE]\n\n");
+          }
         }
         let at = 0;
         return new Response(new ReadableStream({ pull(controller) {
@@ -182,9 +191,16 @@ describe("native fallback reasoning request", () => {
         await result.consumeStream({ onError: error => { streamError = error; } });
         expect(calls).toBe(1); expect(network).not.toHaveBeenCalled();
         expect(capture).toEqual({ modelId: model.id, stream: true, includeUsage: true, effort: "high", hasResponseFormat: false, unknownOutputOmitted: true, fullSchemaPrompt: true });
-        if (mode === "many small chunks") {
-          expect(sourceChunks).toBeGreaterThan(1000); expect(ends).toBe(1); expect(final).toEqual(value); expect(streamError).toBeUndefined();
-          await expect(result.consumeStream()).rejects.toMatchObject({ name: "AI_StreamAlreadyConsumedError" });
+        if (mode === "many small chunks" || mode === "legacy response with DONE" || mode === "non-SSE JSON fallback") {
+          if (mode === "many small chunks") expect(sourceChunks).toBeGreaterThan(1000);
+          expect(ends).toBe(1); expect(final).toEqual(value); expect(streamError).toBeUndefined();
+          expect(finish).toBe("stop"); expect(rawFinish).toBe("stop");
+          expect(await result.finishReason).toBe("stop"); expect(await result.rawFinishReason).toBe("stop");
+        } else if (mode === "legacy response with truncated EOF") {
+          // Valid JSON can pass Output.object while missing terminal framing still forbids a successful stop.
+          expect(ends).toBe(1); expect(final).toEqual(value);
+          expect(finish).toBe("error"); expect(rawFinish).toBe("stream-truncated");
+          expect(await result.finishReason).toBe("error"); expect(await result.rawFinishReason).toBe("stream-truncated");
         } else if (mode === "invalid schema" || mode === "truncated JSON") { expect(ends).toBe(1); expect(final).toBeUndefined(); }
         else if (mode === "reported usage then error" || mode === "HTTP 408") {
           expect(streamError).toBeDefined();
@@ -198,6 +214,7 @@ describe("native fallback reasoning request", () => {
           expect(reported).toMatchObject({ inputTokens: 71, outputTokens: 19, raw: usage });
           expect(await result.totalUsage).toMatchObject({ inputTokens: 71, outputTokens: 19, raw: usage });
         }
+        await expect(result.consumeStream()).rejects.toMatchObject({ name: "AI_StreamAlreadyConsumedError" });
       } finally { network.mockRestore(); }
     });
 
