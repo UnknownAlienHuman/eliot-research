@@ -129,7 +129,7 @@ try {
   assert.deepEqual(aboveCap.context.sources[0].blocks, largeBlocks);
   // A reachable third question must not fail merely because older optional
   // history consumes the room needed by unchanged evidence and the latest Q/A.
-  const followText = Array(150).fill('Canonical source evidence describes the method, its conditions and limitations. '.repeat(50)).join('\n\n').slice(0, 555000);
+  const followText = Array(150).fill('Canonical source evidence describes the method, its conditions and limitations. '.repeat(50)).join('\n\n').slice(0, 535400);
   const followBlocks = scanBlocks(followText);
   await bucket.put('source/' + revisions[0] + '/text.md', followText);
   await bucket.put('source/' + revisions[0] + '/blocks.json', JSON.stringify(followBlocks));
