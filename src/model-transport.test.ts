@@ -1,9 +1,17 @@
-import { streamText, type LanguageModelUsage } from "ai";
+import { generateText, Output, streamText, type LanguageModelUsage } from "ai";
+import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { resolveModelTransport, safeEmptyCompletionLog } from "./model-transport";
 import { DEFAULT_MODEL, MODELS, modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, type ModelSpec } from "./models";
 import { chatModelMessages, estimateModelInput } from "./model-input";
 import { nativeModel } from "./native-model-catalog";
+import { extractionSchema } from "./workflows/distill";
+
+vi.mock("cloudflare:workers", () => ({
+  WorkflowEntrypoint: class {
+    constructor(_ctx: unknown, readonly env: Env) {}
+  },
+}));
 
 it("joins only adjacent user input while retaining evidence, Unicode and assistant history verbatim", () => {
   const messages = [
@@ -54,6 +62,71 @@ it("captures the pinned Anthropic default near the estimated input boundary whil
 });
 
 describe("native fallback reasoning request", () => {
+  it("captures real generateText doGenerate with the production v3 extraction schema at the offline native binding", async () => {
+    const modelId = "@cf/zai-org/glm-5.3-flash";
+    type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
+    const discovered = nativeModel({ name: modelId, task: { name: "Text Generation" }, properties: [
+      { property_id: "context_window", value: "1048576" },
+      { property_id: "reasoning_effort", value: { supported_efforts: ["low", "high", "max"] } },
+    ] } as unknown as NativeRow, "2026-11-07");
+    if (!discovered || discovered.contextTokens === null) throw new Error("The current native Flash fixture did not resolve.");
+    const model: ModelSpec = { ...discovered, contextTokens: discovered.contextTokens };
+    const output = Output.object({ schema: extractionSchema(["[S1:1]"]) });
+    const format = await output.responseFormat;
+    if (format?.type !== "json" || !format.schema) throw new Error("The real SDK did not produce the extraction schema.");
+    const expectedAdapterEnvelope = { type: "json_schema", json_schema: { name: "response", strict: true,
+      schema: format.schema as Record<string, unknown> } } satisfies
+      Extract<NonNullable<AiModels["@cf/zai-org/glm-5.3-flash"]["inputs"]["response_format"]>, { type: "json_schema" }>;
+    // agents@0.30.1: ai-sdk-DRPh2rRa.js adds strict; images-xaDv2Fqe.js
+    // prepareChatCompletionsRequest removes only strict for Workers AI (jsonSchemaStrict:false).
+    // The pinned Flash ResponseFormatJSONSchema type makes strict optional, not a runtime requirement.
+    const expectedBindingEnvelope = { type: "json_schema", json_schema: {
+      name: expectedAdapterEnvelope.json_schema.name, schema: expectedAdapterEnvelope.json_schema.schema,
+    } } satisfies NonNullable<AiModels["@cf/zai-org/glm-5.3-flash"]["inputs"]["response_format"]>;
+    type SchemaNode = { type?: string; minItems?: number; maxItems?: number; anyOf?: unknown[];
+      properties?: Record<string, SchemaNode>; items?: SchemaNode };
+    let calls = 0, captured: Record<string, unknown> | undefined;
+    // Plain fake binding: retain only safe properties, never mock-call copies of source/messages or headers.
+    const run = async (id: string, inputs: Record<string, unknown>, options: Record<string, unknown>) => {
+      calls++;
+      const response = inputs.response_format as { type?: string; json_schema?: { name?: string; strict?: boolean; schema?: SchemaNode } } | undefined;
+      const scope = response?.json_schema?.schema?.properties?.guide?.items?.properties?.scope;
+      captured = { modelId: id, stream: inputs.stream ?? "omitted", nonStreaming: inputs.stream === undefined || inputs.stream === false,
+        hasStreamOptions: Object.hasOwn(inputs, "stream_options"), reasoningEffort: inputs.reasoning_effort,
+        responseFormatType: response?.type, schemaName: response?.json_schema?.name,
+        schemaStrictPresent: Object.hasOwn(response?.json_schema ?? {}, "strict"),
+        exactPinnedEnvelope: isDeepStrictEqual(inputs.response_format, expectedBindingEnvelope),
+        onlyDocumentedStrictRemoval: isDeepStrictEqual({ ...response,
+          json_schema: { ...response?.json_schema, strict: true } }, expectedAdapterEnvelope),
+        scopeType: scope?.type, scopeMinItems: scope?.minItems, scopeMaxItems: scope?.maxItems, scopeItemType: scope?.items?.type,
+        scopeNullableBranch: scope?.anyOf !== undefined, itemNullableBranch: scope?.items?.anyOf !== undefined,
+        hasMaxTokens: Object.hasOwn(inputs, "max_tokens"), hasMaxCompletionTokens: Object.hasOwn(inputs, "max_completion_tokens"),
+        returnRawResponse: options.returnRawResponse === true };
+      throw new Error("Offline native boundary reached; inference is disabled.");
+    };
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+    try {
+      const transport = await resolveModelTransport({ AI: { run } as unknown as Env["AI"], DB: {} as Env["DB"] },
+        model, "native-generate-extraction", { structuredOutput: true });
+      const maxOutputTokens = modelOutputLimit(model, 1024);
+      const options = { model: transport, instructions: "Capture the native structured request only.",
+        messages: [{ role: "user" as const, content: "The method uses normalization. Its source passage is retained." },
+          { role: "user" as const, content: "Return only the requested structured output." }],
+        output, maxRetries: 0, ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }) };
+      expect(model.maxOutputTokens).toBeNull();
+      expect(options).not.toHaveProperty("maxOutputTokens");
+      await expect(generateText(options)).rejects.toThrow(); // Real ai@7.0.152; only AI.run is intercepted.
+      expect(calls).toBe(1);
+      expect(network).not.toHaveBeenCalled();
+      expect(captured).toMatchObject({ modelId, nonStreaming: true, hasStreamOptions: false, reasoningEffort: "high",
+        responseFormatType: "json_schema", schemaName: "response", schemaStrictPresent: false,
+        exactPinnedEnvelope: true, onlyDocumentedStrictRemoval: true,
+        scopeType: "array", scopeMinItems: 0, scopeMaxItems: 1, scopeItemType: "object",
+        scopeNullableBranch: false, itemNullableBranch: false, hasMaxTokens: false, hasMaxCompletionTokens: false, returnRawResponse: true });
+      expect(captured?.stream).toBe("omitted");
+    } finally { network.mockRestore(); }
+  });
+
   it.each([32768, 4096, null])("forwards explicit legacy low and the published %s output maximum through the installed adapter", async (capacity) => {
     const fallback = MODELS.find((entry) => entry.route === DEFAULT_MODEL);
     if (!fallback) throw new Error("The built-in native model fallback is missing.");
