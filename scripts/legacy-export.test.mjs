@@ -166,13 +166,25 @@ test('non-LIVE rows are retained as metadata but never read/exported', (t) => {
   assert.equal(report.exported.some((revision) => revision.source_revision_ref === 'r0'), false);
 });
 
-test('unsafe object references and symlinks cannot escape the snapshot', (t) => {
+test('unsafe object references cannot escape the snapshot', (t) => {
   const f = fixture(t);
   f.mutate("UPDATE source_revision SET normalized_artifact_ref='../core.sqlite' WHERE source_revision_ref='r0'");
   fails(f, /safe relative path/);
+});
+
+test('symlinked object references cannot escape the snapshot', (t) => {
+  const f = fixture(t);
   f.mutate(`UPDATE source_revision SET normalized_artifact_ref='${f.revisions[0].manifestKey}' WHERE source_revision_ref='r0'`);
   rmSync(join(f.objects, f.revisions[0].manifestKey));
-  symlinkSync(f.database, join(f.objects, f.revisions[0].manifestKey));
+  try {
+    symlinkSync(f.database, join(f.objects, f.revisions[0].manifestKey));
+  } catch (error) {
+    if (process.platform === 'win32' && error?.code === 'EPERM') {
+      t.skip('Windows denied symlink creation with EPERM');
+      return;
+    }
+    throw error;
+  }
   fails({ ...f, output: join(f.root, 'second') }, /symlink/);
 });
 
