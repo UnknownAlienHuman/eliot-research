@@ -109,6 +109,12 @@ try {
       unexpectedWrites++;
       return route.abort('blockedbyclient');
     });
+    const model = { route: 'fixture', id: 'fixture', label: 'Synthetic question fixture', provider: 'fixture', enabled: true,
+      contextTokens: 8192, maxOutputTokens: 1024, outputReserveTokens: 1024, checkedOn: null };
+    await page.route('**/api/models', route => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      return route.fulfill({ json: { models: [model], defaultModel: model.route, warnings: [] } });
+    });
     await page.route('**/api/projects/*/overview*', route => {
       const pid = new URL(route.request().url()).pathname.split('/')[3];
       return route.fulfill({ json: { sources: pid === project ? overviewRows : pid === otherProject ? otherOverviewRows : [], nextCursor: null } });
@@ -220,7 +226,7 @@ try {
     await page.getByRole('dialog', { name: 'Replace chat draft', exact: true })
       .getByRole('button', { name: 'Use suggested question', exact: true }).click();
     const oldTurn = { turnId: crypto.randomUUID(), question: 'Earlier source A question', answer: 'Earlier saved source A answer', state: 'completed',
-      createdAt: 1, historyVersion: 1, model: 'fixture', scopeMode: 'explicit', sourceIds: [sourceA.id], revisionIds: [sourceA.currentRevisionId],
+      createdAt: 1, historyVersion: 1, model: model.route, scopeMode: 'explicit', sourceIds: [sourceA.id], revisionIds: [sourceA.currentRevisionId],
       citations: [], invalidLabels: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0, tokenLimit: 0, firstTokenMs: null, totalMs: 0, error: null };
     await heldHistory.fulfill({ json: { ...savedChat, turns: [oldTurn] } });
     await expect(page.getByText(oldTurn.answer, { exact: true })).toBeVisible();
@@ -329,6 +335,7 @@ try {
     assert.deepEqual(pageErrors, []);
     totalUnexpectedWrites += unexpectedWrites + unexpectedTurnPosts;
     console.log(JSON.stringify({ scope: 'K3_QUESTION_DRAFT_BROWSER', viewport,
+      modelCatalogue: 'synthetic browser fixture', providerAcceptance: 'NOT_RUN', semanticAcceptance: 'NOT_RUN',
       questions: { overview: true, currentReader: true, historicalReaderTextOnly: true },
       prefillCreatesOrSends: 0, visibleSourceScope: true, replaceDialog: { escapeKeepsDraft: true, keepDraftKeepsScope: true, confirmReplacesAndSelectsSource: true },
       heldTurnPosts: turnPosts, lateSuccessAndErrorPreserveNewDraft: true,
