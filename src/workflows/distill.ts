@@ -190,8 +190,9 @@ export async function hasAvailableUnderstanding(env: Env, revisionId: string, at
       const parsed = schema.safeParse(raw.output);
       if (!parsed.success) return false;
       if (candidates !== undefined) selectedGlossaryCandidates(candidates, (parsed.data as GlossaryPlanSynthesis).supportedGlossary);
-      return parsed.data.digestPlan.methods.concat(parsed.data.digestPlan.findings, parsed.data.digestPlan.limits)
-        .every((id) => parsed.data.supportedClaims.includes(id) || parsed.data.additionalClaims.some((_, i) => "A" + i === id));
+      const ids = parsed.data.digestPlan.methods.concat(parsed.data.digestPlan.findings, parsed.data.digestPlan.limits);
+      return ids.length <= 8 && new Set(ids).size === ids.length
+        && ids.every((id) => parsed.data.supportedClaims.includes(id) || parsed.data.additionalClaims.some((_, i) => "A" + i === id));
     }
     if (raw.format !== undefined) return false;
     return synthesisSchema(labels, verified.claims.map((_, i) => "C" + i), false).safeParse(raw.output).success;
@@ -634,15 +635,20 @@ async function prepareSynthesis(env: Env, revisionId: string, attemptId?: string
           // authority citation is its own non-quoted block after all of them.
           const block = (label: string, value: string) =>
             [`${label}:`, ...value.split("\n").map((l) => "> " + l)].join("\n");
-          const fields = [
-            block("Statement", fact.statement),
+          const authoredFields: [string, string][] = [
+            ["Statement", fact.statement],
             ...[
               ["Task", fact.task], ["Metric", fact.metric], ["Dataset", fact.dataset],
               ["Value", fact.valueText ? (fact.unit ? `${fact.valueText} ${fact.unit}` : fact.valueText) : null],
               ["Conditions", fact.conditions],
-            ].filter((entry): entry is [string, string] => !!entry[1]?.trim())
-             .map(([k, v]) => block(k, v)),
+            ].filter((entry): entry is [string, string] => !!entry[1]?.trim()),
           ];
+          const fields = authoredFields.map(([label, value]) => {
+            const checkedField = cleanDistillText(value, ["[S1:" + fact.block + "]"], revisionId);
+            if (checkedField.invalidReferences || !numbersSupported(checkedField.text, fact.quote))
+              throw new Error("The curated digest fact contains unsupported rendered fields.");
+            return block(label, value);
+          });
           const cite = `[R${revisionId}:${fact.block}]`;
           return fields.join("\n\n") + "\n\n" + cite;
         });
