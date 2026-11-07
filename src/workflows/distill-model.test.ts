@@ -238,6 +238,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const model: ModelSpec = { ...snapshot, route: "workers-ai:" + id, id, nativeReasoningEffort: "high" };
       delete model.responseFormat;
       const f = fixture(model.route);
+      let admitted = model;
       f.db.prepare("UPDATE source_revision SET distill_token_limit_kind='unknown',distill_token_limit=NULL WHERE id=?").run(revisionId);
       const first = { claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The method uses normalization.",
         task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }],
@@ -250,6 +251,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const privateText = "Private provider details must not escape";
       const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
       let ordinal = 0, acceptedChunks = 0, finalParses = 0, bindingCalls = 0;
+      const bindingEfforts: unknown[] = [];
       vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
       vi.mocked(modelFailure).mockReturnValue("Model stream failed (HTTP 408).");
       vi.mocked(experimental_streamTextLowMemory).mockImplementation(options => {
@@ -282,8 +284,9 @@ describe("DistillWorkflow admitted model snapshot", () => {
           const spec = sdk.Output.object(options);
           return { ...spec, parseCompleteOutput: (...args: Parameters<typeof spec.parseCompleteOutput>) => { finalParses++; return spec.parseCompleteOutput(...args); } };
         });
-        Object.assign(f.env, { AI: { run: async () => {
+        Object.assign(f.env, { AI: { run: async (_modelId: string, options: Record<string, unknown>) => {
           bindingCalls++;
+          bindingEfforts.push(options.reasoning_effort);
           const output = bindingCalls === 1 ? first : second;
           const content = mode === "malformed final JSON" ? '{"claims":' + privateText : mode === "no final text" ? ""
             : JSON.stringify(mode === "invalid final schema" ? { ...first, questions: privateText, [privateText]: privateText } : output);
@@ -295,7 +298,21 @@ describe("DistillWorkflow admitted model snapshot", () => {
         } } });
       }
       try {
-        await run(f, true, model);
+        if (mode === "valid") {
+          const catalogHigh = Object.freeze({ ...model });
+          vi.mocked(requireAvailableModel).mockResolvedValue(catalogHigh);
+          f.db.prepare("UPDATE source_revision SET distill_state='queued',distill_started_at=NULL,distill_request_json=? WHERE id=?")
+            .run(JSON.stringify({ sourceId, revisionId, model: model.route, nativeReasoningEffort: "low" }), revisionId);
+          const create = vi.fn(async ({ params }: { params: DistillInput }) => {
+            expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls FROM source_revision WHERE id=?").get(revisionId)).toEqual({ state: "running", calls: 0 });
+            admitted = params.model;
+            expect(admitted).toEqual({ ...catalogHigh, nativeReasoningEffort: "low" }); expect(admitted).not.toBe(catalogHigh);
+          });
+          Object.assign(f.env, { DISTILL: { create } });
+          await scheduleDistillation(f.env, revisionId);
+          expect(create).toHaveBeenCalledTimes(1); expect(catalogHigh.nativeReasoningEffort).toBe("high");
+        }
+        await run(f, true, admitted);
         const succeeds = mode === "valid" || mode === "SDK placeholder zeros";
         expect(experimental_streamTextLowMemory).toHaveBeenCalledTimes(succeeds ? 2 : 1); expect(generateText).not.toHaveBeenCalled();
         expect(f.dispatchCAS).toHaveBeenCalledTimes(succeeds ? 2 : 1);
@@ -322,6 +339,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
         if (mode === "length with valid output") expect(report.error).toBe("model reached output bound before complete output");
         if (realParser) {
           expect(bindingCalls).toBe(mode === "valid" ? 2 : 1); expect(finalParses).toBe(mode === "valid" ? 2 : 1); expect(modelFailure).not.toHaveBeenCalled();
+          expect(bindingEfforts).toEqual(mode === "valid" ? ["low", "low"] : ["high"]);
+          expect(requireAvailableModel).toHaveBeenCalledTimes(mode === "valid" ? 1 : 0);
           expect(network).not.toHaveBeenCalled();
           if (mode === "valid") {
             expect(report).toMatchObject({ state: "done", error: null, kept: 1, usage: { calls: 2, inputTokens: 142, outputTokens: 38, cachedTokens: 0 } });
@@ -737,6 +756,56 @@ describe("DistillWorkflow admitted model snapshot", () => {
         params: { revisionId: explicitlySelectedRevisionId, model: replacement } });
       expect(generateText).not.toHaveBeenCalled();
     } finally { release(); f.db.close(); }
+  });
+
+  it("fences held Low lookups when the same original route is paused and resumed as High", async () => {
+    const f = queuedBehindRunning();
+    const native: ModelSpec = Object.freeze({ ...snapshot, route: "workers-ai:fixture/native", id: "fixture/native", nativeReasoningEffort: "high" });
+    const lowRequest = JSON.stringify({ sourceId: explicitlySelectedSourceId, revisionId: explicitlySelectedRevisionId, model: native.route, nativeReasoningEffort: "low" });
+    f.db.prepare("UPDATE source_revision SET distill_model=?,distill_request_json=? WHERE id=?")
+      .run(native.route, lowRequest, explicitlySelectedRevisionId);
+    // Exercise stale admission, scheduler error-pause and cost metadata error-pause against the same replacement intent.
+    const results: Array<ModelSpec | LibraryError> = [native, new LibraryError("unavailable", "Old lookup failed.", 503), { ...native, contextTokens: 0 }];
+    const held = results.map(result => {
+      let release!: () => void;
+      const wait = new Promise<void>(resolve => { release = resolve; });
+      return { result, wait, release };
+    });
+    let enters = 0, allEntered!: () => void;
+    const entered = new Promise<void>(resolve => { allEntered = resolve; });
+    vi.mocked(requireAvailableModel).mockResolvedValue(native);
+    for (const lookup of held) vi.mocked(requireAvailableModel).mockImplementationOnce(async () => {
+      if (++enters === held.length) allEntered();
+      await lookup.wait;
+      if (lookup.result instanceof LibraryError) throw lookup.result;
+      return lookup.result;
+    });
+    vi.mocked(requireAvailableModel).mockRejectedValueOnce(new LibraryError("unavailable", "Pause the old intent.", 503));
+    const staleAdmissions = held.map(() => scheduleDistillation(f.env, explicitlySelectedRevisionId));
+    try {
+      await entered;
+      await scheduleDistillation(f.env, explicitlySelectedRevisionId);
+      expect(f.db.prepare("SELECT distill_state FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId)).toEqual({ distill_state: "paused" });
+      await requestUnderstanding(f.env, { type: "owner" } as Actor,
+        { sourceId: explicitlySelectedSourceId, model: native.route, nativeReasoningEffort: "high" });
+      const replacement = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId);
+      expect(replacement).toMatchObject({ distill_state: "queued", distill_attempt_id: null, distill_calls: 0,
+        distill_token_limit: null, distill_token_limit_kind: null, distill_estimated_cost_microusd: 0,
+        distill_request_json: JSON.stringify({ sourceId: explicitlySelectedSourceId, revisionId: explicitlySelectedRevisionId, model: native.route, nativeReasoningEffort: "high" }) });
+      f.db.prepare("UPDATE source_revision SET distill_state='done' WHERE id=?").run(revisionId);
+      for (const lookup of held) lookup.release();
+      await Promise.all(staleAdmissions);
+      expect(f.createWorkflow).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId)).toEqual(replacement);
+      await scheduleDistillation(f.env, explicitlySelectedRevisionId);
+      expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({ id: `distill-${explicitlySelectedRevisionId}`,
+        params: { revisionId: explicitlySelectedRevisionId, model: native } });
+      expect(native.nativeReasoningEffort).toBe("high");
+      expect(generateText).not.toHaveBeenCalled(); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
+    } finally {
+      for (const lookup of held) lookup.release();
+      await Promise.allSettled(staleAdmissions); f.db.close();
+    }
   });
 
   it.each([0, 1])("cron never recreates an ambiguous Workflow after %i model dispatches", async (calls) => {

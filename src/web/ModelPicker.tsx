@@ -21,6 +21,7 @@ export interface ModelRoute {
   readonly mayTrainOnYourPrompts?: boolean;
   readonly outputReserveTokens?: number;
   readonly supportsImages?: boolean;
+  readonly nativeReasoningEffort?: "low" | "high";
   readonly checkedOn: string | null;
 }
 

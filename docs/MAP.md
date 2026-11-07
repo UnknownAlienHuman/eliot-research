@@ -369,6 +369,12 @@ re-distilled automatically.
    Archive the exact old receipt and claim projection before switching; previous attempts remain readable without
    models. Reload and Save existing output remain storage only. Unknown retry replies retain the same request across
    reload/remount; a successful read of its old predecessor cannot authorize a different retry ID. A durable rejected intent enables a fresh explicit model choice without an in-flight duplicate later accepting that rejected ID.
+   Native models advertising a known profile allow an explicit attempt-scoped Low/High choice on Understand/Retry.
+   Its optional literal is retained in existing intent, applied before scheduler admission and frozen for both calls;
+   omission keeps legacy canonical bytes/policy, and changed effort under the same retry ID conflicts. Reader progress
+   shows only the recorded requested profile, omitting old missing fields. No route aliases/default changes or
+   automatic effort fallback; changing the Material selection alone starts no work. Low runtime/quality is NOT_RUN,
+   and High latency as the failure cause remains a hypothesis.
 4. Use at most two bounded calls with zero paid retries. The product-owned 6-minute call/7-minute step bounds are an
    UNQUALIFIED completion-tail experiment: each call uses min(6 minutes, remaining absolute 15-minute recovery
    ceiling). These are not Cloudflare hard maxima or quality acceptance. Historical 180 s failures remain unchanged.

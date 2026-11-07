@@ -20,35 +20,35 @@ export async function admitTurn(env: Env, chatId: string, turnId: string, model:
 }
 
 // Admit one explicitly requested distill revision: record twice the declared
-// per-call capacity (or null unknown) on its row. State owns the admission CAS. Only an
+// per-call capacity (or null unknown) on its row. State and the selected intent own the admission/pause CAS. Only an
 // explicitly queued, undispatched row is eligible, and at most two revisions
 // run at once. Unusable model metadata parks the row as paused with a safe
 // error before any call. A full concurrency window leaves the row queued and
 // returns false without pausing it. There is no monthly or dollar gate.
-export async function admitDistill(env: Env, revisionId: string, model: ModelSpec, attemptId?: string | null): Promise<boolean> {
+export async function admitDistill(env: Env, revisionId: string, model: ModelSpec, attemptId?: string | null, expectedRequest: string | null = null): Promise<boolean> {
   let bound: number | null;
   try {
     const callBound = modelTokenLimit(model);
     bound = callBound === null ? null : 2 * callBound;
     if (bound !== null && !Number.isSafeInteger(bound)) throw new LibraryError("unavailable", "This model has no usable input/output limits.", 503);
   } catch (err) {
-    await pauseDistill(env, revisionId, model.route, err instanceof Error ? err.message : "This model has no usable input/output limits.", attemptId);
+    await pauseDistill(env, revisionId, model.route, err instanceof Error ? err.message : "This model has no usable input/output limits.", attemptId, expectedRequest);
     return false;
   }
   const admitted = await env.DB.prepare(
     "UPDATE source_revision SET distill_state = 'running', distill_model = ?, distill_started_at = ?, distill_token_limit = ?, distill_token_limit_kind = ?, distill_error = NULL" +
     " WHERE id = ? AND distill_state = 'queued' AND distill_calls = 0" +
-    " AND distill_model = ? AND distill_attempt_id IS ? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings')" +
+    " AND distill_model = ? AND distill_attempt_id IS ? AND distill_request_json IS ? AND deleted_at IS NULL AND readable_state IN ('readable','readable_with_warnings')" +
     " AND EXISTS (SELECT 1 FROM source WHERE source.id = source_revision.source_id AND source.state != 'deleted')" +
     " AND (SELECT COUNT(*) FROM source_revision WHERE distill_state = 'running') < 2"
-  ).bind(model.route, Date.now(), bound, bound === null ? "unknown" : "published", revisionId, model.route, attemptId ?? null).run();
+  ).bind(model.route, Date.now(), bound, bound === null ? "unknown" : "published", revisionId, model.route, attemptId ?? null, expectedRequest).run();
   return admitted.meta.changes === 1;
 }
 
-async function pauseDistill(env: Env, revisionId: string, model: string, error: string, attemptId?: string | null): Promise<void> {
+async function pauseDistill(env: Env, revisionId: string, model: string, error: string, attemptId: string | null | undefined, expectedRequest: string | null): Promise<void> {
   await env.DB.prepare(
-    "UPDATE source_revision SET distill_state = 'paused', distill_error = ? WHERE id = ? AND distill_state = 'queued' AND distill_calls = 0 AND distill_model = ? AND distill_attempt_id IS ?"
-  ).bind(error, revisionId, model, attemptId ?? null).run();
+    "UPDATE source_revision SET distill_state = 'paused', distill_error = ? WHERE id = ? AND distill_state = 'queued' AND distill_calls = 0 AND distill_model = ? AND distill_attempt_id IS ? AND distill_request_json IS ?"
+  ).bind(error, revisionId, model, attemptId ?? null, expectedRequest).run();
 }
 
 // Release a stuck distill slot only when no paid call was dispatched: one

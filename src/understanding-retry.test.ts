@@ -85,6 +85,88 @@ function completedOutput(f: ReturnType<typeof fixture>) {
 
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(experimental_streamTextLowMemory).mockReset(); vi.mocked(requireAvailableModel).mockResolvedValue(model); });
 describe("explicit understanding retry", () => {
+  it("records literal Low, freezes the scheduler payload and replays before fresh model resolution", async () => {
+    const f = fixture(), high = Object.freeze({ ...model, nativeReasoningEffort: "high" as const });
+    const lowInput = { ...input, nativeReasoningEffort: "low" as const };
+    vi.mocked(requireAvailableModel).mockResolvedValue(high);
+    try {
+      const old = await getUnderstanding(f.env, actor, { sourceId, revisionId });
+      expect(old.progress).not.toHaveProperty("nativeReasoningEffort");
+      await requestUnderstanding(f.env, actor, lowInput);
+      expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId)).toEqual({
+        request: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: model.route, nativeReasoningEffort: "low" }),
+      });
+      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-attempt-${retryId}`, params: { revisionId, attemptId: retryId, model: { ...high, nativeReasoningEffort: "low" } } });
+      expect(high.nativeReasoningEffort).toBe("high");
+      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress.nativeReasoningEffort).toBe("low");
+      expect(await getUnderstanding(f.env, actor, { sourceId, revisionId, attemptId: revisionId })).toEqual({ ...old, currentAttemptId: retryId });
+      const resolved = vi.mocked(requireAvailableModel).mock.calls.length;
+      vi.mocked(requireAvailableModel).mockRejectedValue(new Error("Catalogue no longer available"));
+      expect(await requestUnderstanding(f.env, actor, lowInput)).toEqual({ revisionId, attemptId: retryId });
+      await expect(requestUnderstanding(f.env, actor, { ...lowInput, nativeReasoningEffort: "high" })).rejects.toMatchObject({ status: 409 });
+      await expect(requestUnderstanding(f.env, actor, input)).rejects.toMatchObject({ status: 409 });
+      expect(requireAvailableModel).toHaveBeenCalledTimes(resolved); expect(f.create).toHaveBeenCalledTimes(1);
+      expect(generateText).not.toHaveBeenCalled(); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+  it.each([model, { ...model, route: "gateway:fixture/model", nativeReasoningEffort: "high" as const }])("rejects a profile unsupported by $route before archiving or queueing", async unavailable => {
+    const f = fixture(); completedOutput(f); vi.mocked(requireAvailableModel).mockResolvedValue(unavailable);
+    const request = { ...input, model: unavailable.route, nativeReasoningEffort: "low" as const };
+    const detail = "This model does not advertise a supported native reasoning profile.";
+    try {
+      const before = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId), bodies = new Map(f.bodies);
+      const claims = f.db.prepare("SELECT * FROM claim WHERE source_revision_id=?").all(revisionId);
+      const rejected = await requestUnderstanding(f.env, actor, request);
+      expect(rejected).toEqual({ revisionId, attemptId: retryId, rejected: detail });
+      expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId)).toEqual(before);
+      expect(f.db.prepare("SELECT * FROM claim WHERE source_revision_id=?").all(revisionId)).toEqual(claims);
+      expect(f.db.prepare("SELECT attempt_id,snapshot_key,rejection,request_json FROM distill_history").all()).toEqual([
+        { attempt_id: retryId, snapshot_key: null, rejection: detail,
+          request_json: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: unavailable.route, nativeReasoningEffort: "low" }) },
+      ]);
+      expect(f.bodies).toEqual(bodies); expect(f.create).not.toHaveBeenCalled();
+      expect(await getUnderstanding(f.env, actor, { sourceId, revisionId, requestId: retryId })).toMatchObject({ knownRequestId: retryId, requestRejection: detail, attemptId: revisionId });
+      const resolved = vi.mocked(requireAvailableModel).mock.calls.length;
+      vi.mocked(requireAvailableModel).mockRejectedValue(new Error("Catalogue no longer available"));
+      expect(await requestUnderstanding(f.env, actor, request)).toEqual(rejected);
+      await expect(requestUnderstanding(f.env, actor, { ...request, nativeReasoningEffort: "high" })).rejects.toMatchObject({ status: 409 });
+      expect(requireAvailableModel).toHaveBeenCalledTimes(resolved); expect(f.create).not.toHaveBeenCalled();
+      vi.mocked(requireAvailableModel).mockResolvedValue({ ...model, nativeReasoningEffort: "high" });
+      expect(await requestUnderstanding(f.env, actor, { ...input, nativeReasoningEffort: "high", retry: { ...input.retry, attemptId: otherId } })).toEqual({ revisionId, attemptId: otherId });
+      expect(f.create).toHaveBeenCalledTimes(1);
+      expect(generateText).not.toHaveBeenCalled(); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+  it("rejects malformed effort values before any model or Workflow lookup", async () => {
+    const f = fixture();
+    try {
+      for (const value of [null, "", "max", "medium"]) await expect(requestUnderstanding(f.env, actor, { ...input, nativeReasoningEffort: value as never })).rejects.toThrow();
+      expect(requireAvailableModel).not.toHaveBeenCalled(); expect(f.status).not.toHaveBeenCalled(); expect(f.create).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT count(*) AS n FROM distill_history").get()).toEqual({ n: 0 });
+    } finally { f.db.close(); }
+  });
+  it("retains a queued original Low intent on repeat and rejects a conflicting profile", async () => {
+    const f = fixture(0), high = Object.freeze({ ...model, nativeReasoningEffort: "high" as const });
+    vi.mocked(requireAvailableModel).mockResolvedValue(high);
+    f.db.prepare("UPDATE source_revision SET distill_state='none' WHERE id=?").run(revisionId);
+    // Fill both admission slots in the existing in-memory fixture.
+    for (const [index, id] of [otherId, retryId].entries())
+      f.db.prepare("INSERT INTO source_revision(id,source_id,revision_no,created_by,created_at,distill_state,distill_started_at) VALUES(?,?,?,'owner',1,'running',?)")
+        .run(id, sourceId, index + 2, Date.now());
+    try {
+      await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: model.route, nativeReasoningEffort: "low" });
+      const request = f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId);
+      expect(request).toEqual({ request: JSON.stringify({ sourceId, revisionId, model: model.route, nativeReasoningEffort: "low" }) });
+      await expect(requestUnderstanding(f.env, actor, { sourceId, revisionId, nativeReasoningEffort: "high" })).rejects.toMatchObject({ status: 409 });
+      expect(f.create).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state AS state FROM source_revision WHERE id=?").get(revisionId)).toEqual({ state: "queued" });
+      f.db.prepare("UPDATE source_revision SET distill_state='none' WHERE id IN (?,?)").run(otherId, retryId);
+      await requestUnderstanding(f.env, actor, { sourceId, revisionId });
+      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-${revisionId}`, params: { revisionId, model: { ...high, nativeReasoningEffort: "low" } } });
+      expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId)).toEqual(request);
+      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress.nativeReasoningEffort).toBe("low");
+    } finally { f.db.close(); }
+  });
   it.each([0, 2])("reuses done output with recorded calls=%s on ordinary Understand and repeated reads without model work", async calls => {
     const f = fixture(calls); completedOutput(f);
     try {
@@ -317,6 +399,8 @@ describe("explicit understanding retry", () => {
       const before = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId);
       await requestUnderstanding(f.env, actor, input);
       expect(f.create).toHaveBeenCalledTimes(1);
+      expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ request: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: model.route }) });
       expect(f.create.mock.calls[0]).toEqual([{ id: `distill-attempt-${retryId}`, params: { revisionId, attemptId: retryId, model } }]);
       const archived = f.db.prepare("SELECT snapshot_key FROM distill_history WHERE attempt_id=?").get(revisionId) as { snapshot_key: string };
       expect(JSON.parse(f.bodies.get(archived.snapshot_key) ?? "null").revision).toEqual(before);

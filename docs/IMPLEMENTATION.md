@@ -903,6 +903,21 @@ Reopening a cached Previous attempts list explicitly refetches it, coalescing an
 the selected historical reader and loaded pagination; the first open enables one initial fetch.
 Only this durable outcome clears a rejected pending request and permits a fresh explicit model/ID choice; an ordinary
 HTTP error leaves the request unknown. Replays adopt either accepted or rejected winners before model work.
+Understanding POST also accepts optional `nativeReasoningEffort: "low" | "high"` for a native model that already
+advertises a known native profile. Null, empty/other values and unsupported routes/capabilities reject before
+queueing or archiving. This is an explicit attempt choice, not a transport fallback or a global setting. Omission
+preserves the legacy canonical retry JSON bytes and catalogue policy; a supplied literal participates in retry
+identity, so the same UUID with a changed effort conflicts before new model resolution. Save cannot select effort.
+The literal lives only in existing `distill_request_json`. Queue drain applies it to a copy of the freshly resolved
+`ModelSpec` before admission and freezes that same spec for both calls. Repeated queued requests cannot change it;
+resuming an accepted paused retry retains its recorded intent. Admitted snapshots are never overridden in transport.
+Admission, scheduler/metadata failure pauses and none/paused queue updates compare the selected exact request JSON
+with null-safe equality, so a stale Low lookup cannot claim or pause a same-route High intent, including original null attempt IDs.
+Reader `progress.nativeReasoningEffort` means requested profile, read only from current/archived recorded intent;
+old missing fields stay omitted without inferring High from today's catalogue. The source Material choice changes
+no settings and starts no request until Understand/Retry; unresolved/busy requests retain the exact pending body.
+As of 2026-11-07, High latency as a cause remains a hypothesis; this explicit Low strategy's runtime and quality are
+NOT_RUN. Source bytes, gates, two calls/zero retries, 6-minute call/7-minute step/15-minute ceiling and 16 MiB remain unchanged.
 `pnpm eval k3 --retry-only` applies strict migrations and exercises pinned Workerd/Workflows/D1/R2 and the production
 browser controls at 1440/390 widths. Both paid producer callbacks are replaced with retained synthetic output and external
 network is denied. This verifies storage/replay/fencing behavior, not model quality, provider availability or deployed
@@ -1323,7 +1338,9 @@ metadata leaves the SDK option unset, allowing the provider default to apply. Th
 effort metadata. Existing stored `low` values remain literal; reads do not upgrade catalogue rows or admitted specs.
 A successful explicit refresh replaces a native row with its newly discovered metadata, and later route resolution
 uses that row. Already admitted work keeps its frozen `ModelSpec`; a queued route-only request resolves metadata when
-it is dispatched.
+it is dispatched. K3 alone permits an owner to record an attempt-scoped Low/High choice on a native route advertising
+either known profile. The scheduler applies that literal before admission; omission retains discovery policy. This
+does not create model aliases, change the Answers/Understanding defaults or enable unsupported `max`/off values.
 
 This is a deliberate reasoning-effort quality policy after real Flash and full GLM 5.3 runs forced to `low` still
 showed semantic errors. Requesting `high` is not a semantic-quality guarantee or acceptance result. The existing

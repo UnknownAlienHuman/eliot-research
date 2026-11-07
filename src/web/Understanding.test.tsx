@@ -320,19 +320,30 @@ describe('Source claim evidence presentation', () => {
     }
   });
 
+  const retryFixture: Understanding = {
+    sourceId: 's1', revisionId: 'r1', state: 'done', error: null, canRecover: false,
+    attemptId: 'attempt-1', currentAttemptId: 'attempt-1', authors: '', published: null,
+    recordedUsage: { tokenLimit: null, tokenLimitKind: 'unknown', calls: 0, inputTokens: null,
+      cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, pricingCheckedOn: null, startedAt: null, wallMs: null },
+    progress: { attempts: 0, limit: 2, maximumTokens: null, model: 'workers-ai:reasoning-fixture', configuredModel: 'workers-ai:reasoning-fixture' },
+    guide: 'Done guide', digest: null, glossary: [], report: null, claims: [], citations: [] };
+  const retryModel: ModelRoute = { route: 'workers-ai:reasoning-fixture', id: 'reasoning-fixture', label: 'Native fixture',
+    enabled: true, contextTokens: 1024, maxOutputTokens: 128, nativeReasoningEffort: 'high', checkedOn: null };
+  const waitFor = async (predicate: () => boolean): Promise<void> => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (predicate()) return;
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    }
+    throw new Error('Timed out waiting for understanding controls.');
+  };
+
   it('explicitly reruns a done understanding without a POST on ordinary mount', async () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     sessionStorage.clear();
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
-    const done: Understanding = {
-      sourceId: 's1', revisionId: 'r1', state: 'done', error: null, canRecover: false,
-      attemptId: 'attempt-1', currentAttemptId: 'attempt-1', authors: '', published: null,
-      recordedUsage: { tokenLimit: null, tokenLimitKind: 'unknown', calls: 0, inputTokens: null,
-        cachedTokens: null, outputTokens: null, estimatedCostMicrousd: null, pricingCheckedOn: null, startedAt: null, wallMs: null },
-      progress: { attempts: 0, limit: 2, maximumTokens: null, model: null, configuredModel: 'gateway:test/test-model' },
-      guide: 'Done guide', digest: null, glossary: [], report: null, claims: [], citations: [] };
+    const done = retryFixture;
     const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
     const posts: Array<{ url: string; method: string; body: string }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -343,28 +354,21 @@ describe('Source claim evidence presentation', () => {
         const parsed = JSON.parse(body) as { retry?: { attemptId?: string } };
         return json({ revisionId: 'r1', attemptId: parsed.retry?.attemptId });
       }
-      if (url.pathname === '/api/models') return json({ models: [{
-        route: 'gateway:test/test-model', id: 'test-model', label: 'Test model', enabled: true,
-        contextTokens: 1024, maxOutputTokens: 128, checkedOn: null,
-      }] });
+      if (url.pathname === '/api/models') return json({ models: [retryModel], defaultModel: 'gateway:answers/other-model' });
       if (url.pathname === '/api/sources/s1/understanding') return json(done);
       return json({});
     }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    const waitFor = async (predicate: () => boolean): Promise<void> => {
-      for (let attempt = 0; attempt < 100; attempt++) {
-        if (predicate()) return;
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
-      }
-      throw new Error('Timed out waiting for the done retry control.');
-    };
     try {
       await act(async () => { root.render(<QueryClientProvider client={client}><MemoryRouter>
         <SourceUnderstanding projectId='p1' sourceId='s1' revisionId='r1' sourceTitle='BERT' />
       </MemoryRouter></QueryClientProvider>); });
       await waitFor(() => Array.from(host.querySelectorAll('button'))
-        .some(button => button.textContent === 'Run understanding again'));
+        .some(button => button.textContent === 'Run understanding again' && !button.disabled));
       expect(posts).toEqual([]);
+      const effort = host.querySelector<HTMLSelectElement>('select[aria-label="Understanding reasoning effort"]');
+      expect(effort?.disabled).toBe(false); expect(effort?.value).toBe('');
+      expect(host.textContent).toContain('Requested native reasoning effort: Unknown (not recorded).');
       const button = Array.from(host.querySelectorAll('button'))
         .find(candidate => candidate.textContent === 'Run understanding again');
       expect(button).toBeDefined();
@@ -375,6 +379,7 @@ describe('Source claim evidence presentation', () => {
       const stored = JSON.parse(sessionStorage.getItem('understanding-retry:s1:r1') ?? 'null') as
         { revisionId: string; retry: { attemptId: string; previousAttemptId: string } };
       expect(stored.revisionId).toBe('r1');
+      expect(stored).not.toHaveProperty('nativeReasoningEffort');
       expect(stored.retry.previousAttemptId).toBe('attempt-1');
       expect(stored.retry.attemptId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
       expect(posts[0]).toMatchObject({ url: '/api/sources/s1/understanding', method: 'POST' });
@@ -383,6 +388,173 @@ describe('Source claim evidence presentation', () => {
       sessionStorage.removeItem('understanding-retry:s1:r1');
       await act(async () => root.unmount());
       host.remove(); client.clear(); vi.unstubAllGlobals();
+    }
+  });
+
+  it('freezes Low across an uncertain retry reply and remount, then shows only the recorded requested profile', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    sessionStorage.clear();
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host);
+    const failed: Understanding = { ...retryFixture, state: 'failed', error: 'Offline failed attempt.' };
+    let current = failed, profileKnown = true;
+    const posts: string[] = [];
+    let rejectFirst!: (reason: Error) => void;
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost'), method = init?.method ?? 'GET';
+      if (method === 'POST' && url.pathname === '/api/sources/s1/understanding') {
+        const body = String(init?.body); posts.push(body);
+        const parsed = JSON.parse(body) as { nativeReasoningEffort?: 'low' | 'high'; retry: { attemptId: string } };
+        if (posts.length === 1) return new Promise<Response>((_resolve, reject) => { rejectFirst = reject; });
+        current = { ...failed, state: 'queued', attemptId: parsed.retry.attemptId, currentAttemptId: parsed.retry.attemptId,
+          knownRequestId: parsed.retry.attemptId, progress: { ...failed.progress, ...(parsed.nativeReasoningEffort ? { nativeReasoningEffort: parsed.nativeReasoningEffort } : {}) } };
+        return Response.json({ revisionId: 'r1', attemptId: parsed.retry.attemptId });
+      }
+      if (method !== 'GET') throw new Error('Unexpected understanding mutation.');
+      if (url.pathname === '/api/models') return Response.json({ models: [{ ...retryModel,
+        ...(profileKnown ? {} : { nativeReasoningEffort: undefined }) }], defaultModel: 'gateway:answers/other-model' });
+      if (url.pathname === '/api/sources/s1/understanding') return Response.json(current);
+      throw new Error('Unexpected understanding read.');
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const render = (key: string) => root.render(<QueryClientProvider client={client}><MemoryRouter>
+      <SourceUnderstanding key={key} projectId='p1' sourceId='s1' revisionId='r1' sourceTitle='BERT' />
+    </MemoryRouter></QueryClientProvider>);
+    const effort = () => {
+      const select = host.querySelector('select[aria-label="Understanding reasoning effort"]');
+      if (!(select instanceof HTMLSelectElement)) throw new Error('The native effort control did not render.');
+      return select;
+    };
+    const button = (label: string) => {
+      const found = Array.from(host.querySelectorAll('button')).find(candidate => candidate.textContent === label);
+      if (!found) throw new Error('Missing understanding action: ' + label);
+      return found;
+    };
+    try {
+      await act(async () => render('initial'));
+      await waitFor(() => host.querySelector<HTMLSelectElement>('select[aria-label="Understanding reasoning effort"]')?.disabled === false);
+      expect(posts).toEqual([]);
+      expect(host.textContent).toContain('Requested native reasoning effort: Unknown (not recorded).');
+      await act(async () => { effort().value = 'low'; effort().dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(posts).toEqual([]);
+      await act(async () => button('Retry understanding').click());
+      await waitFor(() => posts.length === 1);
+      const frozen = posts[0];
+      if (frozen === undefined) throw new Error('The Low retry was not captured.');
+      expect(JSON.parse(frozen)).toEqual({ revisionId: 'r1', nativeReasoningEffort: 'low',
+        retry: { attemptId: expect.any(String), previousAttemptId: 'attempt-1' } });
+      expect(sessionStorage.getItem('understanding-retry:s1:r1')).toBe(frozen);
+      expect(effort().disabled).toBe(true);
+      await act(async () => rejectFirst(new Error('Offline lost reply.')));
+      await waitFor(() => host.textContent?.includes('Request outcome is unknown.') === true);
+      expect(effort().disabled).toBe(true);
+      expect(Array.from(host.querySelectorAll('button')).some(candidate => candidate.textContent === 'Retry understanding')).toBe(false);
+      profileKnown = false;
+      await act(async () => render('reopened'));
+      await waitFor(() => Array.from(host.querySelectorAll('button')).some(candidate => candidate.textContent === 'Send same request'));
+      expect(posts).toHaveLength(1); expect(effort().disabled).toBe(true); expect(effort().value).toBe('low');
+      await act(async () => { effort().value = 'high'; effort().dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(sessionStorage.getItem('understanding-retry:s1:r1')).toBe(frozen);
+      expect(posts).toHaveLength(1);
+      await act(async () => button('Send same request').click());
+      await waitFor(() => posts.length === 2 && sessionStorage.getItem('understanding-retry:s1:r1') === null);
+      expect(posts[1]).toBe(frozen);
+      expect(host.textContent).toContain('Requested native reasoning effort: Low.');
+    } finally {
+      sessionStorage.removeItem('understanding-retry:s1:r1');
+      await act(async () => root.unmount());
+      host.remove(); client.clear();
+    }
+  });
+
+  it('clears unsupported effort drafts and creates a new retry intent only after durable rejection', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    sessionStorage.clear();
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host);
+    const unknownNative = { ...retryModel, route: 'workers-ai:unknown-fixture', id: 'unknown-fixture', nativeReasoningEffort: undefined };
+    const external = { ...retryModel, route: 'gateway:test/test-model', id: 'test-model', label: 'External fixture' };
+    let current: Understanding = { ...retryFixture, state: 'failed', canRecover: true,
+      progress: { ...retryFixture.progress, nativeReasoningEffort: 'high' } };
+    const posts: Array<{ revisionId: string; model?: string; nativeReasoningEffort?: 'low' | 'high'; saveAvailable?: boolean;
+      retry?: { attemptId: string; previousAttemptId: string } }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost'), method = init?.method ?? 'GET';
+      if (method === 'POST' && url.pathname === '/api/sources/s1/understanding') {
+        const body = JSON.parse(String(init?.body)) as (typeof posts)[number]; posts.push(body);
+        if (body.saveAvailable) return Response.json({ revisionId: 'r1' });
+        if (!body.retry) throw new Error('The terminal fixture requires an explicit retry.');
+        current = { ...current, knownRequestId: body.retry.attemptId, requestRejection: 'Offline durable profile rejection.' };
+        return Response.json({ revisionId: 'r1', attemptId: body.retry.attemptId, rejected: current.requestRejection });
+      }
+      if (method !== 'GET') throw new Error('Unexpected understanding mutation.');
+      if (url.pathname === '/api/models') return Response.json({ models: [retryModel, unknownNative, external], defaultModel: external.route });
+      if (url.pathname === '/api/sources/s1/understanding') return Response.json(current);
+      throw new Error('Unexpected understanding read.');
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const render = (projectId = 'p1') => root.render(<QueryClientProvider client={client}><MemoryRouter>
+      <SourceUnderstanding projectId={projectId} sourceId='s1' revisionId='r1' sourceTitle='BERT' />
+    </MemoryRouter></QueryClientProvider>);
+    const select = (label: string) => {
+      const found = host.querySelector('select[aria-label="' + label + '"]');
+      if (!(found instanceof HTMLSelectElement)) throw new Error('Missing understanding control: ' + label);
+      return found;
+    };
+    const change = async (label: string, value: string) => {
+      await act(async () => { const control = select(label); control.value = value; control.dispatchEvent(new Event('change', { bubbles: true })); });
+    };
+    const chooseModel = async (provider: string, route: string) => {
+      await change('Understanding model: provider', provider);
+      await change('Understanding model', route);
+    };
+    const button = (label: string) => {
+      const found = Array.from(host.querySelectorAll('button')).find(candidate => candidate.textContent === label);
+      if (!found) throw new Error('Missing understanding action: ' + label);
+      return found;
+    };
+    try {
+      await act(async () => render());
+      await waitFor(() => host.querySelector<HTMLSelectElement>('select[aria-label="Understanding reasoning effort"]')?.disabled === false);
+      expect(host.textContent).toContain('Requested native reasoning effort: High.');
+      await change('Understanding reasoning effort', 'low');
+      await chooseModel('workers-ai', unknownNative.route);
+      expect(select('Understanding reasoning effort').disabled).toBe(true);
+      expect(select('Understanding reasoning effort').value).toBe('');
+      expect(Array.from(select('Understanding reasoning effort').options).map(option => option.value)).toEqual(['']);
+      expect(posts).toEqual([]);
+      await chooseModel('workers-ai', retryModel.route);
+      expect(select('Understanding reasoning effort').value).toBe('');
+      await change('Understanding reasoning effort', 'low');
+      await act(async () => button('Retry understanding').click());
+      await waitFor(() => posts.length === 1 && sessionStorage.getItem('understanding-retry:s1:r1') === null && Array.from(host.querySelectorAll('button')).some(candidate => candidate.textContent === 'Retry understanding' && !candidate.disabled));
+      expect(posts[0]).toMatchObject({ model: retryModel.route, nativeReasoningEffort: 'low' });
+      await change('Understanding reasoning effort', 'high');
+      expect(posts).toHaveLength(1);
+      await act(async () => button('Retry understanding').click());
+      await waitFor(() => posts.length === 2 && sessionStorage.getItem('understanding-retry:s1:r1') === null && Array.from(host.querySelectorAll('button')).some(candidate => candidate.textContent === 'Retry understanding' && !candidate.disabled));
+      expect(posts[1]).toMatchObject({ model: retryModel.route, nativeReasoningEffort: 'high' });
+      expect(posts[1]?.retry?.attemptId).not.toBe(posts[0]?.retry?.attemptId);
+      await chooseModel('test', external.route);
+      expect(select('Understanding reasoning effort').disabled).toBe(true);
+      expect(select('Understanding reasoning effort').value).toBe('');
+      expect(Array.from(select('Understanding reasoning effort').options).map(option => option.value)).toEqual(['']);
+      await act(async () => button('Retry understanding').click());
+      await waitFor(() => posts.length === 3 && sessionStorage.getItem('understanding-retry:s1:r1') === null && Array.from(host.querySelectorAll('button')).some(candidate => candidate.textContent === 'Retry understanding' && !candidate.disabled));
+      expect(posts[2]?.model).toBe(external.route);
+      expect(posts[2]).not.toHaveProperty('nativeReasoningEffort');
+      await chooseModel('workers-ai', retryModel.route);
+      await change('Understanding reasoning effort', 'low');
+      await act(async () => button('Save available output').click());
+      await waitFor(() => posts.length === 4 && Array.from(host.querySelectorAll('button')).some(candidate => candidate.textContent === 'Retry understanding' && !candidate.disabled));
+      expect(posts[3]).toEqual({ revisionId: 'r1', saveAvailable: true });
+      await act(async () => render('p2'));
+      expect(select('Understanding reasoning effort').value).toBe('');
+      expect(posts).toHaveLength(4);
+    } finally {
+      sessionStorage.removeItem('understanding-retry:s1:r1');
+      await act(async () => root.unmount());
+      host.remove(); client.clear();
     }
   });
 });

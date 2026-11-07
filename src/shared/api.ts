@@ -14,6 +14,15 @@ export function isOpenRouterApiBase(value: string | null | undefined): boolean {
 
 export interface DistillInput { revisionId: string; model: ModelSpec; attemptId?: string | null }
 
+export type NativeReasoningEffort = "low" | "high";
+export interface UnderstandingInput {
+  revisionId?: string | undefined;
+  saveAvailable?: boolean | undefined;
+  model?: string | undefined;
+  nativeReasoningEffort?: NativeReasoningEffort | undefined;
+  retry?: { attemptId: string; previousAttemptId: string } | undefined;
+}
+
 export interface OwnerActor {
   type: "owner";
   id: string;

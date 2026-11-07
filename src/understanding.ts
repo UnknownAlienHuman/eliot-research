@@ -7,6 +7,7 @@ import type { JSONObject } from "@ai-sdk/provider";
 import { modelTokenLimit, readModelCatalog } from "./models";
 import { understandingKey, readAttemptSnapshot, readUnderstandingClaims } from "./understanding-attempts";
 import { hasAvailableUnderstanding } from "./workflows/distill";
+import type { NativeReasoningEffort } from "./shared/api";
 
 export type DistillState = "none" | "queued" | "running" | "paused" | "done" | "partial" | "failed";
 export type ClaimKind = "method" | "result" | "limitation" | "dataset" | "definition" | "other";
@@ -33,7 +34,7 @@ export interface Understanding { sourceId: string; revisionId: string; state: Di
   recordedUsage: RecordedUnderstandingUsage;
   attemptId: string; currentAttemptId: string; knownRequestId?: string | null; requestRejection?: string | null;
   authors: string; published: string | null;
-  progress: { attempts: number; limit: number; maximumTokens: number | null; recordedTokenLimit?: number | null; tokenLimitKind?: "published" | "unknown" | "legacy"; model: string | null; configuredModel: string | null };
+  progress: { attempts: number; limit: number; maximumTokens: number | null; recordedTokenLimit?: number | null; tokenLimitKind?: "published" | "unknown" | "legacy"; model: string | null; configuredModel: string | null; nativeReasoningEffort?: NativeReasoningEffort };
   guide: string | null; digest: string | null; glossary: GlossaryEntry[]; claims: UnderstandingClaim[];
   report: DistillReport | null; citations: { block: number; start: number; end: number }[] }
 
@@ -72,9 +73,9 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
   const revisionId = input.revisionId ?? source.currentRevisionId;
   if (!revisionId) throw new LibraryError("not_found", "This source has no revision yet.", 404);
   let row = await env.DB.prepare("SELECT r.distill_input_tokens AS inputTokens,r.distill_cached_tokens AS cachedTokens,r.distill_output_tokens AS outputTokens,r.distill_estimated_cost_microusd AS estimatedCostMicrousd,r.distill_pricing_checked_on AS pricingCheckedOn,r.distill_started_at AS startedAt,r.distill_ms AS wallMs,r.claim_count AS claimCount,r.distill_attempt_id AS attemptId,r.id AS id, r.distill_state AS state, r.distill_error AS error,r.distill_calls AS attempts,r.distill_report_key AS reportKey,r.distill_model AS model,r.distill_token_limit AS tokenLimit,r.distill_token_limit_kind AS tokenLimitKind"
-    + " FROM source_revision r JOIN source s ON s.id=r.source_id"
+    + ",r.distill_request_json AS request FROM source_revision r JOIN source s ON s.id=r.source_id"
     + " WHERE r.id=? AND r.source_id=? AND r.deleted_at IS NULL AND s.state!='deleted'")
-    .bind(revisionId, input.sourceId).first<{ claimCount: number; attemptId: string | null; id: string; state: DistillState; error: string | null; attempts: number; reportKey: string | null; model: string | null; tokenLimit: number | null; tokenLimitKind: "published" | "unknown" | "legacy" | null } & Omit<RecordedUnderstandingUsage, "calls">>();
+    .bind(revisionId, input.sourceId).first<{ request: string | null; claimCount: number; attemptId: string | null; id: string; state: DistillState; error: string | null; attempts: number; reportKey: string | null; model: string | null; tokenLimit: number | null; tokenLimitKind: "published" | "unknown" | "legacy" | null } & Omit<RecordedUnderstandingUsage, "calls">>();
   if (!row) throw new LibraryError("not_found", "Source revision not found.", 404);
   const currentAttemptId = row.attemptId ?? revisionId;
   const archived = input.attemptId && input.attemptId !== currentAttemptId ? await readAttemptSnapshot(env, revisionId, input.attemptId) : null;
@@ -82,8 +83,11 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
     const r = archived.revision;
     row = { inputTokens: r.distill_input_tokens, cachedTokens: r.distill_cached_tokens, outputTokens: r.distill_output_tokens,
       estimatedCostMicrousd: r.distill_estimated_cost_microusd, pricingCheckedOn: r.distill_pricing_checked_on, startedAt: r.distill_started_at, wallMs: r.distill_ms, claimCount: r.claim_count, id: r.id, attemptId: r.distill_attempt_id, state: r.distill_state, error: r.distill_error, attempts: r.distill_calls,
-      reportKey: r.distill_report_key, model: r.distill_model, tokenLimit: r.distill_token_limit, tokenLimitKind: r.distill_token_limit_kind };
+      reportKey: r.distill_report_key, model: r.distill_model, tokenLimit: r.distill_token_limit, tokenLimitKind: r.distill_token_limit_kind, request: r.distill_request_json };
   }
+  let nativeReasoningEffort: NativeReasoningEffort | undefined;
+  try { nativeReasoningEffort = z.object({ nativeReasoningEffort: z.enum(["low", "high"]).optional() }).parse(JSON.parse(row.request ?? "{}")).nativeReasoningEffort; }
+  catch { /* Legacy intent is not evidence of a requested profile. */ }
   const attemptId = row.attemptId ?? null;
   if (row.reportKey && row.reportKey !== understandingKey(revisionId, "distill.json", attemptId) && row.reportKey !== understandingKey(revisionId, "checked/distill.json", attemptId))
     throw new LibraryError("unavailable", "The saved report points outside this understanding attempt.", 503);
@@ -137,7 +141,7 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
     recordedUsage: { tokenLimit: row.tokenLimit, tokenLimitKind: row.tokenLimitKind, calls: row.attempts, inputTokens: row.inputTokens, cachedTokens: row.cachedTokens, outputTokens: row.outputTokens,
       estimatedCostMicrousd: row.estimatedCostMicrousd, pricingCheckedOn: row.pricingCheckedOn, startedAt: row.startedAt, wallMs: row.wallMs },
     progress: { attempts: row.attempts, limit: 2, maximumTokens, recordedTokenLimit, tokenLimitKind,
-      model: row.model, configuredModel },
+      model: row.model, configuredModel, ...(nativeReasoningEffort === undefined ? {} : { nativeReasoningEffort }) },
     guide,
     digest,
     glossary: Array.isArray(glossary) ? glossary : [],
