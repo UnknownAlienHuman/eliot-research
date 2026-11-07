@@ -372,7 +372,7 @@ re-distilled automatically.
    missing sentence punctuation and freezes the checked full sentence as its original H0–H4 unit. Authored symbols
    are never deleted; question-ending assertions are rejected. It preserves
    ID gaps and the existing qualifier representation. No assertion echo or semantic classifier is used.
-   Fresh `claim-plan-guide-v3` call two selects whole supported H units without rewriting; semantic
+   Fresh `claim-plan-guide-v4` call two selects whole supported H units without rewriting; semantic
    review must reject missing/wrong source scope even when no clause was declared. Final code rechecks and
    copies complete text/bindings into guide Markdown. DONE requires 3–5 actual sentences; insufficient, ambiguous or
    over-five coverage stays readable PARTIAL without trimming, and the guide must remain nonempty. It also freezes
@@ -382,21 +382,25 @@ re-distilled automatically.
    without H candidates. It does not rewrite glossary entries. Code rechecks and copies each selected frozen candidate with its original
    citation binding. Russian mathematical definitions name source objects/symbols and operands explicitly, preserving
    operation/composition/sum relationships and conditions; call-two selection must reject whole units with unsupported
-   roles or ambiguous referents without rewriting them. The same response uses an ordered methods/findings/limits
-   flat `digestPlan` array of `{id,group}`, with the global eight-entry bound encoded in the provider JSON schema,
-   selecting unique IDs from the exact C candidate indexes or A0–A7 original
+   roles or ambiguous referents without rewriting them. The same response uses a `digestPlan` object assigning each
+   selected ID one methods/findings/limits group, with the global eight-property bound encoded in the SDK/provider
+   JSON schema and checked locally. Reader groups retain authored property order within each group,
+   selecting IDs from the exact C candidate indexes or A0–A7 original
    `additionalClaims` indexes. After final claim
    validation, code materializes surviving checked units with complete statements as blockquotes, qualifying
    structured scope fields and authority citations outside authored content; unknown/rejected IDs fail.
    For each claim, `dataset` names a reported dataset/corpus/benchmark or remains `null` when absent; model/architecture
    names never fill that field, and source-stated model/configuration belong in `conditions`. Extraction/additions
-   share this role contract and call-two review must reject wrong roles even when the words occur in the quote. If no claim
-   survives, digest groups are empty and a validated `partialDigest` remains partial with zero claims. `claim-plan-v1`
+   share this role contract and, before drafting statements, retain every non-primary numerical comparison,
+   baseline, improvement and qualifying quantity in `conditions` or a separate atomic result. Call-two review must
+   reject wrong roles even when the words occur in the quote. This fresh repair remains semantically unqualified.
+   If no claim survives, the assignment object is empty and a validated `partialDigest` remains partial with zero claims. `claim-plan-v1`
    is the digest-only continuation for legacy `Verified` artifacts without frozen glossary candidates; markerless
    cached call two retains the full legacy prose Save/history path. `claim-plan-guide-v1` retains its old complete
-   guide/nested-plan behavior; v2 retains its nullable-object scope/flat-plan parser. V2/v3 raw and verified markers must
-   match exactly, including Save. The v3 array substitution is an unproven provider-compatibility hypothesis, not a
-   quality or runtime pass. Old over-eight-total plans are rejected without truncation or raw mutation. The bound remains two calls with no paid retry.
+   guide/nested-plan behavior; v2 retains its nullable-object scope/flat-plan parser and v3 its scope-array/flat-plan
+   parser, including duplicate rejection. V2/v3/v4 raw and verified markers must match exactly, including Save.
+   The v3 scope-array substitution remains an unproven provider-compatibility hypothesis, not a quality or runtime
+   pass. Old over-eight-total plans are rejected without truncation or raw mutation. The bound remains two calls with no paid retry.
    Preserve a safe failure reason for the reader without retaining raw provider errors or credentials.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
    an extra overview model call. Open it from Studio, load sources in bounded pages and Refresh to rescan changed
@@ -463,7 +467,7 @@ re-distilled automatically.
 
 K3 is not fully accepted or deployed. Historical retained runs recorded the ten baseline papers as `done`, an
 unchanged-revision reuse with no new inference, and four overflow answers in `claims` mode. Those runs predate the
-current `claim-plan-guide-v3` producer and do not qualify the exact current baseline corpus or producer. Required
+current `claim-plan-guide-v4` producer and do not qualify the exact current baseline corpus or producer. Required
 conditions for the French Transformer result and some LoRA anchors remain unresolved; statement-local numeric,
 citation and semantic-support gates remain open. Storage-only Save/recheck does not dispatch inference and does not
 qualify K3.
@@ -487,7 +491,7 @@ an unmatched backtick inside a fence cannot mask later prose references. Quote v
 bytes and folds only fallback slices; this reduces repeated work without changing evidence or quality gates.
 Repair defective PDF text only through the existing reviewed OCR/immutable Apply path; preserve old bytes and citations.
 For correct input, keep candidate statements atomic and complete, then review each against its own frozen evidence
-within the existing two calls. Fresh `claim-plan-guide-v3` selects original assembled H0–H4 guide and G0–G11 glossary candidates by ID and
+within the existing two calls. Fresh `claim-plan-guide-v4` selects original assembled H0–H4 guide and G0–G11 glossary candidates by ID and
 rechecks the copied `{labels,en,ru,definition}` units; fresh claim-plan digests use the closed C/A indexes above.
 `claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without glossary candidates, while
 markerless cached output retains the full legacy prose path. These producer checks do not establish semantic support

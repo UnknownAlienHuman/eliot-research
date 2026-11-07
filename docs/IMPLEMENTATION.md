@@ -549,12 +549,13 @@ not model quality or paid-step replay.
 2. Verified excerpts → supported claim selection, whole guide-unit selection, digest selection and, for frozen glossary candidates,
    a glossary selection.
 
-Fresh call one and call two use raw marker `claim-plan-guide-v3`, also recorded on the new verified artifact.
+Fresh call one and call two use raw marker `claim-plan-guide-v4`, also recorded on the new verified artifact.
 `Verified.guideCandidates` keeps the existing frozen representation with original H0–H4
 identities, complete text, qualifiers and source labels. Call two returns strict `supportedGuide` IDs, not replacement
 guide prose. Missing/malformed, unknown or duplicate selections reject the fresh plan without a prose fallback.
-Retained `claim-plan-guide-v2` keeps its nullable-object scope parser and flat digest plan. Raw call two must match the
-exact frozen v2/v3 marker, including cached Save; neither version is reinterpreted as the other.
+Retained `claim-plan-guide-v2` keeps its nullable-object scope parser and flat digest plan; v3 retains array scope and
+its original flat digest-plan parser. Raw call two must match the exact frozen v2/v3/v4 marker, including cached Save;
+no version is reinterpreted as another.
 Legacy `claim-plan-guide-v1` keeps its previously frozen guide units and nested digest plan; no assertion/scope assembly
 or promotion of old dropped guide candidates occurs during GET/history/Save. Verified artifacts without H candidates
 continue the previous producer: `claim-plan-glossary-v1` selects
@@ -572,15 +573,18 @@ when an ambiguous pronoun changes the referent, a predicate is assigned to anoth
 unsupported. It must not rewrite the definition to repair it. These are semantic review contracts, not a heuristic
 classifier or deterministic entailment proof.
 
-Fresh call two returns one flat `digestPlan` array of `{ id, group }`, where group is `methods|findings|limits`.
-Its provider JSON schema encodes `maxItems: 8` globally; code also checks ID uniqueness and final fact survival.
-Reader grouping preserves each selected complete fact and its order within the group. Legacy nested group formats
-retain their old reader/validation behavior: an over-eight-total plan is rejected, never truncated or rewritten.
+Fresh call two returns one `digestPlan` object assigning each selected candidate ID exactly one
+`methods|findings|limits` group. Pinned Zod `partialRecord` closes its keys to the candidate set; public schema metadata
+encodes `maxProperties: 8` in the actual SDK JSON schema, with a matching local count check. A parsed candidate has
+one assignment. Reader groups remain methods, findings, then limits, preserving authored property order within each
+group and copying each complete checked fact. V2/v3 flat arrays retain their original globally bounded parser and
+duplicate rejection. Legacy nested group formats retain their old reader/validation behavior: an over-eight-total
+plan is rejected, never truncated or rewritten. All formats retain exact final fact-survival checks.
 The closed selection set is the exact C candidate indexes supplied to call two plus A0–A7, the original zero-based
 `additionalClaims` indexes. After final claim validation, code renders each selected surviving checked unit with its
 complete statement isolated as a blockquote, qualifying structured scope fields intact and its authority citation
 outside authored content; it does not paraphrase, renumber or substitute. Unknown or rejected IDs reject the fresh
-plan. If no claim survives, the flat array is empty (empty groups for legacy formats) and a validated `partialDigest` is stored only as partial with
+plan. If no claim survives, the assignment object is empty (an empty array or groups for retained formats) and a validated `partialDigest` is stored only as partial with
 zero claims. `claim-plan-v1` remains the digest-only continuation for legacy `Verified` artifacts lacking frozen
 glossary candidates; it keeps their existing prose glossary. Markerless cached call two retains the full legacy prose
 digest/Save path. The call count remains two, with no retry or third call.
@@ -598,7 +602,7 @@ Fresh guide items declare `{ labels, scope: [] | [{ labels, text }], assertion }
 combined domain scope clause, then one coherent independently scoped assertion, without mixing unrelated experiments.
 `scope` is required: the actual SDK/provider JSON schema encodes a non-null array with `minItems: 0`, `maxItems: 1`,
 and non-null object items. Missing/malformed scopes, two or more clauses, and v2 null/object wire values reject fresh
-v3 output without downgrade. Empty/singleton arrays produce exactly the same frozen text as v2 null/object values;
+v3/v4 output without downgrade. Empty/singleton arrays produce exactly the same frozen text as v2 null/object values;
 normalization occurs only after the version-specific schema accepts the raw artifact.
 The assertion is structurally bounded to 800 characters and scope text to 300, keeping the assembled sentence below
 the existing 1200-character bound. Scope labels must be a subset of assertion labels; its meaningful content,
@@ -626,7 +630,7 @@ Legacy raw call one keeps its original verifier: v2 keeps nullable-object scope 
 and pre-H raw output retains first-supported-sentence handling. Legacy verified/cached guide paths keep their existing
 GET/history/Save behavior. Missing new scope/assertion fields do not opt old output into the fresh protocol, and
 historical H/C/G identities are never synthesized or renumbered.
-Glossary candidates use `{ labels, en, ru, definition }`; fresh `claim-plan-guide-v3` and retained guide/glossary plans see those frozen
+Glossary candidates use `{ labels, en, ru, definition }`; fresh `claim-plan-guide-v4` and retained guide/glossary plans see those frozen
 units with their exact excerpts and return only `supportedGlossary` G IDs. Code rechecks the selected full candidates
 and copies their fields and label bindings; it does not request, accept or substitute free glossary prose in this
 branch. `claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without frozen glossary
@@ -644,7 +648,11 @@ Code verifies quotes and numbers between calls. Draft statements are hypotheses,
 each retained candidate against its own quote and can add a small number of atomic facts from the same frozen excerpts.
 The `dataset` field names only a reported dataset, corpus or benchmark, never a model or architecture; it is `null`
 when no such data identity is stated. Source-stated model/configuration and other qualifiers belong in `conditions`.
-Extraction and additional-claim schema descriptions and generation share that role contract. Call two must reject a
+Before drafting the statement, extraction and additional-claim generation must record every non-primary numerical
+comparison, baseline, improvement and qualifying quantity it will mention in `conditions`, preserving the stated
+relationship, or draft a separate result as its own atomic card. The shared field description precedes `statement`
+in both schemas. This drafting contract does not prove model compliance or semantic quality; unchanged numeric gates
+still reject incomplete structured context rather than dropping a statement's comparison. Call two must reject a
 candidate with wrong field roles even when its literal field values occur in the quote; it does not reassign fields.
 `valueText` is the primary reported scalar and `unit` only its unit/scale; secondary results require separate cards.
 Both fields must be `null` for non-result kinds; source-stated formulas/configurations stay in statement/conditions.

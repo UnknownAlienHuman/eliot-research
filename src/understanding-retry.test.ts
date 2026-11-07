@@ -110,7 +110,7 @@ describe("explicit understanding retry", () => {
       extraction.guide = extraction.guide.map((item: { labels: string[]; text: string }) => ({ labels: item.labels, scope: [], assertion: item.text }));
       const synthesis = {
         supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"],
-        digestPlan: [{ id: "C0", group: "methods" }],
+        digestPlan: { C0: "methods" },
         supportedGlossary: [],
       };
       extraction.claims[0].statement = "The method retains evidence.";

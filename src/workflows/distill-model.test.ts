@@ -13,6 +13,7 @@ import type { ModelSpec } from "../models";
 import type * as Models from "../models";
 import type * as ModelTransport from "../model-transport";
 import type * as AISDK from "ai";
+import type { z } from "zod";
 import type { DistillInput } from "../shared/api";
 import type { DistillReport } from "../understanding";
 import { createElement } from "react";
@@ -247,7 +248,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
         claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: guide[0]?.assertion,
           task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] },
         totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
-      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"], digestPlan: [{ id: "C0", group: "methods" }], supportedGlossary: [] },
+      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"], digestPlan: { C0: "methods" }, supportedGlossary: [] },
         totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
     const original = new Map(f.bodies);
     try {
@@ -269,7 +270,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(f.bodies.get(prefix + "digest.md")).toContain(guide[0]?.assertion);
       expect(f.bodies.get(prefix + "digest.md")).toContain("[R" + revisionId + ":1]");
       const call2 = JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null") as { format: string };
-      expect(call2.format).toBe("claim-plan-guide-v3");
+      expect(call2.format).toBe("claim-plan-guide-v4");
       expect(f.bodies.get(prefix + "glossary.json")).toBe("[]");
       for (const [key, body] of original) expect(f.bodies.get(key)).toBe(body);
     } finally { f.db.close(); }
@@ -926,6 +927,9 @@ describe("DistillWorkflow admitted model snapshot", () => {
         maxItems?: number;
         minItems?: number;
         maxLength?: number;
+        maxProperties?: number;
+        propertyNames?: JsonSchemaNode;
+        additionalProperties?: JsonSchemaNode;
       };
       const generatedSchema = (instructions: unknown): JsonSchemaNode => {
         if (typeof instructions !== "string") throw new Error("Structured request instructions were not captured.");
@@ -1003,16 +1007,24 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(extractionSchema(labels, "claim-plan-guide-v2").safeParse(extraction).success).toBe(false);
       expect(secondSchema.properties).not.toHaveProperty("guide");
       expect(secondSchema.required).toContain("supportedGuide");
-      expect(digestPlan).toMatchObject({ type: "array", maxItems: 8 });
-      expect(Object.keys(digestPlan?.items?.properties ?? {})).toEqual(["id", "group"]);
+      const localSchema = vi.mocked(Output.object).mock.calls[1]?.[0].schema as z.ZodType;
+      const actualPlan = await sdk.Output.object({ schema: localSchema }).responseFormat;
+      if (actualPlan?.type !== "json" || !actualPlan.schema) throw new Error("The pinned SDK did not produce the digest selection schema.");
+      const sdkPlan = (actualPlan.schema as JsonSchemaNode).properties?.digestPlan;
+      expect(sdkPlan).toEqual(digestPlan);
+      expect(digestPlan).toMatchObject({ type: "object", maxProperties: 8,
+        propertyNames: { enum: ["C0", "C1", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"] },
+        additionalProperties: { enum: ["methods", "findings", "limits"] } });
+      const selection = { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0"], supportedGlossary: [],
+        digestPlan: { C1: "methods", C0: "methods", A0: "findings", A1: "findings", A2: "findings", A3: "findings", A4: "limits", A5: "limits" } };
+      expect(Object.keys((localSchema.parse(selection) as typeof selection).digestPlan)).toEqual(Object.keys(selection.digestPlan));
+      expect(localSchema.safeParse({ ...selection, digestPlan: { C99: "findings" } }).success).toBe(false);
+      expect(localSchema.safeParse({ ...selection, digestPlan: { ...selection.digestPlan, A6: "limits" } }).success).toBe(false);
+      expect(localSchema.safeParse({ ...selection, digestPlan: [{ id: "C0", group: "methods" }] }).success).toBe(false);
       expect(Object.keys(partialDigestItem?.properties ?? {})).toEqual(["labels", "text"]);
       expect(Object.keys(glossaryItem?.properties ?? {})).toEqual(["labels", "en", "ru", "definition"]);
       expect(guideItem?.required).toContain("labels");
-      expect(digestPlan?.items?.required).toEqual(["id", "group"]);
-      expect(digestPlan?.items?.properties?.group?.enum).toEqual(["methods", "findings", "limits"]);
-      expect(digestPlan?.items?.properties?.id?.enum).toContain("C0");
-      expect(digestPlan?.items?.properties?.id?.enum).toContain("A7");
-      expect(digestPlan?.items?.properties?.id?.enum).not.toContain("A8");
+      expect(digestPlan?.propertyNames?.enum).not.toContain("A8");
       expect(glossaryItem?.required).toContain("labels");
     } finally { f.db.close(); }
 
@@ -1125,9 +1137,10 @@ describe("DistillWorkflow admitted model snapshot", () => {
           task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null,
           start: block1.start, end: block1.end, ambiguous: false, valueNumber: null,
         })),
-        ...(format === "claim-plan-guide-v1" ? { glossaryCandidates: [], guideCandidates: [{
+        ...(format === "claim-plan-guide-v1" || format === "claim-plan-guide-v3" ? { glossaryCandidates: [], guideCandidates: [{
           id: "H4", labels: ["[S1:1]", "[S1:2]", "[S1:3]"], qualifiers: [], text: oldGuideText,
         }] } : {}),
+        ...(format === "claim-plan-guide-v3" ? { format } : {}),
         guide: [
           { labels: ["[S1:1]"], text: "The source describes method Alpha." },
           { labels: ["[S1:2]"], text: "The source reports a result." },
@@ -1145,6 +1158,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
           ["extract source", "verify source excerpts", "review and synthesize"].includes(name) ? undefined : callback());
         await new DistillWorkflow({} as ExecutionContext, f.env).run(
           { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>, { do: steps } as unknown as WorkflowStep);
+        return steps;
       };
       return { f, flow };
     };
@@ -1171,6 +1185,22 @@ describe("DistillWorkflow admitted model snapshot", () => {
         expect(report.state).toBe(overflow ? "failed" : "partial");
         if (overflow) expect(f.bodies.has(prefix + "digest.md")).toBe(false);
         else expect(f.bodies.get(prefix + "guide.md")).toBe(oldGuideText + "\n\n" + [1, 2, 3].map((block) => "[R" + revisionId + ":" + block + "]").join(" "));
+        for (const [key, body] of before) expect(f.bodies.get(key)).toBe(body);
+        expect(generateText).not.toHaveBeenCalled();
+      } finally { f.db.close(); }
+    }
+    {
+      const { f, flow } = prepareCached({ supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H4"], supportedGlossary: [],
+        digestPlan: [{ id: "C0", group: "findings" }, { id: "C0", group: "findings" }] }, "claim-plan-guide-v3");
+      const before = new Map(f.bodies);
+      try {
+        expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
+        const steps = await flow();
+        expect(steps.mock.calls.at(-1)?.[0]).toBe("store understanding");
+        await expect(steps.mock.results.at(-1)?.value).rejects.toThrow("The curated digest plan is not a bounded, unique selection.");
+        expect(JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null")).toMatchObject({ state: "failed",
+          error: "Source understanding failed." });
+        expect(f.bodies.has(prefix + "digest.md")).toBe(false);
         for (const [key, body] of before) expect(f.bodies.get(key)).toBe(body);
         expect(generateText).not.toHaveBeenCalled();
       } finally { f.db.close(); }
@@ -1207,6 +1237,64 @@ describe("DistillWorkflow admitted model snapshot", () => {
       } finally { f.db.close(); }
     }
   });
+
+  it.each(["complete comparison", "missing comparison", "rejected ID"] as const)(
+    "copies eight unique fresh assignments only from fully checked facts: %s", async (mode) => {
+      const statements = ["The method retains evidence.", "The method preserves labels.", "The method shares weights.",
+        "The method computes attention.", "The method trains in parallel.", "The method limits padding."];
+      const result = "On English-German translation, the model reports 28.4 BLEU, improving over the previous best by 2.0 BLEU after 3.5 days on eight P100 GPUs.";
+      const document = documentWithBlocks([
+        { type: "paragraph", text: "The method uses normalization. " + statements.join(" ") + "\n" },
+        { type: "paragraph", text: result + "\n" },
+      ]);
+      const f = fixture(snapshot.route, document);
+      const fields = { task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null };
+      const comparison = mode === "missing comparison" ? "after 3.5 days on eight P100 GPUs"
+        : "improving over the previous best by 2.0 BLEU after 3.5 days on eight P100 GPUs";
+      const digestPlan = { A7: "limits", C0: "methods", A0: "findings", A6: "methods", A2: "methods", A3: "methods", A4: "methods", A5: "methods" };
+      if (mode === "rejected ID") { delete (digestPlan as Partial<typeof digestPlan>).A7; Object.assign(digestPlan, { A1: "limits" }); }
+      vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+      vi.mocked(generateText)
+        .mockResolvedValueOnce({ output: { claims: [{ quoteBlock: "[S1:1]", kind: "method", ...fields, statement: "The method uses normalization." }],
+          guide: [{ labels: ["[S1:1]"], scope: [], assertion: "The method uses normalization." },
+            { labels: ["[S1:1]"], scope: [], assertion: "The method retains evidence." },
+            { labels: ["[S1:2]"], scope: [], assertion: "The source reports a translation result." }],
+          glossary: [], questions: ["Which method?", "Which result?", "Which conditions?"] },
+          totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
+        .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], supportedGuide: ["H0", "H1", "H2"], supportedGlossary: [], digestPlan,
+          additionalClaims: [
+            { quoteBlock: "[S1:2]", kind: "result", task: "English-German translation", metric: "BLEU", dataset: null,
+              valueText: "28.4", unit: "BLEU", conditions: comparison, statement: result },
+            { quoteBlock: "[S1:1]", kind: "method", ...fields, statement: "The method uses 99 layers." },
+            ...statements.map((statement) => ({ quoteBlock: "[S1:1]", kind: "method", ...fields, statement })),
+          ] }, totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
+      try {
+        const steps = await run(f);
+        expect(generateText).toHaveBeenCalledTimes(2);
+        expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+        const raw2 = f.bodies.get(prefix + "distill-call2.json");
+        expect(JSON.parse(raw2 ?? "null")).toMatchObject({ format: "claim-plan-guide-v4", output: { digestPlan } });
+        const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+        if (mode !== "complete comparison") {
+          expect(steps.mock.calls.at(-1)?.[0]).toBe("store understanding");
+          await expect(steps.mock.results.at(-1)?.value).rejects.toThrow("The curated digest references an unknown or rejected claim.");
+          expect(report).toMatchObject({ state: "failed", error: "Source understanding failed." });
+          expect(f.bodies.has(prefix + "digest.md")).toBe(false);
+        } else {
+          expect(report).toMatchObject({ state: "done", kept: 8 });
+          expect(report.dropped).toContainEqual({ index: 1, reason: "additional-unsupported-statement-numbers" });
+          const digest = f.bodies.get(prefix + "digest.md") ?? "";
+          const expectedOrder = ["## Methods", "The method uses normalization.", statements[4], ...statements.slice(0, 4),
+            "## Findings", result, comparison, "## Limitations", statements[5]] as string[];
+          let position = -1;
+          for (const text of expectedOrder) { const next = digest.indexOf(text, position + 1); expect(next, text).toBeGreaterThan(position); position = next; }
+          expect(f.db.prepare("SELECT statement,conditions FROM claim WHERE source_revision_id=? AND kind='result'").get(revisionId))
+            .toEqual({ statement: result, conditions: comparison });
+        }
+        expect(f.bodies.get(prefix + "distill-call2.json")).toBe(raw2);
+        expect(f.bodies.get(prefix + "text.md")).toBe(document.text);
+      } finally { f.db.close(); }
+    });
 
   it.each([
     { name: "task", field: "task", value: "99 experiments" },
@@ -1329,7 +1417,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
-  it.each(["complete", "questions", "over-five", "insufficient", "zero-claim", "unknown", "duplicate", "duplicate-digest", "missing", "malformed"] as const)(
+  it.each(["complete", "questions", "over-five", "insufficient", "zero-claim", "unknown", "duplicate", "missing", "malformed"] as const)(
     "assembles complete source-bound scope before whole-guide review: %s", async (mode) => {
       const document = documentWithBlocks([
         { type: "paragraph", text: "Compared to GPT-3 175B fine-tuned with Adam, the method reduces GPU memory. (Version 2)"
@@ -1365,7 +1453,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       for (const i of [1, 3, 4]) expect(guide[i]?.assertion).not.toContain(guide[i]?.scope[0]?.text);
       const ids = mode === "unknown" ? ["H0"] : mode === "duplicate" ? ["H1", "H1", "H3"]
         : mode === "insufficient" ? ["H1"] : ["H1", "H3", "H4"];
-      const zero = mode === "zero-claim", invalid = ["unknown", "duplicate", "duplicate-digest", "missing", "malformed"].includes(mode);
+      const zero = mode === "zero-claim", invalid = ["unknown", "duplicate", "missing", "malformed"].includes(mode);
       vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
       vi.mocked(generateText)
         .mockResolvedValueOnce({ output: { guide, glossary: [], questions: ["Which scope?", "What method?", "What evidence?"],
@@ -1374,8 +1462,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
           totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
         .mockResolvedValueOnce({ output: { supportedClaims: zero ? [] : ["C0"], additionalClaims: [], supportedGlossary: [],
           ...(mode === "missing" ? { guide: frozen } : { supportedGuide: mode === "malformed" ? "H1" : ids }),
-          digestPlan: zero ? [] : mode === "duplicate-digest" ? [{ id: "C0", group: "methods" }, { id: "C0", group: "findings" }]
-            : [{ id: "C0", group: "methods" }],
+          digestPlan: zero ? {} : { C0: "methods" },
           ...(zero ? { partialDigest: [{ labels: ["[S1:2]"], text: "Adaptation keeps the pre-trained weights frozen." }] } : {}) },
           totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
       try {
@@ -1383,7 +1470,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
         expect(generateText).toHaveBeenCalledTimes(2);
         expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
         const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
-        expect(verified.format).toBe("claim-plan-guide-v3");
+        expect(verified.format).toBe("claim-plan-guide-v4");
         expect(verified.guideCandidates).toEqual(frozen);
         expect(verified.dropped).toContainEqual({ index: 0, reason: mode === "questions"
           ? "guide-candidate-question-assertion" : "guide-candidate-qualifier-outside-scope" });
@@ -1396,7 +1483,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
           evidence: item.labels.map((label) => verified.evidence.find((e: { label: string }) => e.label === label)) })));
         if (mode === "questions") expect(context.guideCandidates.map((item: { text: string }) => item.text).join("\n"))
           .not.toContain("r=1 always suffices");
-        expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null").format).toBe("claim-plan-guide-v3");
+        expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null").format).toBe("claim-plan-guide-v4");
         const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
         expect(report.state).toBe(invalid ? "failed" : mode === "complete" || mode === "questions" ? "done" : "partial");
         expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(!invalid);
@@ -1445,7 +1532,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       await run(f);
       expect(generateText).toHaveBeenCalledTimes(1);
       expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
-      expect(JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null").format).toBe("claim-plan-guide-v3");
+      expect(JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null").format).toBe("claim-plan-guide-v4");
       expect(f.bodies.has(prefix + "distill-verified.json")).toBe(false);
       expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
       expect(JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null")).toMatchObject({ state: "failed", kept: 0, usage: { calls: 1 } });
@@ -1453,7 +1540,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
-  it.each(["claim-plan-guide-v2", "claim-plan-guide-v3"] as const)("keeps identical complete text, symbols and cached Save with exact version matching: %s", async (format) => {
+  it.each(["claim-plan-guide-v2", "claim-plan-guide-v3", "claim-plan-guide-v4"] as const)("keeps identical complete text, symbols and cached Save with exact version matching: %s", async (format) => {
     const document = documentWithBlocks([{ type: "paragraph", text:
       "For distinct items, the number of permutations is n!. The estimate remains open... During adaptation, the method keeps the pre-trained weights fixed.\n" }]);
     const f = fixture(snapshot.route, document);
@@ -1474,15 +1561,15 @@ describe("DistillWorkflow admitted model snapshot", () => {
       claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The method keeps the pre-trained weights fixed during adaptation.",
         task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] };
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
-    if (format === "claim-plan-guide-v2") {
+    if (format !== "claim-plan-guide-v4") {
       f.bodies.set(prefix + "distill-call1.json", JSON.stringify({ format, output: firstOutput,
         usage: { inputTokens: 17, cachedTokens: 0, outputTokens: 8, tokenLimit: null, tokenLimitKind: "legacy" } }));
       f.db.prepare("UPDATE source_revision SET distill_calls=1 WHERE id=?").run(revisionId);
     } else vi.mocked(generateText).mockResolvedValueOnce({ output: firstOutput, totalUsage } as never);
     vi.mocked(generateText).mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], supportedGlossary: [],
-        supportedGuide: ["H0", "H1", "H2"], digestPlan: [{ id: "C0", group: "methods" }] }, totalUsage } as never);
+        supportedGuide: ["H0", "H1", "H2"], digestPlan: format === "claim-plan-guide-v4" ? { C0: "methods" } : [{ id: "C0", group: "methods" }] }, totalUsage } as never);
     try {
-      if (format === "claim-plan-guide-v2") await new DistillWorkflow({} as ExecutionContext, f.env).run(
+      if (format !== "claim-plan-guide-v4") await new DistillWorkflow({} as ExecutionContext, f.env).run(
         { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>,
         { do: async (name: string, _options: unknown, callback: () => Promise<unknown>) => name === "extract source" ? undefined : callback() } as unknown as WorkflowStep);
       else await run(f);
@@ -1509,7 +1596,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true });
       expect(f.bodies.get(prefix + "checked/guide.md")).toBe(expectedGuide);
       for (const [key, value] of beforeSave) expect(f.bodies.get(key)).toBe(value);
-      expect(generateText).toHaveBeenCalledTimes(format === "claim-plan-guide-v2" ? 1 : 2);
+      expect(generateText).toHaveBeenCalledTimes(format === "claim-plan-guide-v4" ? 2 : 1);
     } finally { f.db.close(); }
   });
 
@@ -1539,7 +1626,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
         guide, questions, glossary: empty ? [] : [invalid, unit] },
         totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
       .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"],
-        digestPlan: [{ id: "C0", group: "methods" }], supportedGlossary: empty ? [] : ["G1"] },
+        digestPlan: { C0: "methods" }, supportedGlossary: empty ? [] : ["G1"] },
         totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
     try {
       await run(f);
@@ -1563,7 +1650,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(schema.properties).not.toHaveProperty("glossary");
       expect(schema.properties.supportedGlossary.maxItems).toBe(empty ? 0 : 1);
       const rawCall2 = JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null");
-      expect(rawCall2.format).toBe("claim-plan-guide-v3");
+      expect(rawCall2.format).toBe("claim-plan-guide-v4");
       expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual(empty ? [] : [{
         ...unit, labels: ["[R" + revisionId + ":2]", "[R" + revisionId + ":3]"],
       }]);
