@@ -1797,6 +1797,58 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { f.db.close(); }
   });
 
+  it.each([true, false])("classifies only observed owned deadline expiry through a serialized Workflow failure: %s", async (expired) => {
+    vi.useFakeTimers();
+    // Native Node AbortSignal.timeout does not use Vitest's fake clock.
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("Fixture local deadline", "TimeoutError")), ms);
+      return controller.signal;
+    });
+    const f = fixture(snapshot.route);
+    const privateText = "private-provider-response-and-request-marker";
+    const wrapped = new Error("Wrapped stream failure " + privateText, {
+      cause: Object.assign(new Error(privateText), { name: "TimeoutError" }),
+    });
+    let enter: () => void = () => undefined;
+    const dispatched = new Promise<void>((resolve) => { enter = resolve; });
+    let observedSignal: AbortSignal | undefined;
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(modelFailure).mockReturnValue("Model stream failed.");
+    vi.mocked(generateText).mockImplementationOnce(({ abortSignal }) => {
+      observedSignal = abortSignal;
+      enter();
+      if (!abortSignal) throw new Error("The actual call must own a deadline signal.");
+      return new Promise<never>((_resolve, reject) => {
+        if (expired) abortSignal.addEventListener("abort", () => reject(wrapped), { once: true });
+        else reject(wrapped);
+      });
+    });
+    try {
+      const pending = run(f, true);
+      await dispatched;
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(180_000);
+      expect(observedSignal?.aborted).toBe(false);
+      if (expired) await vi.advanceTimersByTimeAsync(180_000);
+      const steps = await pending;
+      const failure = expired ? "Local model-call deadline expiry observed. No retry was started." : "Model stream failed.";
+      expect(observedSignal?.aborted).toBe(expired);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
+      expect(steps.mock.calls[0]?.[1]).toMatchObject({ retries: { limit: 0 }, timeout: "4 minutes" });
+      expect(generateText).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ abortSignal: observedSignal, maxRetries: 0 }));
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      if (expired) expect(modelFailure).not.toHaveBeenCalled();
+      else expect(modelFailure).toHaveBeenCalledExactlyOnceWith(wrapped, snapshot);
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_error AS error FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "failed", calls: 1, error: failure });
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      expect(report).toMatchObject({ state: "failed", error: failure,
+        usage: { calls: 1, inputTokens: null, cachedTokens: null, outputTokens: null, providerUsage: [] },
+        raw: { first: null, second: null } });
+      for (const body of f.bodies.values()) expect(body).not.toContain(privateText);
+    } finally { f.db.close(); vi.clearAllTimers(); timeout.mockRestore(); vi.useRealTimers(); }
+  });
+
   it("retains typed structured-output failure telemetry and cause across serialized steps", async () => {
     // Does not reproduce eval/out/openrouter-20261028/resnet-trace (generic External failure, distill-call2.json 404, unrecoverable).
     // It covers the proven pinned ai@7.0.152 shape in isolation: NoObjectGeneratedError carries usage/finishReason.

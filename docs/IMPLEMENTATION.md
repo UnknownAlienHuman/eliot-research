@@ -698,6 +698,11 @@ headers or credentials, and adds no table, ledger or model call. Missing token c
 Capture the fixed safe provider-failure projection on the owning revision before crossing the Workflow step boundary.
 The final report and reader retain that cause even when Workflow serialization strips the original error class;
 provider response bodies, request headers and credentials remain excluded.
+At catch entry, each call snapshots whether its own existing deadline signal has expired and persists a fixed
+"Local model-call deadline expiry observed" reason before Workflow serialization. This observes the local deadline,
+not a provider/server timeout cause or completed billing; elapsed wall time alone never supplies that classification.
+Known typed structured-output usage/artifacts are still retained; unknown usage stays unknown. The 180 s call and
+4 minute step bounds are unchanged, and historical generic failures are not reclassified or rewritten.
 `done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal
 filtering and remains diagnostic. `partial` records a missing required component, ambiguous Markdown visibility or an interrupted/error outcome,
 not a nonzero drop percentage. The same exact-quote, numeric-support and anchor gates apply to both states.

@@ -299,15 +299,17 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   if (!dispatch.meta.changes) throw new Error("This model call was already dispatched; it will not be repeated.");
   const artifactName = `distill-call${ordinal}.json`;
   let result: Awaited<ReturnType<typeof generateText>> | undefined;
+  const deadlineSignal = AbortSignal.timeout(Math.min(180_000, remaining));
   try {
     result = await generateText({ model: transport,
       instructions: modelInstructions, messages, output: Output.object({ schema }),
-      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0, ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: AbortSignal.timeout(Math.min(180_000, remaining)) });
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0, ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: deadlineSignal });
     const output = result.output as T;
     const usage = result.totalUsage;
     const inputTokens = usage.inputTokens ?? null, cachedTokens = usage.inputTokenDetails?.cacheReadTokens ?? null, outputTokens = usage.outputTokens ?? null;
     return { output, usage: { inputTokens, cachedTokens, outputTokens, tokenLimit, tokenLimitKind, providerUsage: usage.raw ?? null } };
   } catch (error) {
+    const localDeadlineObserved = deadlineSignal.aborted;
     const detail = structuredFailureDetail(error, result);
     let failure: string;
     if (detail) {
@@ -317,8 +319,9 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
         : "model returned incomplete or invalid structured output";
     } else {
       // Provider errors can contain credentials; retain only the fixed safe projection.
-      failure = modelFailure(error, model);
+      failure = localDeadlineObserved ? "Local model-call deadline expiry observed. No retry was started." : modelFailure(error, model);
     }
+    if (localDeadlineObserved && detail) failure = "Local model-call deadline expiry observed. " + failure + ". No retry was started.";
     await env.DB.prepare("UPDATE source_revision SET distill_error=? WHERE id=? AND distill_state='running' AND distill_calls=? AND distill_attempt_id IS ?")
       .bind(failure, revisionId, ordinal, attemptId ?? null).run();
     throw new LibraryError("unavailable", failure, 503);
