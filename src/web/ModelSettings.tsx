@@ -6,7 +6,7 @@
 // Global form also owns the AI Gateway connection mini-section
 // (GET/PUT /api/models/connection, gatewayId only, no secrets).
 import { useEffect, useRef, useState } from 'react';
-import { apiErrorMessage, apiJson } from './api';
+import { apiJson } from './api';
 import { ModelPicker } from './ModelPicker';
 import { ModelProviders, toDraft, validateDrafts, type Draft as ProviderDraft } from './ModelProviders';
 import type { ModelProvider } from '../models';
@@ -22,14 +22,11 @@ function quotaLabels(quotas: ProviderQuota[]): Record<string, string | null> {
     quota.usage === null || quota.limit === null ? null :
       `${quota.usage.toLocaleString('en-US')} / ${quota.limit.toLocaleString('en-US')}`]));
 }
-async function apiRequest(path: string, init?: RequestInit): Promise<void> {
-  const res = await fetch(path, { credentials: 'same-origin', ...init });
-  if (!res.ok) throw new Error(await apiErrorMessage(res));
-}
 export function ModelSettings({ projectId, onSaved }: { readonly projectId?: string; readonly onSaved?: () => void }) {
   const [models, setModels] = useState<ModelRoute[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState('');
+  const [modelWarnings, setModelWarnings] = useState<string[]>([]);
   const [providerQuotas, setProviderQuotas] = useState<Record<string, string | null>>({});
   const [answerModel, setAnswerModel] = useState('');
   const [distillModel, setDistillModel] = useState('');
@@ -45,6 +42,7 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
   const [editingTarget, setEditingTarget] = useState<'answer' | 'distill'>('answer');
   const [gatewayNote, setGatewayNote] = useState('');
   const [initialGatewayId, setInitialGatewayId] = useState('');
+  const [connectionLoaded, setConnectionLoaded] = useState(false);
   const [providerDrafts, setProviderDrafts] = useState<ProviderDraft[] | null>(null);
   const [providersBaseline, setProvidersBaseline] = useState<readonly ModelProvider[]>([]);
   const [providersError, setProvidersError] = useState('');
@@ -70,7 +68,7 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
     catalogRequest.current.controller = null;
     return catalogRequest.current.sequence;
   }
-  async function reloadModels(): Promise<ModelRoute[] | undefined> {
+  async function reloadModels(): Promise<ModelCatalog | undefined> {
     const sequence = invalidateModels();
     const generation = gatewayGeneration.current;
     const controller = new AbortController();
@@ -84,8 +82,9 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
       if (!current()) return;
       setProviderQuotas(quotaLabels(d.quotas ?? []));
       setNativeUsage(d.nativeUsage ?? null);
+      setModelWarnings(d.warnings ?? []);
       setModels((previous) => current() ? d.models : previous);
-      return d.models;
+      return d;
     } catch (err) {
       if (!current()) return;
       setModelsError(err instanceof Error ? err.message : 'Could not load model catalog.');
@@ -119,7 +118,7 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
     if (projectId === undefined) {
       settings = apiJson<{ settings: GlobalSettings }>('/api/settings', { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.settings.answerModel); setDistillModel(d.settings.distillModel); setInitialAnswer(d.settings.answerModel); setInitialDistill(d.settings.distillModel); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
       if (projectId === undefined) void apiJson<{ providers: ModelProvider[] }>('/api/models/providers', { signal: reads.signal }).then((d) => { if (!live) return; setProviderDrafts(d.providers.map(toDraft)); setProvidersBaseline(d.providers); }).catch(() => { if (live) setProvidersError('Providers are unavailable.'); });
-    void apiJson<{ connection: GatewayConnection }>('/api/models/connection', { signal: reads.signal }).then((d) => { if (!live || gatewayGeneration.current !== generation) return; setGatewayId(d.connection.gatewayId ?? ''); setInitialGatewayId(d.connection.gatewayId ?? ''); setAllowGateway(false); }).catch((err: unknown) => { if (live && gatewayGeneration.current === generation) setGatewayNote(err instanceof Error ? err.message : 'Gateway connection status unavailable.'); });
+    void apiJson<{ connection: GatewayConnection }>('/api/models/connection', { signal: reads.signal }).then((d) => { if (!live || gatewayGeneration.current !== generation) return; setGatewayId(d.connection.gatewayId ?? ''); setInitialGatewayId(d.connection.gatewayId ?? ''); setAllowGateway(false); setConnectionLoaded(true); }).catch((err: unknown) => { if (live && gatewayGeneration.current === generation) setGatewayNote(err instanceof Error ? err.message : 'Gateway connection status unavailable.'); });
     } else {
       const pid = projectId;
       settings = apiJson<{ project: ProjectSettings }>('/api/projects/' + encodeURIComponent(pid), { signal: reads.signal }).then((d) => { if (!live) return; setAnswerModel(d.project.answerModel ?? ''); setUseGlobal(d.project.answerModel === null); setInstructions(d.project.instructions); setReady(true); }).catch((err: unknown) => { if (live) setNote(err instanceof Error ? err.message : 'Could not load settings.'); });
@@ -141,13 +140,15 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
       if (saved) onSaved?.();
       return;
     }
-    if (answerModel === '') { setNote('Choose an answer model.'); return; }
+    if (answerModel !== initialAnswer && answerModel === '') { setNote('Choose an answer model.'); return; }
+    if (distillModel !== initialDistill && distillModel === '') { setNote('Choose an understanding model.'); return; }
     const checked = providerDrafts === null ? null : validateDrafts(providerDrafts);
     if (checked !== null) setProviderFieldErrors(checked.errors);
     if (checked !== null && checked.providers === null) { setNote('Check the highlighted provider fields.'); return; }
     const nextProviders = checked?.providers ?? null;
     const providerChanged = nextProviders !== null && JSON.stringify(providerDrafts) !== JSON.stringify(providersBaseline.map(toDraft));
-    const settingsChanged = answerModel !== initialAnswer || distillModel !== initialDistill;
+    const modelChanges = { ...(answerModel !== initialAnswer ? { answerModel } : {}), ...(distillModel !== initialDistill ? { distillModel } : {}) };
+    const settingsChanged = Object.keys(modelChanges).length > 0;
     const gatewayTrimmed = gatewayId.trim();
     const gatewayChanged = gatewayTrimmed !== initialGatewayId;
     if (gatewayChanged && gatewayTrimmed !== '' && !allowGateway) { setNote('gateway: check the box to connect a Gateway, or clear the field to disable'); return; }
@@ -168,9 +169,9 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
     }
     if (settingsChanged) {
       try {
-        await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel, distillModel }) });
-        setInitialAnswer(answerModel);
-        setInitialDistill(distillModel);
+        await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(modelChanges) });
+        if (modelChanges.answerModel !== undefined) setInitialAnswer(modelChanges.answerModel);
+        if (modelChanges.distillModel !== undefined) setInitialDistill(modelChanges.distillModel);
       } catch (err) { problems.push('settings: ' + (err instanceof Error ? err.message : 'could not save settings')); }
     }
     if (gatewayChanged) {
@@ -178,6 +179,7 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
           const gd = await apiJson<{ connection: GatewayConnection }>('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(gatewayTrimmed === '' ? { gatewayId: null } : { gatewayId: gatewayTrimmed, confirmCredentialAccess: true }) });
           setGatewayId(gd.connection.gatewayId ?? '');
           setInitialGatewayId(gd.connection.gatewayId ?? '');
+          setConnectionLoaded(true);
           setAllowGateway(false);
           gatewayReload = true;
         } catch (err) { problems.push('gateway connection: ' + (err instanceof Error ? err.message : 'could not save Gateway connection')); }
@@ -191,13 +193,16 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
     setModelsRefreshing(true);
     setRefreshNote('');
     try {
-      await apiRequest('/api/models/refresh', {
+      const refreshed = await apiJson<ModelCatalog>('/api/models/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
-      await reloadModels();
-      setRefreshNote('Models refreshed.');
+      const latest = await reloadModels();
+      if (latest === undefined) return;
+      const warnings = [...new Set([...(refreshed.warnings ?? []), ...(latest.warnings ?? [])])];
+      setModelWarnings(warnings);
+      setRefreshNote(warnings.length ? 'Models refreshed with warnings.' : 'Models refreshed.');
     } catch (err) {
       setRefreshNote(err instanceof Error ? err.message : 'Could not refresh model catalog.');
     } finally {
@@ -214,7 +219,7 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
           <textarea value={instructions} onChange={(e) => setInstructions(e.currentTarget.value)} rows={3} maxLength={10000} />
         </label>
         <ModelPicker label='Answer model' choices={modelChoices} value={useGlobal ? '' : answerModel} emptyLabel='Use global default'
-          loading={modelsLoading || savingAll} error={modelsError} compact
+          loading={modelsLoading || savingAll} error={modelsError} warnings={modelWarnings} compact
           onChange={selectAnswerModel} />
         <div className='er-models__actions'>
           <button className='er-button er-button--primary' type='button' disabled={savingAll} onClick={() => void save()}>{savingAll ? 'Saving…' : 'Save'}</button>
@@ -242,18 +247,25 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
           </label>
         </fieldset>
         <ModelPicker label={editingTarget === 'answer' ? 'Answer model' : 'Understanding model'} choices={modelChoices} value={editingTarget === 'answer' ? answerModel : distillModel} onChange={(route) => { if (editingTarget === 'answer') selectAnswerModel(route); else selectDistillModel(route); }}
-          loading={modelsLoading || savingAll} error={modelsError} />
+          loading={modelsLoading || savingAll} error={modelsError} warnings={modelWarnings} />
+        <div className='er-models__actions'>
+          <p className='er-status' role='status'><span>{!connectionLoaded
+            ? gatewayNote === '' ? 'Loading external connection…' : 'External connection status is unavailable.'
+            : initialGatewayId === '' ? 'External requests are not connected. You can choose and save models; running them requires an authorized Gateway connection.'
+            : 'External requests use the saved Gateway connection. Provider usability is not verified.'}</span></p>
+          <button className='er-button er-button--text' type='button' disabled={savingAll} onClick={openGatewayDialog}>AI Gateway connection</button>
+        </div>
         <p className='er-status'><span>Workers AI uses your existing Cloudflare plan. Free stops at the daily allowance; Paid overage may apply. Eliot does not change your subscription or enforce a separate free cap.</span></p>
         {nativeUsageLabel !== null ? <p className='er-status'><span>{nativeUsageLabel}</span></p> : null}
         <div className='er-models__actions'>
           <button className='er-button er-button--text' type='button' disabled={modelsLoading || modelsRefreshing || savingAll} onClick={() => void refreshModels()}>
             {modelsRefreshing ? 'Refreshing models…' : 'Refresh models'}
           </button>
-          <button className='er-button er-button--text' type='button' disabled={savingAll} onClick={openGatewayDialog}>AI Gateway connection</button>
           <button className='er-button er-button--primary' type='button' disabled={savingAll} onClick={() => void save()}>{savingAll ? 'Saving…' : 'Save'}</button>
           {note !== '' ? <p className='er-status' role='status'><span>{note}</span></p> : null}
         </div>
-        {refreshNote !== '' ? <p className='er-status' role={refreshNote === 'Models refreshed.' ? 'status' : 'alert'}>{refreshNote}</p> : null}
+        {refreshNote !== '' ? <p className='er-status' role={refreshNote === 'Models refreshed.' || refreshNote === 'Models refreshed with warnings.' ? 'status' : 'alert'}>{refreshNote}</p> : null}
+        <p className='er-status'><span>Enabled providers supply catalogue choices. Enabling a provider does not connect credentials or authorize external requests.</span></p>
         <ModelProviders drafts={providerDrafts} onChange={(d) => { setProviderDrafts(d); setProviderFieldErrors({}); }} quotas={providerQuotas} fieldErrors={providerFieldErrors} disabled={savingAll} />
         {providersError !== '' ? <p className='er-status er-status--error' role='alert'><span>{providersError}</span></p> : null}
         <dialog className='er-dialog er-models__dialog' ref={gatewayDialog} aria-labelledby='er-gateway-connection-title'>

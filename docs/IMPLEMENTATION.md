@@ -1361,6 +1361,12 @@ same R2 object; no D1/settings migration is required. A provider refresh failure
 and returns a warning while available provider slices may update. On an absent snapshot, GET returns the native Flash
 fallback, `snapshot.updatedAt: null`, `snapshot.refreshNeeded: true` and a refresh-needed warning. The snapshot
 contains no credentials.
+An existing valid snapshot is authoritative, including a successful native slice that excludes the factory Flash
+route; reading it never reinserts that seed. Failed native Refresh preserves only its previously stored native slice
+with a warning. A configured default missing from the snapshot remains stored and visibly unavailable; paid
+resolution rejects it before dispatch. Catalogue warnings are shown on read. Explicit Refresh reports success with
+warnings when present, including quota warnings, without treating every warning as a model-catalogue failure or
+changing the selected provider/native-ID pair.
 
 Provider quotas are optional display data in the same R2 snapshot. Explicit Refresh reads OpenRouter's documented
 `GET /api/v1/key` through the configured Gateway's receiver-bound `AI.fetch`, without a provider Authorization header.
@@ -1428,9 +1434,21 @@ catalogue restriction. Provider APIs provide the selectable catalogue; no model-
 OpenRouter embed/rerank IDs remain separate future K5 capabilities, not chat choices.
 
 Settings uses one visible provider/search/free-name filter and catalogue, with Answers/Understanding choosing which
-default is being edited. Filters are display-only; the catalogue has no pagination or technical model-details panel.
+default is being edited. All-provider option labels include their provider origin; equal names from distinct
+provider/native-ID pairs remain separate choices. Filters are display-only: an outside-filter current choice is
+identified separately with its origin, never inserted among another provider's results. The catalogue has no pagination or technical model-details panel.
 Chat and project settings use compact provider then model selection with the applicable default available. Refresh preserves the
 selected provider/native-ID pair. Usable model bounds remain required locally; provider quota/billing restrictions apply upstream.
+
+The catalogue's read-only `selectable` projection permits choosing/saving a known model from an enabled configured
+provider independently of Gateway connection and execution readiness. `enabled`/`unavailableReason` continue to guard
+execution; disabled/unconfigured providers, unsupported model capabilities and ambiguous identities are not made
+selectable. Unknown bounds remain visible/selectable but paid resolution still requires usable input/output bounds.
+Selecting or saving a default never grants credential access, connects a Gateway, refreshes metadata or starts a job.
+Global `PUT /api/settings` accepts either or both model fields. Save sends only edited defaults; the API validates and
+updates only changed values, leaving an untouched missing/disabled saved route intact. An unchanged stale replay is a
+storage-only no-op. Empty/unknown payloads remain invalid, and the retired `nativeUsageMode` field is rejected before
+catalogue lookup or writes. Existing owner/Origin and Gateway credential-consent guards remain unchanged.
 
 Migration `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; null disables external routes. Owner-only
 GET `/api/models/connection` and PUT read/save the exact existing named Gateway ID. Enabling requires
@@ -1589,8 +1607,10 @@ scroll locally. This targets modern Chromium with native MathML, with no legacy 
 
 The shared model picker reuses the approved legacy Material interaction and provider/native-ID identity. Settings
 provider, search and free-name filters only filter the displayed catalogue; they do not change saved routes or admission.
-Chat uses compact provider then model controls with project default available. A provider with no enabled,
-unambiguous catalogue choices is visibly unavailable. Model changes affect the next Send; each answer shows its stored
+Chat uses compact provider then model controls with project default available. A provider with no selectable,
+unambiguous catalogue choices is visibly unavailable; a missing Gateway connection alone does not disable
+catalogue selection. Execution readiness still blocks Send/Understand and remains visible as an actionable reason.
+Model changes affect the next Send; each answer shows its stored
 model's name. New chats may Send with no sources, while existing chats wait for their history to load. Changing chats
 clears the previous queue view and ignores messages from the closed connection. The inherited model name is displayed
 without sending an explicit override.
@@ -1605,6 +1625,9 @@ and source scope. Choosing the current chat or using a modified link leaves its 
 without confirmation; blank drafts follow the existing navigation. This applies to these controls, not browser Back/Forward.
 Settings keeps human provider names and known quota values on compact rows,
 with provider addresses and Gateway routing in connection dialogs. Both owner billing and data-use choices remain.
+Saved Gateway connection status and its existing setup action appear beside the catalogue. Provider Enable controls
+configuration/catalogue participation, not credential consent or verified connectivity. Draft connection edits do not
+claim a saved connection; saving a connection still requires the existing explicit credential-access consent.
 Unknown metadata stays visible, and model-job admission remains separate
 from selection.
 

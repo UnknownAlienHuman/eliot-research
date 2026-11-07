@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { verifyClaims } from '../quotes';
 import type { Understanding } from '../understanding';
 import { SourceUnderstanding } from './Understanding';
+import { ModelPicker, type ModelRoute } from './ModelPicker';
+import { ModelSettings } from './ModelSettings';
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -29,6 +31,143 @@ function SourcesRead({ projectId }: { projectId: string }) {
 }
 
 describe('Source claim evidence presentation', () => {
+  it('disambiguates provider origins and keeps an outside-filter selection separate without changing it', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host);
+    const choices: ModelRoute[] = [
+      { route: 'workers-ai:flash', id: 'flash', label: 'GLM Flash', enabled: true, selectable: true, contextTokens: 1024, maxOutputTokens: null, checkedOn: null },
+      ...['openrouter', 'command-code'].map(provider => ({ route: 'gateway:' + provider + '/stealth/crouton-alpha', id: 'stealth/crouton-alpha',
+        label: 'Crouton Alpha', enabled: false, selectable: true, unavailableReason: 'Connect AI Gateway in Settings.', contextTokens: null, maxOutputTokens: null, checkedOn: null })),
+    ];
+    let selected = 'workers-ai:flash';
+    const blocked = vi.fn();
+    const changed = vi.fn((route: string) => { selected = route; render(); });
+    const render = () => root.render(<ModelPicker label='Answer model' choices={choices} value={selected} onChange={changed} onRoutePendingChange={blocked} />);
+    const controls = () => {
+      const provider = host.querySelector('select[aria-label="Answer model: provider"]');
+      const model = host.querySelector('select[aria-label="Answer model"]');
+      if (!(provider instanceof HTMLSelectElement) || !(model instanceof HTMLSelectElement)) throw new Error('The shared picker controls did not render.');
+      return { provider, model };
+    };
+    try {
+      await act(async () => render());
+      const labels = Array.from(controls().model.options).filter(option => option.textContent?.includes('Crouton Alpha')).map(option => option.textContent);
+      expect(labels).toEqual(['Crouton Alpha · OpenRouter — setup required', 'Crouton Alpha · Command Code — setup required']);
+      await act(async () => { controls().provider.value = 'openrouter'; controls().provider.dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(changed).not.toHaveBeenCalled(); expect(selected).toBe('workers-ai:flash');
+      expect(Array.from(controls().model.options).map(option => option.value)).toEqual(['', 'gateway:openrouter/stealth/crouton-alpha']);
+      expect(host.textContent).toContain('Current selection: GLM Flash · Workers AI. Outside the current filter.');
+      expect(controls().model.value).toBe('');
+      await act(async () => { controls().model.value = 'gateway:openrouter/stealth/crouton-alpha'; controls().model.dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(changed).toHaveBeenLastCalledWith('gateway:openrouter/stealth/crouton-alpha');
+      expect(blocked).toHaveBeenLastCalledWith(true); expect(host.textContent).toContain('Connect AI Gateway in Settings.');
+      await act(async () => { controls().provider.value = 'command-code'; controls().provider.dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(controls().model.options).toHaveLength(2); expect(selected).toBe('gateway:openrouter/stealth/crouton-alpha');
+      await act(async () => { controls().model.value = 'gateway:command-code/stealth/crouton-alpha'; controls().model.dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(changed.mock.calls.map(([route]) => route)).toEqual(['gateway:openrouter/stealth/crouton-alpha', 'gateway:command-code/stealth/crouton-alpha']);
+    } finally { await act(async () => root.unmount()); host.remove(); }
+  });
+
+  it.each(['answerModel', 'distillModel'] as const)('saves only changed %s while preserving the other missing default, without connecting credentials or starting a job', async field => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host), native = 'workers-ai:flash', external = 'gateway:openrouter/stealth/crouton-alpha';
+    const choices: ModelRoute[] = [
+      { route: native, id: 'flash', label: 'GLM Flash', enabled: true, selectable: true, contextTokens: 1024, maxOutputTokens: null, checkedOn: null },
+      { route: external, id: 'stealth/crouton-alpha', label: 'Crouton Alpha', enabled: false, selectable: true,
+        unavailableReason: 'Connect AI Gateway in Settings.', contextTokens: null, maxOutputTokens: null, checkedOn: null },
+    ];
+    const missing = 'gateway:removed/retired-model';
+    let settings = { answerModel: field === 'answerModel' ? native : missing, distillModel: field === 'distillModel' ? native : missing, updatedAt: 0 };
+    const writes: Array<{ path: string; method: string; body: unknown }> = [];
+    const json = (value: unknown) => Response.json(value);
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = String(input), method = init?.method ?? 'GET';
+      if (method !== 'GET') {
+        writes.push({ path, method, body: JSON.parse(String(init?.body)) });
+        if (path !== '/api/settings' || method !== 'PUT') throw new Error('Unexpected connection, refresh or job mutation.');
+        settings = { ...settings, ...JSON.parse(String(init?.body)) }; return json({ settings });
+      }
+      if (path === '/api/settings') return json({ settings });
+      if (path === '/api/models') return json({ models: choices, warnings: [], defaultModel: native });
+      if (path === '/api/models/connection') return json({ connection: { gatewayId: null, provider: 'ai-gateway', alias: 'default' } });
+      if (path === '/api/models/providers') return json({ providers: [
+        { id: 'workers-ai', type: 'workers-ai', baseUrl: null, gatewaySlug: null, gatewayPath: '', enabled: true },
+        { id: 'openrouter', type: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1', gatewaySlug: 'openrouter', gatewayPath: 'v1', enabled: true, dataCollection: 'deny' },
+      ] });
+      throw new Error('Unexpected Settings read.');
+    }));
+    try {
+      await act(async () => root.render(<ModelSettings />));
+      expect(writes).toEqual([]); expect(host.querySelectorAll('.er-model-picker')).toHaveLength(1);
+      expect(host.textContent).toContain('External requests are not connected.');
+      expect(Array.from(host.querySelectorAll('button')).filter(button => button.textContent === 'AI Gateway connection')).toHaveLength(1);
+      if (field === 'distillModel') {
+        const target = host.querySelector('input[type="radio"][value="distill"]');
+        if (!(target instanceof HTMLInputElement)) throw new Error('The shared catalogue target did not render.');
+        await act(async () => target.click());
+      }
+      const picker = host.querySelector('select[aria-label="' + (field === 'answerModel' ? 'Answer model' : 'Understanding model') + '"]');
+      if (!(picker instanceof HTMLSelectElement)) throw new Error('The Settings catalogue did not render.');
+      await act(async () => { picker.value = external; picker.dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(host.textContent).toContain('Connect AI Gateway in Settings.');
+      const save = host.querySelector<HTMLButtonElement>('.er-models__actions .er-button--primary');
+      if (!save) throw new Error('The existing Settings Save action did not render.');
+      await act(async () => save.click());
+      expect(writes).toEqual([{ path: '/api/settings', method: 'PUT', body: { [field]: external } }]);
+      expect(settings).toMatchObject({ [field]: external, [field === 'answerModel' ? 'distillModel' : 'answerModel']: missing });
+      expect(host.textContent).toContain('External requests are not connected.');
+      await act(async () => save.click());
+      expect(writes).toHaveLength(1); // The untouched missing route must not cause a second Save.
+      const target = host.querySelector('input[type="radio"][value="' + (field === 'answerModel' ? 'distill' : 'answer') + '"]');
+      if (!(target instanceof HTMLInputElement)) throw new Error('The shared catalogue target did not render.');
+      await act(async () => target.click());
+      expect(host.querySelectorAll('.er-model-picker')).toHaveLength(1);
+      expect(host.textContent).toContain('Current selection: not in the current catalogue.');
+      expect(writes).toHaveLength(1);
+    } finally { await act(async () => root.unmount()); host.remove(); }
+  });
+
+  it.each(['OpenRouter model catalogue request timed out.', 'OpenRouter quota is unavailable.'])(
+    'shows stored warnings and a truthful refresh outcome without changing the selected slice: %s', async warning => {
+      vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+      const host = document.createElement('div'); document.body.appendChild(host); const root = createRoot(host);
+      const route = 'gateway:openrouter/retained-model';
+      const retained = { route, id: 'retained-model', label: 'Retained model', contextTokens: null, maxOutputTokens: null, checkedOn: null,
+        enabled: false, selectable: true, unavailableReason: 'Connect AI Gateway in Settings.' };
+      const posts: string[] = []; let refreshed = false, catalogueGets = 0;
+      vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const path = String(input), method = init?.method ?? 'GET';
+        if (method !== 'GET') {
+          if (path !== '/api/models/refresh' || method !== 'POST') throw new Error('Refresh must not save defaults, connect credentials or infer.');
+          posts.push(path); refreshed = true;
+          return Response.json({ models: [retained], defaultModel: route, warnings: [warning] });
+        }
+        if (path === '/api/settings') return Response.json({ settings: { answerModel: route, distillModel: route, updatedAt: 0 } });
+        if (path === '/api/models') { catalogueGets++; return Response.json({ models: [retained], defaultModel: route, warnings: refreshed ? [] : ['Stored catalogue advisory.'] }); }
+        if (path === '/api/models/providers') return Response.json({ providers: [] });
+        if (path === '/api/models/connection') return Response.json({ connection: { gatewayId: null, provider: 'ai-gateway', alias: 'default' } });
+        throw new Error('Unexpected Settings request.');
+      }));
+      try {
+        await act(async () => root.render(<ModelSettings />));
+        expect(posts).toEqual([]); expect(catalogueGets).toBe(1);
+        expect(host.querySelector('details.er-model-picker__warnings')?.textContent).toContain('Stored catalogue advisory.');
+        const button = Array.from(host.querySelectorAll('button')).find(item => item.textContent === 'Refresh models');
+        if (!button) throw new Error('The explicit catalogue Refresh action did not render.');
+        await act(async () => button.click());
+        expect(posts).toEqual(['/api/models/refresh']); expect(catalogueGets).toBe(2);
+        const picker = host.querySelector('select[aria-label="Answer model"]');
+        if (!(picker instanceof HTMLSelectElement)) throw new Error('The retained catalogue choice did not render.');
+        expect(picker.value).toBe(route); expect(picker.disabled).toBe(false);
+        expect(Array.from(picker.options).filter(item => item.value === route)).toHaveLength(1);
+        expect(host.querySelector('details.er-model-picker__warnings')?.textContent).toContain(warning);
+        const outcome = Array.from(host.querySelectorAll('[role="status"]')).find(item => item.textContent === 'Models refreshed with warnings.');
+        expect(outcome).toBeDefined();
+      } finally { await act(async () => root.unmount()); host.remove(); }
+    });
+
   it('shows the exact excerpt without presenting literal checks as semantic verification', () => {
     // The real BERT failure: the same 512 occurs in a bound and batch arithmetic.
     const quote = '50% of the time B is the actual next sentence that follows A and 50% of the time it is a random sentence, which is done for the ‘next sentence prediction’ task. '

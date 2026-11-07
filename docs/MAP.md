@@ -227,6 +227,8 @@ stop/reconnect, reopen chat and save an answer as a page.
    `POST /api/models/refresh` discovers JSON models and available provider quota data; a partial provider failure preserves that provider's prior slice and
    returns a warning. If no snapshot exists, use the native Flash fallback. Paid admission remains separate and
    requires usable context/output bounds, without per-model price prerequisites. Providers enforce quota/billing rules.
+   A valid stored catalogue is authoritative; a successful native slice cannot be supplemented with an absent fallback
+   route. Preserve a failed native refresh's prior slice and show warnings on read/Refresh without changing selections.
    Keep Command Code and add Kilo, Nous Portal and OpenCode Go through that same configuration. Go's live IDs join its
    published metadata for limits and API protocol; no model-name mapping or private donor login is copied. New provider
    rows start disabled, and saving them does not refresh catalogues or start inference.
@@ -241,6 +243,11 @@ stop/reconnect, reopen chat and save an answer as a page.
    as never sent, with known zero usage. Reads and repeat IDs do not start it again.
 6. Add chat/page APIs, one visible Material catalogue with answer/understanding defaults, compact chat/project pickers,
    saved answers and the moved chat/evidence UI. Provider configuration is separate from credentials kept in Cloudflare.
+   All-provider labels identify origin without merging distinct provider/native-ID pairs. Filters preserve the current
+   choice separately when it is outside the results. Configured model choice/Save remains separate from connection
+   and paid admission; show saved Gateway status/setup beside the catalogue, without granting credential access.
+   Save/validate only changed defaults, retaining an untouched missing/disabled default and treating an unchanged
+   stale replay as a no-op. Refresh warnings stay visible and do not claim an unconditional clean refresh.
    The project header opens a paged active-project picker with Refresh/Retry; switching opens that project's chat
    without creating a chat or sending a question. Switching to another project confirms discarding a nonblank draft;
    cancelling or closing the picker preserves the current draft and source scope.

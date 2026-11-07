@@ -8,7 +8,7 @@ import type { ApiError, MeResponse } from "./shared/api";
 import { addSource, attachSource, availableSources, createProject, getProject, getSource, LibraryError, listProjects, listSources, MAX_SOURCE_BYTES, setProjectScope, updateProject } from "./library";
 import { readOriginal, readOutline, readText } from "./read";
 import { captureUrl, UrlGuardError } from "./url-guard";
-import { getModelConnection, getModelProviders, modelProvidersSchema, readModelCatalog, refreshModelCatalog, requireCatalogModel, saveModelProviders, validGatewayId } from "./models";
+import { getModelConnection, getModelProviders, modelProvidersSchema, readModelCatalog, refreshModelCatalog, requireCatalogModel, saveModelDefaults, saveModelProviders, validGatewayId } from "./models";
 import { getPage, listPages, saveAnswer } from "./pages";
 import { requestUnderstanding, scheduleDistillation } from "./workflows/distill";
 import { getOverview, getUnderstanding, getUnderstandingHistory } from "./understanding";
@@ -102,15 +102,7 @@ app.put("/api/models/connection", async (c) => {
 });
 app.get("/api/settings", async (c) => c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,updated_at AS updatedAt FROM settings WHERE id=1").first() }));
 app.put("/api/settings", async (c) => {
-  const body: unknown = await c.req.json();
-  if (body !== null && typeof body === "object" && Object.hasOwn(body, "nativeUsageMode"))
-    throw new LibraryError("invalid", "Workers AI usage modes have been removed. Reload Settings. Requests use your existing Cloudflare plan; Eliot does not change your subscription or enforce a separate free cap.", 400);
-  const input = z.object({ answerModel: z.string().min(1), distillModel: z.string().min(1).optional() }).strict().parse(body);
-  await requireCatalogModel(c.env, input.answerModel);
-  if (input.distillModel !== undefined) await requireCatalogModel(c.env, input.distillModel);
-  await c.env.DB.prepare("UPDATE settings SET answer_model=?,distill_model=COALESCE(?,distill_model),updated_at=? WHERE id=1")
-    .bind(input.answerModel, input.distillModel ?? null, Date.now()).run();
-  return c.json({ settings: await c.env.DB.prepare("SELECT answer_model AS answerModel,distill_model AS distillModel,updated_at AS updatedAt FROM settings WHERE id=1").first() });
+  return c.json({ settings: await saveModelDefaults(c.env, await c.req.json()) });
 });
 app.patch("/api/projects/:id/settings", async (c) => {
   const projectId = uuid.parse(c.req.param("id")), project = await getProject(c.env, c.get("actor"), projectId);

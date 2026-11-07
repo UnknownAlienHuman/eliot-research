@@ -13,6 +13,7 @@ export interface ModelRoute {
   readonly id: string;
   readonly label: string;
   readonly enabled: boolean;
+  readonly selectable?: boolean;
   readonly unavailableReason?: string | null;
   readonly provider?: string;
   readonly contextTokens: number | null;
@@ -40,10 +41,11 @@ function providerLabel(model: ModelRoute): string {
   if (provider === 'command-code') return 'Command Code';
   return provider || 'Unknown provider';
 }
-function optionLabel(model: ModelRoute): string {
+function optionLabel(model: ModelRoute, showProvider = false): string {
   return model.label
+    + (showProvider ? ' · ' + providerLabel(model) : '')
     + (model.mayTrainOnYourPrompts === true ? ' — may train on your prompts' : '')
-    + (model.enabled ? '' : ' — unavailable');
+    + (model.enabled ? '' : model.selectable ? ' — setup required' : ' — unavailable');
 }
 export function modelCatalogEntryKey(model: ModelRoute): string {
   const provider = providerId(model);
@@ -88,6 +90,7 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, defau
     providers.set(providerId(model), providerLabel(model));
   }
   const identityIssue = (model: ModelRoute) => keyCounts.get(modelCatalogEntryKey(model)) !== 1 || matches(model.route).length !== 1;
+  const canSelect = (model: ModelRoute) => (model.selectable ?? model.enabled) && !identityIssue(model);
   function routeIssue(route: string, routeMatches: readonly ModelRoute[]): string | null {
     if (route === '') return null;
     if (routeMatches.length === 0) return 'Route is missing from the current catalogue.';
@@ -147,7 +150,7 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, defau
     }
     const candidates = matches(route);
     const candidate = candidates.length === 1 ? candidates[0] : undefined;
-    if (candidate?.enabled && !identityIssue(candidate)) {
+    if (candidate && canSelect(candidate)) {
       setCompactProvider(providerId(candidate));
       setRoutePending(false);
       onChange(route);
@@ -169,7 +172,7 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, defau
                 {compactProvider !== '' && !providers.has(compactProvider)
                   ? <option value={compactProvider} disabled>Current provider unavailable</option> : null}
                 {[...providers].map(([key, name]) => {
-                  const available = choices.some((model) => providerId(model) === key && model.enabled && !identityIssue(model));
+                  const available = choices.some((model) => providerId(model) === key && canSelect(model));
                   return <option key={key} value={key} disabled={!available}
                     title={available ? name : 'No available models from this provider.'}>
                     {available ? name : name + ' — unavailable'}
@@ -185,12 +188,12 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, defau
                 onChange={(event) => chooseModel(event.currentTarget.value)}>
                 <option value='' disabled={compactProvider !== '' || defaultRoute === undefined}>{compactProvider === '' ? inherited?.label ?? (defaultRoute ? 'Project default model' : 'Choose a provider first') : 'Choose a model'}</option>
                 {value !== '' && compactProvider === currentProvider && !compactModels.some((model) => model.route === value)
-                  ? <option value={value} disabled={!selected || selectedIssue !== null}>
+                  ? <option value={value} disabled={!selected || !canSelect(selected)}>
                     {selected ? optionLabel(selected) + ' — saved selection' : 'Saved selection unavailable'}
                   </option> : null}
                 {compactModels.map((model, index) => <option
                   key={identityIssue(model) ? modelCatalogEntryKey(model) + ':' + index : modelCatalogEntryKey(model)}
-                  value={model.route} disabled={!model.enabled || identityIssue(model)}
+                  value={model.route} disabled={!canSelect(model)}
                   title={identityIssue(model) ? 'Not uniquely identified in the current catalogue.' : model.unavailableReason || optionLabel(model)}>
                   {optionLabel(model)}
                 </option>)}
@@ -222,21 +225,21 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, defau
             </div>
             <div className='er-model-picker__chip'>
               <MaterialSymbol name='spark' />
-              <select id={id + '-select'} aria-label={label} value={value}
+              <select id={id + '-select'} aria-label={label} value={selectedVisible ? value : ''}
                 title={selected ? selected.label + ' · ' + providerLabel(selected) : emptyLabel || 'Choose a model'}
                 disabled={loading || error !== '' || (choices.length === 0 && value === '')}
                 onChange={(event) => chooseModel(event.currentTarget.value)}>
-                <option value='' disabled={emptyLabel === undefined}>{emptyLabel ?? 'Choose a model'}</option>
-                {value !== '' && !selectedVisible ? <option value={value} disabled={!selected || selectedIssue !== null}>
-                  {selected ? optionLabel(selected) + (selected.route !== value ? ' — saved selection' : '') : 'Saved selection unavailable'}
-                </option> : null}
+                <option value='' disabled={emptyLabel === undefined}>{emptyLabel ?? (value !== '' && !selectedVisible ? 'Choose from filtered models' : 'Choose a model')}</option>
                 {[...groups].map(([name, rows]) => <optgroup key={name} label={name}>
                   {rows.map((model, index) => <option key={identityIssue(model) ? modelCatalogEntryKey(model) + ':' + index : modelCatalogEntryKey(model)} value={model.route}
-                    disabled={!model.enabled || identityIssue(model)}
-                    title={identityIssue(model) ? 'Not uniquely identified in the current catalogue.' : model.unavailableReason || optionLabel(model)}>{optionLabel(model)}</option>)}
+                    disabled={!canSelect(model)}
+                    title={identityIssue(model) ? 'Not uniquely identified in the current catalogue.' : model.unavailableReason || optionLabel(model)}>{optionLabel(model, provider === '')}</option>)}
                 </optgroup>)}
               </select>
             </div>
+            {value !== '' && !selectedVisible ? <p className='er-status' role='status'>
+              <span>Current selection: {selected ? optionLabel(selected, true) : 'not in the current catalogue'}. Outside the current filter.</span>
+            </p> : null}
           </>
         )}
         {routePending ? <p className='er-status' role='status'><span>Choose a model from this provider to use it.</span></p> : null}
@@ -250,8 +253,8 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, defau
         {activeUnavailable ? (
           <p className='er-status er-status--error' role='alert'>
             <span>
-              {value !== '' ? 'Selected model is unavailable: ' : 'Inherited default model is unavailable: '}
-              {activeIssue}{value !== '' ? ' Its saved route is preserved; refresh models in Settings to update availability.' : ' Choose an available model or refresh models in Settings.'}
+              {value !== '' ? 'Selected model is not ready to run: ' : 'Inherited default model is not ready to run: '}
+              {activeIssue}{value !== '' ? ' The selection is preserved; complete setup before starting a request.' : ' Choose a ready model or complete setup in Settings.'}
             </span>
           </p>
         ) : null}

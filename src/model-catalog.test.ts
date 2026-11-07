@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { discoverGatewayModels } from "./model-catalog";
-import { getModelProviders, modelOutputLimit, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, saveModelProviders } from "./models";
+import { DEFAULT_MODEL, MODELS, getModelProviders, modelOutputLimit, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, requireCatalogModel, saveModelDefaults, saveModelProviders } from "./models";
 import type { ModelProvider } from "./models";
 import { nativeModel } from "./native-model-catalog";
 import { resolveModelTransport } from "./model-transport";
@@ -43,21 +43,28 @@ function fakeBucket(initial: unknown | null = null) {
   return { binding: { get, put } as unknown as R2Bucket, get, put, stored: () => stored };
 }
 
-function fixtureEnv(bucket: R2Bucket, opts: { providers?: ModelProvider[]; providersRaw?: string; gatewayId?: string | null; aiModels?: () => Promise<never[]> } = {}): Env {
+function fixtureEnv(bucket: R2Bucket, opts: { providers?: ModelProvider[]; providersRaw?: string; gatewayId?: string | null; aiModels?: () => Promise<never[]>;
+  settings?: { answerModel: string; distillModel: string; updatedAt: number } } = {}): Env {
   let providersJson = opts.providersRaw !== undefined ? opts.providersRaw : JSON.stringify(opts.providers !== undefined ? opts.providers : defaultProviders());
   const gatewayId = opts.gatewayId === undefined ? "fixture-gateway" : opts.gatewayId;
   const aiModels = opts.aiModels !== undefined ? opts.aiModels : async () => [];
+  const settings = { answerModel: DEFAULT_MODEL, distillModel: DEFAULT_MODEL, updatedAt: 0, ...opts.settings };
   return {
     DB: {
       prepare: (sql: string) => ({
         first: async () => {
           if (sql.indexOf("model_providers_json") >= 0) return { providers: providersJson };
           if (sql.indexOf("model_gateway_id") >= 0) return { gatewayId: gatewayId };
+          if (sql.startsWith("SELECT answer_model")) return { ...settings };
           return null;
         },
-        bind: (value: unknown) => ({ run: async () => {
-          if (!sql.startsWith("UPDATE settings SET model_providers_json=")) throw new Error("Unexpected fixture write");
-          providersJson = String(value);
+        bind: (...values: unknown[]) => ({ run: async () => {
+          if (sql.startsWith("UPDATE settings SET model_providers_json=")) providersJson = String(values[0]);
+          else if (sql.startsWith("UPDATE settings SET answer_model=COALESCE(")) {
+            if (values[0] !== null) settings.answerModel = String(values[0]);
+            if (values[1] !== null) settings.distillModel = String(values[1]);
+            settings.updatedAt = Number(values[2]);
+          } else throw new Error("Unexpected fixture write");
           return { meta: { changes: 1 } };
         } }),
       }),
@@ -70,6 +77,75 @@ function fixtureEnv(bucket: R2Bucket, opts: { providers?: ModelProvider[]; provi
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("provider model catalogue discovery", () => {
+  it.each(["answerModel", "distillModel"] as const)("updates only %s while retaining an untouched unavailable default and accepts an unchanged stale replay", async field => {
+    const disabledRoute = "gateway:command-code/disabled-model";
+    const original = { answerModel: "gateway:retired/answer", distillModel: field === "answerModel" ? disabledRoute : "gateway:retired/understanding", updatedAt: 7 };
+    const providers = defaultProviders().map(provider => ({ ...provider, enabled: provider.id !== "command-code" }));
+    const bucket = fakeBucket({ updatedAt: "2026-11-07T00:00:00.000Z", warnings: [], providers, models: [...MODELS,
+      { route: disabledRoute, id: "disabled-model", label: "Disabled model", contextTokens: null, maxOutputTokens: null, enabled: true, checkedOn: "2026-11-07" }] });
+    const env = fixtureEnv(bucket.binding, { providers, settings: original, gatewayId: null });
+    const network = vi.fn(async () => { throw new Error("Defaults Save must not discover or infer"); }); vi.stubGlobal("fetch", network);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(10);
+    try {
+      const saved = await saveModelDefaults(env, { [field]: DEFAULT_MODEL });
+      expect(saved).toEqual({ ...original, [field]: DEFAULT_MODEL, updatedAt: 10 });
+      clock.mockReturnValue(20);
+      await expect(saveModelDefaults(env, { answerModel: saved?.answerModel, distillModel: saved?.distillModel })).resolves.toEqual(saved);
+      await expect(saveModelDefaults(env, {})).rejects.toThrow();
+      const reads = bucket.get.mock.calls.length;
+      await expect(saveModelDefaults(env, { nativeUsageMode: "included", [field]: DEFAULT_MODEL })).rejects.toMatchObject({ code: "invalid", status: 400 });
+      expect(bucket.get.mock.calls).toHaveLength(reads); expect(bucket.put).not.toHaveBeenCalled(); expect(network).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); }
+  });
+
+  it("does not resurrect Flash from an authoritative native catalogue, including after a failed native refresh", async () => {
+    const other = { route: "workers-ai:@cf/vendor/other", id: "@cf/vendor/other", label: "Other native", enabled: true,
+      contextTokens: 64000, maxOutputTokens: null, outputReserveTokens: 8192, checkedOn: "2026-11-07" };
+    const providers = defaultProviders().filter(provider => provider.type === "workers-ai");
+    const bucket = fakeBucket();
+    const aiModels = vi.fn(async () => [{ name: other.id, task: { name: "Text Generation" },
+      properties: [{ property_id: "context_window", value: "64000" }] }] as never[]);
+    const env = fixtureEnv(bucket.binding, { providers, gatewayId: null, aiModels });
+    const read = await refreshModelCatalog(env);
+    expect(read.models.map(model => model.route)).toEqual([other.route]);
+    await expect(requireCatalogModel(env, DEFAULT_MODEL)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    await expect(requireAvailableModel(env, DEFAULT_MODEL)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    expect(aiModels).toHaveBeenCalledTimes(1);
+    aiModels.mockRejectedValueOnce(new Error("Private native discovery failure"));
+    const refreshed = await refreshModelCatalog(env);
+    expect(refreshed.models).toEqual(read.models);
+    expect(refreshed.warnings).toContain("Workers AI model catalogue is unavailable.");
+    expect(JSON.stringify(bucket.stored())).not.toContain("Private native discovery failure");
+    await expect(requireAvailableModel(env, DEFAULT_MODEL)).rejects.toMatchObject({ code: "unavailable", status: 503 });
+    expect(aiModels).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows configured catalogue selection without Gateway consent while preserving execution and metadata guards", async () => {
+    const models = ["openrouter", "command-code"].map(provider => ({ route: "gateway:" + provider + "/shared-model", id: "shared-model", label: "Shared model",
+      contextTokens: null, maxOutputTokens: null, enabled: true, checkedOn: "2026-11-07" }));
+    const providers = defaultProviders();
+    const bucket = fakeBucket({ updatedAt: "2026-11-07T00:00:00.000Z", warnings: [], models, providers });
+    const before = JSON.stringify(bucket.stored()), aiModels = vi.fn(async () => [] as never[]);
+    const env = fixtureEnv(bucket.binding, { gatewayId: null, aiModels });
+    const network = vi.fn(async () => { throw new Error("Selection must not refresh or start a model request"); });
+    vi.stubGlobal("fetch", network);
+    const catalog = await readModelCatalog(env);
+    const external = catalog.models.filter(model => model.route.startsWith("gateway:"));
+    expect(external.map(model => model.route)).toEqual(models.map(model => model.route));
+    for (const row of models) {
+      await expect(requireCatalogModel(env, row.route)).resolves.toMatchObject({ route: row.route, selectable: true,
+        enabled: false, contextTokens: null, unavailableReason: "Connect AI Gateway in Settings." });
+      await expect(requireAvailableModel(env, row.route)).rejects.toThrow("Connect AI Gateway in Settings.");
+    }
+    const connected = fixtureEnv(bucket.binding);
+    await expect(requireCatalogModel(connected, "gateway:openrouter/shared-model")).resolves.toMatchObject({ selectable: true, enabled: true, contextTokens: null });
+    await expect(requireAvailableModel(connected, "gateway:openrouter/shared-model")).rejects.toThrow("The provider has not published usable context/output metadata.");
+    const disabled = fixtureEnv(bucket.binding, { providers: providers.map(provider => ({ ...provider, enabled: provider.id === "workers-ai" })) });
+    await expect(requireCatalogModel(disabled, "gateway:openrouter/shared-model")).rejects.toThrow("Provider is disabled.");
+    expect(JSON.stringify(bucket.stored())).toBe(before); expect(bucket.put).not.toHaveBeenCalled();
+    expect(aiModels).not.toHaveBeenCalled(); expect(network).not.toHaveBeenCalled();
+  });
+
   it("does not infer a combined window when reading an old cached input ceiling", async () => {
     const old = { route: "gateway:command-code/hy3", id: "hy3", label: "Legacy metadata",
       contextTokens: 192000, maxOutputTokens: 128000, outputReserveTokens: 8192, enabled: true, checkedOn: "2026-11-03" };

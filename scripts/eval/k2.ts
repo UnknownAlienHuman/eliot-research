@@ -82,7 +82,8 @@ async function runPickerOnlyProof() {
   const eligible = entries.filter((model) => model?.enabled === true && typeof model.route === 'string' && typeof model.id === 'string' && routes.get(model.route) === 1
     && identities.get(providerOf(model.route).length + ':' + providerOf(model.route) + model.id) === 1);
   assert(eligible.length > 0, 'Picker proof needs one enabled, uniquely identified model in the actual catalogue.');
-  const noChoiceProvider = [...new Set(entries.filter((model) => typeof model?.route === 'string').map((model) => providerOf(model.route)).filter(Boolean))].find((provider) => !eligible.some((model) => providerOf(model.route) === provider));
+  const noChoiceProvider = [...new Set(entries.filter((model) => typeof model?.route === 'string').map((model) => providerOf(model.route)).filter(Boolean))].find((provider) => !entries.some((model) => providerOf(model.route) === provider && (model.selectable ?? model.enabled) && routes.get(model.route) === 1
+    && identities.get(provider.length + ':' + provider + model.id) === 1));
   const key = randomUUID(), projectTitle = 'K2 picker QA ' + key;
   const projectCreate = await apiJson('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: projectTitle }) });
   assert.equal(projectCreate.status, 201, 'Create one isolated empty QA project through the public API.'); const project = projectCreate.body?.project;
@@ -863,7 +864,7 @@ if (process.argv.includes('--models-only')) {
         free: page.getByRole('checkbox', { name: /free/i }),
       };
     }
-    async function assertDisabledChoice(page, mode, routes) {
+    async function assertCatalogueChoice(page, mode, routes) {
       const label = mode === 'answers' ? 'Answer model' : 'Understanding model';
       const expected = mode === 'answers' ? before.body.settings.answerModel : before.body.settings.distillModel;
       const picked = await activePicker(page, mode);
@@ -880,16 +881,25 @@ if (process.argv.includes('--models-only')) {
         await provider.selectOption(parts[1]);
         assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter((option) => option.value === value).length, route), 1,
           'Expanded catalogue must attach the exact provider/native route without paging (' + parts[1] + ', ' + label + ').');
-        await expect(select).toHaveValue(expected);
+        await expect(select).toHaveValue('');
+        await expect(page.locator('.er-model-picker').getByRole('status').filter({ hasText: 'Current selection:' })).toContainText('Outside the current filter.');
+        assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter(option => option.value === value).length, expected), 0,
+          'The current native choice must not appear among another provider\'s models.');
         const choice = models.body.models.find((entry) => entry.route === route);
         assert(choice, 'The native model must exist in the frozen catalogue.');
         await search.fill(choice.id);
-        await expect(select).toHaveValue(expected);
+        await expect(select).toHaveValue('');
         await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
-          .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([true]);
+          .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([!(choice.selectable ?? choice.enabled)]);
+        if (choice.selectable ?? choice.enabled) {
+          await select.selectOption(route);
+          await expect(select).toHaveValue(route);
+        }
+        await provider.selectOption(''); await search.fill('');
+        await select.selectOption(expected);
       }
       await free.check();
-      await expect(select).toHaveValue(expected);
+      await expect(select).toHaveValue('');
       await free.uncheck();
       await expect(select).toHaveValue(expected);
       await search.fill('');
@@ -961,7 +971,7 @@ if (process.argv.includes('--models-only')) {
     try {
       await inheritedPage.goto(browserOrigin + '/p/' + projectId + '/chat');
       await inheritedPage.getByRole('textbox', { name: 'Question', exact: true }).fill('Unavailable inherited model check');
-      await expect(inheritedPage.getByRole('alert').filter({ hasText: 'Inherited default model is unavailable:' })).toBeVisible();
+      await expect(inheritedPage.getByRole('alert').filter({ hasText: 'Inherited default model is not ready to run:' })).toBeVisible();
       await expect(inheritedPage.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
       await inheritedPage.getByRole('button', { name: /^Sources and model:/ }).click();
       await inheritedPage.getByRole('combobox', { name: 'Model: provider', exact: true }).selectOption('workers-ai');
@@ -998,8 +1008,8 @@ if (process.argv.includes('--models-only')) {
     assert.strictEqual(await page.locator('.er-model-picker__find').count(), 0, 'Expanded picker must not introduce a Find disclosure.');
     assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Expanded picker must not introduce pagination.');
     assert.strictEqual(await page.locator('section.er-model-picker__advanced').count(), 0, 'Expanded picker must not hide Model details.');
-    await assertDisabledChoice(page, 'answers', browserModelRoutes);
-    await assertDisabledChoice(page, 'understanding', browserModelRoutes);
+    await assertCatalogueChoice(page, 'answers', browserModelRoutes);
+    await assertCatalogueChoice(page, 'understanding', browserModelRoutes);
     await activePicker(page, 'answers');
     await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(before.body.settings.answerModel);
     await activePicker(page, 'understanding');
@@ -1036,7 +1046,7 @@ if (process.argv.includes('--models-only')) {
         assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter((option) => option.value === value).length, route), 1,
           'Understanding catalogue must attach the exact provider/native route (' + parts[1] + ').');
         await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
-          .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([true]);
+          .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([!(models.body.models.find(entry => entry.route === route)?.selectable ?? false)]);
       }
     }
     assert.strictEqual(settingsPuts, 0, 'The entire browser journey must attempt zero settings PUTs.');

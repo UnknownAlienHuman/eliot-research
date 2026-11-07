@@ -90,6 +90,7 @@ export interface CatalogModel {
   nativeReasoningEffort?: "low" | "high";
   checkedOn: string;
   enabled: boolean;
+  selectable?: boolean; // Read projection only: choosing a default does not authorize execution.
   unavailableReason?: string;
 }
 export interface ModelSpec extends CatalogModel {
@@ -157,7 +158,9 @@ function resolved(model: CatalogModel | undefined, route: string): ModelSpec {
   const reason = model ? missingMetadata(model) : "This model is absent from the current provider catalogue.";
   if (!model || !model.enabled || reason) throw new LibraryError("unavailable", model?.unavailableReason ?? reason ?? "This model is unavailable.", 503);
   modelTokenLimit(model);
-  return { ...model, route, contextTokens: model.contextTokens as number };
+  const spec = { ...model, route, contextTokens: model.contextTokens as number };
+  delete spec.selectable;
+  return spec;
 }
 export const validGatewayId = (id: string) => id !== "default" && /^[a-z0-9][a-z0-9-]{0,63}$/.test(id);
 export async function getModelConnection(env: Pick<Env, "DB">) {
@@ -254,9 +257,9 @@ function isNativeUsage(value: unknown): value is NativeUsage {
     (value.error === null || typeof value.error === "string");
 }
 function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string | null, providers: ModelProvider[]): CatalogModel[] {
-  const models = new Map<string, CatalogModel>(MODELS.map((model) => [model.route, { ...model }]));
+  const models = new Map<string, CatalogModel>((snapshot === null ? MODELS : []).map((model) => [model.route, { ...model }]));
   for (const model of snapshot?.models ?? []) {
-    const fallback = models.get(model.route);
+    const fallback = MODELS.find((entry) => entry.route === model.route);
     const visible: CatalogModel = { route: model.route, id: model.id, label: model.label, contextTokens: model.contextTokens,
       maxOutputTokens: model.maxOutputTokens, checkedOn: model.checkedOn, enabled: model.enabled };
     for (const field of ["contextWindowTokens", "outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning",
@@ -271,10 +274,11 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     const provider = providerForRoute(providers, route);
     const previous = snapshot?.providers?.find((entry) => entry.id === provider?.id);
     const changed = provider?.type === "openai-compatible" && !sameProviderRoute(provider, previous);
+    const selectable = provider?.enabled === true && model.enabled;
     const reason = !provider ? "Provider is not configured." : !provider.enabled ? "Provider is disabled."
       : route.startsWith("gateway:") && !gatewayId ? "Connect AI Gateway in Settings."
         : changed ? "Refresh models after editing provider settings." : null;
-    if (reason) models.set(route, { ...model, enabled: false, unavailableReason: reason });
+    models.set(route, { ...model, selectable, ...(reason ? { enabled: false, unavailableReason: reason } : {}) });
   }
   return [...models.values()];
 }
@@ -361,11 +365,26 @@ function catalogModel(models: CatalogModel[], route: string): CatalogModel {
   const matches = models.filter((model) => model.route === route);
   if (matches.length > 1) throw new LibraryError("unavailable", "This model identity is ambiguous.", 503);
   const model = matches[0];
-  if (!model || !model.enabled) throw new LibraryError("unavailable", model?.unavailableReason ?? "This model is absent from the current provider catalogue.", 503);
+  if (!model || !(model.selectable ?? model.enabled)) throw new LibraryError("unavailable", model?.unavailableReason ?? "This model is absent from the current provider catalogue.", 503);
   return { ...model, route };
 }
 export async function requireCatalogModel(env: ModelEnvironment, route: string): Promise<CatalogModel> {
   return catalogModel((await readModelCatalog(env)).models, route);
+}
+export async function saveModelDefaults(env: ModelEnvironment, body: unknown) {
+  if (body !== null && typeof body === "object" && Object.hasOwn(body, "nativeUsageMode"))
+    throw new LibraryError("invalid", "Workers AI usage modes have been removed. Reload Settings. Requests use your existing Cloudflare plan; Eliot does not change your subscription or enforce a separate free cap.", 400);
+  const input = z.object({ answerModel: z.string().min(1).optional(), distillModel: z.string().min(1).optional() }).strict()
+    .refine(value => value.answerModel !== undefined || value.distillModel !== undefined).parse(body);
+  const query = "SELECT answer_model AS answerModel,distill_model AS distillModel,updated_at AS updatedAt FROM settings WHERE id=1";
+  const current = await env.DB.prepare(query).first<{ answerModel: string; distillModel: string; updatedAt: number }>();
+  const answer = input.answerModel !== undefined && input.answerModel !== current?.answerModel ? input.answerModel : null;
+  const distill = input.distillModel !== undefined && input.distillModel !== current?.distillModel ? input.distillModel : null;
+  if (answer !== null) await requireCatalogModel(env, answer);
+  if (distill !== null) await requireCatalogModel(env, distill);
+  if (answer !== null || distill !== null) await env.DB.prepare("UPDATE settings SET answer_model=COALESCE(?,answer_model),distill_model=COALESCE(?,distill_model),updated_at=? WHERE id=1")
+    .bind(answer, distill, Date.now()).run();
+  return env.DB.prepare(query).first<{ answerModel: string; distillModel: string; updatedAt: number }>();
 }
 export async function requireAvailableModel(env: ModelEnvironment, route: string): Promise<ModelSpec> {
   const catalog = await readModelCatalog(env);
