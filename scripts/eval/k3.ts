@@ -74,12 +74,13 @@ function exactSourceRows(rows, expected, what) {
     assert(row && expectedByName.has(row.originalFilename), what + ': unexpected source ' + String(row && row.originalFilename));
     const filename = row.originalFilename;
     assert(!byName.has(filename), what + ': duplicate filename ' + filename);
-    assert.equal(row.title, expectedByName.get(filename).title, what + ': title mismatch for ' + filename);
+    const frozen = expectedByName.get(filename);
+    assert(typeof frozen.displayTitle === 'string' && frozen.displayTitle.trim().length > 0, what + ': missing frozen displayTitle for ' + filename);
+    assert.equal(row.title, frozen.displayTitle, what + ': display title changed for ' + filename);
     assert.equal(row.kind, 'file', what + ': expected a PDF source for ' + filename);
     assert(typeof row.id === 'string' && row.id.length > 0, what + ': missing source ID for ' + filename);
     assert(typeof row.currentRevisionId === 'string' && row.currentRevisionId.length > 0, what + ': missing current revision for ' + filename);
     assert.equal(row.revisionId, row.currentRevisionId, what + ': listed revision is not current for ' + filename);
-    const frozen = expectedByName.get(filename);
     if (frozen.sourceId !== undefined) assert.equal(row.id, frozen.sourceId, what + ': source ID changed for ' + filename);
     if (frozen.revisionId !== undefined) assert.equal(row.currentRevisionId, frozen.revisionId, what + ': current revision changed for ' + filename);
     if (frozen.originalBytes !== undefined) assert.equal(row.originalSize, frozen.originalBytes, what + ': original byte count changed for ' + filename);
@@ -94,6 +95,48 @@ function exactSourceRows(rows, expected, what) {
   }
   for (const source of expected) assert(byName.has(source.filename), what + ': missing source ' + source.filename);
   return expected.map((source) => byName.get(source.filename));
+}
+function freezeObservedDisplayTitles(rows, expected, what) {
+  assert(Array.isArray(rows), what + ': source rows must be an array.');
+  const expectedByName = new Map(expected.map((source) => [source.filename, source]));
+  assert.equal(expectedByName.size, expected.length, what + ': expected filenames must be unique.');
+  assert.equal(rows.length, expected.length, what + ': observed display-title scope must be exact.');
+  const byName = new Map();
+  for (const row of rows) {
+    assert(row && expectedByName.has(row.originalFilename), what + ': unexpected source ' + String(row && row.originalFilename));
+    const filename = row.originalFilename;
+    assert(!byName.has(filename), what + ': duplicate filename ' + filename);
+    assert(typeof row.title === 'string' && row.title.trim().length > 0, what + ': missing owner display title for ' + filename);
+    byName.set(filename, row);
+  }
+  for (const source of expected) assert(byName.has(source.filename), what + ': missing source ' + source.filename);
+  return expected.map((identity) => {
+    const row = byName.get(identity.filename);
+    assert(typeof row.id === 'string' && row.id.length > 0, what + ': missing source ID for ' + identity.filename);
+    assert(typeof row.currentRevisionId === 'string' && row.currentRevisionId.length > 0, what + ': missing current revision for ' + identity.filename);
+    return { ...identity, displayTitle: row.title, sourceId: row.id, revisionId: row.currentRevisionId,
+      listedRevisionId: row.revisionId, originalBytes: row.originalSize, canonicalBytes: row.readableSize };
+  });
+}
+function assertObservedSourceMetadata(rows, expected, what) {
+  assert(Array.isArray(rows), what + ': source rows must be an array.');
+  assert.equal(rows.length, expected.length, what + ': observed source count changed.');
+  const byName = new Map();
+  for (const row of rows) {
+    assert(row && typeof row.originalFilename === 'string', what + ': missing source filename.');
+    assert(!byName.has(row.originalFilename), what + ': duplicate filename ' + row.originalFilename);
+    byName.set(row.originalFilename, row);
+  }
+  for (const frozen of expected) {
+    const row = byName.get(frozen.filename);
+    assert(row, what + ': missing source ' + frozen.filename);
+    assert.equal(row.title, frozen.displayTitle, what + ': display title changed for ' + frozen.filename);
+    assert.equal(row.id, frozen.sourceId, what + ': source ID changed for ' + frozen.filename);
+    assert.equal(row.currentRevisionId, frozen.revisionId, what + ': current revision changed for ' + frozen.filename);
+    if (frozen.listedRevisionId !== undefined) assert.equal(row.revisionId, frozen.listedRevisionId, what + ': listed revision changed for ' + frozen.filename);
+    if (frozen.originalBytes !== undefined) assert.equal(row.originalSize, frozen.originalBytes, what + ': original byte count changed for ' + frozen.filename);
+    if (frozen.canonicalBytes !== undefined) assert.equal(row.readableSize, frozen.canonicalBytes, what + ': canonical byte count changed for ' + frozen.filename);
+  }
 }
 function uniqueClaimTurn(turns, question, revisionKey) {
   const matching = (turns || []).filter((turn) => turn && turn.question === question);
@@ -112,9 +155,15 @@ function assertPaidCallCeiling(distillPosts, answerPosts, baselineCount, what) {
   assert(distillPosts * 2 + answerPosts <= baselineCount * 2 + CLAIM_ORDER.length, what + ': paid call ceiling exceeded.');
 }
 const sourceFixture = (filename, id, revisionId, title) => ({ originalFilename: filename, id, currentRevisionId: revisionId, revisionId, title, kind: 'file', readableState: 'readable', readableSize: 100 });
-const scopeFixtureExpected = [{ filename: 'arxiv-01.pdf', title: 'Paper 1' }, { filename: 'arxiv-02.pdf', title: 'Paper 2' }];
-const scopeFixture = [sourceFixture('arxiv-01.pdf', 's1', 'r1', 'Paper 1'), sourceFixture('arxiv-02.pdf', 's2', 'r2', 'Paper 2')];
-assert.equal(exactSourceRows(scopeFixture, scopeFixtureExpected, 'scope fixture').length, 2);
+const scopeFixtureExpected = [
+  { filename: 'arxiv-01.pdf', title: 'Paper 1 manifest identity', displayTitle: 'Owner Transformer label' },
+  { filename: 'arxiv-02.pdf', title: 'Paper 2 manifest identity', displayTitle: 'Owner BERT label' },
+];
+const scopeFixture = [sourceFixture('arxiv-01.pdf', 's1', 'r1', 'Owner Transformer label'), sourceFixture('arxiv-02.pdf', 's2', 'r2', 'Owner BERT label')];
+const observedTitleRows = exactSourceRows(scopeFixture, scopeFixtureExpected, 'observed filename-title fixture');
+assert.equal(observedTitleRows.length, 2);
+assert.equal(observedTitleRows[0].title, 'Owner Transformer label', 'Filename and owner display title remain exact without requiring manifest-title equality.');
+assert.throws(() => exactSourceRows([scopeFixture[0], { ...scopeFixture[1], title: 'Changed owner BERT label' }], scopeFixtureExpected, 'changed displayTitle fixture'), /display title changed/);
 assert.throws(() => exactSourceRows([scopeFixture[0], { ...scopeFixture[1], originalFilename: 'arxiv-01.pdf' }], scopeFixtureExpected, 'duplicate fixture'), /duplicate filename/);
 assert.throws(() => exactSourceRows([scopeFixture[0]], scopeFixtureExpected, 'missing fixture'), /expected exactly/);
 assert.throws(() => exactSourceRows([...scopeFixture, sourceFixture('arxiv-03.pdf', 's3', 'r3', 'Paper 3')], scopeFixtureExpected, 'extra fixture'), /expected exactly/);
@@ -137,10 +186,11 @@ const FROZEN_BASELINE = baselineSeed ? (() => {
   return BASELINE_EXPECTED.map((expected) => {
     const record = byFilename.get(expected.filename);
     assert(record && record.title === expected.title, 'Frozen baseline record mismatch for ' + expected.filename);
+    assert(typeof record.displayTitle === 'string' && record.displayTitle.trim().length > 0, 'Frozen baseline displayTitle missing for ' + expected.filename);
     assert(typeof record.sourceId === 'string' && typeof record.revisionId === 'string', 'Frozen baseline source/revision identity missing for ' + expected.filename);
     assert(Number.isSafeInteger(record.expectedOriginalBytes) && /^[0-9a-f]{64}$/u.test(record.expectedOriginalSha256), 'Frozen original SHA/bytes missing for ' + expected.filename);
     assert(Number.isSafeInteger(record.expectedCanonicalBytes) && /^[0-9a-f]{64}$/u.test(record.expectedCanonicalSha256), 'Frozen canonical SHA/bytes missing for ' + expected.filename);
-    return { ...expected, sourceId: record.sourceId, revisionId: record.revisionId,
+    return { ...expected, displayTitle: record.displayTitle, sourceId: record.sourceId, revisionId: record.revisionId,
       originalBytes: record.expectedOriginalBytes, originalSha256: record.expectedOriginalSha256,
       canonicalBytes: record.expectedCanonicalBytes, canonicalSha256: record.expectedCanonicalSha256 };
   });
@@ -155,10 +205,11 @@ const FROZEN_OVERFLOW = overflowStorage ? (() => {
     const extra = extras.get(manifest.id);
     assert(extra, 'Frozen overflow misses manifest paper ' + manifest.id);
     assert.equal(extra.filename, manifest.id + '-' + manifest.arxiv + '.pdf', 'Frozen overflow filename must identify ' + manifest.id);
+    assert(typeof extra.displayTitle === 'string' && extra.displayTitle.trim().length > 0, 'Frozen overflow displayTitle missing for ' + manifest.id);
     assert(typeof extra.sourceId === 'string' && typeof extra.revisionId === 'string', 'Frozen overflow source/revision identity missing for ' + manifest.id);
     assert(Number.isSafeInteger(extra.original?.bytes) && extra.original.bytes > 0 && /^[0-9a-f]{64}$/u.test(extra.original.sha256), 'Frozen overflow original SHA/bytes missing for ' + manifest.id);
     assert(Number.isSafeInteger(extra.canonical?.bytes) && extra.canonical.bytes > 0 && /^[0-9a-f]{64}$/u.test(extra.canonical.sha256), 'Frozen overflow canonical SHA/bytes missing for ' + manifest.id);
-    return { filename: extra.filename, title: manifest.title, id: manifest.id, sourceId: extra.sourceId, revisionId: extra.revisionId,
+    return { filename: extra.filename, title: manifest.title, displayTitle: extra.displayTitle, id: manifest.id, sourceId: extra.sourceId, revisionId: extra.revisionId,
       originalBytes: extra.original.bytes, originalSha256: extra.original.sha256,
       canonicalBytes: extra.canonical.bytes, canonicalSha256: extra.canonical.sha256 };
   });
@@ -301,20 +352,38 @@ async function apiJson(path, init) {
   try { b = t ? JSON.parse(t) : null; } catch { b = { raw: t.slice(0, 300) }; }
   return { status: r.status, body: b };
 }
+async function readBoundedProjectSources(projectId, what) {
+  let rows = [], cursor;
+  for (let i = 0; i < 10; i++) {
+    const page = await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/sources' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''));
+    assert.equal(page.status, 200, what + ': GET sources must be 200.');
+    rows = rows.concat(page.body.sources || []);
+    cursor = page.body.nextCursor || undefined;
+    if (!cursor) break;
+  }
+  assert.equal(cursor, undefined, what + ': source listing exceeded its page bound.');
+  return rows;
+}
 async function apiBytes(path) {
   const r = await fetchEval(origin + path, { headers: { ...H } }, origin, process.env.ELIOT_ORIGIN);
   return { status: r.status, bytes: Buffer.from(await r.arrayBuffer()) };
 }
 function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
+function assertFrozenContentIdentity(bytes, expectedBytes, expectedSha256, what, label) {
+  assert.equal(bytes.length, expectedBytes, what + ': ' + label + ' byte count changed.');
+  assert.equal(sha256(bytes), expectedSha256, what + ': ' + label + ' SHA-256 changed.');
+}
+const frozenHashFixture = Buffer.from('same');
+const frozenHashFixtureSha = sha256(frozenHashFixture);
+assert.doesNotThrow(() => assertFrozenContentIdentity(frozenHashFixture, frozenHashFixture.length, frozenHashFixtureSha, 'hash fixture', 'canonical'));
+assert.throws(() => assertFrozenContentIdentity(Buffer.from('sAme'), frozenHashFixture.length, frozenHashFixtureSha, 'changed hash fixture', 'canonical'), /SHA-256 changed/);
 async function assertFrozenSourceBytes(source, expected, what) {
   const original = await apiBytes('/api/revisions/' + encodeURIComponent(expected.revisionId) + '/original');
   assert.equal(original.status, 200, what + ': GET original must be 200.');
-  assert.equal(original.bytes.length, expected.originalBytes, what + ': original byte count changed.');
-  assert.equal(sha256(original.bytes), expected.originalSha256, what + ': original SHA-256 changed.');
+  assertFrozenContentIdentity(original.bytes, expected.originalBytes, expected.originalSha256, what, 'original');
   const canonical = await apiBytes('/api/revisions/' + encodeURIComponent(expected.revisionId) + '/text');
   assert.equal(canonical.status, 200, what + ': GET canonical text must be 200.');
-  assert.equal(canonical.bytes.length, expected.canonicalBytes, what + ': canonical byte count changed.');
-  assert.equal(sha256(canonical.bytes), expected.canonicalSha256, what + ': canonical SHA-256 changed.');
+  assertFrozenContentIdentity(canonical.bytes, expected.canonicalBytes, expected.canonicalSha256, what, 'canonical');
   assert.equal(source.currentRevisionId, expected.revisionId, what + ': current revision changed during byte verification.');
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -590,7 +659,7 @@ assert.equal(checkAnchors(new Map([['arxiv-07.pdf', [
   { statement: a3MemorySource, quote: 'For GPT-3 175B, the source discusses GPU memory.' },
   { statement: 'The source discusses GPT-3 175B.', quote: a3MemorySource },
 ]]])).some(entry => entry.startsWith(a3MemoryAnchor)), true, 'A3 memory direction cannot be borrowed across cards.');
-if (anchorsOnly) { console.log(JSON.stringify({ scope: 'K3_ANCHOR_GATES', memoryDirectionCases: a3MemoryCases.length, pairedSidesChecked: true, apiCalls: 0, modelCalls: 0, unrecognized: 'REVIEW_REQUIRED', semanticAcceptance: 'NOT_RUN' })); process.exit(0); }
+if (anchorsOnly) { console.log(JSON.stringify({ scope: 'K3_ANCHOR_GATES', memoryDirectionCases: a3MemoryCases.length, pairedSidesChecked: true, displayTitleFreezeCases: 2, frozenHashIdentityCases: 2, apiCalls: 0, modelCalls: 0, unrecognized: 'REVIEW_REQUIRED', semanticAcceptance: 'NOT_RUN' })); process.exit(0); }
 const me = await apiJson('/api/me');
 assert.equal(me.status, 200, 'GET /api/me must be 200; start pnpm dev first.');
 assert.equal(me.body.actor.type, 'owner', 'Eval must run as owner.');
@@ -608,19 +677,24 @@ const proj = projectMatches[0];
 if (!proj) { console.log('K3 skipped: project ' + JSON.stringify(title) + ' not found; prep K1 corpus first, do not upload/convert again.'); process.exit(2); }
 assert.equal(projectMatches.length, 1, 'K3 project title must resolve to exactly one project.');
 if (FROZEN_BASELINE && !nativeOnly) assert.equal(proj.id, baselineSeed.project.id, 'K3 project must match the frozen baseline seed project.');
-let sources = [], scur = undefined;
-for (let i = 0; i < 10; i++) {
-  const s = await apiJson('/api/projects/' + encodeURIComponent(proj.id) + '/sources' + (scur ? '?cursor=' + encodeURIComponent(scur) : ''));
-  assert.equal(s.status, 200, 'GET sources must be 200.');
-  sources = sources.concat(s.body.sources || []);
-  scur = s.body.nextCursor || undefined;
-  if (!scur) break;
-}
-assert.equal(scur, undefined, 'K3 baseline source listing exceeded its page bound; exact scope cannot be proven.');
+const sources = await readBoundedProjectSources(proj.id, 'K3 baseline source listing');
 const want = new Set(BASELINE_EXPECTED.map((s) => s.filename));
-const scoped = nativeOnly
-  ? sources.filter((s) => want.has(s.originalFilename) && s.currentRevisionId && ['readable', 'readable_with_warnings'].includes(s.readableState))
-  : exactSourceRows(sources, FROZEN_BASELINE || BASELINE_EXPECTED, 'K3 baseline');
+const nativeCandidates = sources.filter((s) => want.has(s.originalFilename) && s.currentRevisionId && ['readable', 'readable_with_warnings'].includes(s.readableState));
+const observedBaselineIdentity = nativeOnly
+  ? BASELINE_EXPECTED.filter((s) => nativeCandidates.some((row) => row.originalFilename === s.filename))
+  : BASELINE_EXPECTED;
+const baselineMetadataFreeze = FROZEN_BASELINE || freezeObservedDisplayTitles(
+  nativeOnly ? nativeCandidates : sources, observedBaselineIdentity, 'K3 initial owner display-title freeze');
+if (!nativeOnly && !FROZEN_BASELINE) assert.equal(baselineMetadataFreeze.length, BASELINE_EXPECTED.length, 'K3 logical metadata freeze must include all ten baseline papers.');
+const scoped = nativeOnly ? nativeCandidates : exactSourceRows(sources, baselineMetadataFreeze, 'K3 baseline');
+async function assertBaselineSourceMetadata(what) {
+  const current = await readBoundedProjectSources(proj.id, what);
+  const expectedRows = nativeOnly
+    ? current.filter((row) => baselineMetadataFreeze.some((expected) => expected.filename === row.originalFilename))
+    : current;
+  if (nativeOnly) assertObservedSourceMetadata(expectedRows, baselineMetadataFreeze, what);
+  else exactSourceRows(expectedRows, baselineMetadataFreeze, what);
+}
 if (FROZEN_BASELINE && !nativeOnly) {
   for (const source of scoped) {
     const expected = FROZEN_BASELINE.find((s) => s.filename === source.originalFilename);
@@ -690,6 +764,8 @@ if (unchangedOnly) {
     claimRowsBefore += record.claimRows;
     frozen.push({ sourceId: s.id, filename: s.originalFilename, revisionId: s.currentRevisionId, record });
   }
+  try { await assertBaselineSourceMetadata('K3 unchanged-only before POST'); }
+  catch (e) { preflightViolations.push('source metadata changed before POST: ' + String((e && e.message) || e).split(EOL)[0]); }
   if (preflightViolations.length > 0 || frozen.length !== 10) {
     const mdFail = ['# K3 unchanged-only reuse (partial scope, storage-only)', '', '- project: ' + title, '- preflight: ' + frozen.length + '/10 frozen terminal, violations: ' + preflightViolations.length, '- fullK3Accepted: false', '', '## Preflight open', ''].concat(preflightViolations.map((v) => '- ' + v)).concat(['', '- no POST made (rejected before any POST).', '- K2/K3 remain unaccepted.', '']).join(EOL);
     console.log(mdFail);
@@ -727,6 +803,8 @@ if (unchangedOnly) {
     }
     byFile.set(f.filename, claims.map((c) => ({ quote: c && c.quote, statement: c && c.statement })));
   }
+  try { await assertBaselineSourceMetadata('K3 unchanged-only final acceptance'); }
+  catch (e) { reuseViolations.push('source metadata changed at final acceptance: ' + String((e && e.message) || e).split(EOL)[0]); }
   const settingsAfterRaw = await apiJson('/api/settings');
   assert.equal(settingsAfterRaw.status, 200, 'GET /api/settings must be 200 (after).');
   assert(settingsAfterRaw.body && settingsAfterRaw.body.settings, 'GET /api/settings must retain settings.');
@@ -1148,6 +1226,7 @@ if (nativeOnly) {
     const revisionCallsBefore = [...revisionRecordsBefore.values()].reduce((sum, record) => sum + (typeof record.calls === 'number' ? record.calls : 0), 0);
     const revisionCallCountsUnknownBefore = [...revisionRecordsBefore.values()].filter((record) => typeof record.calls !== 'number').length;
     const claimRowsBefore = [...revisionRecordsBefore.values()].reduce((sum, record) => sum + record.claimRows, 0);
+    await assertBaselineSourceMetadata('K3 native-only final acceptance');
     const md = ['# K3 native-only (storage, zero model calls)', '', '- project: ' + title, '- readable arxiv rows: ' + scoped.length + '/10 (no ingestion/conversion repeats)', '- owning revision rows before/after: ' + revisionRecordsBefore.size + '/' + revisionRowsReadAfter, '- exact unchanged revision records preserved: ' + exactRevisionRecordsPreserved + '/' + (scoped.length - [...recoveryUpdatedRevisions].filter((rev) => revisionRecordsBefore.has(rev)).length), '- owning revision claim rows before/after: ' + claimRowsBefore + '/' + claimRowsAfter, '- recorded owning revision calls before/after (known subtotal): ' + revisionCallsBefore + '/' + revisionCallsAfter + '; unknown rows ' + revisionCallCountsUnknownBefore + '/' + revisionCallCountsUnknownAfter, '- calls this run on POSTed revisions (known delta subtotal): 0; unknown delta rows 0 (storage-only)', '- settings record preserved: true', '- understandingRouteWired: ' + String(understandingWired), '- overviewRouteWired: ' + String(overviewWired), '- reader range self-check: 1 exact range', '- paid distillation: skipped (root opt-in required)', '- claim-mode C1-C4: skipped (separate root step; hard gate remains open)', '- fullK3Accepted: false', ''].concat(recLines).concat(['']).join(EOL);
   await writeFile(outDir + '/k3-native-' + Date.now() + '.md', md);
   console.log(md);
@@ -1155,16 +1234,7 @@ if (nativeOnly) {
   process.exit(0);
 }
 async function readClaimSources(projectId, what) {
-  let rows = [], cursor;
-  for (let i = 0; i < 10; i++) {
-    const page = await apiJson('/api/projects/' + encodeURIComponent(projectId) + '/sources' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''));
-    assert.equal(page.status, 200, what + ': GET sources must be 200.');
-    rows = rows.concat(page.body.sources || []);
-    cursor = page.body.nextCursor || undefined;
-    if (!cursor) break;
-  }
-  assert.equal(cursor, undefined, what + ': source listing exceeded its page bound.');
-  return rows;
+  return readBoundedProjectSources(projectId, what);
 }
 async function preflightClaimScope() {
   assert(FROZEN_BASELINE && FROZEN_OVERFLOW, 'Frozen baseline and overflow manifests are required before full K3 work.');
@@ -1344,6 +1414,13 @@ if (!runModel) {
       violations.push('claim-mode stored: ' + String((e && e.message) || e).split('\n')[0]);
     }
   }
+  try { await assertBaselineSourceMetadata('K3 stored final acceptance'); }
+  catch (e) { violations.push('baseline source metadata changed at final acceptance: ' + String((e && e.message) || e).split(EOL)[0]); }
+  if (claimPreflight) {
+    try {
+      exactSourceRows(await readClaimSources(claimPreflight.project.id, 'K3 stored final overflow metadata'), [...FROZEN_BASELINE, ...FROZEN_OVERFLOW], 'K3 stored final overflow metadata');
+    } catch (e) { violations.push('overflow source metadata changed at final acceptance: ' + String((e && e.message) || e).split(EOL)[0]); }
+  }
   const md = ['# K3 stored hard-gate validation (zero paid calls)', '', '- project: ' + title, '- owning revision rows before/after: ' + storedRevisionRecordsBefore.size + '/' + revisionRecordsAfterCount + '; exact records preserved: ' + exactRevisionRowsPreserved, '- owning revision claim rows before/after: ' + sClaimRows + '/' + sClaimRowsAfter, '- recorded owning revision calls before/after (known subtotal): ' + sCalls + '/' + sCallsAfter + '; unknown rows ' + sCallRowsUnknown + '/' + sCallRowsUnknownAfter, '- calls this run on POSTed revisions (known delta subtotal): 0; unknown delta rows 0 (storage-only)', '- chat settings record preserved: ' + String(JSON.stringify(settingsAfterStored.body.settings) === JSON.stringify(settingsForRun.body.settings)), '- fullK3Accepted: false', '- violations: ' + violations.length, '', '| source | state | claims | mode |', '|---|---|---|---|'].concat(sRows).concat(['', '## Violations / open gates', '']).concat(violations.map((v) => '- ' + v)).concat(['']).join(EOL);
   await writeFile(outDir + '/k3-stored-' + Date.now() + '.md', md);
   console.log(md);
@@ -1373,6 +1450,7 @@ let admit = true;
 let newTokens = 0;
 let newTokensUnknown = 0;
 {
+  await assertBaselineSourceMetadata('K3 baseline before paid dispatch');
   const blocked = [];
   for (const s of scoped) {
     const u = await getUnderstanding(s.id, s.currentRevisionId);
@@ -1605,6 +1683,13 @@ else {
   const claimMd = ['# K3 claim-mode C1-C4 (whole-overflow scope, zero mode forcing)', '', '- project: ' + claimTitle, '- chat: ' + (chat.title || chat.id), '- frozen scope revisions: ' + claimRows.length, '- prepared overflow extras calls before this run: ' + priorExtraCalls + '/' + (FROZEN_OVERFLOW.length * 2) + ' (historical, separate from the 24-call run ceiling)', '- claim POST attempts this run: ' + claimPostAttempts + '; completed new turns: ' + postedTurns + ' (max 4)', '- model: ' + SELECTED_ANSWER_MODEL, '- fullK3Accepted: false', '- violations: ' + claimV.length, ''].join(EOL);
   console.log(claimMd);
   await writeFile(outDir + '/k3-claim-' + Date.now() + '.md', claimMd);
+}
+try { await assertBaselineSourceMetadata('K3 final baseline acceptance'); }
+catch (e) { tailV.push('Final baseline source metadata changed: ' + String((e && e.message) || e).split(EOL)[0]); }
+if (claimPreflight) {
+  try {
+    exactSourceRows(await readClaimSources(claimPreflight.project.id, 'K3 final overflow acceptance'), [...FROZEN_BASELINE, ...FROZEN_OVERFLOW], 'K3 final overflow acceptance');
+  } catch (e) { claimV.push('Final overflow source metadata changed: ' + String((e && e.message) || e).split(EOL)[0]); }
 }
 const finalViolations = [...tailV, ...claimV];
 assert.equal(finalViolations.length, 0, [
