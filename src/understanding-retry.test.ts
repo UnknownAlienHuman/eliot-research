@@ -106,7 +106,12 @@ describe("explicit understanding retry", () => {
       const before = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId), bodies = new Map(f.bodies);
       const previous = await getUnderstanding(f.env, actor, { sourceId, revisionId });
       const extraction = JSON.parse(f.bodies.get(`source/${revisionId}/distill-call1.json`) ?? "null").output;
-      const synthesis = JSON.parse(f.bodies.get(`source/${revisionId}/distill-call2.json`) ?? "null").output;
+      extraction.glossary = [];
+      const synthesis = {
+        supportedClaims: ["C0"], additionalClaims: [], guide: extraction.guide,
+        digestPlan: { methods: ["C0"], findings: [], limits: [] },
+        supportedGlossary: [],
+      };
       extraction.claims[0].statement = "The method retains evidence.";
       expect(await requestUnderstanding(f.env, actor, input)).toEqual({ revisionId, attemptId: retryId });
       expect(f.status).toHaveBeenCalledTimes(1); expect(f.create).toHaveBeenCalledTimes(1);
