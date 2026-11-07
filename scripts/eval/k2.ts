@@ -658,6 +658,7 @@ if (process.argv.includes('--models-only')) {
   assert.deepEqual(rereadB.body.snapshot, refreshed.body.snapshot, 'Snapshot metadata must stay stable across GETs.');
   assert.deepEqual(rereadA.body.warnings, refreshed.body.warnings, 'Warnings must be identical between refresh and GET.');
   assert.deepEqual(rereadB.body.warnings, refreshed.body.warnings, 'Warnings must stay stable across GETs.');
+  assert.deepEqual((await apiJson('/api/settings')).body.settings, before.body.settings, 'Authoritative Refresh must preserve configured defaults, including routes absent from its catalogue.');
   const models = rereadB;
   const warnings = models.body.warnings;
   assert(Array.isArray(warnings) && warnings.every((w) => typeof w === 'string' && w.trim().length > 0), 'Catalogue discovery warnings must remain visible, including partial provider failures.');
@@ -672,8 +673,8 @@ if (process.argv.includes('--models-only')) {
   });
   assert.equal(new Set(nativePairs.map((pair) => JSON.stringify(pair))).size, externals.length, 'Provider/native ID pairs must be unique.');
   for (const m of externals) assert(m && !m.enabled && m.unavailableReason, 'External model must be visibly disabled without owner credential opt-in (' + m.route + ').');
-  const external = externals[0];
-  assert(external, 'At least one external Gateway route is required.');
+  const external = externals.find((model) => model.selectable === true);
+  assert(external, 'At least one configured, selectable external Gateway route is required independently of execution readiness.');
   const firstRouteByProvider = new Map();
   for (const model of externals) {
     const providerId = /^gateway:([^/]+)\/.+/.exec(model.route)?.[1];
@@ -690,10 +691,10 @@ if (process.argv.includes('--models-only')) {
   }
   const browserModelRoutes = [...new Set([external.route, ...providerRoutesForBrowser])];
   const embedders = models.body.models.filter((m) => m && /embed|rerank/i.test(m.route + ' ' + (m.id || '') + ' ' + (m.label || '')));
-  for (const m of embedders) assert(!m.enabled && m.unavailableReason, 'Embed/rerank inventory entries must not be selectable (' + m.route + ').');
-  const flash = models.body.models.find((m) => m.route === 'workers-ai:@cf/zai-org/glm-5.3-flash');
-  assert(flash && flash.enabled, 'Native Flash default must stay enabled.');
-  assert.equal(before.body.settings.answerModel, flash.route, 'Default answer model stays Flash.');
+  for (const m of embedders) assert(!m.enabled && m.unavailableReason, 'Embed/rerank inventory entries must remain unavailable for execution (' + m.route + ').');
+  const settingsBase = { answerModel: before.body.settings.answerModel, distillModel: before.body.settings.distillModel };
+  for (const route of Object.values(settingsBase)) assert(typeof route === 'string' && route.length > 0, 'The configured default identity must be retained even when absent from the authoritative catalogue.');
+  const absentDefaults = Object.values(settingsBase).filter((route) => !models.body.models.some((model) => model.route === route));
   const denied = await apiJson('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gatewayId: 'eliotr-reasoning' }) });
   assert.equal(denied.status, 400, 'Saving a Gateway without explicit credential consent must fail before mutation.');
   const connectionAfterDenied = await apiJson('/api/models/connection');
@@ -701,14 +702,14 @@ if (process.argv.includes('--models-only')) {
   assert.equal(connectionAfterDenied.body.connection.gatewayId, null, 'Server must preserve the blank Gateway setting after rejecting missing consent.');
   const invalid = await apiJson('/api/models/connection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gatewayId: 'default' }) });
   assert.equal(invalid.status, 400, 'The auto-created default Gateway is not an allowed connection.');
-  const changed = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: external.route }) });
-  assert.equal(changed.status, 503, 'A disconnected external route cannot become the default.');
+  const unchangedDefault = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settingsBase) });
+  assert.equal(unchangedDefault.status, 200, 'Saving unchanged defaults, including missing routes, must be a no-op.');
+  assert.deepEqual(unchangedDefault.body.settings, before.body.settings, 'A no-op must preserve exact defaults and update time.');
   const emptyDistill = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: before.body.settings.answerModel, distillModel: '' }) });
   assert.equal(emptyDistill.status, 400, 'An empty distillModel must fail before mutation (no truthiness bypass).');
   const afterEmpty = await apiJson('/api/settings');
   assert.deepEqual(afterEmpty.body.settings, before.body.settings, 'Rejected empty distillModel must leave global settings unchanged.');
   assert(!Object.hasOwn(before.body.settings, 'nativeUsageMode'), 'Retired native usage mode must not be exposed.');
-  const settingsBase = { answerModel: before.body.settings.answerModel, distillModel: before.body.settings.distillModel };
   for (const nativeUsageMode of ['included', 'standard', 'metered', null]) {
     const rejected = await apiJson('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...settingsBase, nativeUsageMode }) });
     assert.equal(rejected.status, 400, 'A stale native usage field must fail before mutation.');
@@ -722,6 +723,19 @@ if (process.argv.includes('--models-only')) {
   assert.equal(emptyProjectModel.status, 400, 'An empty project answerModel must fail before mutation (no truthiness bypass).');
   const projectAfterEmpty = await apiJson('/api/projects/' + projectId);
   assert.equal(projectAfterEmpty.body.project.answerModel, null, 'Rejected empty project answerModel must leave the project override null.');
+  // A missing global route cannot be reselected after changing it. Use the existing
+  // nullable project override for a reversible external-selection roundtrip instead.
+  try {
+    const selected = await apiJson('/api/projects/' + projectId + '/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: external.route }) });
+    assert.equal(selected.status, 200, 'A configured external model must be savable without granting Gateway credential access.');
+    assert.equal((await apiJson('/api/projects/' + projectId)).body.project.answerModel, external.route, 'Readback must retain the exact provider/native route.');
+    assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null, 'Model selection must not connect credentials.');
+  } finally {
+    const restored = await apiJson('/api/projects/' + projectId + '/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: null }) });
+    assert.equal(restored.status, 200, 'Restore the project override through the public API.');
+    assert.equal((await apiJson('/api/projects/' + projectId)).body.project.answerModel, null, 'Project selection roundtrip must restore inheritance.');
+  }
+  assert.deepEqual((await apiJson('/api/settings')).body.settings, before.body.settings, 'Project selection/restore must preserve unavailable global defaults exactly.');
   const created = await apiJson('/api/projects/' + projectId + '/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(created.status, 201);
   const chatId = created.body.chat.id;
@@ -746,6 +760,21 @@ if (process.argv.includes('--models-only')) {
   const storedRejectedTurns = chatAfterTurn.body.turns.filter((stored) => stored && stored.turnId === disconnectedTurnId);
   assert.equal(storedRejectedTurns.length, 1, 'The rejected turn must have exactly one stored row.');
   assert.deepEqual(storedRejectedTurns[0], turn.body.turn, 'The exact stored rejected-turn record must equal the owning POST result.');
+  let missingDefaultRejection = null;
+  if (absentDefaults.includes(settingsBase.answerModel)) {
+    const turnId = randomUUID();
+    const rejected = await apiJson(admissionChatPath + '/turns?wait=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnId, question: 'Unavailable configured default check', scopeMode: 'empty' }) });
+    assert.equal(rejected.status, 200);
+    assert.equal(rejected.body.turn.turnId, turnId);
+    assert.equal(rejected.body.turn.state, 'failed', 'An absent configured default must fail without adopting a fallback.');
+    for (const key of ['tokenLimit', 'inputTokens', 'cachedTokens', 'outputTokens']) assert.strictEqual(rejected.body.turn[key], 0, 'Absent default must be undispatched with known zero ' + key + '.');
+    assert.match(rejected.body.turn.error, /absent|catalogue|unavailable/i);
+    const stored = await apiJson(admissionChatPath);
+    assert.equal(stored.body.turns.length, chatAfterTurn.body.turns.length + 1);
+    assert.deepEqual(stored.body.turns.find((item) => item.turnId === turnId), rejected.body.turn);
+    assert.deepEqual(stored.body.turns.find((item) => item.turnId === disconnectedTurnId), turn.body.turn);
+    missingDefaultRejection = { route: settingsBase.answerModel, tokenLimit: rejected.body.turn.tokenLimit, state: rejected.body.turn.state, storedExact: true };
+  }
   let distill = { skipped: true, reason: 'storage fixture not attempted' };
   let sourceId = null;
   {
@@ -810,6 +839,17 @@ if (process.argv.includes('--models-only')) {
       if (!open && isOpen) await dialog.getByRole('button', { name: 'Done', exact: true }).click();
       assert.equal(await dialog.evaluate((element) => (element as HTMLDialogElement).open), open, 'AI Gateway connection dialog open state must match the requested state.');
     }
+    async function assertSavedDefault(page, mode, select) {
+      const expected = mode === 'answers' ? settingsBase.answerModel : settingsBase.distillModel;
+      const present = models.body.models.some((model) => model.route === expected);
+      await expect(select).toHaveValue(present ? expected : '');
+      if (!present) {
+        assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter(option => option.value === value).length, expected), 0, 'An absent default must not reappear as a fake catalogue option.');
+        const picker = page.locator('.er-model-picker');
+        await expect(picker.getByRole('status').filter({ hasText: 'Current selection:' })).toContainText('not in the current catalogue');
+        await expect(picker.getByRole('alert')).toContainText('Route is missing from the current catalogue.');
+      }
+    }
     async function openSettings(page) {
       const reads = ['/api/settings', '/api/models/connection', '/api/models'].map(async (path) => {
         const response = await page.waitForResponse((r) => r.url() === browserOrigin + path && r.request().method() === 'GET', { timeout: 30000 });
@@ -833,17 +873,25 @@ if (process.argv.includes('--models-only')) {
       await answersRadio.check();
       await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toBeVisible();
       await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toBeEnabled({ timeout: 30000 });
-      await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(before.body.settings.answerModel);
+      await assertSavedDefault(page, 'answers', page.getByRole('combobox', { name: 'Answer model', exact: true }));
       await expect(page.getByRole('combobox', { name: 'Answer model: provider', exact: true })).toBeVisible();
       await expect(page.getByRole('searchbox', { name: 'Answer model: search models', exact: true })).toBeVisible();
       await expect(page.getByRole('checkbox', { name: /free/i })).toBeVisible();
       await understandingRadio.check();
       await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toBeVisible();
       await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toBeEnabled({ timeout: 30000 });
-      await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toHaveValue(before.body.settings.distillModel);
+      await assertSavedDefault(page, 'understanding', page.getByRole('combobox', { name: 'Understanding model', exact: true }));
       await expect(page.getByRole('combobox', { name: 'Understanding model: provider', exact: true })).toBeVisible();
       await expect(page.getByRole('searchbox', { name: 'Understanding model: search models', exact: true })).toBeVisible();
       await answersRadio.check();
+      if (warnings.length > 0) {
+        const details = modelsRegion.locator('details.er-model-picker__warnings');
+        await expect(details).toHaveCount(1);
+        await details.locator('summary').click();
+        await expect(details.locator('li')).toHaveText(warnings);
+        await expect(details.locator('li').first()).toBeVisible();
+        await details.locator('summary').click();
+      }
       // Opening Settings is read-only; the Models Save button is not used here.
       await setAdvancedGateway(page, true);
       const gatewayDialog = modelsRegion.locator('dialog.er-models__dialog');
@@ -867,12 +915,13 @@ if (process.argv.includes('--models-only')) {
     async function assertCatalogueChoice(page, mode, routes) {
       const label = mode === 'answers' ? 'Answer model' : 'Understanding model';
       const expected = mode === 'answers' ? before.body.settings.answerModel : before.body.settings.distillModel;
+      const expectedChoice = models.body.models.find((model) => model.route === expected);
       const picked = await activePicker(page, mode);
       const select = picked.select;
       const provider = picked.provider;
       const search = picked.search;
       const free = picked.free;
-      await expect(select).toHaveValue(expected);
+      await assertSavedDefault(page, mode, select);
       for (const route of routes) {
         const parts = /^gateway:([^/]+)\/.+/.exec(route);
         assert(parts, 'Browser check requires a complete provider/native route.');
@@ -881,14 +930,19 @@ if (process.argv.includes('--models-only')) {
         await provider.selectOption(parts[1]);
         assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter((option) => option.value === value).length, route), 1,
           'Expanded catalogue must attach the exact provider/native route without paging (' + parts[1] + ', ' + label + ').');
-        await expect(select).toHaveValue('');
-        await expect(page.locator('.er-model-picker').getByRole('status').filter({ hasText: 'Current selection:' })).toContainText('Outside the current filter.');
-        assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter(option => option.value === value).length, expected), 0,
-          'The current native choice must not appear among another provider\'s models.');
+        const sameProvider = expectedChoice?.route.startsWith('gateway:' + parts[1] + '/') === true;
+        await expect(select).toHaveValue(sameProvider ? expected : '');
+        if (!sameProvider) {
+          await expect(page.locator('.er-model-picker').getByRole('status').filter({ hasText: 'Current selection:' })).toContainText('Outside the current filter.');
+          assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter(option => option.value === value).length, expected), 0,
+            'The current choice must not appear among another provider\'s models.');
+        }
         const choice = models.body.models.find((entry) => entry.route === route);
-        assert(choice, 'The native model must exist in the frozen catalogue.');
+        assert(choice, 'The exact provider/native model must exist in the frozen catalogue.');
         await search.fill(choice.id);
-        await expect(select).toHaveValue('');
+        const visibleAfterSearch = sameProvider && choice.id.toLowerCase().split(/\s+/).every(term =>
+          (expectedChoice.label + ' ' + expectedChoice.route + ' ' + expectedChoice.id + ' ' + providerDisplayName(parts[1])).toLowerCase().includes(term));
+        await expect(select).toHaveValue(visibleAfterSearch ? expected : '');
         await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
           .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([!(choice.selectable ?? choice.enabled)]);
         if (choice.selectable ?? choice.enabled) {
@@ -896,16 +950,18 @@ if (process.argv.includes('--models-only')) {
           await expect(select).toHaveValue(route);
         }
         await provider.selectOption(''); await search.fill('');
-        await select.selectOption(expected);
+        if (expectedChoice && (expectedChoice.selectable ?? expectedChoice.enabled)) await select.selectOption(expected);
+        else { await openSettings(page); await activePicker(page, mode); }
       }
       await free.check();
-      await expect(select).toHaveValue('');
+      const freeIncludesDefault = models.body.models.some(model => model.route === expected && /free/i.test(model.id + ' ' + model.label));
+      await expect(select).toHaveValue(freeIncludesDefault ? expected : '');
       await free.uncheck();
-      await expect(select).toHaveValue(expected);
+      await assertSavedDefault(page, mode, select);
       await search.fill('');
-      await expect(select).toHaveValue(expected);
+      await assertSavedDefault(page, mode, select);
       await provider.selectOption('');
-      await expect(select).toHaveValue(expected);
+      await assertSavedDefault(page, mode, select);
       assert.strictEqual(await page.locator('.er-model-picker__find').count(), 0, 'Filters must not introduce a Find disclosure (' + label + ').');
       assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Filters must not introduce pagination (' + label + ').');
     }
@@ -953,8 +1009,14 @@ if (process.argv.includes('--models-only')) {
       'Readback must show the actual stored Gateway setting; this does not prove provider usability.');
     const connectedCatalog = await apiJson('/api/models');
     const inheritedChoice = connectedCatalog.body.models.find((model) => model.enabled && model.route.startsWith('gateway:'));
-    const nativeChoice = connectedCatalog.body.models.find((model) => model.enabled && model.route.startsWith('workers-ai:'));
-    assert(inheritedChoice && nativeChoice, 'Unavailable-default regression requires real external and native catalogue choices.');
+    const nativeChoice = connectedCatalog.body.models.find((model) => {
+      if (!model.enabled || !model.route.startsWith('workers-ai:')) return false;
+      const reserve = Math.min(model.outputReserveTokens ?? model.maxOutputTokens ?? 0, model.maxOutputTokens ?? Infinity);
+      return Number.isSafeInteger(model.contextTokens) && model.contextTokens > 0 && Number.isSafeInteger(reserve) && reserve > 0
+        && (model.maxOutputTokens === null || (Number.isSafeInteger(model.maxOutputTokens) && model.maxOutputTokens > 0))
+        && (model.contextWindowTokens === undefined || (Number.isSafeInteger(model.contextWindowTokens) && model.contextWindowTokens > reserve));
+    });
+    assert(inheritedChoice, 'Unavailable-default regression requires a real external catalogue choice.');
     const inheritedProject = await apiJson('/api/projects/' + projectId + '/settings', { method: 'PATCH',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerModel: inheritedChoice.route }) });
     assert.equal(inheritedProject.status, 200, 'An available external route must be saved as this fixture project default.');
@@ -973,10 +1035,29 @@ if (process.argv.includes('--models-only')) {
       await inheritedPage.getByRole('textbox', { name: 'Question', exact: true }).fill('Unavailable inherited model check');
       await expect(inheritedPage.getByRole('alert').filter({ hasText: 'Inherited default model is not ready to run:' })).toBeVisible();
       await expect(inheritedPage.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+      await inheritedPage.getByRole('button', { name: 'Project settings', exact: true }).click();
+      const projectDialog = inheritedPage.getByRole('dialog', { name: 'Project settings', exact: true });
+      const projectModel = projectDialog.getByRole('combobox', { name: 'Answer model', exact: true });
+      await expect(projectModel).toBeEnabled();
+      await projectDialog.getByRole('combobox', { name: 'Answer model: provider', exact: true }).selectOption(/^gateway:([^/]+)\//.exec(external.route)[1]);
+      await projectModel.selectOption(external.route);
+      await expect(projectModel).toHaveValue(external.route);
+      await projectDialog.getByRole('button', { name: 'Close', exact: true }).click();
+      assert.equal((await apiJson('/api/projects/' + projectId)).body.project.answerModel, inheritedChoice.route, 'Project picker drafts must not save without the existing Save action.');
+      await expect(inheritedPage.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
       await inheritedPage.getByRole('button', { name: /^Sources and model:/ }).click();
-      await inheritedPage.getByRole('combobox', { name: 'Model: provider', exact: true }).selectOption('workers-ai');
-      await inheritedPage.getByRole('combobox', { name: 'Model', exact: true }).selectOption(nativeChoice.route);
-      await expect(inheritedPage.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+      const chatProvider = inheritedPage.getByRole('combobox', { name: 'Model: provider', exact: true });
+      if (nativeChoice) {
+        await chatProvider.selectOption('workers-ai');
+        await inheritedPage.getByRole('combobox', { name: 'Model', exact: true }).selectOption(nativeChoice.route);
+        await expect(inheritedPage.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+      } else {
+        const nativeRows = connectedCatalog.body.models.filter(model => model.route.startsWith('workers-ai:'));
+        const option = chatProvider.locator('option[value="workers-ai"]');
+        if (nativeRows.length === 0) await expect(option).toHaveCount(0);
+        else assert.equal(await option.evaluate(element => element.disabled), !nativeRows.some(model => model.selectable ?? model.enabled), 'Native provider selection must reflect the authoritative inventory independently of runnable metadata.');
+        await expect(inheritedPage.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+      }
     } finally {
       await inheritedPage.close();
       const restoredProject = await apiJson('/api/projects/' + projectId + '/settings', { method: 'PATCH',
@@ -1001,6 +1082,7 @@ if (process.argv.includes('--models-only')) {
       connectionPutCount: gatewayConsentRequests.length,
       blankOnlySaveNoOp: true,
       providerUsabilityProven: false,
+      nativeReplacementRoute: nativeChoice?.route ?? null,
     };
     await setAdvancedGateway(page, false);
     assert.equal(await gatewayDialog.count(), 1, 'Models card must retain its native Gateway connection dialog.');
@@ -1011,9 +1093,9 @@ if (process.argv.includes('--models-only')) {
     await assertCatalogueChoice(page, 'answers', browserModelRoutes);
     await assertCatalogueChoice(page, 'understanding', browserModelRoutes);
     await activePicker(page, 'answers');
-    await expect(page.getByRole('combobox', { name: 'Answer model', exact: true })).toHaveValue(before.body.settings.answerModel);
+    await assertSavedDefault(page, 'answers', page.getByRole('combobox', { name: 'Answer model', exact: true }));
     await activePicker(page, 'understanding');
-    await expect(page.getByRole('combobox', { name: 'Understanding model', exact: true })).toHaveValue(before.body.settings.distillModel);
+    await assertSavedDefault(page, 'understanding', page.getByRole('combobox', { name: 'Understanding model', exact: true }));
     await activePicker(page, 'answers');
     assert.strictEqual(await page.locator('.er-model-picker__find').count(), 0, 'Display-only filters must not introduce a Find disclosure.');
     assert.strictEqual(await page.locator('nav.er-model-picker__pages').count(), 0, 'Display-only filters must not introduce pagination.');
@@ -1038,15 +1120,29 @@ if (process.argv.includes('--models-only')) {
       const sourceProvider = understanding.getByRole('combobox', { name: 'Understanding model: provider', exact: true });
       await expect(select).toBeVisible();
       await expect(sourceProvider).toBeEnabled({ timeout: 30000 });
+      await expect(understanding).toHaveAttribute('aria-busy', 'false');
       for (const route of browserModelRoutes) {
         const parts = /^gateway:([^/]+)\/.+/.exec(route);
         assert(parts, 'Understanding browser check requires a complete provider/native route.');
+        const choice = models.body.models.find(entry => entry.route === route);
+        assert(choice, 'Understanding picker requires its exact stored catalogue entry.');
+        const providerSelectable = models.body.models.some(entry => entry.route.startsWith('gateway:' + parts[1] + '/') && (entry.selectable ?? entry.enabled));
+        if (!providerSelectable) {
+          assert.equal(await sourceProvider.locator('option').evaluateAll((options, id) => options.some(option => option.value === id && option.disabled), parts[1]), true,
+            'A compact provider with no selectable catalogue choices must remain visibly unavailable.');
+          continue;
+        }
         await sourceProvider.selectOption(parts[1]);
         await expect(select).toBeEnabled();
         assert.equal(await select.locator('option').evaluateAll((options, value) => options.filter((option) => option.value === value).length, route), 1,
           'Understanding catalogue must attach the exact provider/native route (' + parts[1] + ').');
         await expect.poll(() => select.locator('option').evaluateAll((options, chosen) => options
-          .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([!(models.body.models.find(entry => entry.route === route)?.selectable ?? false)]);
+          .filter((option) => option.getAttribute('value') === chosen).map((option) => option.hasAttribute('disabled')), route), { timeout: 30000 }).toEqual([!(choice.selectable ?? choice.enabled)]);
+        if (choice.selectable ?? choice.enabled) {
+          await select.selectOption(route);
+          await expect(select).toHaveValue(route);
+          await expect(understanding.getByRole('button', { name: 'Understand source', exact: true })).toBeDisabled();
+        }
       }
     }
     assert.strictEqual(settingsPuts, 0, 'The entire browser journey must attempt zero settings PUTs.');
@@ -1265,6 +1361,8 @@ if (process.argv.includes('--models-only')) {
     && after.body.settings.updatedAt >= before.body.settings.updatedAt, 'Intentional provider saves/restores must record a valid nondecreasing update time.');
   assert.equal((await apiJson('/api/models/connection')).body.connection.gatewayId, null);
   const result = { scope: 'LOCAL_CONNECTION_AND_ADMISSION', projectId, chatId, fullK2Accepted: false, consentRejected: true, disconnectedTurnTokenLimit: turn.body.turn.tokenLimit ?? null,
+    selectionRoundtrip: { projectExternalSaveAccepted: true, projectOverrideRestored: true, globalDefaultsPreserved: true, staleGlobalSaveNoOp: true },
+    absentDefaults: [...new Set(absentDefaults)], missingDefaultRejection,
     disconnectedTurnRows: { before: chatBeforeTurn.body.turns.length, after: chatAfterTurn.body.turns.length, persistedMatches: storedRejectedTurns.length },
     retiredNativeUsageMode: { absent: !Object.hasOwn(after.body.settings, 'nativeUsageMode'), staleWritesRejected: true },
     catalogue: { externalModels: externals.length, providers: [...new Set(nativePairs.map((pair) => pair[0]))],
