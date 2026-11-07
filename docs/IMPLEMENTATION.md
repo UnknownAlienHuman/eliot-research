@@ -1177,9 +1177,22 @@ call; an in-flight call may finish.
 
 ## 11. Models
 
-The native default's cold-start metadata includes its documented low reasoning effort, matching the existing native
-catalogue discovery policy. GLM 5.3 Flash supports low/high/max and defaults to max when effort is omitted; reasoning
-cannot be disabled. The admitted model keeps this parameter frozen with its context and output bounds.
+Cloudflare's [GLM 5.3 Flash](https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/) and
+[GLM 5.3](https://developers.cloudflare.com/workers-ai/models/glm-5.3/) pages, checked 2026-11-06, list `low`,
+`high` and `max`, with `max` as the default for both. The pinned Agents 0.30.1 native adapter accepts and forwards
+`high`; its type does not expose `max`, and the serializer omits the option when no effort is supplied.
+
+For a fresh Workers AI catalogue row, Eliot sets `nativeReasoningEffort: "high"` only when exactly one
+`reasoning_effort` property has a `supported_efforts` array containing `high`. Absent, duplicate or unsupported
+metadata leaves the SDK option unset, allowing the provider default to apply. The fallback Flash seed carries no
+effort metadata. Existing stored `low` values remain literal; reads do not upgrade catalogue rows or admitted specs.
+A successful explicit refresh replaces a native row with its newly discovered metadata, and later route resolution
+uses that row. Already admitted work keeps its frozen `ModelSpec`; a queued route-only request resolves metadata when
+it is dispatched.
+
+This is a deliberate reasoning-effort quality policy after real Flash and full GLM 5.3 runs forced to `low` still
+showed semantic errors. Requesting `high` is not a semantic-quality guarantee or acceptance result. The existing
+90-second K2 latency gate is unchanged.
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban

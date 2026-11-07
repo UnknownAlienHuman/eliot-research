@@ -543,6 +543,22 @@ describe("native contradictory catalogue entries", () => {
       { property_id: "context_window", value: "128000" },
     ]), "2026-10-27")?.contextTokens).toBeNull();
   });
+
+  it("selects high only from one reasoning_effort property advertising high", () => {
+    type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
+    const row = (reasoningProperties: unknown[]): NativeRow => ({ id: "catalogue-uuid", name: "@cf/zai-org/glm-5.3",
+      task: { name: "Text Generation" }, properties: [{ property_id: "context_window", value: "1048576" }, ...reasoningProperties] } as unknown as NativeRow);
+    const native = (reasoningProperties: unknown[]) => nativeModel(row(reasoningProperties), "2026-11-07");
+    expect(native([{ property_id: "reasoning_effort", value: { supported_efforts: ["low", "high", "max"] } }]))
+      .toMatchObject({ nativeReasoningEffort: "high" });
+    expect(native([])).not.toHaveProperty("nativeReasoningEffort");
+    expect(native([{ property_id: "reasoning_effort", value: { supported_efforts: ["low", "max"] } }]))
+      .not.toHaveProperty("nativeReasoningEffort");
+    expect(native([
+      { property_id: "reasoning_effort", value: { supported_efforts: ["high"] } },
+      { property_id: "reasoning_effort", value: { supported_efforts: ["low"] } },
+    ])).not.toHaveProperty("nativeReasoningEffort");
+  });
 });
 
 describe("frozen gateway protocol transports", () => {
@@ -720,6 +736,41 @@ describe("provider configuration loader", () => {
 });
 
 describe("stored catalogue with provider snapshot", () => {
+  it("preserves stored low on reads and replaces it with fresh native reasoning metadata on refresh", async () => {
+    const workersAi = defaultProviders().filter((provider) => provider.type === "workers-ai");
+    const route = "workers-ai:@cf/zai-org/glm-5.3-flash";
+    const legacy = { route, id: "@cf/zai-org/glm-5.3-flash", label: "GLM 5.3 Flash", contextTokens: 1_048_576,
+      contextWindowTokens: 1_048_576, maxOutputTokens: null, outputReserveTokens: 8192, supportsImages: true,
+      nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true };
+    const bucket = fakeBucket({ updatedAt: "2026-10-30T00:00:00.000Z", warnings: [], models: [legacy], providers: workersAi });
+    let supportedEfforts: string[] | null = ["low", "high", "max"];
+    const row = () => ({ id: "catalogue-uuid", name: "@cf/zai-org/glm-5.3-flash", task: { name: "Text Generation" },
+      properties: [{ property_id: "context_window", value: "1048576" },
+        ...(supportedEfforts === null ? [] : [{ property_id: "reasoning_effort", value: { supported_efforts: supportedEfforts } }])] }) as never;
+    const aiModels = vi.fn(async () => [row()]);
+    const env = fixtureEnv(bucket.binding, { providers: workersAi, gatewayId: null, aiModels });
+    catalogues([], []);
+
+    const storedRead = await readModelCatalog(env);
+    expect(storedRead.models.find((model) => model.route === route)?.nativeReasoningEffort).toBe("low");
+    expect(aiModels).not.toHaveBeenCalled();
+    expect(bucket.put).not.toHaveBeenCalled();
+
+    const advertised = await refreshModelCatalog(env);
+    expect(advertised.models.find((model) => model.route === route)?.nativeReasoningEffort).toBe("high");
+    const persistedHigh = (bucket.stored() as { models: Array<{ route: string; nativeReasoningEffort?: string }> }).models
+      .find((model) => model.route === route);
+    expect(persistedHigh?.nativeReasoningEffort).toBe("high");
+
+    supportedEfforts = ["low", "max"];
+    const unsupported = await refreshModelCatalog(env);
+    expect(unsupported.models.find((model) => model.route === route)).not.toHaveProperty("nativeReasoningEffort");
+    const persistedUnsupported = (bucket.stored() as { models: Array<{ route: string; nativeReasoningEffort?: string }> }).models
+      .find((model) => model.route === route);
+    expect(persistedUnsupported).not.toHaveProperty("nativeReasoningEffort");
+    expect(aiModels).toHaveBeenCalledTimes(2);
+  });
+
   it("reports a missing snapshot visibly without discovery", async () => {
     const bucket = fakeBucket(null);
     const env = fixtureEnv(bucket.binding);

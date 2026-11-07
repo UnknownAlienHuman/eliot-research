@@ -87,7 +87,7 @@ export interface CatalogModel {
   apiProtocol?: "openai-chat" | "openai-responses" | "anthropic" | "google";
   apiBaseUrl?: string;
   mayTrainOnYourPrompts?: boolean;
-  nativeReasoningEffort?: "low";
+  nativeReasoningEffort?: "low" | "high";
   checkedOn: string;
   enabled: boolean;
   unavailableReason?: string;
@@ -100,7 +100,7 @@ export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
 // Owner-selected native default metadata is a fallback, not a provider allowlist.
 export const MODELS: ModelSpec[] = [
   { route: DEFAULT_MODEL, id: "@cf/zai-org/glm-5.3-flash", label: "GLM 5.3 Flash", contextTokens: 1_048_576,
-    contextWindowTokens: 1_048_576, maxOutputTokens: null, outputReserveTokens: 8192, supportsImages: true, nativeReasoningEffort: "low", checkedOn: "2026-10-30", enabled: true },
+    contextWindowTokens: 1_048_576, maxOutputTokens: null, outputReserveTokens: 8192, supportsImages: true, checkedOn: "2026-10-30", enabled: true },
 ];
 // Assembly headroom and legacy/OCR reservations are not a provider generation cap.
 export const modelOutputReserve = (model: Pick<CatalogModel, "outputReserveTokens" | "maxOutputTokens">) => {
@@ -208,7 +208,7 @@ function isCatalogModel(value: unknown): value is CatalogModel {
   if (value.supportsTemperature !== undefined && typeof value.supportsTemperature !== "boolean") return false;
   if (value.supportsImages !== undefined && typeof value.supportsImages !== "boolean") return false;
   if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
-  if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low") return false;
+  if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low" && value.nativeReasoningEffort !== "high") return false;
   if (value.apiProtocol !== undefined && !["openai-chat", "openai-responses", "anthropic", "google"].includes(String(value.apiProtocol))) return false;
   if (value.apiBaseUrl !== undefined && typeof value.apiBaseUrl !== "string") return false;
   if (value.mayTrainOnYourPrompts !== undefined && typeof value.mayTrainOnYourPrompts !== "boolean") return false;

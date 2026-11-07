@@ -261,6 +261,8 @@ stop/reconnect, reopen chat and save an answer as a page.
 **Behavioral contract.** Only Send starts answer inference. Each turn freezes its source revisions and admitted model
 metadata. Context reserve is separate from the published generation maximum; unknown maxima retain provider/SDK defaults.
 Admission has its own claim; a missing numeric capacity never permits another call for the same turn.
+Fresh native rows request `high` only when one `reasoning_effort` property uniquely advertises it in `supported_efforts`;
+otherwise the SDK option is omitted, while stored `low` remains literal. This is a request policy, not semantic acceptance.
 Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
 across corpora, with no fixed-paper coaching or JSON sentence/label enum. Each whole or compact evidence block is one
 JSON `{label,text}` record with literal brackets escaped, and its label applies only to that block's text. The label

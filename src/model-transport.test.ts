@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveModelTransport, safeEmptyCompletionLog } from "./model-transport";
 import { DEFAULT_MODEL, MODELS, modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, type ModelSpec } from "./models";
 import { chatModelMessages, estimateModelInput } from "./model-input";
+import { nativeModel } from "./native-model-catalog";
 
 it("joins only adjacent user input while retaining evidence, Unicode and assistant history verbatim", () => {
   const messages = [
@@ -53,10 +54,11 @@ it("captures the pinned Anthropic default near the estimated input boundary whil
 });
 
 describe("native fallback reasoning request", () => {
-  it.each([32768, 4096, null])("forwards low and the published %s output maximum through the installed adapter", async (capacity) => {
+  it.each([32768, 4096, null])("forwards explicit legacy low and the published %s output maximum through the installed adapter", async (capacity) => {
     const fallback = MODELS.find((entry) => entry.route === DEFAULT_MODEL);
     if (!fallback) throw new Error("The built-in native model fallback is missing.");
-    const model = { ...fallback, maxOutputTokens: capacity };
+    expect(fallback).not.toHaveProperty("nativeReasoningEffort");
+    const model = { ...fallback, maxOutputTokens: capacity, nativeReasoningEffort: "low" as const };
     expect(model).toMatchObject({
       id: "@cf/zai-org/glm-5.3-flash",
       contextTokens: 1_048_576,
@@ -98,6 +100,45 @@ describe("native fallback reasoning request", () => {
     expect(captured?.inputs.reasoning_effort).not.toBe("max");
     expect((captured?.inputs.chat_template_kwargs as Record<string, unknown> | undefined)?.enable_thinking).not.toBe(false);
     expect(captured?.options.returnRawResponse).toBe(true);
+  });
+});
+
+describe("fresh native reasoning effort request", () => {
+  it.each([
+    { name: "advertised high", supportedEfforts: ["low", "high", "max"], expected: "high" },
+    { name: "absent metadata", supportedEfforts: null, expected: undefined },
+    { name: "unsupported high", supportedEfforts: ["low", "max"], expected: undefined },
+  ])("submits $name as the actual native SDK field", async ({ supportedEfforts, expected }) => {
+    type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
+    const properties: unknown[] = [{ property_id: "context_window", value: "1048576" }];
+    if (supportedEfforts !== null) properties.push({ property_id: "reasoning_effort", value: { supported_efforts: supportedEfforts } });
+    const discovered = nativeModel({ id: "catalogue-uuid", name: "@cf/zai-org/glm-5.3", task: { name: "Text Generation" }, properties } as unknown as NativeRow, "2026-11-07");
+    if (!discovered || discovered.contextTokens === null) throw new Error("The native GLM fixture did not resolve.");
+    const model: ModelSpec = { ...discovered, contextTokens: discovered.contextTokens };
+    let captured: { inputs: Record<string, unknown> } | undefined;
+    const run = vi.fn(async (modelId: string, inputs: Record<string, unknown>) => {
+      captured = { inputs };
+      const chunk = (value: unknown) => "data: " + JSON.stringify(value) + "\n\n";
+      const base = { id: "fresh-native-reasoning", object: "chat.completion.chunk", created: 0, model: modelId };
+      return new Response(
+        chunk({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "Captured without inference." }, finish_reason: null }] }) +
+        chunk({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }) +
+        chunk({ ...base, choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }) +
+        "data: [DONE]\n\n",
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    const transport = await resolveModelTransport({ AI: { run } as unknown as Env["AI"], DB: {} as Env["DB"] }, model, "fresh-native-reasoning");
+    await expect(streamText({ model: transport, prompt: "Capture the native request only.", maxRetries: 0 }).text)
+      .resolves.toBe("Captured without inference.");
+    expect(run).toHaveBeenCalledTimes(1);
+    if (expected === undefined) {
+      expect(discovered).not.toHaveProperty("nativeReasoningEffort");
+      expect(captured?.inputs).not.toHaveProperty("reasoning_effort");
+    } else {
+      expect(discovered.nativeReasoningEffort).toBe(expected);
+      expect(captured?.inputs.reasoning_effort).toBe(expected);
+    }
   });
 });
 
