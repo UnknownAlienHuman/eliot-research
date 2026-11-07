@@ -549,6 +549,14 @@ not model quality or paid-step replay.
 2. Verified excerpts → supported claim selection, whole guide-unit selection, digest selection and, for frozen glossary candidates,
    a glossary selection.
 
+Native K3 calls request prompt-directed JSON: the complete unchanged `z.toJSONSchema(schema)` is included in the
+instructions and input estimate, while `Output.object({schema})` still parses and validates locally. For the existing
+`structuredOutput:true` transport option only, inline public AI SDK parameter middleware selects upstream text format,
+so Workers AI receives no `response_format`/JSON Mode. No JSON salvage, repair call or weaker schema is added; typed
+failures retain known usage through the same catch/artifact path. This execution experiment is unqualified until real
+corpus/semantic acceptance. Provider causes remain unknown; an earlier High success at 133.816 s means High is not
+intrinsically beyond the unchanged 180 s call bound. Old attempts, canonical bytes and quality gates are unchanged.
+
 Fresh call one and call two use raw marker `claim-plan-guide-v3`, also recorded on the new verified artifact.
 `Verified.guideCandidates` keeps the existing frozen representation with original H0–H4
 identities, complete text, qualifiers and source labels. Call two returns strict `supportedGuide` IDs, not replacement
@@ -1283,6 +1291,13 @@ it is dispatched.
 This is a deliberate reasoning-effort quality policy after real Flash and full GLM 5.3 runs forced to `low` still
 showed semantic errors. Requesting `high` is not a semantic-quality guarantee or acceptance result. The existing
 90-second K2 latency gate is unchanged.
+
+Native K3 uses prompt-directed JSON with local `Output.object` validation (§6), omitting upstream JSON Mode through
+the installed `ai@7.0.152` public `wrapLanguageModel`/`transformParams` API. Native chat/OCR calls without the structured
+option and external providers retain their transport behavior. Cloudflare's [JSON Mode docs](https://developers.cloudflare.com/workers-ai/features/json-mode/)
+(`dateModified: 2026-09-14`, read 2026-11-07) enable that mode via `response_format` and warn that schema complexity
+can prevent fulfillment; they do not establish the cause of the retained deadline failures. This remains an
+unqualified execution experiment, preserving High effort, model/output bounds and local validation.
 
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
