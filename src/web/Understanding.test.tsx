@@ -366,8 +366,9 @@ describe('Source claim evidence presentation', () => {
       await waitFor(() => Array.from(host.querySelectorAll('button'))
         .some(button => button.textContent === 'Run understanding again' && !button.disabled));
       expect(posts).toEqual([]);
-      const effort = host.querySelector<HTMLSelectElement>('select[aria-label="Understanding reasoning effort"]');
-      expect(effort?.disabled).toBe(false); expect(effort?.value).toBe('');
+      const effort = host.querySelector('select[aria-label="Understanding reasoning effort"]');
+      if (!(effort instanceof HTMLSelectElement)) throw new Error('The native effort control did not render.');
+      expect(effort.disabled).toBe(false); expect(effort.value).toBe('');
       expect(host.textContent).toContain('Requested native reasoning effort: Unknown (not recorded).');
       const button = Array.from(host.querySelectorAll('button'))
         .find(candidate => candidate.textContent === 'Run understanding again');
@@ -432,7 +433,10 @@ describe('Source claim evidence presentation', () => {
     };
     try {
       await act(async () => render('initial'));
-      await waitFor(() => host.querySelector<HTMLSelectElement>('select[aria-label="Understanding reasoning effort"]')?.disabled === false);
+      await waitFor(() => {
+        const effort = host.querySelector('select[aria-label="Understanding reasoning effort"]');
+        return effort instanceof HTMLSelectElement && effort.disabled === false;
+      });
       expect(posts).toEqual([]);
       expect(host.textContent).toContain('Requested native reasoning effort: Unknown (not recorded).');
       await act(async () => { effort().value = 'low'; effort().dispatchEvent(new Event('change', { bubbles: true })); });
@@ -515,7 +519,10 @@ describe('Source claim evidence presentation', () => {
     };
     try {
       await act(async () => render());
-      await waitFor(() => host.querySelector<HTMLSelectElement>('select[aria-label="Understanding reasoning effort"]')?.disabled === false);
+      await waitFor(() => {
+        const effort = host.querySelector('select[aria-label="Understanding reasoning effort"]');
+        return effort instanceof HTMLSelectElement && effort.disabled === false;
+      });
       expect(host.textContent).toContain('Requested native reasoning effort: High.');
       await change('Understanding reasoning effort', 'low');
       await chooseModel('workers-ai', unknownNative.route);

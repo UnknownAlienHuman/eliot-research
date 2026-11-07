@@ -1207,9 +1207,13 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: Unders
     return { revisionId: row.id };
   }
   const settings = await env.DB.prepare("SELECT distill_model AS model FROM settings WHERE id=1").first<{ model: string }>();
-  const model = withNativeEffort(await requireAvailableModel(env, input.model ?? settings?.model ?? ""), input.nativeReasoningEffort ?? recordedEffort);
-  const request = attemptId !== null || input.nativeReasoningEffort === undefined ? row.distill_request_json
-    : JSON.stringify({ sourceId, revisionId: row.id, model: input.model ?? null, nativeReasoningEffort: input.nativeReasoningEffort });
+  const resolved = await requireAvailableModel(env, input.model ?? settings?.model ?? "");
+  const clearOriginalEffort = attemptId === null && row.distill_calls === 0 && resolved.route !== row.distill_model
+    && input.nativeReasoningEffort === undefined && recordedEffort !== undefined;
+  const effort = input.nativeReasoningEffort ?? (clearOriginalEffort ? undefined : recordedEffort);
+  const model = withNativeEffort(resolved, effort);
+  const request = attemptId !== null || (input.nativeReasoningEffort === undefined && !clearOriginalEffort) ? row.distill_request_json
+    : JSON.stringify({ sourceId, revisionId: row.id, model: input.model ?? null, ...(effort === undefined ? {} : { nativeReasoningEffort: effort }) });
   const queued = await env.DB.prepare("UPDATE source_revision SET distill_state='queued',distill_error=NULL,distill_model=?,distill_request_json=? WHERE id=? AND distill_state IN ('none','paused') AND distill_calls=0 AND distill_attempt_id IS ? AND distill_request_json IS ?").bind(model.route, request, row.id, attemptId, row.distill_request_json).run();
   if (!queued.meta.changes) throw new LibraryError("conflict", "This revision changed before it could be queued. Reload and retry explicitly.", 409);
   await scheduleDistillation(env, row.id);

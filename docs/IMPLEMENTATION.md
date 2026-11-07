@@ -911,6 +911,8 @@ identity, so the same UUID with a changed effort conflicts before new model reso
 The literal lives only in existing `distill_request_json`. Queue drain applies it to a copy of the freshly resolved
 `ModelSpec` before admission and freezes that same spec for both calls. Repeated queued requests cannot change it;
 resuming an accepted paused retry retains its recorded intent. Admitted snapshots are never overridden in transport.
+An undispatched original none/paused attempt retains effort on the same route. Changing its resolved route with
+effort omitted clears the old native effort from both model selection and stored intent; accepted retry intent stays unchanged.
 Admission, scheduler/metadata failure pauses and none/paused queue updates compare the selected exact request JSON
 with null-safe equality, so a stale Low lookup cannot claim or pause a same-route High intent, including original null attempt IDs.
 Reader `progress.nativeReasoningEffort` means requested profile, read only from current/archived recorded intent;

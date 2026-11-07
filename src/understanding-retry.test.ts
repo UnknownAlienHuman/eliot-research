@@ -160,11 +160,29 @@ describe("explicit understanding retry", () => {
       await expect(requestUnderstanding(f.env, actor, { sourceId, revisionId, nativeReasoningEffort: "high" })).rejects.toMatchObject({ status: 409 });
       expect(f.create).not.toHaveBeenCalled();
       expect(f.db.prepare("SELECT distill_state AS state FROM source_revision WHERE id=?").get(revisionId)).toEqual({ state: "queued" });
+      f.db.prepare("UPDATE source_revision SET distill_state='paused' WHERE id=?").run(revisionId);
       f.db.prepare("UPDATE source_revision SET distill_state='none' WHERE id IN (?,?)").run(otherId, retryId);
-      await requestUnderstanding(f.env, actor, { sourceId, revisionId });
+      await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: model.route });
       expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-${revisionId}`, params: { revisionId, model: { ...high, nativeReasoningEffort: "low" } } });
       expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId)).toEqual(request);
       expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress.nativeReasoningEffort).toBe("low");
+    } finally { f.db.close(); }
+  });
+  it("resumes an undispatched paused original on Gateway without carrying its old native Low intent", async () => {
+    const f = fixture(0), gateway = Object.freeze({ ...model, route: "gateway:fixture/model", id: "fixture/model" });
+    const lowRequest = JSON.stringify({ sourceId, revisionId, model: model.route, nativeReasoningEffort: "low" });
+    f.db.prepare("UPDATE source_revision SET distill_state='paused',distill_request_json=? WHERE id=?").run(lowRequest, revisionId);
+    vi.mocked(requireAvailableModel).mockResolvedValue(gateway);
+    try {
+      const bodies = new Map(f.bodies);
+      expect(await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: gateway.route })).toEqual({ revisionId });
+      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-${revisionId}`, params: { revisionId, model: gateway } });
+      expect(f.db.prepare("SELECT distill_attempt_id AS attempt,distill_model AS model,distill_calls AS calls,distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ attempt: null, model: gateway.route, calls: 0, request: JSON.stringify({ sourceId, revisionId, model: gateway.route }) });
+      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress).not.toHaveProperty("nativeReasoningEffort");
+      expect(gateway).not.toHaveProperty("nativeReasoningEffort");
+      expect(f.bodies).toEqual(bodies); expect(f.db.prepare("SELECT count(*) AS n FROM distill_history").get()).toEqual({ n: 0 });
+      expect(generateText).not.toHaveBeenCalled(); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
     } finally { f.db.close(); }
   });
   it.each([0, 2])("reuses done output with recorded calls=%s on ordinary Understand and repeated reads without model work", async calls => {
