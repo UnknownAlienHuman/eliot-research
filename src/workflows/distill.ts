@@ -1,7 +1,7 @@
 import { numbersSupported } from "../numbers";
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
-import { NoObjectGeneratedError, NoOutputGeneratedError, generateText, Output } from "ai";
+import { NoObjectGeneratedError, NoOutputGeneratedError, generateText, experimental_streamTextLowMemory, Output } from "ai";
 import type { JSONObject } from "@ai-sdk/provider";
 import { z } from "zod";
 import { isCitableBlock, type Block } from "../blocks";
@@ -252,12 +252,13 @@ function toStoredUsage(usage: GeneratedUsage | null | undefined, tokenLimit: num
   const raw = usage?.raw;
   return { inputTokens, cachedTokens, outputTokens, tokenLimit, tokenLimitKind, providerUsage: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as JSONObject) : null };
 }
-function structuredFailureDetail(error: unknown, result: { finishReason: string; totalUsage: GeneratedUsage } | undefined): { usage: GeneratedUsage | undefined; finishReason: string | null } | null {
+function structuredFailureDetail(error: unknown, result: { finishReason: string; totalUsage: GeneratedUsage } | undefined, streamed?: { usage: GeneratedUsage | undefined; finishReason: string | null }): { usage: GeneratedUsage | undefined; finishReason: string | null } | null {
   if (NoObjectGeneratedError.isInstance(error)) {
-    return { usage: error.usage, finishReason: error.finishReason ?? null };
+    return streamed ?? { usage: error.usage, finishReason: error.finishReason ?? null };
   }
-  if (result && NoOutputGeneratedError.isInstance(error)) {
-    return { usage: result.totalUsage, finishReason: result.finishReason };
+  if (NoOutputGeneratedError.isInstance(error)) {
+    if (streamed) return streamed;
+    if (result) return { usage: result.totalUsage, finishReason: result.finishReason };
   }
   return null;
 }
@@ -291,7 +292,7 @@ export async function hasAvailableUnderstanding(env: Env, revisionId: string, at
   } catch { return false; }
 }
 
-async function call<T>(env: Env, revisionId: string, ordinal: number, instructions: string, content: string, schema: z.ZodType<T>, language: "English" | "Russian", model: ModelSpec, attemptId?: string | null): Promise<Raw<T>> {
+async function call<T>(env: Env, revisionId: string, ordinal: number, instructions: string, content: string, schema: z.ZodType<T>, language: "English" | "Russian", model: ModelSpec, memory: Materialization, attemptId?: string | null): Promise<Raw<T>> {
   const row = await env.DB.prepare("SELECT distill_model,distill_started_at,distill_token_limit,distill_token_limit_kind FROM source_revision WHERE id=? AND distill_state='running' AND distill_attempt_id IS ?")
     .bind(revisionId, attemptId ?? null).first<{ distill_model: string; distill_started_at: number; distill_token_limit: number | null; distill_token_limit_kind: Usage["tokenLimitKind"] | null }>();
   if (!row) throw new Error("Source understanding is no longer running.");
@@ -300,9 +301,11 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   if (remaining <= 0) throw new Error("Source understanding reached its recovery deadline. No paid step will be repeated.");
   const transport = await resolveModelTransport(env, model, understandingWorkflowId(revisionId, attemptId), { structuredOutput: true });
   const fidelityInstructions = instructions + " Preserve source technical literals verbatim. In JSON prose strings encode literal square brackets as \\u005b and \\u005d; keep authority-label strings exactly as supplied by the closed label set. Only those authority labels are citations; all other source literals remain content. Keep every table value with its exact row or method, metric, and column or data-split identity. A blank or dash cell is unreported, never a measurement; omit a fact if these associations are ambiguous.";
-  const modelInstructions = model.responseFormat === false ? fidelityInstructions + "\nReturn one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(schema)) : fidelityInstructions;
+  const native = model.route.startsWith("workers-ai:"), jsonSchema = z.toJSONSchema(schema);
+  if (native) reserve(memory, sourceContextJsonAllocation(jsonSchema, new Set()) + 2 * (fidelityInstructions.length + 64));
+  const modelInstructions = native || model.responseFormat === false ? fidelityInstructions + "\nReturn one JSON object conforming to this schema: " + JSON.stringify(jsonSchema) : fidelityInstructions;
   const messages = [{ role: "user" as const, content }, { role: "user" as const, content: `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }];
-  const inputBound = estimateModelInput({ instructions: modelInstructions, messages, schema: z.toJSONSchema(schema) });
+  const inputBound = estimateModelInput({ instructions: modelInstructions, messages, schema: jsonSchema });
   if (inputBound > modelInputLimit(model)) throw new Error("This source exceeds the bounded understanding context. Use a smaller readable revision.");
   const tokenLimitKind = row.distill_token_limit_kind ?? "legacy";
   const tokenLimit = row.distill_token_limit === null ? null : row.distill_token_limit / 2;
@@ -313,8 +316,41 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   if (!dispatch.meta.changes) throw new Error("This model call was already dispatched; it will not be repeated.");
   const artifactName = `distill-call${ordinal}.json`;
   let result: Awaited<ReturnType<typeof generateText>> | undefined;
+  const streamed: { usage: GeneratedUsage | undefined; finishReason: string | null } | undefined = native ? { usage: undefined, finishReason: null } : undefined;
+  let responseBudgetExceeded = false;
   const deadlineSignal = AbortSignal.timeout(Math.min(6 * 60_000, remaining));
   try {
+    if (streamed) {
+      let output: T | undefined, streamError: unknown, complete = false;
+      const response = experimental_streamTextLowMemory({ model: transport, instructions: modelInstructions, messages, output: Output.object({ schema }),
+        ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0, streamRetries: 0,
+        ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: deadlineSignal,
+        // Charge before SDK text/partial parsing; the single consumer retains no replay snapshots.
+        experimental_transform: () => new TransformStream({ transform(part, controller) {
+          if (part.type === "text-delta" || part.type === "reasoning-delta") {
+            try { reserve(memory, 12 * (part.text.length + 64)); }
+            catch (error) {
+              if (error instanceof LibraryError && error.code === "invalid" && error.status === 400) responseBudgetExceeded = true;
+              throw error;
+            }
+          }
+          controller.enqueue(part);
+        } }),
+        onChunk: ({ chunk }) => {
+          if (chunk.type !== "finish-step") return;
+          streamed.finishReason = chunk.finishReason;
+          streamed.usage = chunk.usage.raw ? chunk.usage : undefined;
+          complete = chunk.finishReason === "stop" && chunk.rawFinishReason !== undefined;
+        },
+        onEnd: event => { output = event.output; },
+        onError: ({ error }) => { streamError ??= error; },
+      });
+      await response.consumeStream({ onError: error => { streamError ??= error; } });
+      deadlineSignal.throwIfAborted();
+      if (streamError !== undefined) throw streamError;
+      if (!complete || output === undefined) throw new NoOutputGeneratedError({ message: "The native stream did not produce complete validated output." });
+      return { output, usage: toStoredUsage(streamed.usage, tokenLimit, tokenLimitKind) };
+    }
     result = await generateText({ model: transport,
       instructions: modelInstructions, messages, output: Output.object({ schema }),
       ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0, ...(model.supportsTemperature ? { temperature: 0 } : {}), abortSignal: deadlineSignal });
@@ -324,18 +360,22 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
     return { output, usage: { inputTokens, cachedTokens, outputTokens, tokenLimit, tokenLimitKind, providerUsage: usage.raw ?? null } };
   } catch (error) {
     const localDeadlineObserved = deadlineSignal.aborted;
-    const detail = structuredFailureDetail(error, result);
+    const detail = structuredFailureDetail(error, result, streamed);
     let failure: string;
-    if (detail) {
-      const failed = { output: null, usage: toStoredUsage(detail.usage, tokenLimit, tokenLimitKind) };
+    if (detail || streamed?.usage) {
+      const failed = { output: null, usage: toStoredUsage(detail?.usage ?? streamed?.usage, tokenLimit, tokenLimitKind) };
       try { await put(env, revisionId, artifactName, failed, attemptId); } catch { /* Preserve the failure without repeating inference if storage is unavailable. */ }
+    }
+    if (responseBudgetExceeded) {
+      failure = "Local response materialization budget exceeded. No retry was started.";
+    } else if (detail) {
       failure = detail.finishReason === "length" ? "model reached output bound before complete output"
         : "model returned incomplete or invalid structured output";
     } else {
       // Provider errors can contain credentials; retain only the fixed safe projection.
       failure = localDeadlineObserved ? "Local model-call deadline expiry observed. No retry was started." : modelFailure(error, model);
     }
-    if (localDeadlineObserved && detail) failure = "Local model-call deadline expiry observed. " + failure + ". No retry was started.";
+    if (localDeadlineObserved && detail && !responseBudgetExceeded) failure = "Local model-call deadline expiry observed. " + failure + ". No retry was started.";
     await env.DB.prepare("UPDATE source_revision SET distill_error=? WHERE id=? AND distill_state='running' AND distill_calls=? AND distill_attempt_id IS ?")
       .bind(failure, revisionId, ordinal, attemptId ?? null).run();
     throw new LibraryError("unavailable", failure, 503);
@@ -396,7 +436,7 @@ async function extract(env: Env, revisionId: string, model: ModelSpec, attemptId
     "Then create 3–5 useful follow-up questions grounded in the supplied text without assuming a discipline or checklist. " +
     "Draft at most 12 glossary candidates with English and Russian term pairs and complete Russian definitions. Select each candidate's 1–4 supporting source labels before writing it. Each whole definition must retain the source's scope, conditions, comparisons and limitations; do not shorten a qualified definition into a broader one. The declared blocks must support both terms and every clause of that definition. Treat each term pair, complete definition and original labels as one independent candidate unit. " + GLOSSARY_MATH_ROLE + " " +
     "Keep task, metric, dataset and valueText in the source language; do not convert units or generalize a particular result.",
-    content, extractionSchema(labels), documentLanguage(citable.map(({ passage }) => passage)), model, attemptId);
+    content, extractionSchema(labels), documentLanguage(citable.map(({ passage }) => passage)), model, memory, attemptId);
   await put(env, revisionId, "distill-call1.json", { ...raw, format: "claim-plan-guide-v4" }, attemptId);
 }
 async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec, attemptId?: string | null) {
@@ -625,7 +665,7 @@ async function synthesize(env: Env, revisionId: string, model: ModelSpec, attemp
     "Treat guideCandidates as hypotheses and the supplied original excerpts as the sole evidence. Preserve distinct source-grounded facts across contribution, methods, assumptions, findings, conditions and limitations when stated. Candidate-card coverage is independent of guide, digest and glossary prose; deduplicate candidate cards only against other candidate cards. If the excerpts support a missing fact as one atomic claim from one block, include it in additionalClaims; otherwise omit it. At the 32-claim bound, prioritize distinct supported facts and omit duplicates. When stated and supported, prioritize the central contribution, mechanism, assumptions and limitations before secondary result rows or repeated variants; the maximum claim count is a ceiling, not a target. Add only useful atomic facts missing from retained candidates, quoting one supplied block per additional claim; total retained plus additional claims must not exceed 32. Apply the same dataset/conditions/valueText/unit role contracts to every additional claim. Each additional result needs its task, metric, dataset, one scalar valueText, primary unit and exact conditions from that block. Split different settings and secondary results into separate records, use null for absent fields, and do not calculate or borrow values from another block. " +
     guideInstructions + digestInstructions + "C IDs refer to the candidates supplied to this call by their index. A IDs refer to the zero-based positions in your additionalClaims array. Do not renumber either set after final validation. Choose only facts you included in supportedClaims or additionalClaims. The server will copy each survived complete checked statement and its conditions with its own citation; do not paraphrase, combine, generalize or add digest prose. Do not make the digest a dump of all cards or repeat the guide. If no claim survives, return digestPlan as " + emptyPlan + " and provide a concise partialDigest using its own declared labels; this is stored only as partial with zero claims. Put supplied authority labels only in labels arrays. Copy numeric spellings exactly; do not add unsupported facts. " + glossaryInstructions,
     content, schema,
-    documentLanguage(verified.evidence.map((item) => item.quote)), model, attemptId);
+    documentLanguage(verified.evidence.map((item) => item.quote)), model, memory, attemptId);
   await put(env, revisionId, "distill-call2.json", { ...raw,
     format: assembled ? verified.format : guideCandidates !== undefined ? "claim-plan-guide-v1" : glossaryCandidates === undefined ? "claim-plan-v1" : "claim-plan-glossary-v1" }, attemptId);
 }

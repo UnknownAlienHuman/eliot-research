@@ -9,14 +9,14 @@ import type * as ModelTransport from "./model-transport";
 
 vi.mock("cloudflare:workers", () => ({ WorkflowEntrypoint: class { constructor(_ctx: unknown, readonly env: Env) {} } }));
 vi.mock("./models", async (original) => ({ ...await original<typeof Models>(), requireAvailableModel: vi.fn() }));
-vi.mock("ai", async (original) => ({ ...await original<typeof AI>(), generateText: vi.fn() }));
+vi.mock("ai", async (original) => ({ ...await original<typeof AI>(), generateText: vi.fn(), experimental_streamTextLowMemory: vi.fn() }));
 vi.mock("./model-transport", async (original) => ({ ...await original<typeof ModelTransport>(), resolveModelTransport: vi.fn() }));
 import { requireAvailableModel } from "./models";
 import { requestUnderstanding, DistillWorkflow, scheduleDistillation } from "./workflows/distill";
 import { getUnderstanding, getUnderstandingHistory } from "./understanding";
 import { failUndispatchedDistill, admitDistill } from "./cost";
 import { resolveModelTransport } from "./model-transport";
-import { generateText } from "ai";
+import { generateText, experimental_streamTextLowMemory } from "ai";
 import { buildContext } from "./context";
 import { LibraryError } from "./library";
 
@@ -83,7 +83,7 @@ function completedOutput(f: ReturnType<typeof fixture>) {
   return { guide, digest, glossary };
 }
 
-beforeEach(() => { vi.clearAllMocks(); vi.mocked(requireAvailableModel).mockResolvedValue(model); });
+beforeEach(() => { vi.clearAllMocks(); vi.mocked(experimental_streamTextLowMemory).mockReset(); vi.mocked(requireAvailableModel).mockResolvedValue(model); });
 describe("explicit understanding retry", () => {
   it.each([0, 2])("reuses done output with recorded calls=%s on ordinary Understand and repeated reads without model work", async calls => {
     const f = fixture(calls); completedOutput(f);
@@ -97,7 +97,7 @@ describe("explicit understanding retry", () => {
       expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId)).toEqual(before);
       expect(f.bodies).toEqual(bodies); expect((await getUnderstandingHistory(f.env, { sourceId, revisionId })).attempts).toEqual([]);
       expect(f.status).not.toHaveBeenCalled(); expect(f.create).not.toHaveBeenCalled();
-      expect(requireAvailableModel).not.toHaveBeenCalled(); expect(generateText).not.toHaveBeenCalled();
+      expect(requireAvailableModel).not.toHaveBeenCalled(); expect(generateText).not.toHaveBeenCalled(); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
     } finally { f.db.close(); }
   });
   it("explicitly retries done within two calls and keeps its exact result, claims and usage in history", async () => {
@@ -119,12 +119,19 @@ describe("explicit understanding retry", () => {
       const snapshot = JSON.parse(f.bodies.get(`source/${revisionId}/history/${retryId}.json`) ?? "null");
       expect(snapshot.revision).toEqual(before); expect(snapshot.claims).toEqual(previous.claims);
       vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
-      const totalUsage = { inputTokens: 17, inputTokenDetails: { cacheReadTokens: 0 }, outputTokens: 8 };
-      vi.mocked(generateText).mockResolvedValueOnce({ output: extraction, totalUsage } as never).mockResolvedValueOnce({ output: synthesis, totalUsage } as never);
+      const totalUsage = { inputTokens: 17, inputTokenDetails: { cacheReadTokens: 0 }, outputTokens: 8,
+        raw: { prompt_tokens: 17, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 0 } } };
+      for (const output of [extraction, synthesis]) vi.mocked(experimental_streamTextLowMemory).mockImplementationOnce(options => ({
+        consumeStream: async () => {
+          await options.onChunk?.({ chunk: { type: "finish-step", finishReason: "stop", rawFinishReason: "stop", usage: totalUsage } } as never);
+          if (typeof options.onEnd !== "function") throw new Error("Final output callback missing.");
+          await options.onEnd({ output, totalUsage } as never);
+        },
+      } as never));
       await new DistillWorkflow({} as ExecutionContext, f.env).run({ payload: { revisionId, attemptId: retryId, model } } as never,
         { do: async (_name: string, _options: unknown, callback: () => unknown) => callback() } as never);
-      expect(generateText).toHaveBeenCalledTimes(2);
-      expect(vi.mocked(generateText).mock.calls.map(([options]) => options.maxRetries)).toEqual([0, 0]);
+      expect(experimental_streamTextLowMemory).toHaveBeenCalledTimes(2); expect(generateText).not.toHaveBeenCalled();
+      expect(vi.mocked(experimental_streamTextLowMemory).mock.calls.map(([options]) => [options.maxRetries, options.streamRetries])).toEqual([[0, 0], [0, 0]]);
       expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_attempt_id AS attempt FROM source_revision WHERE id=?").get(revisionId))
         .toEqual({ state: "done", calls: 2, attempt: retryId });
       const current = await getUnderstanding(f.env, actor, { sourceId, revisionId });
@@ -139,7 +146,7 @@ describe("explicit understanding retry", () => {
       expect(await requestUnderstanding(f.env, actor, input)).toEqual({ revisionId, attemptId: retryId });
       expect(await requestUnderstanding(f.env, actor, { sourceId, revisionId })).toEqual({ revisionId });
       expect(requireAvailableModel).toHaveBeenCalledTimes(lookups); expect(f.status).toHaveBeenCalledTimes(1);
-      expect(f.create).toHaveBeenCalledTimes(1); expect(generateText).toHaveBeenCalledTimes(2);
+      expect(f.create).toHaveBeenCalledTimes(1); expect(experimental_streamTextLowMemory).toHaveBeenCalledTimes(2); expect(generateText).not.toHaveBeenCalled();
     } finally { f.db.close(); }
   });
   it.each(["unknown", "running", "paused", "waiting", "queued", "waitingForPause", "rollingBack"])("blocks legacy zero-call done output with %s Workflow status regardless of age", async status => {
@@ -419,7 +426,7 @@ describe("explicit understanding retry", () => {
       await requestUnderstanding(f.env, actor, input);
       const before = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId);
       release(); await old;
-      expect(generateText).not.toHaveBeenCalled(); expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId)).toEqual(before);
+      expect(generateText).not.toHaveBeenCalled(); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled(); expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId)).toEqual(before);
     } finally { f.db.close(); }
   });
   it("rejects a new publication between frozen context metadata and the single claims read", async () => {
@@ -434,7 +441,7 @@ describe("explicit understanding retry", () => {
         return prepare(sql);
       }) as typeof f.env.DB.prepare;
       await expect(buildContext(f.env, actor, { projectId: "p", scopeMode: "project_default", model: { contextTokens: 8000, maxOutputTokens: 1000 } })).rejects.toMatchObject({ code: "conflict", status: 409 });
-      expect(generateText).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled(); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
     } finally { f.db.close(); }
   });
   it("keeps A's captured claim count when B publishes while A's finish waits on R2", async () => {
@@ -491,7 +498,7 @@ describe("explicit understanding retry", () => {
       } as never);
       expect(switched).toBe(true); expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId)).toEqual(current);
       expect(f.db.prepare("SELECT * FROM claim WHERE source_revision_id=?").all(revisionId)).toEqual(claims);
-      expect(generateText).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled(); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
     } finally { f.db.close(); }
   });
 });

@@ -549,6 +549,21 @@ not model quality or paid-step replay.
 2. Verified excerpts → supported claim selection, whole guide-unit selection, digest selection and, for frozen glossary candidates,
    a glossary selection.
 
+Native K3 delivery uses the installed public `ai@7.0.152` `experimental_streamTextLowMemory` API with one
+`consumeStream` consumer and final strict `Output.object` validation through `onEnd.output`. It never reads eager
+final-content getters or partial/replay streams. Ordinary `streamText` replay is not used: growing partial-object
+snapshots must not be retained behind text-only allocation accounting. The unchanged complete schema is included in
+the actual prompt/input estimate; native structured-output parameter middleware requests upstream text for stream
+operations only, omitting `response_format` while preserving native `doGenerate` JSON Mode. Cloudflare's complete
+JSON Mode page was independently reread 2026-11-07 (updated 2026-09-14)
+and states that JSON Mode does not support streaming. External Gateway generation and native chat/OCR remain unchanged.
+The existing 16 MiB allowance charges schema serialization and response text/reasoning before SDK parsing, under
+the same owned deadline through full consumption and final validation. A local response-budget rejection keeps a
+fixed local reason rather than becoming a provider error. No manual collector, JSON/SSE parser or repair call is added.
+The offline many-small-chunk regression verifies the public single-consumer/no-replay boundary, final callback,
+strict schema and reported usage; it does not measure V8 heap bytes or independently prove the SDK's exact retained
+memory. This delivery experiment is unqualified until a real run; the cause of earlier HTTP 408s remains unknown.
+
 Fresh call one and call two use raw marker `claim-plan-guide-v4`, also recorded on the new verified artifact.
 `Verified.guideCandidates` keeps the existing frozen representation with original H0–H4
 identities, complete text, qualifiers and source labels. Call two returns strict `supportedGuide` IDs, not replacement
@@ -707,8 +722,11 @@ bytes `[1011,1940)`, matches its canonical R2 range (929 bytes) and requires rev
 does not close this actual anchor. `pnpm eval k3 --anchors-only` runs synthetic checks before API calls and rejects
 model opt-in. This is not general semantic verification; frozen questions and production claim verification are unchanged.
 Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.providerUsage` from AI SDK `usage.raw`
-as a JSON object or null. A typed structured-output failure retains `output: null` and known usage in the same immutable
-artifact. Its safe failure cause is exposed by the owning report; request bodies, headers and private protocol fields
+as a JSON object or null. A typed structured-output failure, invalid final native callback output, or stream failure
+after reported usage retains `output: null` and known usage in the same immutable artifact. Native usage is known only
+when the adapter supplies provider-reported `usage.raw`; SDK placeholders stay unknown. Stream error, abort, missing
+finish or missing final validated output cannot publish even parseable partial text. Its safe failure cause is exposed
+by the owning report; request bodies, headers and private protocol fields
 are excluded.
 It remains failed and unavailable for Save unless complete compatible output exists. The final report retains
 `usage.providerUsage` as an array of at most two such entries for

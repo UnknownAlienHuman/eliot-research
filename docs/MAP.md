@@ -372,6 +372,12 @@ re-distilled automatically.
 4. Use at most two bounded calls with zero paid retries. The product-owned 6-minute call/7-minute step bounds are an
    UNQUALIFIED completion-tail experiment: each call uses min(6 minutes, remaining absolute 15-minute recovery
    ceiling). These are not Cloudflare hard maxima or quality acceptance. Historical 180 s failures remain unchanged.
+   Native K3's unqualified delivery experiment uses pinned SDK `experimental_streamTextLowMemory`: one consumer,
+   no replay/partial streams or eager content getters, and only final strict `onEnd.output` may be stored. The full
+   unchanged schema remains in the prompt/input estimate while upstream JSON Mode is omitted. Existing 16 MiB,
+   admission/call/time/error/unknown-usage guards remain; reported usage survives invalid/interrupted output. Many
+   small chunks test the public single-consumer contract, not exact V8 heap retention. Earlier HTTP 408 cause and
+   real delivery/semantic qualification remain open. External generation and native chat/OCR are unchanged.
    Labelled canonical text produces atomic claim cards, draft guide and at most twelve
    glossary candidates. Fresh guide items declare source labels, a required scope array of zero or one non-null
    combined domain clause (at most 300 characters, with subset source labels) and one coherent assertion (at most 800 characters). Before review,

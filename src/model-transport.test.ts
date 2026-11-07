@@ -1,11 +1,12 @@
-import { generateText, Output, streamText, type LanguageModelUsage } from "ai";
+import { generateText, experimental_streamTextLowMemory, Output, streamText, type LanguageModelUsage } from "ai";
 import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it, vi } from "vitest";
-import { resolveModelTransport, safeEmptyCompletionLog } from "./model-transport";
+import { modelFailure, resolveModelTransport, safeEmptyCompletionLog } from "./model-transport";
 import { DEFAULT_MODEL, MODELS, modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, type ModelSpec } from "./models";
 import { chatModelMessages, estimateModelInput } from "./model-input";
 import { nativeModel } from "./native-model-catalog";
 import { extractionSchema } from "./workflows/distill";
+import { z } from "zod";
 
 vi.mock("cloudflare:workers", () => ({
   WorkflowEntrypoint: class {
@@ -62,7 +63,7 @@ it("captures the pinned Anthropic default near the estimated input boundary whil
 });
 
 describe("native fallback reasoning request", () => {
-  it("captures real generateText doGenerate with the production v3 extraction schema at the offline native binding", async () => {
+  it("preserves native doGenerate JSON Mode with the structured-output flag at the offline binding", async () => {
     const modelId = "@cf/zai-org/glm-5.3-flash";
     type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
     const discovered = nativeModel({ name: modelId, task: { name: "Text Generation" }, properties: [
@@ -126,6 +127,79 @@ describe("native fallback reasoning request", () => {
       expect(captured?.stream).toBe("omitted");
     } finally { network.mockRestore(); }
   });
+
+  it.each(["many small chunks", "invalid schema", "truncated JSON", "reported usage then error", "no finish or usage", "HTTP 408"] as const)(
+    "uses the real pinned single-consumer SDK and final v4 validation: %s", async mode => {
+      const seed = MODELS.find(model => model.route === DEFAULT_MODEL);
+      if (!seed) throw new Error("The native factory fixture is missing.");
+      const model = { ...seed, nativeReasoningEffort: "high" as const, maxOutputTokens: null };
+      const schema = extractionSchema(["[S1:1]"]), schemaText = JSON.stringify(z.toJSONSchema(schema));
+      const value = { claims: Array.from({ length: mode === "many small chunks" ? 32 : 1 }, () => ({ quoteBlock: "[S1:1]", kind: "method",
+        statement: "The method preserves source evidence. ".repeat(20), task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null })),
+        guide: ["The method retains evidence.", "The source describes a method.", "The source retains its passage."]
+          .map(assertion => ({ labels: ["[S1:1]"], scope: [], assertion })),
+        questions: ["Which method?", "Which evidence?", "Which passage?"], glossary: [] };
+      const invalid = { ...value, guide: value.guide.map(item => ({ ...item, scope: null })) };
+      const text = mode === "invalid schema" ? JSON.stringify(invalid) : JSON.stringify(value);
+      const wireText = mode === "truncated JSON" || mode === "no finish or usage" ? text.slice(0, -6) : text;
+      const usage = { prompt_tokens: 71, completion_tokens: 19, total_tokens: 90, prompt_tokens_details: { cached_tokens: 0 } };
+      const privateBody = "Private provider body must not escape";
+      let calls = 0, sourceChunks = 0, ends = 0, final: unknown, streamError: unknown, reported: LanguageModelUsage | undefined;
+      let finish: string | undefined, rawFinish: string | undefined, capture: Record<string, unknown> | undefined;
+      const run = async (id: string, inputs: Record<string, unknown>) => {
+        calls++;
+        capture = { modelId: id, stream: inputs.stream, includeUsage: (inputs.stream_options as { include_usage?: boolean })?.include_usage,
+          effort: inputs.reasoning_effort, hasResponseFormat: Object.hasOwn(inputs, "response_format"),
+          unknownOutputOmitted: !Object.hasOwn(inputs, "max_tokens") && !Object.hasOwn(inputs, "max_completion_tokens"),
+          fullSchemaPrompt: (inputs.messages as Array<{ content: unknown }>).some(item => typeof item.content === "string" && item.content.includes(schemaText)) };
+        if (mode === "HTTP 408") return new Response(JSON.stringify({ error: { message: privateBody } }), { status: 408, headers: { "content-type": "application/json" } });
+        const base = { id: "offline-low-memory", object: "chat.completion.chunk", created: 0, model: id };
+        const frame = (data: unknown) => "data: " + JSON.stringify(data) + "\n\n";
+        const chunks: string[] = [];
+        for (let at = 0; at < wireText.length; at += 16) chunks.push(frame({ ...base, choices: [{ index: 0, delta: { content: wireText.slice(at, at + 16) }, finish_reason: null }] }));
+        sourceChunks = chunks.length;
+        if (mode !== "no finish or usage") {
+          chunks.push(frame({ ...base, choices: [{ index: 0, delta: {}, finish_reason: mode === "truncated JSON" ? "length" : "stop" }] }), frame({ ...base, choices: [], usage }));
+          if (mode === "reported usage then error") chunks.push(frame({ error: { message: privateBody, statusCode: 408 } }));
+          chunks.push("data: [DONE]\n\n");
+        }
+        let at = 0;
+        return new Response(new ReadableStream({ pull(controller) {
+          const chunk = chunks[at++];
+          if (chunk === undefined) controller.close(); else controller.enqueue(new TextEncoder().encode(chunk));
+        } }), { headers: { "content-type": "text/event-stream" } });
+      };
+      const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+      try {
+        const transport = await resolveModelTransport({ AI: { run } as unknown as Env["AI"], DB: {} as Env["DB"] }, model, "offline-native-k3", { structuredOutput: true });
+        const result = experimental_streamTextLowMemory({ model: transport, output: Output.object({ schema }),
+          instructions: "Return one JSON object conforming to this schema: " + schemaText,
+          messages: [{ role: "user", content: "The method retains evidence." }], maxRetries: 0, streamRetries: 0,
+          onEnd: event => { ends++; final = event.output; },
+          onChunk: ({ chunk }) => { if (chunk.type === "finish-step") { reported = chunk.usage; finish = chunk.finishReason; rawFinish = chunk.rawFinishReason; } },
+          onError: ({ error }) => { streamError = error; } });
+        expect("output" in result).toBe(false); // Inspect the public facade, never read a content getter.
+        await result.consumeStream({ onError: error => { streamError = error; } });
+        expect(calls).toBe(1); expect(network).not.toHaveBeenCalled();
+        expect(capture).toEqual({ modelId: model.id, stream: true, includeUsage: true, effort: "high", hasResponseFormat: false, unknownOutputOmitted: true, fullSchemaPrompt: true });
+        if (mode === "many small chunks") {
+          expect(sourceChunks).toBeGreaterThan(1000); expect(ends).toBe(1); expect(final).toEqual(value); expect(streamError).toBeUndefined();
+          await expect(result.consumeStream()).rejects.toMatchObject({ name: "AI_StreamAlreadyConsumedError" });
+        } else if (mode === "invalid schema" || mode === "truncated JSON") { expect(ends).toBe(1); expect(final).toBeUndefined(); }
+        else if (mode === "reported usage then error" || mode === "HTTP 408") {
+          expect(streamError).toBeDefined();
+          const reason = modelFailure(streamError, model);
+          expect(reason).not.toContain(privateBody);
+          if (mode === "HTTP 408") { expect(reason).toBe("Model stream failed (HTTP 408)."); expect(ends).toBe(0); }
+        } else { expect(finish).toBe("error"); expect(rawFinish).toBe("stream-truncated"); expect(final).toBeUndefined(); }
+        if (mode === "no finish or usage" || mode === "HTTP 408") {
+          expect(reported?.raw).toBeUndefined(); expect(reported?.inputTokens).toBeUndefined(); expect(reported?.outputTokens).toBeUndefined();
+        } else {
+          expect(reported).toMatchObject({ inputTokens: 71, outputTokens: 19, raw: usage });
+          expect(await result.totalUsage).toMatchObject({ inputTokens: 71, outputTokens: 19, raw: usage });
+        }
+      } finally { network.mockRestore(); }
+    });
 
   it.each([32768, 4096, null])("forwards explicit legacy low and the published %s output maximum through the installed adapter", async (capacity) => {
     const fallback = MODELS.find((entry) => entry.route === DEFAULT_MODEL);

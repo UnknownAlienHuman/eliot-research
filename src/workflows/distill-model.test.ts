@@ -13,7 +13,7 @@ import type { ModelSpec } from "../models";
 import type * as Models from "../models";
 import type * as ModelTransport from "../model-transport";
 import type * as AISDK from "ai";
-import type { z } from "zod";
+import { z } from "zod";
 import type { DistillInput } from "../shared/api";
 import type { DistillReport } from "../understanding";
 import { createElement } from "react";
@@ -32,7 +32,7 @@ vi.mock("cloudflare:workers", () => ({
 }));
 vi.mock("ai", async () => {
   const actual = await vi.importActual<Record<string, unknown>>("ai");
-  return { ...actual, generateText: vi.fn(), Output: { object: vi.fn() } };
+  return { ...actual, generateText: vi.fn(), experimental_streamTextLowMemory: vi.fn(), Output: { object: vi.fn() } };
 });
 vi.mock("../model-transport", async () => ({
   ...await vi.importActual<typeof ModelTransport>("../model-transport"),
@@ -46,7 +46,7 @@ vi.mock("../models", async () => ({
   requireAvailableModel: vi.fn(), requireCatalogModel: vi.fn(), availableModels: vi.fn(),
 }));
 
-import { NoObjectGeneratedError, generateText, Output } from "ai";
+import { NoObjectGeneratedError, generateText, experimental_streamTextLowMemory, Output } from "ai";
 import { modelFailure, resolveModelTransport } from "../model-transport";
 import { availableModels, modelTokenLimit, requireAvailableModel, requireCatalogModel } from "../models";
 import { discoverGatewayModels } from "../model-catalog";
@@ -196,6 +196,7 @@ const forbiddenLookups = [requireAvailableModel, requireCatalogModel, availableM
   discoverGatewayModels, discoverNativeModels];
 beforeEach(() => {
   vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation"));
+  vi.mocked(experimental_streamTextLowMemory).mockReset().mockImplementation(() => { throw new Error("Unexpected native generation"); });
   vi.mocked(resolveModelTransport).mockReset().mockRejectedValue(new Error("Fixture transport stopped before dispatch."));
   vi.mocked(modelFailure).mockReset().mockReturnValue("Unexpected model failure projection");
   for (const lookup of forbiddenLookups) vi.mocked(lookup).mockReset().mockRejectedValue(new Error("Unexpected catalogue lookup"));
@@ -230,6 +231,75 @@ function finished(f: ReturnType<typeof fixture>, error: string) {
 }
 
 describe("DistillWorkflow admitted model snapshot", () => {
+  it.each(["valid", "invalid final schema", "reported usage then failure", "missing finish", "length with valid output", "SDK placeholder zeros", "response budget"] as const)(
+    "stores only final native onEnd output and preserves usage/guards: %s", async mode => {
+      const model: ModelSpec = { ...snapshot, route: "workers-ai:fixture", id: "fixture", nativeReasoningEffort: "high" };
+      delete model.responseFormat;
+      const f = fixture(model.route);
+      f.db.prepare("UPDATE source_revision SET distill_token_limit_kind='unknown',distill_token_limit=NULL WHERE id=?").run(revisionId);
+      const first = { claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The method uses normalization.",
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }],
+        guide: ["The method uses normalization.", "The source retains its passage.", "The source describes a method."]
+          .map(assertion => ({ labels: ["[S1:1]"], scope: [], assertion })), glossary: [], questions: ["Which method?", "Which evidence?", "Which passage?"] };
+      const second = { supportedClaims: ["C0"], additionalClaims: [], supportedGuide: ["H0", "H1", "H2"], supportedGlossary: [], digestPlan: { C0: "methods" } };
+      const unknown = mode === "SDK placeholder zeros" || mode === "missing finish";
+      const usage = { inputTokens: unknown ? 0 : 71, outputTokens: unknown ? 0 : 19, inputTokenDetails: { cacheReadTokens: 0 },
+        ...(unknown ? {} : { raw: { prompt_tokens: 71, completion_tokens: 19, prompt_tokens_details: { cached_tokens: 0 } } }) };
+      const privateText = "Private provider details must not escape";
+      let ordinal = 0, acceptedChunks = 0;
+      vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+      vi.mocked(modelFailure).mockReturnValue("Model stream failed (HTTP 408).");
+      vi.mocked(experimental_streamTextLowMemory).mockImplementation(options => {
+        const output = ordinal++ === 0 ? first : second;
+        return { consumeStream: async ({ onError }: { onError: (error: unknown) => void }) => {
+          if (mode === "response budget") {
+            const transform = options.experimental_transform;
+            if (typeof transform !== "function") throw new Error("Native response guard was not supplied.");
+            let chunks = 0;
+            const source = new ReadableStream({ pull(controller) {
+              if (chunks++ === 200) controller.close(); else controller.enqueue({ type: "text-delta", id: "offline", text: "x".repeat(8192) });
+            } });
+            try { await source.pipeThrough(transform({ tools: {}, stopStream: () => {} })).pipeTo(new WritableStream({ write() { acceptedChunks++; } })); }
+            catch (error) { onError(error); }
+            return;
+          }
+          await options.onChunk?.({ chunk: { type: "finish-step", finishReason: mode === "missing finish" ? "other" : mode === "length with valid output" ? "length" : "stop",
+            ...(mode === "missing finish" ? {} : { rawFinishReason: mode === "length with valid output" ? "length" : "stop" }), usage } } as never);
+          if (mode === "reported usage then failure") onError(new Error(privateText));
+          if (typeof options.onEnd !== "function") throw new Error("Final validated output callback was not supplied.");
+          await options.onEnd({ output: mode === "invalid final schema" ? undefined : output, totalUsage: usage } as never);
+        } } as never;
+      });
+      try {
+        await run(f, true, model);
+        const succeeds = mode === "valid" || mode === "SDK placeholder zeros";
+        expect(experimental_streamTextLowMemory).toHaveBeenCalledTimes(succeeds ? 2 : 1); expect(generateText).not.toHaveBeenCalled();
+        expect(f.dispatchCAS).toHaveBeenCalledTimes(succeeds ? 2 : 1);
+        const request = vi.mocked(experimental_streamTextLowMemory).mock.calls[0]?.[0];
+        expect(request).toMatchObject({ maxRetries: 0, streamRetries: 0 }); expect(request).not.toHaveProperty("maxOutputTokens");
+        expect(request?.instructions).toContain("Return one JSON object conforming to this schema: " + JSON.stringify(z.toJSONSchema(extractionSchema(["[S1:1]"]))));
+        const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+        expect(report.state).toBe(succeeds ? "done" : "failed");
+        if (mode === "response budget") {
+          expect(acceptedChunks).toBeGreaterThan(1); expect(acceptedChunks).toBeLessThan(200);
+          expect(modelFailure).not.toHaveBeenCalled();
+          expect(report.error).toBe("Local response materialization budget exceeded. No retry was started.");
+          expect(f.bodies.has(prefix + "distill-call1.json")).toBe(false);
+        } else {
+          const raw = JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null");
+          expect(raw.output).toEqual(succeeds ? first : null);
+          expect(raw.usage).toMatchObject({ inputTokens: unknown ? null : 71, outputTokens: unknown ? null : 19, cachedTokens: unknown ? null : 0 });
+          if (succeeds) {
+            expect(raw.format).toBe("claim-plan-guide-v4"); expect(f.bodies.get(prefix + "guide.md")).toContain("The method uses normalization.");
+            expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null").output.digestPlan).toEqual({ C0: "methods" });
+          }
+        }
+        if (mode === "reported usage then failure") expect(report.error).toBe("Model stream failed (HTTP 408).");
+        if (mode === "length with valid output") expect(report.error).toBe("model reached output bound before complete output");
+        for (const body of f.bodies.values()) expect(body).not.toContain(privateText);
+      } finally { f.db.close(); }
+    });
+
   it.each(["scanner >400k", "legacy >4096-byte block"])("completes both synthetic producers and actual verify/store for %s", async (shape) => {
     const lead = "The method preserves source evidence and its conditions. The source retains canonical text. The source describes its method. ";
     const paragraph = "Canonical evidence preserves the source conditions and terminology. ".repeat(120);
@@ -1968,7 +2038,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
     { name: "fresh six-minute call", expired: true, remainingMs: 15 * 60_000, effectiveMs: 360_000 },
     { name: "only 60 seconds left in the absolute ceiling", expired: true, remainingMs: 60_000, effectiveMs: 60_000 },
     { name: "provider failure before its deadline", expired: false, remainingMs: 15 * 60_000, effectiveMs: 360_000 },
-  ])("classifies owned deadline expiry without changing history: $name", async ({ expired, remainingMs, effectiveMs }) => {
+  ].flatMap(item => [false, true].map(native => ({ ...item, native }))))("classifies owned deadline expiry without changing history: $name native=$native", async ({ expired, remainingMs, effectiveMs, native }) => {
     vi.useFakeTimers();
     // Native Node AbortSignal.timeout does not use Vitest's fake clock.
     const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
@@ -1976,7 +2046,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
       setTimeout(() => controller.abort(new DOMException("Fixture local deadline", "TimeoutError")), ms);
       return controller.signal;
     });
-    const f = fixture(snapshot.route);
+    const deliveryModel = native ? { ...snapshot, route: "workers-ai:fixture", id: "fixture" } : snapshot;
+    const f = fixture(deliveryModel.route);
     const startedAt = Date.now() - 15 * 60_000 + remainingMs;
     f.db.prepare("UPDATE source_revision SET distill_started_at=? WHERE id=?").run(startedAt, revisionId);
     const historicalId = explicitlySelectedRevisionId;
@@ -2007,7 +2078,20 @@ describe("DistillWorkflow admitted model snapshot", () => {
     let observedSignal: AbortSignal | undefined;
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
     vi.mocked(modelFailure).mockReturnValue("Model stream failed.");
-    vi.mocked(generateText).mockImplementationOnce(({ abortSignal }) => {
+    const reportedBeforeAbort = native && remainingMs === 60_000;
+    const reportedUsage = { inputTokens: 71, outputTokens: 19, inputTokenDetails: { cacheReadTokens: 0 }, raw: { prompt_tokens: 71, completion_tokens: 19 } };
+    if (native) vi.mocked(experimental_streamTextLowMemory).mockImplementationOnce(({ abortSignal, onChunk }) => ({
+      consumeStream: async ({ onError }: { onError: (error: unknown) => void }) => {
+        observedSignal = abortSignal; enter();
+        if (!abortSignal) throw new Error("Native consumption must own its deadline signal.");
+        if (reportedBeforeAbort) await onChunk?.({ chunk: { type: "finish-step", finishReason: "stop", rawFinishReason: "stop", usage: reportedUsage } } as never);
+        await new Promise<void>(resolve => {
+          const fail = () => { onError(wrapped); resolve(); };
+          if (expired) abortSignal.addEventListener("abort", fail, { once: true }); else fail();
+        });
+      },
+    } as never));
+    else vi.mocked(generateText).mockImplementationOnce(({ abortSignal }) => {
       observedSignal = abortSignal;
       enter();
       if (!abortSignal) throw new Error("The actual call must own a deadline signal.");
@@ -2017,7 +2101,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
       });
     });
     try {
-      const pending = run(f, true);
+      const pending = run(f, true, deliveryModel);
       await dispatched;
       expect(timeout).toHaveBeenCalledExactlyOnceWith(effectiveMs);
       expect(observedSignal?.aborted).toBe(false);
@@ -2034,18 +2118,21 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(observedSignal?.aborted).toBe(expired);
       expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source"]);
       expect(steps.mock.calls[0]?.[1]).toMatchObject({ retries: { limit: 0 }, timeout: "7 minutes" });
-      expect(generateText).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ abortSignal: observedSignal, maxRetries: 0 }));
+      expect(native ? experimental_streamTextLowMemory : generateText).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ abortSignal: observedSignal, maxRetries: 0 }));
+      expect(native ? generateText : experimental_streamTextLowMemory).not.toHaveBeenCalled();
       expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
       expect(Date.now() - callStartedAt).toBe(expired ? effectiveMs : 0);
       if (expired) expect(modelFailure).not.toHaveBeenCalled();
-      else expect(modelFailure).toHaveBeenCalledExactlyOnceWith(wrapped, snapshot);
+      else expect(modelFailure).toHaveBeenCalledExactlyOnceWith(wrapped, deliveryModel);
       expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_error AS error FROM source_revision WHERE id=?").get(revisionId))
         .toEqual({ state: "failed", calls: 1, error: failure });
       const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
       expect(report).toMatchObject({ state: "failed", error: failure,
-        usage: { calls: 1, inputTokens: null, cachedTokens: null, outputTokens: null, providerUsage: [],
+        usage: { calls: 1, inputTokens: reportedBeforeAbort ? 71 : null, cachedTokens: reportedBeforeAbort ? 0 : null, outputTokens: reportedBeforeAbort ? 19 : null, providerUsage: reportedBeforeAbort ? [reportedUsage.raw] : [],
           wallMs: 15 * 60_000 - remainingMs + (expired ? effectiveMs : 0) },
-        raw: { first: null, second: null } });
+        raw: { first: reportedBeforeAbort ? prefix + "distill-call1.json" : null, second: null } });
+      if (reportedBeforeAbort) expect(JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null"))
+        .toMatchObject({ output: null, usage: { inputTokens: 71, outputTokens: 19 } });
       expect(f.db.prepare("SELECT distill_started_at FROM source_revision WHERE id=?").get(revisionId)).toEqual({ distill_started_at: startedAt });
       expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
       expect(f.bodies.get(historicalSnapshotKey)).toBe(historicalSnapshot);
