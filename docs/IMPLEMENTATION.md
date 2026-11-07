@@ -452,7 +452,8 @@ whitespace/quote/dash/soft-hyphen normalization with a map back to original byte
 ambiguous duplicates, and drop unmatched claims. Numeric support compares complete numeric literals, including their
 signs and exponents, rather than digits borrowed from a fraction or another quantity. `0.50` does not support `50`;
 `41.0` and a separate `8` do not support `41.8` or `41,8`. Unambiguous decimal commas match decimal points; ambiguous
-comma-thousands retain their written grouping. This check also applies to statements, conditions, digest and glossary.
+comma-thousands retain their written grouping. This check also applies to statements, conditions, legacy prose-digest
+and zero-claim `partialDigest` items, and glossary. Fresh claim-plan digest entries inherit the checked claim fields.
 Code checks numeric identity without converting fractions to percentages. Unit, row, metric and condition association
 must also be supported by the same quote, but remain the model's own-quote review and the semantic acceptance gate.
 A missing literal percent sign alone does not establish a false number: a table may state its measurement in words.
@@ -482,8 +483,9 @@ This exported fallback is covered by synthetic quote regressions and a retained-
 Workerd/D1/R2. Current extraction resolves whole canonical blocks and normally takes the exact-match path; no observed
 fresh-model or corpus failure is attributed to this fallback. The fixture establishes range/storage correctness,
 not semantic support, missing-anchor recovery or live model quality.
-Digest/glossary numeric statements are checked against only the verified quotes selected by their labels; a valid
-label alone does not authorize a new number or experiment condition.
+Legacy prose-digest, zero-claim `partialDigest` and glossary numeric statements are checked against only the verified
+quotes selected by their labels; a valid label alone does not authorize a new number or experiment condition. Fresh
+claim-plan digest items are assembled only from final-checked claim units (§6).
 
 Claims retain source-language task/metric/dataset, value text, optional parsed number/unit, conditions, quote and exact
 range. K6 owns cross-source normalization; K3 must not pretend raw multilingual strings are canonical.
@@ -541,8 +543,28 @@ not model quality or paid-step replay.
 
 `DistillWorkflow` uses two bounded calls:
 
-1. labelled canonical text → candidate claims, draft guide and 3–5 questions;
-2. verified original excerpts → supported claim selection, final 3–5 sentence guide, digest and EN/RU glossary.
+1. Labelled canonical text → candidate claims, draft guide, 3–5 questions and at most twelve glossary candidates shaped
+   `{ labels, en, ru, definition }`. The first verifier freezes each accepted candidate with its original G0–G11
+   index before dropped entries can leave gaps.
+2. Verified excerpts → supported claim selection, final guide, digest selection and, for frozen glossary candidates,
+   a glossary selection.
+
+Fresh call two uses raw marker `claim-plan-glossary-v1` when `Verified.glossaryCandidates` exists. It returns strict
+`supportedGlossary` G IDs only, not replacement glossary text; code maps those IDs to the frozen original candidates,
+rechecks labels/content/numbers, and copies the complete `{ labels, en, ru, definition }` units with their exact
+selected-label binding converted to persistent revision citations. G IDs remain their original extraction indexes;
+unsupported/dropped candidates do not renumber later ones, and duplicate or unknown selections reject the plan. This
+verifies declared references and numeric/content constraints, not semantic glossary quality.
+
+Fresh call two also returns ordered `methods`/`findings`/`limits` `digestPlan` groups with at most eight unique IDs total.
+The closed selection set is the exact C candidate indexes supplied to call two plus A0–A7, the original zero-based
+`additionalClaims` indexes. After final claim validation, code renders each selected surviving checked unit with its
+complete statement isolated as a blockquote, qualifying structured scope fields intact and its authority citation
+outside authored content; it does not paraphrase, renumber or substitute. Unknown or rejected IDs reject the fresh
+plan. If no claim survives, all digest groups are empty and a validated `partialDigest` is stored only as partial with
+zero claims. `claim-plan-v1` remains the digest-only continuation for legacy `Verified` artifacts lacking frozen
+glossary candidates; it keeps their existing prose glossary. Markerless cached call two retains the full legacy prose
+digest/Save path. The call count remains two, with no retry or third call.
 
 Each input block is a separate JSON record containing its exact `quoteBlock` and text, so a label does not implicitly
 name following blocks or an entire section. The first-call schema and instructions draft atomic claim cards before guide
@@ -559,13 +581,18 @@ union of those selected quotes. It splits authored prose and retains at most the
 per item, yielding at most five draft sentences; an early paragraph cannot consume the whole guide allowance.
 `Verified.guide` retains these `{ labels, text }` records as hypotheses. Call two receives them directly alongside
 candidate claims with their own exact quotes, plus the original excerpts as the sole
-evidence. The retained excerpt pool is exactly the union of
-declared claim `quoteBlock` selections and guide `labels`; code adds no inferred evidence bindings. Final guide and
-digest items also use `{ labels, text }` with 1–4 selected excerpts; glossary records likewise select labels first.
-Call two asks the model to reread only each guide/digest/glossary item's declared excerpts, check every factual clause
-against them, preserve their stated scope, conditions, comparisons and limitations, and omit items those excerpts do
-not fully support. Storage binds citations and numeric checks to those labels but does not prove semantic entailment;
-this item-local prompt review stays within call two and does not close the fresh-result quality gate.
+evidence. The retained excerpt pool is exactly the union of declared claim `quoteBlock` selections, guide `labels` and original
+valid declared glossary-candidate labels. Valid labels from candidates later dropped by numeric/content checks remain
+in that pool; code adds no inferred evidence bindings. Final guide items use `{ labels, text }`.
+Glossary candidates use `{ labels, en, ru, definition }`; fresh `claim-plan-glossary-v1` call two sees those frozen
+units with their exact excerpts and returns only `supportedGlossary` G IDs. Code rechecks the selected full candidates
+and copies their fields and label bindings; it does not request, accept or substitute free glossary prose in this
+branch. `claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without frozen glossary
+candidates, and markerless cached output retains the full legacy prose path. Legacy prose digests and zero-claim
+`partialDigest` keep their declared-label sentence checks; a fresh claim-plan digest carries only the bounded closed
+C/A selection plan and is materialized from surviving final-checked claims. Storage binds citations and numeric checks
+to those sources but does not prove semantic entailment; this review stays within call two and does not close the
+fresh-result quality gate.
 Historical cached synthesis rechecks do not consume `Verified.guide` or expand its frozen evidence pool, so this new
 producer shape does not rebind or rewrite old artifacts. Raw selections are retained in R2, stored labels use the full
 revision UUID, and a final user task explicitly states the English/Russian response language in both calls. These
@@ -632,17 +659,19 @@ provider response bodies, request headers and credentials remain excluded.
 `done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal
 filtering and remains diagnostic. `partial` records a missing required component, ambiguous Markdown visibility or an interrupted/error outcome,
 not a nonzero drop percentage. The same exact-quote, numeric-support and anchor gates apply to both states.
-In particular, nonempty validated final guide and digest may be stored with zero claims as `partial`; missing claims
-alone must not discard those readable artifacts. Zero claims never produces `done`: both normal finish and storage-only
+In particular, a nonempty validated final guide and zero-claim `partialDigest` may be stored as `partial`; missing
+claims alone must not discard those readable artifacts. Zero claims never produces `done`: both normal finish and storage-only
 Save available output require at least three guide sentences and at least one kept final claim for `done`. Only the
 second call's supported selections/additions become cards; first-call draft candidates are never promoted to fill an
 empty final claim set. A readable zero-claim partial result is not full K3 acceptance or proof of semantic quality.
 Known empty claim statements (whitespace or punctuation/formatting wrappers around declared references) do not count
 as kept claims, including cached rechecks. Additional-claim drop reasons retain their original call-two array indexes.
-Guide/digest describe the paper for the owner rather than candidate review or model reasoning. Conflicting source
-values remain attributed to their separate source passages instead of being silently reconciled.
-Guide/digest sentences need content beyond declared citations and punctuation/formatting wrappers; `[S1:1].`,
-`([S1:1])` and `**[S1:1]**` do not count toward completion. Glossary entries also require nonblank EN/RU terms.
+Guide and glossary describe the paper for the owner rather than candidate review or model reasoning. Fresh claim-plan
+digests present selected surviving statements under Methods/Findings/Limitations; conflicting source values remain
+attributed to their separate passages instead of being silently reconciled. Guide sentences, legacy prose-digest and
+`partialDigest` sentences, and glossary entries need content beyond declared citations and punctuation/formatting
+wrappers; `[S1:1].`, `([S1:1])` and `**[S1:1]**` do not count toward completion. A fresh claim-plan digest uses
+nonempty verified claim statements rather than authored digest sentences. Glossary entries require nonblank EN/RU terms.
 Ordinary letters, numbers, Unicode symbols and nonblank supported fenced/inline code remain content. The bounded
 check does not parse Markdown: explicit links, images, HTML/entities, footnotes, reference definitions, indented code
 and ambiguous marker-only output are kept as whole review units rather than sentence-split, and force `partial`
@@ -655,7 +684,8 @@ missing or unmatched legacy origins conservatively keep surviving cards as `part
 This gives up automatic visibility classification of those constructs; it does not discard them or establish
 semantic support. Both normal completion and storage-only Save apply this policy without another model call.
 Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels
-in guide/digest/glossary storage, including within sentence-level validation. Code literals remain literal; unknown
+in prose guide, legacy digest/`partialDigest` and glossary storage, including within sentence-level validation. Fresh
+claim-plan digest citations are appended outside the copied authored statement. Code literals remain literal; unknown
 annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.
 
 K3 records `distill_calls` (hard maximum two per explicit attempt), `distill_started_at` and `distill_ms` on the owning revision. Admission
@@ -695,9 +725,10 @@ expired or lost instances instead of holding both slots forever. Status/storage 
 never recreated automatically, and uncertainty after a paid call never releases its conservative usage reservation.
 Raw call output and verification details remain in immutable R2 artifacts. The final artifact is written before its D1
 state; a lost D1 reply reconciles that same stored result without overwriting it or repeating inference. A conditional
-write that finds an existing artifact must verify equal content; different content is a conflict. Digest paragraphs
-are checked one authored sentence at a time with the same declared evidence, retaining supported sentences and
-rejecting unsupported numbers without rewriting them. Guide/digest links resolve against the immutable block map,
+write that finds an existing artifact must verify equal content; different content is a conflict. Legacy prose-digest
+and zero-claim `partialDigest` paragraphs are checked one authored sentence at a time with the same declared evidence,
+retaining supported sentences and rejecting unsupported numbers without rewriting them. Fresh claim-plan digests
+are assembled from selected surviving checked claims. Guide/digest links resolve against the immutable block map,
 while claim cards open their exact original quote ranges. The reader labels these cards “Claims and source excerpts”,
 not “Verified claims”: matching quote bytes and numeric literals does not establish the generated claim's meaning.
 
@@ -1505,10 +1536,12 @@ with provider addresses and Gateway routing in connection dialogs. Both owner bi
 Unknown metadata stays visible, and model-job admission remains separate
 from selection.
 
-**Conversation decomposition — UI extraction complete; Sol audit passed; real-browser Cancel/focus verification pending.** The composer
+**Conversation decomposition — UI extraction complete; Sol audit passed; CI Cancel/Confirm paths passed; manual extension Cancel remains unverified.** The composer
 presentation lives in `web/ChatComposer.tsx` and receives existing values and callbacks; it owns no state or refs. Chrome
-spot-check observed the composer/draft rendering, History opening and native discard confirmation; Cancel/focus
-verification and the user Cancel handoff remain pending after extension focus timeouts. Keep the active conversation's
+spot-check observed the composer/draft rendering and History opening. e622 CI runs `42337156849` and `42337156855`
+passed native/browser History/New chat Cancel/Confirm/draft+scope at 1440/390. Manual extension Cancel was not verified:
+the test tab was removed and the dialog is gone; no user action is pending. These browser checks do not close K2/K3
+quality gates. Keep the active conversation's
 HTTP/socket/history/version/cursor/scroll lifecycle together. Each route, connection and source selection keeps one state
 owner; preserve stale-response cancellation, queued status and current Material layout. This UI slice does not close the
 K2/K3 quality gates. Use existing

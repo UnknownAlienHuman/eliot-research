@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +14,14 @@ import type * as Models from "../models";
 import type * as ModelTransport from "../model-transport";
 import type { DistillInput } from "../shared/api";
 import type { DistillReport } from "../understanding";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router";
+import { Markdown } from "../web/Markdown";
+
+const { JSDOM } = createRequire(import.meta.url)("jsdom") as {
+  JSDOM: new (html: string) => { window: { document: Document; close(): void } };
+};
 
 vi.mock("cloudflare:workers", () => ({
   WorkflowEntrypoint: class {
@@ -237,7 +246,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
         claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: guide[0]?.text,
           task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] },
         totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
-      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], guide, digest: [guide[0]], glossary: [] },
+      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], guide, digestPlan: { methods: ["C0"], findings: [], limits: [] }, glossary: [] },
         totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
     const original = new Map(f.bodies);
     try {
@@ -255,7 +264,11 @@ describe("DistillWorkflow admitted model snapshot", () => {
       const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
       expect(report).toMatchObject({ state: "done", usage: { calls: 2, inputTokens: 36, outputTokens: 17, tokenLimit: null, tokenLimitKind: "unknown" } });
       expect(f.bodies.get(prefix + "guide.md")).toContain(`[R${revisionId}:1]`);
+      expect(f.bodies.get(prefix + "digest.md")).toContain("Methods");
       expect(f.bodies.get(prefix + "digest.md")).toContain(guide[0]?.text);
+      expect(f.bodies.get(prefix + "digest.md")).toContain("[R" + revisionId + ":1]");
+      const call2 = JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null") as { format: string };
+      expect(call2.format).toBe("claim-plan-v1");
       expect(f.bodies.get(prefix + "glossary.json")).toBe("[]");
       for (const [key, body] of original) expect(f.bodies.get(key)).toBe(body);
     } finally { f.db.close(); }
@@ -890,6 +903,7 @@ describe("DistillWorkflow admitted model snapshot", () => {
         anyOf?: JsonSchemaNode[];
         oneOf?: JsonSchemaNode[];
         allOf?: JsonSchemaNode[];
+        enum?: string[];
       };
       const generatedSchema = (instructions: unknown): JsonSchemaNode => {
         if (typeof instructions !== "string") throw new Error("Structured request instructions were not captured.");
@@ -933,13 +947,18 @@ describe("DistillWorkflow admitted model snapshot", () => {
         return resolve(rootSchema.$defs?.[name] ?? rootSchema.definitions?.[name], rootSchema, next);
       };
       const guideItem = resolve(secondSchema.properties?.guide?.items, secondSchema);
-      const digestItem = resolve(secondSchema.properties?.digest?.items, secondSchema);
+      const digestPlan = resolve(secondSchema.properties?.digestPlan, secondSchema);
+      const partialDigestItem = resolve(secondSchema.properties?.partialDigest?.items, secondSchema);
       const glossaryItem = resolve(secondSchema.properties?.glossary?.items, secondSchema);
       expect(Object.keys(guideItem?.properties ?? {})).toEqual(["labels", "text"]);
-      expect(Object.keys(digestItem?.properties ?? {})).toEqual(["labels", "text"]);
+      expect(Object.keys(digestPlan?.properties ?? {})).toEqual(["methods", "findings", "limits"]);
+      expect(Object.keys(partialDigestItem?.properties ?? {})).toEqual(["labels", "text"]);
       expect(Object.keys(glossaryItem?.properties ?? {})).toEqual(["labels", "en", "ru", "definition"]);
       expect(guideItem?.required).toContain("labels");
-      expect(digestItem?.required).toContain("labels");
+      expect(digestPlan?.required).toEqual(["methods", "findings", "limits"]);
+      expect((digestPlan?.properties?.methods?.items as { enum?: string[] } | undefined)?.enum).toContain("C0");
+      expect((digestPlan?.properties?.methods?.items as { enum?: string[] } | undefined)?.enum).toContain("A7");
+      expect((digestPlan?.properties?.methods?.items as { enum?: string[] } | undefined)?.enum).not.toContain("A8");
       expect(glossaryItem?.required).toContain("labels");
     } finally { f.db.close(); }
 
@@ -1020,6 +1039,314 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(cached.db.prepare("SELECT statement FROM claim WHERE source_revision_id=? ORDER BY ordinal").all(revisionId))
         .toEqual([{ statement: "Method Alpha uses a low-rank update." }, { statement: "The method uses a low-rank update." }]);
     } finally { cached.db.close(); }
+  });
+
+  it("rejects an unknown or dropped claim-plan ID and malformed fresh plan without legacy fallback", async () => {
+    const document = documentWithBlocks([
+      { type: "paragraph", text: "Method Alpha uses a low-rank update.\n" },
+      { type: "paragraph", text: "The source reports a result.\n" },
+      { type: "paragraph", text: "The source notes a limitation.\n" },
+    ]);
+    const prepareCached = (output: unknown, format: string | undefined) => {
+      const f = fixture(snapshot.route, document);
+      const encoder = new TextEncoder();
+      const bytes = encoder.encode(document.text);
+      const quote = (block: Block) => new TextDecoder().decode(bytes.subarray(block.start, block.end));
+      const [block1, block2, block3] = document.blocks;
+      if (!block1 || !block2 || !block3) throw new Error("Fixture requires three blocks.");
+      f.bodies.set(prefix + "distill-verified.json", JSON.stringify({
+        claims: [{
+          kind: "method", statement: "Method Alpha uses a low-rank update.", quote: quote(block1), block: block1.id,
+          task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null,
+          start: block1.start, end: block1.end, ambiguous: false, valueNumber: null,
+        }],
+        guide: [
+          { labels: ["[S1:1]"], text: "The source describes method Alpha." },
+          { labels: ["[S1:2]"], text: "The source reports a result." },
+          { labels: ["[S1:3]"], text: "The source notes a limitation." },
+        ],
+        evidence: [block1, block2, block3].map((block) => ({ label: "[S1:" + block.id + "]", block: block.id, quote: quote(block) })),
+        questions: ["Q?"], dropped: [], clearedNumbers: 0,
+      }));
+      const flow = async () => {
+        f.bodies.set(prefix + "distill-call2.json", JSON.stringify({
+          output, usage: { inputTokens: 12, cachedTokens: 0, outputTokens: 24, tokenLimit: 1000, providerUsage: null },
+          ...(format ? { format } : {}),
+        }));
+      const steps = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) =>
+        ["extract source", "verify source excerpts", "review and synthesize"].includes(name) ? undefined : callback());
+        await new DistillWorkflow({} as ExecutionContext, f.env).run(
+          { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>, { do: steps } as unknown as WorkflowStep);
+      };
+      return { f, flow };
+    };
+    const guide = [
+      { labels: ["[S1:1]"], text: "The source describes method Alpha." },
+      { labels: ["[S1:2]"], text: "The source reports a result." },
+      { labels: ["[S1:3]"], text: "The source notes a limitation." },
+    ];
+    const good = { supportedClaims: ["C0"], additionalClaims: [], guide, digestPlan: { methods: ["C0"], findings: [], limits: [] }, glossary: [] };
+    {
+      const { f, flow } = prepareCached(good, "claim-plan-v1");
+      try {
+        await flow();
+        const r = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null") as { state: string; error: string | null };
+        if (!["done", "partial"].includes(r.state)) throw new Error("flow report: " + JSON.stringify(r));
+        expect(f.bodies.get(prefix + "digest.md")).toContain("Method Alpha uses a low-rank update.");
+        expect(f.bodies.get(prefix + "digest.md")).toContain("[R" + revisionId + ":1]");
+        expect(generateText).not.toHaveBeenCalled();
+      } finally { f.db.close(); }
+    }
+    for (const [output, format] of [
+      [{ ...good, digestPlan: { methods: ["C99"], findings: [], limits: [] } }, "claim-plan-v1"],
+      [{ ...good, digestPlan: { methods: ["C1"], findings: [], limits: [] } }, "claim-plan-v1"],
+      [{ supportedClaims: ["C0"], additionalClaims: [], guide, glossary: [] }, "claim-plan-v1"],
+      [{ ...good, digestPlan: { methods: [] } }, "claim-plan-v1"],
+    ] as const) {
+      const { f, flow } = prepareCached(output, format);
+      try {
+        await flow();
+        const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null") as { state: string; error: string };
+        expect(report.state).toBe("failed");
+        expect(f.bodies.get(prefix + "digest.md")).toBeUndefined();
+      } finally { f.db.close(); }
+    }
+  });
+
+  it("stores a zero-claim claim-plan result as partial only with validated partial digest", async () => {
+    const document = documentWithBlocks([
+      { type: "paragraph", text: "Method Alpha uses a low-rank update.\n" },
+      { type: "paragraph", text: "The source reports a result.\n" },
+      { type: "paragraph", text: "The source notes a limitation.\n" },
+    ]);
+    const f = fixture(snapshot.route, document);
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(document.text);
+    const quote = (block: Block) => new TextDecoder().decode(bytes.subarray(block.start, block.end));
+    const [block1, block2, block3] = document.blocks;
+    if (!block1 || !block2 || !block3) throw new Error("Fixture requires three blocks.");
+    f.bodies.set(prefix + "distill-verified.json", JSON.stringify({
+      claims: [],
+      guide: [
+        { labels: ["[S1:1]"], text: "The source describes method Alpha." },
+        { labels: ["[S1:2]"], text: "The source reports a result." },
+        { labels: ["[S1:3]"], text: "The source notes a limitation." },
+      ],
+      evidence: [block1, block2, block3].map((block) => ({ label: "[S1:" + block.id + "]", block: block.id, quote: quote(block) })),
+      questions: ["Q?"], dropped: [], clearedNumbers: 0,
+    }));
+    f.bodies.set(prefix + "distill-call2.json", JSON.stringify({
+      output: { supportedClaims: [], additionalClaims: [],
+        guide: [
+          { labels: ["[S1:1]"], text: "The source describes method Alpha." },
+          { labels: ["[S1:2]"], text: "The source reports a result." },
+          { labels: ["[S1:3]"], text: "The source notes a limitation." },
+        ],
+        digestPlan: { methods: [], findings: [], limits: [] },
+        partialDigest: [{ labels: ["[S1:1]"], text: "The source describes method Alpha." }],
+        glossary: [] },
+      format: "claim-plan-v1",
+      usage: { inputTokens: 12, cachedTokens: 0, outputTokens: 24, tokenLimit: 1000, providerUsage: null },
+    }));
+    try {
+      const steps = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) =>
+        ["extract source", "verify source excerpts", "review and synthesize"].includes(name) ? undefined : callback());
+      await new DistillWorkflow({} as ExecutionContext, f.env).run(
+        { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>, { do: steps } as unknown as WorkflowStep);
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null") as { state: string; kept: number };
+      expect(report.state).toBe("partial");
+      expect(report.kept).toBe(0);
+      expect(f.bodies.get(prefix + "digest.md")).toContain("The source describes method Alpha.");
+    } finally { f.db.close(); }
+  });
+
+  it.each([
+    { name: "whole G1 unit after an earlier drop", empty: false },
+    { name: "fresh empty candidate set", empty: true },
+  ])("freezes and selects glossary candidates: $name", async ({ empty }) => {
+    const document = documentWithBlocks([
+      { type: "paragraph", text: "The source describes Method Alpha, which uses normalization.\n" },
+      { type: "paragraph", text: "The compact adapter uses 4 layers only for short sequences.\n" },
+      { type: "paragraph", text: "The comparison concerns one request at a time, not large-batch throughput.\n" },
+    ]);
+    const f = fixture(snapshot.route, document);
+    const guide = [
+      { labels: ["[S1:1]"], text: "The source describes Method Alpha." },
+      { labels: ["[S1:1]"], text: "Method Alpha uses normalization." },
+      { labels: ["[S1:1]"], text: "The method is named Alpha." },
+    ];
+    const questions = ["What method?", "Which condition?", "What comparison?"];
+    const unit = { labels: ["[S1:2]", "[S1:3]"], en: "Compact adapter", ru: "Компактный адаптер",
+      definition: "Компактный адаптер использует 4 слоя только для коротких последовательностей; сравнение касается обработки по одному запросу. Этот вывод не относится к большому пакетному режиму." };
+    const invalid = { labels: ["[S1:1]"], en: "Layered adapter", ru: "Многослойный адаптер", definition: "Адаптер использует 99 слоёв." };
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ output: { claims: [{ quoteBlock: "[S1:1]", kind: "method", statement: "Method Alpha uses normalization.",
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }],
+        guide, questions, glossary: empty ? [] : [invalid, unit] },
+        totalUsage: { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } } } as never)
+      .mockResolvedValueOnce({ output: { supportedClaims: ["C0"], additionalClaims: [], guide,
+        digestPlan: { methods: ["C0"], findings: [], limits: [] }, supportedGlossary: empty ? [] : ["G1"] },
+        totalUsage: { inputTokens: 19, outputTokens: 9, inputTokenDetails: { cacheReadTokens: 0 } } } as never);
+    try {
+      await run(f);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
+      expect(verified.glossaryCandidates).toEqual(empty ? [] : [{ id: "G1", ...unit }]);
+      expect(verified.evidence.map(({ label }: { label: string }) => label))
+        .toEqual(empty ? ["[S1:1]"] : ["[S1:1]", "[S1:2]", "[S1:3]"]);
+      if (!empty) expect(verified.dropped).toContainEqual({ index: 0, reason: "glossary-candidate-unsupported-output" });
+      const call2 = vi.mocked(generateText).mock.calls[1]?.[0];
+      const content = call2?.messages?.[0]?.content;
+      if (!call2 || typeof content !== "string" || typeof call2.instructions !== "string") throw new Error("Fresh glossary request was not captured.");
+      const context = JSON.parse(content);
+      expect(context.glossaryCandidates).toEqual(empty ? [] : [{ id: "G1", ...unit, evidence: [
+        { label: "[S1:2]", block: 2, quote: "The compact adapter uses 4 layers only for short sequences.\n" },
+        { label: "[S1:3]", block: 3, quote: "The comparison concerns one request at a time, not large-batch throughput.\n" },
+      ] }]);
+      const marker = "Return one JSON object conforming to this schema: ";
+      const schema = JSON.parse(call2.instructions.slice(call2.instructions.lastIndexOf(marker) + marker.length));
+      expect(schema.required).toContain("supportedGlossary");
+      expect(schema.properties).not.toHaveProperty("glossary");
+      expect(schema.properties.supportedGlossary.maxItems).toBe(empty ? 0 : 1);
+      const rawCall2 = JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null");
+      expect(rawCall2.format).toBe("claim-plan-glossary-v1");
+      expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual(empty ? [] : [{
+        ...unit, labels: ["[R" + revisionId + ":2]", "[R" + revisionId + ":3]"],
+      }]);
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      expect(report).toMatchObject({ state: "done", kept: 1, questions });
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(true);
+      expect(f.bodies.get(prefix + "text.md")).toBe(document.text);
+    } finally { f.db.close(); }
+  });
+
+  it.each([
+    { name: "missing", ids: undefined },
+    { name: "unknown dropped G0", ids: ["G0"] },
+    { name: "duplicate", ids: ["G1", "G1"] },
+  ])("rejects $name fresh glossary selection without prose fallback", async ({ ids }) => {
+    const document = documentWithBlocks([
+      { type: "paragraph", text: "Method Alpha uses normalization.\n" },
+      { type: "paragraph", text: "The method applies only to short sequences.\n" },
+      { type: "paragraph", text: "The source notes a limitation.\n" },
+    ]);
+    const f = fixture(snapshot.route, document);
+    const bytes = new TextEncoder().encode(document.text);
+    const quote = (block: Block) => new TextDecoder().decode(bytes.subarray(block.start, block.end));
+    const block1 = document.blocks[0];
+    if (!block1) throw new Error("The glossary fixture requires a canonical first block.");
+    const guide = [
+      { labels: ["[S1:1]"], text: "The source describes Method Alpha." },
+      { labels: ["[S1:2]"], text: "The method applies to short sequences." },
+      { labels: ["[S1:3]"], text: "The source notes a limitation." },
+    ];
+    const unit = { labels: ["[S1:1]"], en: "Normalization", ru: "Нормализация", definition: "Метод Alpha использует нормализацию." };
+    f.db.prepare("UPDATE source_revision SET distill_calls=2 WHERE id=?").run(revisionId);
+    f.bodies.set(prefix + "distill-verified.json", JSON.stringify({
+      claims: [{ kind: "method", statement: "Method Alpha uses normalization.", quote: quote(block1), block: block1.id,
+        task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null,
+        start: block1.start, end: block1.end, ambiguous: false, valueNumber: null }],
+      guide, evidence: document.blocks.map((block) => ({ label: "[S1:" + block.id + "]", block: block.id, quote: quote(block) })),
+      questions: ["What method?", "Which scope?", "What limitation?"], dropped: [], clearedNumbers: 0,
+      glossaryCandidates: [{ id: "G1", ...unit }, { id: "G2", labels: ["[S1:2]"], en: "Short sequence", ru: "Короткая последовательность",
+        definition: "Условие относится только к коротким последовательностям." }],
+    }));
+    const rawCall2 = JSON.stringify({ format: "claim-plan-glossary-v1",
+      output: { supportedClaims: ["C0"], additionalClaims: [], guide, digestPlan: { methods: ["C0"], findings: [], limits: [] },
+        ...(ids === undefined ? { glossary: [unit] } : { supportedGlossary: ids }) },
+      usage: { inputTokens: 12, cachedTokens: 0, outputTokens: 24, tokenLimit: 1000, providerUsage: null } });
+    f.bodies.set(prefix + "distill-call2.json", rawCall2);
+    try {
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
+      const steps = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) =>
+        ["extract source", "verify source excerpts", "review and synthesize"].includes(name) ? undefined : callback());
+      await new DistillWorkflow({} as ExecutionContext, f.env).run(
+        { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>, { do: steps } as unknown as WorkflowStep);
+      expect(JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null").state).toBe("failed");
+      expect(f.bodies.has(prefix + "glossary.json")).toBe(false);
+      expect(f.bodies.has(prefix + "digest.md")).toBe(false);
+      expect(f.bodies.get(prefix + "distill-call2.json")).toBe(rawCall2);
+      expect(generateText).not.toHaveBeenCalled();
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+
+  it.each([
+    { name: "plain", marker: "", closed: true },
+    { name: "closed backtick", marker: String.fromCharCode(96).repeat(3), closed: true },
+    { name: "open backtick", marker: String.fromCharCode(96).repeat(3), closed: false },
+    { name: "closed tilde", marker: "~~~", closed: true },
+    { name: "open tilde", marker: "~~~", closed: false },
+  ])("preserves full curated digest scope and outside citation for $name", async ({ marker, closed }) => {
+    const statementText = "WikiSQL validation accuracy is 73.4 at rank 4.";
+    const conditionsText = "rank 4 on the validation split only";
+    const authored = (text: string) => marker ? marker + "\n" + text + (closed ? "\n" + marker : "") : text;
+    const statement = authored(statementText), conditions = authored(conditionsText);
+    const document = documentWithBlocks([
+      { type: "paragraph", text: statementText + " The scope is " + conditionsText + ".\n" },
+      { type: "paragraph", text: "The source reports a result.\n" },
+      { type: "paragraph", text: "The source notes a limitation.\n" },
+    ]);
+    const f = fixture(snapshot.route, document);
+    const bytes = new TextEncoder().encode(document.text);
+    const quote = (block: Block) => new TextDecoder().decode(bytes.subarray(block.start, block.end));
+    const [block1, block2, block3] = document.blocks;
+    if (!block1 || !block2 || !block3) throw new Error("Fixture requires three blocks.");
+    const guide = [
+      { labels: ["[S1:1]"], text: "The source reports WikiSQL validation accuracy." },
+      { labels: ["[S1:2]"], text: "The source reports a result." },
+      { labels: ["[S1:3]"], text: "The source notes a limitation." },
+    ];
+    const metadata = { task: "Validation accuracy", metric: "Accuracy", dataset: "WikiSQL", valueText: "73.4", unit: "%", conditions };
+    const usage = { inputTokens: 12, cachedTokens: 0, outputTokens: 24, tokenLimit: 1000, providerUsage: null };
+    f.db.prepare("UPDATE source_revision SET distill_calls=2 WHERE id=?").run(revisionId);
+    f.bodies.set(prefix + "distill-call1.json", JSON.stringify({
+      output: { claims: [{ quoteBlock: "[S1:1]", kind: "result", statement, ...metadata }], guide,
+        questions: ["What result?", "What dataset?", "What scope?"] }, usage,
+    }));
+    f.bodies.set(prefix + "distill-verified.json", JSON.stringify({
+      claims: [{ kind: "result", statement, quote: quote(block1), block: block1.id, ...metadata,
+        start: block1.start, end: block1.end, ambiguous: false, valueNumber: 73.4 }],
+      guide,
+      evidence: [block1, block2, block3].map((block) => ({ label: "[S1:" + block.id + "]", block: block.id, quote: quote(block) })),
+      questions: ["What result?", "What dataset?", "What scope?"], dropped: [], clearedNumbers: 0,
+    }));
+    f.bodies.set(prefix + "distill-call2.json", JSON.stringify({
+      output: { supportedClaims: ["C0"], additionalClaims: [], guide,
+        digestPlan: { methods: [], findings: ["C0"], limits: [] }, glossary: [] },
+      format: "claim-plan-v1", usage,
+    }));
+    try {
+      const steps = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) =>
+        ["extract source", "verify source excerpts", "review and synthesize"].includes(name) ? undefined : callback());
+      await new DistillWorkflow({} as ExecutionContext, f.env).run(
+        { payload: { revisionId, model: snapshot } } as WorkflowEvent<DistillInput>, { do: steps } as unknown as WorkflowStep);
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null") as { state: string; kept: number };
+      expect(report).toMatchObject({ state: "done", kept: 1 });
+      const digest = f.bodies.get(prefix + "digest.md") ?? "";
+      expect(f.db.prepare("SELECT statement,conditions FROM claim WHERE source_revision_id=?").get(revisionId))
+        .toEqual({ statement, conditions });
+      const href = "/p/project/source/" + sourceId + "?revisionId=" + revisionId + "&start=" + block1.start + "&end=" + block1.end;
+      const html = renderToStaticMarkup(createElement(MemoryRouter, null,
+        createElement(Markdown, { text: digest, references: [{ text: "[R" + revisionId + ":1]", href, label: "Paper · 1" }] })));
+      const dom = new JSDOM(html);
+      try {
+        const rendered = dom.window.document;
+        expect(rendered.body.textContent).toContain(statementText);
+        expect(rendered.body.textContent).toContain(conditionsText);
+        expect(rendered.body.textContent).toContain("Dataset:");
+        expect(rendered.body.textContent).toContain("WikiSQL");
+        expect(rendered.body.textContent).toContain("73.4 %");
+        expect(rendered.querySelectorAll("blockquote pre code")).toHaveLength(marker ? 2 : 0);
+        const citations = rendered.querySelectorAll("a.er-citation");
+        expect(citations).toHaveLength(1);
+        expect(citations.item(0).getAttribute("href")).toBe(href);
+        expect(citations.item(0).closest("pre,code,blockquote")).toBeNull();
+      } finally { dom.window.close(); }
+      expect(generateText).not.toHaveBeenCalled();
+      expect(resolveModelTransport).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
   });
 
   it("charges repeated call-two quote escaping before dispatch at the materialization boundary", async () => {

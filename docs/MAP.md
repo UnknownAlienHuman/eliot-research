@@ -64,7 +64,7 @@ full-corpus or deployed gates. Implement one usable slice at a time and update i
 | 8 · K1/K2 | `web/Chat.tsx` scopes Send/Stop/Save continuations to their initiating view; `web/Library.tsx` scopes Reader reads and replacement, with pending project/source locks in `App`; see [§13](IMPLEMENTATION.md#13-owner-interface). | Accepted in [#472](https://github.com/UnknownAlienHuman/eliot-research/pull/472), `ceb840a0`. Desktop/phone checks cover project/Settings remounts and independent upload locks. Submitted writes retain their target. |
 | 9 · K3 | `workflows/distill.ts` no longer requests or promotes un-attributed author/date guesses; see [§6](IMPLEMENTATION.md#6-one-time-distillation). | Accepted in [#473](https://github.com/UnknownAlienHuman/eliot-research/pull/473), `a8d5d215`. New metadata stays `''`/`NULL`; historical values/evidence remain unchanged. |
 | 10 · K2/K3 | Exact retained NotebookLM export and sidecars are preserved in the owner's local archive; hash/access/completeness are recorded in the existing [baseline](../eval/arxiv-10/baseline.md). | Accepted in [#474](https://github.com/UnknownAlienHuman/eliot-research/pull/474), `fedd0406`. Second-checkout verification covers frozen `answers.md`/`runs.json` hashes, unique IDs, questions and all twelve retained answer bodies; sidecar equality was checked separately locally. Archive contents stay outside Git; another machine requires authorized private transfer. The citation probe remains incomplete; answer-text availability does not establish quality acceptance. |
-| 11 · K2/K3 | Partially complete: pure post-stream usage projection was accepted in [#475](https://github.com/UnknownAlienHuman/eliot-research/pull/475), merged as `d718301c`. Composer presentation is extracted to `ChatComposer`; `ChatView` retains conversation state, lifecycle and action ownership; see [§13](IMPLEMENTATION.md#13-owner-interface). | Server extraction preserved admission, deadlines, citations, queue and settlement. The UI extraction slice is complete locally; the existing K0 Chat suite passed 53/53. Sol's bounded source audit passed with blob IDs. Chrome spot-check observed the composer/draft rendering, History opening and native discard confirmation; Cancel/focus verification and the user Cancel handoff remain pending after extension focus timeouts. K2/K3 quality gates remain open. |
+| 11 · K2/K3 | Partially complete: pure post-stream usage projection was accepted in [#475](https://github.com/UnknownAlienHuman/eliot-research/pull/475), merged as `d718301c`. Composer presentation is extracted to `ChatComposer`; `ChatView` retains conversation state, lifecycle and action ownership; see [§13](IMPLEMENTATION.md#13-owner-interface). | Server extraction preserved admission, deadlines, citations, queue and settlement. The UI extraction slice is complete locally; the existing K0 Chat suite passed 53/53. Sol's bounded source audit passed with blob IDs. Chrome spot-check observed composer/draft rendering and History opening. e622 CI runs `42337156849` and `42337156855` passed native/browser History/New chat Cancel/Confirm/draft+scope at 1440/390. Manual extension Cancel was not verified: its test tab was removed and the dialog is gone; no user action is pending. K2/K3 quality gates remain open. |
 | 12 · K2/K3 | Citation identity and numeric occurrence still do not establish source meaning or fact coverage. Finish the quality repairs below against unchanged questions and anchors. | K2 facts/citations/latency and owner comparison; K3 all-source reuse/anchors, semantic support for claims/guide/digest/glossary and real claim-mode C1–C4 pass their existing gates. Targeted runs cannot establish full acceptance. |
 | 13 · K0/K4 | Deployed Access remains unverified. After an authorized deployment, check the existing owner/agent boundary and WebSocket path. | Owner browser/token work; invalid or wrong-audience JWTs fail; agents read/propose but cannot accept or invoke owner-only paid work. Local JWKS evidence alone cannot close this row. |
 
@@ -362,10 +362,18 @@ re-distilled automatically.
    Archive the exact old receipt and claim projection before switching; previous attempts remain readable without
    models. Reload and Save existing output remain storage only. Unknown retry replies retain the same request across
    reload/remount; a successful read of its old predecessor cannot authorize a different retry ID. A durable rejected intent enables a fresh explicit model choice without an in-flight duplicate later accepting that rejected ID.
-4. Use at most two bounded calls: labelled canonical text produces atomic claim cards before guide prose, with card
-   coverage independent of guide/digest and deduplication only among cards; code verifies quotes/ranges/numbers. The
-   second call receives each verified candidate with its exact quote and produces digest/glossary. Store raw
-   output/report in R2 and compact claims in D1. Paid calls do not retry.
+4. Use at most two bounded calls: labelled canonical text produces atomic claim cards, draft guide and at most twelve
+   glossary candidates with `{labels,en,ru,definition}`; code verifies quotes/ranges/numbers. Candidate glossary IDs
+   are frozen as their original G0–G11 indexes before invalid candidates are dropped, leaving intentional gaps. Fresh
+   call two uses `claim-plan-glossary-v1` when those candidates exist and returns `supportedGlossary` G IDs only; it
+   does not rewrite glossary entries. Code rechecks and copies each selected frozen candidate with its original
+   citation binding. The same response uses an ordered methods/findings/limits `digestPlan` selecting at most eight
+   unique IDs from the exact C candidate indexes or A0–A7 original `additionalClaims` indexes. After final claim
+   validation, code materializes surviving checked units with complete statements as blockquotes, qualifying
+   structured scope fields and authority citations outside authored content; unknown/rejected IDs fail. If no claim
+   survives, digest groups are empty and a validated `partialDigest` remains partial with zero claims. `claim-plan-v1`
+   is the digest-only continuation for legacy `Verified` artifacts without frozen glossary candidates; markerless
+   cached call two retains the full legacy prose Save/history path. The bound remains two calls with no paid retry.
    Preserve a safe failure reason for the reader without retaining raw provider errors or credentials.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
    an extra overview model call. Open it from Studio, load sources in bounded pages and Refresh to rescan changed
@@ -426,12 +434,12 @@ re-distilled automatically.
 
 **Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
 
-K3 is not fully accepted or deployed. The ten baseline papers reached `done`; the unchanged-revision check dispatched
-no further inference. Required conditions for the French Transformer result and some LoRA anchors remain unresolved.
-All four real overflow answers used `claims` mode; statement-local numeric and citation support gates remain open.
-Semantic support for guide, digest and glossary
-content remains separate from label and numeric validation. Storage-only Save/recheck does not dispatch inference
-and does not qualify K3.
+K3 is not fully accepted or deployed. Historical retained runs recorded the ten baseline papers as `done`, an
+unchanged-revision reuse with no new inference, and four overflow answers in `claims` mode. Those runs predate the
+current `claim-plan-glossary-v1` producer and do not qualify the exact current baseline corpus or producer. Required
+conditions for the French Transformer result and some LoRA anchors remain unresolved; statement-local numeric,
+citation and semantic-support gates remain open. Storage-only Save/recheck does not dispatch inference and does not
+qualify K3.
 
 **Remaining quality repairs (proposed).** Diagnose each failure against its exact source revision: incorrect canonical
 text, wrong/missing selected evidence, lost statement conditions, numeric-format rejection or unsupported prose.
@@ -452,10 +460,11 @@ an unmatched backtick inside a fence cannot mask later prose references. Quote v
 bytes and folds only fallback slices; this reduces repeated work without changing evidence or quality gates.
 Repair defective PDF text only through the existing reviewed OCR/immutable Apply path; preserve old bytes and citations.
 For correct input, keep candidate statements atomic and complete, then review each against its own frozen evidence
-within the existing two calls. The call-two producer prompt now directs guide/digest/glossary items to select labels
-before prose, reread only those excerpts, retain their source-stated scope, conditions, comparisons and limitations,
-and omit items unsupported by their labels. Code still binds citations and numeric checks to declared labels; the
-prompt review does not prove semantic support. Existing eval anchors are unchanged, and the fix adds no model call.
+within the existing two calls. Fresh `claim-plan-glossary-v1` selects original G0–G11 glossary candidates by ID and
+rechecks the copied `{labels,en,ru,definition}` units; fresh claim-plan digests use the closed C/A indexes above.
+`claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without glossary candidates, while
+markerless cached output retains the full legacy prose path. These producer checks do not establish semantic support
+or full K3 acceptance. Existing eval anchors are unchanged, and no extra model call is added.
 Adding a third verifier, paper-specific prompts or weakening anchors is not a remedy.
 Fix numeric-format regressions narrowly, without inferring units or conditions.
 [#430](https://github.com/UnknownAlienHuman/eliot-research/pull/430),
