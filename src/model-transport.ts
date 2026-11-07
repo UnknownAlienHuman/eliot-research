@@ -227,10 +227,7 @@ export async function resolveModelTransport(
   options: { structuredOutput?: boolean } = {},
 ): Promise<LanguageModel> {
   if (model.route.startsWith("workers-ai:")) {
-    const native = createAI({ binding: env.AI }).languageModel(model.id, { ...(model.nativeReasoningEffort ? { reasoningEffort: model.nativeReasoningEffort } : {}), sessionAffinity });
-    return options.structuredOutput === true ? wrapLanguageModel({ model: native, middleware: {
-      transformParams: async ({ params }) => ({ ...params, responseFormat: { type: "text" } }),
-    } }) : native;
+    return createAI({ binding: env.AI }).languageModel(model.id, { ...(model.nativeReasoningEffort ? { reasoningEffort: model.nativeReasoningEffort } : {}), sessionAffinity });
   }
   if (!model.route.startsWith("gateway:")) {
     throw new LibraryError("unavailable", "This model route is not supported.", 503);

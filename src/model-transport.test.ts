@@ -1,5 +1,5 @@
-import { generateText, NoObjectGeneratedError, Output, streamText, type LanguageModelUsage } from "ai";
-import { z } from "zod";
+import { generateText, Output, streamText, type LanguageModelUsage } from "ai";
+import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { resolveModelTransport, safeEmptyCompletionLog } from "./model-transport";
 import { DEFAULT_MODEL, MODELS, modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, type ModelSpec } from "./models";
@@ -62,7 +62,7 @@ it("captures the pinned Anthropic default near the estimated input boundary whil
 });
 
 describe("native fallback reasoning request", () => {
-  it("generates native K3 JSON from the complete prompt schema without provider JSON Mode and validates locally", async () => {
+  it("captures real generateText doGenerate with the production v3 extraction schema at the offline native binding", async () => {
     const modelId = "@cf/zai-org/glm-5.3-flash";
     type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
     const discovered = nativeModel({ name: modelId, task: { name: "Text Generation" }, properties: [
@@ -71,67 +71,59 @@ describe("native fallback reasoning request", () => {
     ] } as unknown as NativeRow, "2026-11-07");
     if (!discovered || discovered.contextTokens === null) throw new Error("The current native Flash fixture did not resolve.");
     const model: ModelSpec = { ...discovered, contextTokens: discovered.contextTokens };
-    const schema = extractionSchema(["[S1:1]"], "claim-plan-guide-v3"), fullSchema = z.toJSONSchema(schema);
-    const instructions = "Return one JSON object conforming to this schema: " + JSON.stringify(fullSchema);
-    const valid = { claims: [], guide: [
-      { labels: ["[S1:1]"], scope: [], assertion: "The method uses normalization." },
-      { labels: ["[S1:1]"], scope: [{ labels: ["[S1:1]"], text: "only for this setting" }], assertion: "The source retains evidence." },
-      { labels: ["[S1:1]"], scope: [], assertion: "The source states its limitations." },
-    ], questions: ["Which method?", "What evidence?", "Which limitations?"], glossary: [] };
-    type SchemaNode = { type?: string; minItems?: number; maxItems?: number; properties?: Record<string, SchemaNode>; items?: SchemaNode };
-    const scope = (fullSchema as SchemaNode).properties?.guide?.items?.properties?.scope;
-    expect(scope).toMatchObject({ type: "array", minItems: 0, maxItems: 1, items: { type: "object" } });
-    let responseText = "", calls = 0;
-    const captures: Record<string, unknown>[] = [];
+    const output = Output.object({ schema: extractionSchema(["[S1:1]"]) });
+    const format = await output.responseFormat;
+    if (format?.type !== "json" || !format.schema) throw new Error("The real SDK did not produce the extraction schema.");
+    const expectedAdapterEnvelope = { type: "json_schema", json_schema: { name: "response", strict: true,
+      schema: format.schema as Record<string, unknown> } } satisfies
+      Extract<NonNullable<AiModels["@cf/zai-org/glm-5.3-flash"]["inputs"]["response_format"]>, { type: "json_schema" }>;
+    // agents@0.30.1: ai-sdk-DRPh2rRa.js adds strict; images-xaDv2Fqe.js
+    // prepareChatCompletionsRequest removes only strict for Workers AI (jsonSchemaStrict:false).
+    // The pinned Flash ResponseFormatJSONSchema type makes strict optional, not a runtime requirement.
+    const expectedBindingEnvelope = { type: "json_schema", json_schema: {
+      name: expectedAdapterEnvelope.json_schema.name, schema: expectedAdapterEnvelope.json_schema.schema,
+    } } satisfies NonNullable<AiModels["@cf/zai-org/glm-5.3-flash"]["inputs"]["response_format"]>;
+    type SchemaNode = { type?: string; minItems?: number; maxItems?: number; anyOf?: unknown[];
+      properties?: Record<string, SchemaNode>; items?: SchemaNode };
+    let calls = 0, captured: Record<string, unknown> | undefined;
+    // Plain fake binding: retain only safe properties, never mock-call copies of source/messages or headers.
     const run = async (id: string, inputs: Record<string, unknown>, options: Record<string, unknown>) => {
       calls++;
-      // Retain only safe flags; never retain source/messages/headers in mock-call copies.
-      const messages = inputs.messages as { content?: unknown }[] | undefined;
-      captures.push({ modelId: id, stream: inputs.stream ?? "omitted", hasStreamOptions: Object.hasOwn(inputs, "stream_options"),
-        hasResponseFormat: Object.hasOwn(inputs, "response_format"), reasoningEffort: inputs.reasoning_effort,
-        fullSchemaInPrompt: messages?.some(message => message.content === instructions) === true,
+      const response = inputs.response_format as { type?: string; json_schema?: { name?: string; strict?: boolean; schema?: SchemaNode } } | undefined;
+      const scope = response?.json_schema?.schema?.properties?.guide?.items?.properties?.scope;
+      captured = { modelId: id, stream: inputs.stream ?? "omitted", nonStreaming: inputs.stream === undefined || inputs.stream === false,
+        hasStreamOptions: Object.hasOwn(inputs, "stream_options"), reasoningEffort: inputs.reasoning_effort,
+        responseFormatType: response?.type, schemaName: response?.json_schema?.name,
+        schemaStrictPresent: Object.hasOwn(response?.json_schema ?? {}, "strict"),
+        exactPinnedEnvelope: isDeepStrictEqual(inputs.response_format, expectedBindingEnvelope),
+        onlyDocumentedStrictRemoval: isDeepStrictEqual({ ...response,
+          json_schema: { ...response?.json_schema, strict: true } }, expectedAdapterEnvelope),
+        scopeType: scope?.type, scopeMinItems: scope?.minItems, scopeMaxItems: scope?.maxItems, scopeItemType: scope?.items?.type,
+        scopeNullableBranch: scope?.anyOf !== undefined, itemNullableBranch: scope?.items?.anyOf !== undefined,
         hasMaxTokens: Object.hasOwn(inputs, "max_tokens"), hasMaxCompletionTokens: Object.hasOwn(inputs, "max_completion_tokens"),
-        returnRawResponse: options.returnRawResponse === true });
-      return new Response(JSON.stringify({ id: "offline-extraction", object: "chat.completion", created: 0, model: id,
-        choices: [{ index: 0, message: { role: "assistant", content: responseText }, finish_reason: "stop" }],
-        usage: { prompt_tokens: 17, completion_tokens: 8, total_tokens: 25, prompt_tokens_details: { cached_tokens: 0 } },
-      }), { headers: { "content-type": "application/json" } });
+        returnRawResponse: options.returnRawResponse === true };
+      throw new Error("Offline native boundary reached; inference is disabled.");
     };
     const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
     try {
       const transport = await resolveModelTransport({ AI: { run } as unknown as Env["AI"], DB: {} as Env["DB"] },
         model, "native-generate-extraction", { structuredOutput: true });
       const maxOutputTokens = modelOutputLimit(model, 1024);
-      const options = { model: transport, instructions, messages: [{ role: "user" as const, content: "The method uses normalization." }],
-        output: Output.object({ schema }), maxRetries: 0, ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }) };
+      const options = { model: transport, instructions: "Capture the native structured request only.",
+        messages: [{ role: "user" as const, content: "The method uses normalization. Its source passage is retained." },
+          { role: "user" as const, content: "Return only the requested structured output." }],
+        output, maxRetries: 0, ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }) };
+      expect(model.maxOutputTokens).toBeNull();
       expect(options).not.toHaveProperty("maxOutputTokens");
-      for (const fixture of [
-        { text: JSON.stringify(valid), error: null },
-        { text: '{"guide":', error: "No object generated: could not parse the response." },
-        { text: JSON.stringify({ ...valid, guide: valid.guide.map(item => ({ ...item, scope: null })) }), error: "No object generated: response did not match schema." },
-      ]) {
-        responseText = fixture.text;
-        const before = calls;
-        let failure: unknown;
-        try {
-          const result = await generateText(options); // Real pinned SDK and Output.object, including local validation.
-          expect(result.output).toEqual(valid);
-          expect(result.totalUsage).toMatchObject({ inputTokens: 17, outputTokens: 8 });
-        } catch (error) { failure = error; }
-        if (fixture.error === null) expect(failure).toBeUndefined();
-        else {
-          expect(NoObjectGeneratedError.isInstance(failure)).toBe(true);
-          if (!NoObjectGeneratedError.isInstance(failure)) throw new Error("Local SDK schema validation did not reject the fixture.");
-          expect(failure.message).toBe(fixture.error);
-          expect(failure.usage).toMatchObject({ inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } });
-          expect(failure.finishReason).toBe("stop");
-        }
-        expect(calls - before).toBe(1);
-      }
-      expect(captures).toEqual(Array(3).fill({ modelId, stream: "omitted", hasStreamOptions: false,
-        hasResponseFormat: false, reasoningEffort: "high", fullSchemaInPrompt: true,
-        hasMaxTokens: false, hasMaxCompletionTokens: false, returnRawResponse: true }));
+      await expect(generateText(options)).rejects.toThrow(); // Real ai@7.0.152; only AI.run is intercepted.
+      expect(calls).toBe(1);
       expect(network).not.toHaveBeenCalled();
+      expect(captured).toMatchObject({ modelId, nonStreaming: true, hasStreamOptions: false, reasoningEffort: "high",
+        responseFormatType: "json_schema", schemaName: "response", schemaStrictPresent: false,
+        exactPinnedEnvelope: true, onlyDocumentedStrictRemoval: true,
+        scopeType: "array", scopeMinItems: 0, scopeMaxItems: 1, scopeItemType: "object",
+        scopeNullableBranch: false, itemNullableBranch: false, hasMaxTokens: false, hasMaxCompletionTokens: false, returnRawResponse: true });
+      expect(captured?.stream).toBe("omitted");
     } finally { network.mockRestore(); }
   });
 

@@ -363,10 +363,7 @@ re-distilled automatically.
    models. Reload and Save existing output remain storage only. Unknown retry replies retain the same request across
    reload/remount; a successful read of its old predecessor cannot authorize a different retry ID. A durable rejected intent enables a fresh explicit model choice without an in-flight duplicate later accepting that rejected ID.
 4. Use at most two bounded calls: labelled canonical text produces atomic claim cards, draft guide and at most twelve
-   glossary candidates. Native K3 includes the full unchanged schema in the prompt and input estimate, omits upstream
-   provider JSON Mode, and retains local `Output.object` parse/validation plus every evidence gate. This execution
-   experiment is unqualified; native chat/OCR and external transports retain their existing behavior. Drafts include
-   fresh guide items with source labels, a required scope array of zero or one non-null
+   glossary candidates. Fresh guide items declare source labels, a required scope array of zero or one non-null
    combined domain clause (at most 300 characters, with subset source labels) and one coherent assertion (at most 800 characters). Before review,
    code prefixes the complete scope in parentheses, preserves the assertion apart from outer whitespace, adds only
    missing sentence punctuation and freezes the checked full sentence as its original H0–H4 unit. Authored symbols

@@ -13,7 +13,6 @@ import type { ModelSpec } from "../models";
 import type * as Models from "../models";
 import type * as ModelTransport from "../model-transport";
 import type * as AISDK from "ai";
-import { z } from "zod";
 import type { DistillInput } from "../shared/api";
 import type { DistillReport } from "../understanding";
 import { createElement } from "react";
@@ -1748,32 +1747,6 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect((JSON.parse(content) as { candidates: Array<{ quote: string }> }).candidates.map(({ quote }) => quote))
         .toEqual(Array(3).fill("[]".repeat(40000)));
     } finally { fitting.db.close(); }
-  });
-
-  it("puts the complete unchanged local schema in the native K3 prompt and counts it in admission", async () => {
-    const models = await vi.importActual<typeof Models>("../models");
-    const fallback = models.MODELS.find((model) => model.route === models.DEFAULT_MODEL);
-    if (!fallback) throw new Error("The native default is missing.");
-    const native = { ...fallback, nativeReasoningEffort: "high" as const };
-    const f = fixture(native.route);
-    f.db.prepare("UPDATE source_revision SET distill_token_limit_kind='unknown' WHERE id=?").run(revisionId);
-    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
-    try {
-      await run(f, false, native);
-      const options = vi.mocked(generateText).mock.calls[0]?.[0];
-      if (!options || typeof options.instructions !== "string") throw new Error("Native instructions were not captured.");
-      const marker = "Return one JSON object conforming to this schema: ";
-      const supplied = vi.mocked(Output.object).mock.calls.at(-1)?.[0].schema;
-      if (!supplied) throw new Error("The local SDK validation schema was not supplied.");
-      const expected = z.toJSONSchema(extractionSchema(["[S1:1]"]));
-      expect(options.instructions.endsWith(marker + JSON.stringify(expected))).toBe(true);
-      expect(z.toJSONSchema(supplied as ReturnType<typeof extractionSchema>)).toEqual(expected);
-      expect(estimateModelInput({ instructions: options.instructions, messages: options.messages as { role: string; content: string }[], schema: expected }))
-        .toBeLessThanOrEqual(modelInputLimit(native));
-      expect(options).not.toHaveProperty("maxOutputTokens");
-      expect(resolveModelTransport).toHaveBeenCalledExactlyOnceWith(f.env, native, `distill-${revisionId}`, { structuredOutput: true });
-      expect(generateText).toHaveBeenCalledTimes(1);
-    } finally { f.db.close(); }
   });
 
   it("passes the exact admitted context, reserve and checked date to transport without rediscovery", async () => {
