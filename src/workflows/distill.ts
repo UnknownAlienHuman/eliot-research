@@ -41,29 +41,32 @@ function guideUnitSchema(label: z.ZodType<string>) {
       .describe("Declare the source-stated scope, conditions, comparisons and limitations before drafting text. Each meaningful phrase must occur intact in the complete text and use only labels selected for this item."),
     text: z.string().min(1).max(1200).describe("The complete owner-facing guide sentence, including every declared qualifier without shortening. Select all supporting blocks and qualifying phrases before writing.") });
 }
-function guideDraftSchema(label: z.ZodType<string>) {
+type AssembledGuideFormat = "claim-plan-guide-v2" | "claim-plan-guide-v3";
+function guideDraftSchema(label: z.ZodType<string>, scopeArray = false) {
+  const clause = z.object({ labels: z.array(label).min(1).max(4), text: z.string().min(1).max(300) });
   return z.object({ labels: z.array(label).min(1).max(4),
-    scope: z.object({ labels: z.array(label).min(1).max(4), text: z.string().min(1).max(300) })
-      .nullable().describe("One combined source-stated domain scope/condition/comparison clause in natural language, with labels drawn only from this item's labels. Use null only when no scope clause is needed; no field headings or debugging labels."),
+    scope: scopeArray ? z.array(clause).min(0).max(1)
+      .describe("Zero or one combined source-stated domain scope/condition/comparison clause in natural language, with labels drawn only from this item's labels. Use [] only when no scope clause is needed; no field headings or debugging labels.")
+      : clause.nullable().describe("One combined source-stated domain scope/condition/comparison clause in natural language, with labels drawn only from this item's labels. Use null only when no scope clause is needed; no field headings or debugging labels."),
     assertion: z.string().min(1).max(800).describe("One coherent, independently scoped source assertion, preserving authored notation and punctuation. Do not mix unrelated experiments or results. The server preserves the assertion apart from outer whitespace and prefixes the complete scope clause before review; no verbatim echo of that clause is required here.") });
 }
-function extractionSchema(labels: [string, ...string[]]) {
+export function extractionSchema(labels: [string, ...string[]], format: AssembledGuideFormat = "claim-plan-guide-v3") {
   const quoteBlock = z.enum(labels).describe("Select the exact labelled source block to quote in full. The server resolves its original bytes; do not transcribe or paraphrase the quote.");
   return z.object({ claims: z.array(z.object({ quoteBlock, kind, task: optionalText, metric: optionalText, dataset: optionalText.describe(DATASET_ROLE),
       valueText: optionalText.describe(VALUE_ROLE), unit: optionalText.describe(UNIT_ROLE), conditions: optionalText.describe(CONDITIONS_ROLE), statement: z.string().min(1).max(1200) })).max(32),
-    guide: z.array(guideDraftSchema(quoteBlock)).min(3).max(5),
+    guide: z.array(guideDraftSchema(quoteBlock, format === "claim-plan-guide-v3")).min(3).max(5),
     questions: z.array(z.string().min(1).max(500)).min(3).max(5),
     glossary: z.array(glossaryUnitSchema(quoteBlock)).max(12) });
 }
 type Extraction = z.infer<ReturnType<typeof extractionSchema>>;
 type RetainedExtraction = Omit<Extraction, "guide"> & { guide: (GuideItem | z.infer<ReturnType<typeof guideDraftSchema>>)[] };
 interface Usage { inputTokens: number | null; cachedTokens: number | null; outputTokens: number | null; tokenLimit: number | null; tokenLimitKind?: "published" | "unknown" | "legacy"; providerUsage?: JSONObject | null }
-interface Raw<T> { output: T | null; usage: Usage; validation?: { dropped: { index: number; reason: string }[] }; format?: "claim-plan-v1" | "claim-plan-glossary-v1" | "claim-plan-guide-v1" | "claim-plan-guide-v2" }
+interface Raw<T> { output: T | null; usage: Usage; validation?: { dropped: { index: number; reason: string }[] }; format?: "claim-plan-v1" | "claim-plan-glossary-v1" | "claim-plan-guide-v1" | AssembledGuideFormat }
 interface Evidence { label: string; block: number; quote: string }
 interface GuideItem { labels: string[]; text: string }
 interface GuideCandidate extends z.infer<ReturnType<typeof guideUnitSchema>> { id: string }
 interface GlossaryCandidate extends GlossaryEntry { id: string }
-interface Verified { claims: VerifiedClaim[]; guide: GuideItem[]; evidence: Evidence[]; questions: string[]; dropped: { index: number; reason: string }[]; clearedNumbers: number; glossaryCandidates?: GlossaryCandidate[]; guideCandidates?: GuideCandidate[]; format?: "claim-plan-guide-v2" }
+interface Verified { claims: VerifiedClaim[]; guide: GuideItem[]; evidence: Evidence[]; questions: string[]; dropped: { index: number; reason: string }[]; clearedNumbers: number; glossaryCandidates?: GlossaryCandidate[]; guideCandidates?: GuideCandidate[]; format?: AssembledGuideFormat }
 interface Projection { kept: number; guideSentences: number; dropped: { index: number; reason: string }[]; clearedNumbers: number; requiresReview?: boolean }
 interface Prepared extends Projection { guide: string; digest: string; glossary: GlossaryEntry[]; claims: VerifiedClaim[]; summary: string }
 function synthesisSchema(labels: [string, ...string[]], claimIds: string[], requireAdditionalMetadata = false) {
@@ -254,8 +257,8 @@ export async function hasAvailableUnderstanding(env: Env, revisionId: string, at
     const raw = await json<Raw<unknown>>(env, revisionId, "distill-call2.json", attemptId);
     if (!verified.evidence.length) return false;
     if (!raw.output) return false;
-    const assembled = raw.format === "claim-plan-guide-v2";
-    if (assembled !== (verified.format === "claim-plan-guide-v2")) return false;
+    const assembled = raw.format === "claim-plan-guide-v2" || raw.format === "claim-plan-guide-v3";
+    if ((assembled || verified.format !== undefined) && raw.format !== verified.format) return false;
     if (verified.guideCandidates !== undefined && raw.format !== "claim-plan-guide-v1" && !assembled) return false;
     const labels = verified.evidence.map((e) => e.label) as [string, ...string[]];
     if (raw.format === "claim-plan-v1" || raw.format === "claim-plan-glossary-v1" || raw.format === "claim-plan-guide-v1" || assembled) {
@@ -378,12 +381,12 @@ async function extract(env: Env, revisionId: string, model: ModelSpec, attemptId
     "Choose quoteBlock from the printed labels. The full block is the exact quote shown to the owner and must support the entire statement, every number and every condition. Never combine facts from separate blocks into one claim. " +
     "Each result claim describes one scalar result for one task, dataset, metric and model condition. Split different result rows into separate claims; do not put multiple results in valueText. Copy source digits and units without conversion. " +
     DATASET_ROLE + " " + CONDITIONS_ROLE + " " + VALUE_ROLE + " " + UNIT_ROLE + " " +
-    "Then draft 3–5 complete owner-facing source-guide sentences about the source's contribution or purpose, methods, assumptions, reported findings or results, relevant conditions and limitations when stated. For each item select all supporting labels, declare at most one combined scope clause with its own labels, then write one coherent, independently scoped central assertion. Scope labels must be a subset of the item's labels. The assertion is at most 800 characters and the scope clause at most 300. Preserve all necessary source-stated domain scope, conditions, comparisons and limitations in that clause, using natural owner-facing language without field headings. Use null only when no scope clause is needed; it never waives source completeness. Do not mix unrelated experiments or results in one assertion. The server preserves the assertion apart from outer whitespace, prefixes the complete visible scope and adds only missing sentence punctuation before review; no verbatim scope echo in the assertion is needed. Do not infer a whole section from its first block. " +
+    "Then draft 3–5 complete owner-facing source-guide sentences about the source's contribution or purpose, methods, assumptions, reported findings or results, relevant conditions and limitations when stated. For each item select all supporting labels, declare at most one combined scope clause with its own labels, then write one coherent, independently scoped central assertion. Scope labels must be a subset of the item's labels. The assertion is at most 800 characters and the scope clause at most 300. Preserve all necessary source-stated domain scope, conditions, comparisons and limitations in that clause, using natural owner-facing language without field headings. Return scope as a required array containing zero or one non-null clause object. Use [] only when no scope clause is needed; it never waives source completeness. Do not mix unrelated experiments or results in one assertion. The server preserves the assertion apart from outer whitespace, prefixes the complete visible scope and adds only missing sentence punctuation before review; no verbatim scope echo in the assertion is needed. Do not infer a whole section from its first block. " +
     "Then create 3–5 useful follow-up questions grounded in the supplied text without assuming a discipline or checklist. " +
     "Draft at most 12 glossary candidates with English and Russian term pairs and complete Russian definitions. Select each candidate's 1–4 supporting source labels before writing it. Each whole definition must retain the source's scope, conditions, comparisons and limitations; do not shorten a qualified definition into a broader one. The declared blocks must support both terms and every clause of that definition. Treat each term pair, complete definition and original labels as one independent candidate unit. " + GLOSSARY_MATH_ROLE + " " +
     "Keep task, metric, dataset and valueText in the source language; do not convert units or generalize a particular result.",
     content, extractionSchema(labels), documentLanguage(citable.map(({ passage }) => passage)), model, attemptId);
-  await put(env, revisionId, "distill-call1.json", { ...raw, format: "claim-plan-guide-v2" }, attemptId);
+  await put(env, revisionId, "distill-call1.json", { ...raw, format: "claim-plan-guide-v3" }, attemptId);
 }
 async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec, attemptId?: string | null) {
   const raw = await json<Raw<RetainedExtraction>>(env, revisionId, "distill-call1.json", attemptId);
@@ -416,16 +419,17 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec, at
   if (verifiedIndex !== verifiedClaims.length) throw new Error("The call-1 verifier lost candidate ordering.");
   verified.claims = synthesisCandidates;
   const guideDropped: { index: number; reason: string }[] = [];
-  const assembledGuide = raw.format === "claim-plan-guide-v2";
+  const assembledGuide = raw.format === "claim-plan-guide-v2" || raw.format === "claim-plan-guide-v3";
   const freshGuide = assembledGuide || raw.format === "claim-plan-guide-v1";
   const guideLabels = z.enum(blocks.map((block) => "[S1:" + block.id + "]") as [string, ...string[]]);
   const guideDrafts = !freshGuide ? undefined : assembledGuide
-    ? z.array(guideDraftSchema(guideLabels)).min(3).max(5).parse(raw.output.guide)
+    ? z.array(guideDraftSchema(guideLabels, raw.format === "claim-plan-guide-v3")).min(3).max(5).parse(raw.output.guide)
     : z.array(guideUnitSchema(guideLabels)).min(3).max(5).parse(raw.output.guide);
   const guideCandidates = guideDrafts?.flatMap((item, index) => {
       let unit: z.infer<ReturnType<typeof guideUnitSchema>>;
       if ("assertion" in item) {
-        reserve(memory, 12 * (item.assertion.length + (item.scope?.text.length ?? 0) + 64));
+        const scope = Array.isArray(item.scope) ? item.scope[0] ?? null : item.scope;
+        reserve(memory, 12 * (item.assertion.length + (scope?.text.length ?? 0) + 64));
         const assertion = item.assertion.trim();
         if (/[?？][.!?。！？\s]*$/u.test(assertion)) {
           guideDropped.push({ index, reason: "guide-candidate-question-assertion" }); return [];
@@ -433,8 +437,8 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec, at
         if (checkDistillContent(assertion, item.labels, revisionId).empty) {
           guideDropped.push({ index, reason: "guide-candidate-empty-assertion" }); return [];
         }
-        unit = { labels: item.labels, qualifiers: item.scope === null ? [] : [item.scope],
-          text: (item.scope === null ? "" : "(" + item.scope.text + ") ") + assertion
+        unit = { labels: item.labels, qualifiers: scope === null ? [] : [scope],
+          text: (scope === null ? "" : "(" + scope.text + ") ") + assertion
             + (/[.!。！…]$/u.test(assertion) ? "" : ".") };
       } else unit = item;
       const candidate = { id: "H" + index, ...unit };
@@ -473,7 +477,7 @@ async function verifyAndStore(env: Env, revisionId: string, model: ModelSpec, at
     return [{ id: "G" + index, ...item, labels: [...item.labels] }];
   });
   const artifact: Verified = { ...verified, guide, questions: raw.output.questions,
-    ...(assembledGuide ? { format: "claim-plan-guide-v2" as const } : {}),
+    ...(assembledGuide ? { format: raw.format as AssembledGuideFormat } : {}),
     ...(glossaryCandidates === undefined ? {} : { glossaryCandidates }),
     ...(guideCandidates === undefined ? {} : { guideCandidates }),
     evidence: [...new Set([...raw.output.claims.map((item) => item.quoteBlock), ...raw.output.guide.flatMap((item) => item.labels), ...glossaryLabels])].map((label) => ({ label, ...evidence(label) })),
@@ -567,7 +571,7 @@ async function synthesize(env: Env, revisionId: string, model: ModelSpec, attemp
     unit: item.unit, conditions: item.conditions }));
   const glossaryCandidates = verified.glossaryCandidates === undefined ? undefined : frozenGlossaryCandidates(verified);
   const guideCandidates = verified.guideCandidates === undefined ? undefined : frozenGuideCandidates(verified);
-  const assembled = verified.format === "claim-plan-guide-v2";
+  const assembled = verified.format === "claim-plan-guide-v2" || verified.format === "claim-plan-guide-v3";
   if ((assembled && guideCandidates === undefined) || (guideCandidates !== undefined && (!guideCandidates.length || glossaryCandidates === undefined)))
     throw new Error("No complete qualified guide candidates are available for synthesis.");
   const byLabel = new Map(verified.evidence.map((item) => [item.label, item]));
@@ -607,17 +611,17 @@ async function synthesize(env: Env, revisionId: string, model: ModelSpec, attemp
     content, schema,
     documentLanguage(verified.evidence.map((item) => item.quote)), model, attemptId);
   await put(env, revisionId, "distill-call2.json", { ...raw,
-    format: assembled ? "claim-plan-guide-v2" : guideCandidates !== undefined ? "claim-plan-guide-v1" : glossaryCandidates === undefined ? "claim-plan-v1" : "claim-plan-glossary-v1" }, attemptId);
+    format: assembled ? verified.format : guideCandidates !== undefined ? "claim-plan-guide-v1" : glossaryCandidates === undefined ? "claim-plan-v1" : "claim-plan-glossary-v1" }, attemptId);
 }
 async function prepareSynthesis(env: Env, revisionId: string, attemptId?: string | null): Promise<Prepared> {
   const verified = await json<Verified>(env, revisionId, "distill-verified.json", attemptId);
   const raw = await json<Raw<unknown>>(env, revisionId, "distill-call2.json", attemptId);
   if (!verified.evidence.length) throw new Error("No frozen source excerpts are available.");
   if (!raw.output) throw new Error("The retained source material did not produce supported understanding. No paid step will be repeated.");
-  if (raw.format !== undefined && raw.format !== "claim-plan-v1" && raw.format !== "claim-plan-glossary-v1" && raw.format !== "claim-plan-guide-v1" && raw.format !== "claim-plan-guide-v2")
+  if (raw.format !== undefined && raw.format !== "claim-plan-v1" && raw.format !== "claim-plan-glossary-v1" && raw.format !== "claim-plan-guide-v1" && raw.format !== "claim-plan-guide-v2" && raw.format !== "claim-plan-guide-v3")
     throw new Error("The retained synthesis format is unsupported.");
-  const assembled = raw.format === "claim-plan-guide-v2";
-  if (assembled !== (verified.format === "claim-plan-guide-v2")) throw new Error("The retained guide/digest protocol does not match its frozen candidates.");
+  const assembled = raw.format === "claim-plan-guide-v2" || raw.format === "claim-plan-guide-v3";
+  if ((assembled || verified.format !== undefined) && raw.format !== verified.format) throw new Error("The retained guide/digest protocol does not match its frozen candidates.");
   if (verified.guideCandidates !== undefined && raw.format !== "claim-plan-guide-v1" && !assembled)
     throw new Error("Qualified guide candidates require whole-unit selection.");
   const guidePlan = raw.format === "claim-plan-guide-v1" || assembled;

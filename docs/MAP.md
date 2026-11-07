@@ -363,13 +363,13 @@ re-distilled automatically.
    models. Reload and Save existing output remain storage only. Unknown retry replies retain the same request across
    reload/remount; a successful read of its old predecessor cannot authorize a different retry ID. A durable rejected intent enables a fresh explicit model choice without an in-flight duplicate later accepting that rejected ID.
 4. Use at most two bounded calls: labelled canonical text produces atomic claim cards, draft guide and at most twelve
-   glossary candidates. Fresh guide items declare source labels, one optional combined domain scope clause (at most
-   300 characters, with subset source labels) and one coherent assertion (at most 800 characters). Before review,
+   glossary candidates. Fresh guide items declare source labels, a required scope array of zero or one non-null
+   combined domain clause (at most 300 characters, with subset source labels) and one coherent assertion (at most 800 characters). Before review,
    code prefixes the complete scope in parentheses, preserves the assertion apart from outer whitespace, adds only
    missing sentence punctuation and freezes the checked full sentence as its original H0–H4 unit. Authored symbols
    are never deleted; question-ending assertions are rejected. It preserves
    ID gaps and the existing qualifier representation. No assertion echo or semantic classifier is used.
-   Fresh `claim-plan-guide-v2` call two selects whole supported H units without rewriting; semantic
+   Fresh `claim-plan-guide-v3` call two selects whole supported H units without rewriting; semantic
    review must reject missing/wrong source scope even when no clause was declared. Final code rechecks and
    copies complete text/bindings into guide Markdown. DONE requires 3–5 actual sentences; insufficient, ambiguous or
    over-five coverage stays readable PARTIAL without trimming, and the guide must remain nonempty. It also freezes
@@ -391,7 +391,9 @@ re-distilled automatically.
    survives, digest groups are empty and a validated `partialDigest` remains partial with zero claims. `claim-plan-v1`
    is the digest-only continuation for legacy `Verified` artifacts without frozen glossary candidates; markerless
    cached call two retains the full legacy prose Save/history path. `claim-plan-guide-v1` retains its old complete
-   guide/nested-plan behavior; old over-eight-total plans are rejected without truncation or raw mutation. The bound remains two calls with no paid retry.
+   guide/nested-plan behavior; v2 retains its nullable-object scope/flat-plan parser. V2/v3 raw and verified markers must
+   match exactly, including Save. The v3 array substitution is an unproven provider-compatibility hypothesis, not a
+   quality or runtime pass. Old over-eight-total plans are rejected without truncation or raw mutation. The bound remains two calls with no paid retry.
    Preserve a safe failure reason for the reader without retaining raw provider errors or credentials.
 5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
    an extra overview model call. Open it from Studio, load sources in bounded pages and Refresh to rescan changed
@@ -458,7 +460,7 @@ re-distilled automatically.
 
 K3 is not fully accepted or deployed. Historical retained runs recorded the ten baseline papers as `done`, an
 unchanged-revision reuse with no new inference, and four overflow answers in `claims` mode. Those runs predate the
-current `claim-plan-guide-v2` producer and do not qualify the exact current baseline corpus or producer. Required
+current `claim-plan-guide-v3` producer and do not qualify the exact current baseline corpus or producer. Required
 conditions for the French Transformer result and some LoRA anchors remain unresolved; statement-local numeric,
 citation and semantic-support gates remain open. Storage-only Save/recheck does not dispatch inference and does not
 qualify K3.
@@ -482,7 +484,7 @@ an unmatched backtick inside a fence cannot mask later prose references. Quote v
 bytes and folds only fallback slices; this reduces repeated work without changing evidence or quality gates.
 Repair defective PDF text only through the existing reviewed OCR/immutable Apply path; preserve old bytes and citations.
 For correct input, keep candidate statements atomic and complete, then review each against its own frozen evidence
-within the existing two calls. Fresh `claim-plan-guide-v2` selects original assembled H0–H4 guide and G0–G11 glossary candidates by ID and
+within the existing two calls. Fresh `claim-plan-guide-v3` selects original assembled H0–H4 guide and G0–G11 glossary candidates by ID and
 rechecks the copied `{labels,en,ru,definition}` units; fresh claim-plan digests use the closed C/A indexes above.
 `claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without glossary candidates, while
 markerless cached output retains the full legacy prose path. These producer checks do not establish semantic support

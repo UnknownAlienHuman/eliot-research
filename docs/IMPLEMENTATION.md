@@ -549,10 +549,12 @@ not model quality or paid-step replay.
 2. Verified excerpts → supported claim selection, whole guide-unit selection, digest selection and, for frozen glossary candidates,
    a glossary selection.
 
-Fresh call one and call two use raw marker `claim-plan-guide-v2`, also recorded on the new verified artifact.
+Fresh call one and call two use raw marker `claim-plan-guide-v3`, also recorded on the new verified artifact.
 `Verified.guideCandidates` keeps the existing frozen representation with original H0–H4
 identities, complete text, qualifiers and source labels. Call two returns strict `supportedGuide` IDs, not replacement
 guide prose. Missing/malformed, unknown or duplicate selections reject the fresh plan without a prose fallback.
+Retained `claim-plan-guide-v2` keeps its nullable-object scope parser and flat digest plan. Raw call two must match the
+exact frozen v2/v3 marker, including cached Save; neither version is reinterpreted as the other.
 Legacy `claim-plan-guide-v1` keeps its previously frozen guide units and nested digest plan; no assertion/scope assembly
 or promotion of old dropped guide candidates occurs during GET/history/Save. Verified artifacts without H candidates
 continue the previous producer: `claim-plan-glossary-v1` selects
@@ -592,8 +594,12 @@ the model does not transcribe canonical evidence. Claim quote/range and numeric 
 and a statement that adds numbers absent from it is rejected. Each call-two candidate carries that exact verified quote
 beside its statement and structured fields; `quoteBlock` remains its source identity.
 
-Fresh guide items declare `{ labels, scope: { labels, text } | null, assertion }`: 1–4 source-block labels, at most one
+Fresh guide items declare `{ labels, scope: [] | [{ labels, text }], assertion }`: 1–4 source-block labels, at most one
 combined domain scope clause, then one coherent independently scoped assertion, without mixing unrelated experiments.
+`scope` is required: the actual SDK/provider JSON schema encodes a non-null array with `minItems: 0`, `maxItems: 1`,
+and non-null object items. Missing/malformed scopes, two or more clauses, and v2 null/object wire values reject fresh
+v3 output without downgrade. Empty/singleton arrays produce exactly the same frozen text as v2 null/object values;
+normalization occurs only after the version-specific schema accepts the raw artifact.
 The assertion is structurally bounded to 800 characters and scope text to 300, keeping the assembled sentence below
 the existing 1200-character bound. Scope labels must be a subset of assertion labels; its meaningful content,
 references and numbers are checked against only its own declared canonical quotes. Before freezing or call two,
@@ -602,7 +608,7 @@ with no technical field heading in the owner text. It deletes no authored symbol
 a terminal period only when the assertion lacks an ending period, exclamation mark or ellipsis. Question-ending
 assertions are rejected before construction. No verbatim scope echo, case folding or semantic guess is required.
 The assembled text is checked as a complete unit and frozen using the existing `{id,labels,qualifiers,text}` shape,
-with the combined scope retained as its single qualifier (or an empty array for null scope). H IDs retain original
+with the combined scope retained as its single qualifier (or an empty array for absent scope). H IDs retain original
 call-one indexes through drops. Call two reviews that exact assembled text, scope and original excerpts, and must
 reject missing/wrong source scope, conditions, comparisons or limitations even when scope is absent. These checks
 do not establish semantic completeness.
@@ -611,11 +617,16 @@ guide Markdown, converting only declared citations to persistent labels. It coun
 trimming text: fewer than three, more than five or ambiguous markup stays readable `partial`; an empty guide fails.
 The retained excerpt pool remains the union of declared claim `quoteBlock` selections, guide `labels` and original
 valid glossary-candidate labels, including valid selections from later dropped candidates. No bindings are inferred.
-Legacy raw call one keeps its original verifier: `claim-plan-guide-v1` retains its complete-text/qualifier checks,
+This is a bounded compatibility experiment, not a proven Cloudflare defect or runtime/quality pass. A retained
+pinned-SDK comparison measured v1/v2 first schemas at 9812/9967 bytes, which does not establish substantial schema
+growth. Whether the v2 structured `anyOf[object,null]` branch affects provider handling remains unproven until real
+qualification. The offline v2/v3 SDK-schema comparison changes only `guide.scope` and its necessary description;
+existing primitive-nullable fields remain identical.
+Legacy raw call one keeps its original verifier: v2 keeps nullable-object scope assembly, v1 its complete-text/qualifier checks,
 and pre-H raw output retains first-supported-sentence handling. Legacy verified/cached guide paths keep their existing
 GET/history/Save behavior. Missing new scope/assertion fields do not opt old output into the fresh protocol, and
 historical H/C/G identities are never synthesized or renumbered.
-Glossary candidates use `{ labels, en, ru, definition }`; fresh `claim-plan-guide-v2` and retained guide/glossary plans see those frozen
+Glossary candidates use `{ labels, en, ru, definition }`; fresh `claim-plan-guide-v3` and retained guide/glossary plans see those frozen
 units with their exact excerpts and return only `supportedGlossary` G IDs. Code rechecks the selected full candidates
 and copies their fields and label bindings; it does not request, accept or substitute free glossary prose in this
 branch. `claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without frozen glossary
