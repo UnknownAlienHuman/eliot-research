@@ -555,6 +555,12 @@ rechecks labels/content/numbers, and copies the complete `{ labels, en, ru, defi
 selected-label binding converted to persistent revision citations. G IDs remain their original extraction indexes;
 unsupported/dropped candidates do not renumber later ones, and duplicate or unknown selections reject the plan. This
 verifies declared references and numeric/content constraints, not semantic glossary quality.
+For Russian mathematical definitions, schema descriptions and first-call drafting require explicit source object or
+symbol names for every operation and operand, preserving operand identities, operation order, composition and sum
+relationships, and stated conditions. Call two must review those roles in the frozen wording and reject the whole G unit
+when an ambiguous pronoun changes the referent, a predicate is assigned to another object, or a relationship is
+unsupported. It must not rewrite the definition to repair it. These are semantic review contracts, not a heuristic
+classifier or deterministic entailment proof.
 
 Fresh call two also returns ordered `methods`/`findings`/`limits` `digestPlan` groups with at most eight unique IDs total.
 The closed selection set is the exact C candidate indexes supplied to call two plus A0–A7, the original zero-based
@@ -600,6 +606,10 @@ request/validation changes do not establish paid-service or quality acceptance.
 
 Code verifies quotes and numbers between calls. Draft statements are hypotheses, not evidence: the second call checks
 each retained candidate against its own quote and can add a small number of atomic facts from the same frozen excerpts.
+The `dataset` field names only a reported dataset, corpus or benchmark, never a model or architecture; it is `null`
+when no such data identity is stated. Source-stated model/configuration and other qualifiers belong in `conditions`.
+Extraction and additional-claim schema descriptions and generation share that role contract. Call two must reject a
+candidate with wrong field roles even when its literal field values occur in the quote; it does not reassign fields.
 Fresh candidates that already fail the scalar-result projection are excluded before the second call. Their originally
 selected source blocks remain in the same declared evidence pool; code neither splits a compound candidate nor creates
 facts from it. Historical verified candidate IDs are not recomputed during cached-output rechecks.

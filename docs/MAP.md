@@ -367,10 +367,16 @@ re-distilled automatically.
    are frozen as their original G0–G11 indexes before invalid candidates are dropped, leaving intentional gaps. Fresh
    call two uses `claim-plan-glossary-v1` when those candidates exist and returns `supportedGlossary` G IDs only; it
    does not rewrite glossary entries. Code rechecks and copies each selected frozen candidate with its original
-   citation binding. The same response uses an ordered methods/findings/limits `digestPlan` selecting at most eight
-   unique IDs from the exact C candidate indexes or A0–A7 original `additionalClaims` indexes. After final claim
+   citation binding. Russian mathematical definitions name source objects/symbols and operands explicitly, preserving
+   operation/composition/sum relationships and conditions; call-two selection must reject whole units with unsupported
+   roles or ambiguous referents without rewriting them. The same response uses an ordered methods/findings/limits
+   `digestPlan` selecting at most eight unique IDs from the exact C candidate indexes or A0–A7 original
+   `additionalClaims` indexes. After final claim
    validation, code materializes surviving checked units with complete statements as blockquotes, qualifying
-   structured scope fields and authority citations outside authored content; unknown/rejected IDs fail. If no claim
+   structured scope fields and authority citations outside authored content; unknown/rejected IDs fail.
+   For each claim, `dataset` names a reported dataset/corpus/benchmark or remains `null` when absent; model/architecture
+   names never fill that field, and source-stated model/configuration belong in `conditions`. Extraction/additions
+   share this role contract and call-two review must reject wrong roles even when the words occur in the quote. If no claim
    survives, digest groups are empty and a validated `partialDigest` remains partial with zero claims. `claim-plan-v1`
    is the digest-only continuation for legacy `Verified` artifacts without frozen glossary candidates; markerless
    cached call two retains the full legacy prose Save/history path. The bound remains two calls with no paid retry.
