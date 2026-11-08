@@ -1466,7 +1466,8 @@ Failed or paused jobs do not resume automatically; previously queued explicit wo
 scheduler. Deployment must account for already queued or running work. The Neuron readout is informational.
 
 During refresh, each enabled compatible provider supplies its bounded JSON `/models` catalogue; Workers AI uses its
-native binding. Partial failure preserves that provider's last good metadata and its original routing configuration.
+native binding. A unique provider `vision` value of canonical `true`/`false` (string or boolean wire) maps to `supportsImages`; other wire values remain unknown at the discovery boundary and never overwrite the factory flag restored in `models.ts`.
+Partial failure preserves that provider's last good metadata and its original routing configuration.
 Changing a provider's base URL or Gateway route invalidates old external metadata until an explicit refresh succeeds.
 Neither API nor HTML prices are required or parsed for new model selection/admission. Missing usable input metadata
 or assembly headroom blocks dispatch; a provider output maximum may remain unknown. UI filters perform no discovery

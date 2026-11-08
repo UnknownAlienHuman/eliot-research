@@ -635,6 +635,24 @@ describe("native contradictory catalogue entries", () => {
       { property_id: "reasoning_effort", value: { supported_efforts: ["low"] } },
     ])).not.toHaveProperty("nativeReasoningEffort");
   });
+
+  it("maps one published boolean vision property to supportsImages; absent/non-boolean/duplicate stays unknown", () => {
+    type NativeRow = Awaited<ReturnType<Ai["models"]>>[number];
+    const row = (visionProperties: unknown[]): NativeRow => ({ id: "catalogue-uuid", name: "@cf/meta/vision-model",
+      task: { name: "Text Generation" }, properties: [{ property_id: "context_window", value: "131000" }, ...visionProperties] } as unknown as NativeRow);
+    const native = (visionProperties: unknown[]) => nativeModel(row(visionProperties), "2026-11-07");
+    expect(native([{ property_id: "vision", value: true }])).toMatchObject({ supportsImages: true });
+    expect(native([{ property_id: "vision", value: false }])).toMatchObject({ supportsImages: false });
+    expect(native([{ property_id: "vision", value: "true" }])).toMatchObject({ supportsImages: true });
+    expect(native([{ property_id: "vision", value: "false" }])).toMatchObject({ supportsImages: false });
+    expect(native([])).not.toHaveProperty("supportsImages");
+    expect(native([{ property_id: "vision", value: "TRUE" }])).not.toHaveProperty("supportsImages");
+    expect(native([{ property_id: "vision", value: 1 }])).not.toHaveProperty("supportsImages");
+    expect(native([
+      { property_id: "vision", value: true },
+      { property_id: "vision", value: false },
+    ])).not.toHaveProperty("supportsImages");
+  });
 });
 
 describe("frozen gateway protocol transports", () => {

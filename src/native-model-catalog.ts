@@ -13,6 +13,7 @@ export function nativeModel(row: NativeRow, checkedOn: string): CatalogModel | n
     return entries?.length === 1 ? entries[0]?.value : undefined;
   };
   const context = property("context_window");
+  const vision = property("vision");
   const contextTokens = typeof context === "string" && /^\d+$/.test(context) &&
     Number.isSafeInteger(Number(context)) && Number(context) > 0 ? Number(context) : null;
   // No currency parsing: native price/rate/cost properties (including per-neuron
@@ -23,6 +24,8 @@ export function nativeModel(row: NativeRow, checkedOn: string): CatalogModel | n
     Array.isArray(effort.supported_efforts) && effort.supported_efforts.includes("high");
   return { route: "workers-ai:" + row.name, id: row.name, label: row.name, enabled: true,
     contextTokens, ...(contextTokens === null ? {} : { contextWindowTokens: contextTokens }), maxOutputTokens: null, outputReserveTokens: 8192,
+    ...(vision === true || vision === "true" ? { supportsImages: true }
+      : vision === false || vision === "false" ? { supportsImages: false } : {}),
     ...(highEffort ? { nativeReasoningEffort: "high" as const } : {}),
     checkedOn };
 }
