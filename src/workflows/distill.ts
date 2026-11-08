@@ -441,16 +441,24 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   const streamed: { usage: GeneratedUsage | undefined; finishReason: string | null } | undefined = native ? { usage: undefined, finishReason: null } : undefined;
   let responseBudgetExceeded = false;
   let nativeValidationCause: string | undefined;
+  let schemaFailureOutput: unknown;
+  let schemaFailureCause: unknown;
+  let streamedComplete = false;
+  let streamedTruncated = false;
   const deadlineSignal = AbortSignal.timeout(Math.min(6 * 60_000, remaining));
   try {
     if (streamed) {
-      let output: unknown, streamError: unknown, complete = false, streamTruncated = false;
+      let output: unknown, streamError: unknown;
       const outputSpec = native && compactMode && ordinal === 1 ? Output.json() : Output.object({ schema });
       const observedOutput = { ...outputSpec, async parseCompleteOutput(...args: Parameters<typeof outputSpec.parseCompleteOutput>) {
         if (!/\S/u.test(args[0].text)) nativeValidationCause = "Native final output contained no text.";
         try { return await outputSpec.parseCompleteOutput(...args); }
         catch (error) {
           const cause = NoObjectGeneratedError.isInstance(error) ? error.cause : error;
+          if (native && compactMode && ordinal === 2 && streamedComplete && !streamedTruncated && !responseBudgetExceeded && !deadlineSignal.aborted && args[1]?.finishReason === "stop" && TypeValidationError.isInstance(cause) && cause.cause instanceof z.ZodError) {
+            schemaFailureOutput = cause.value;
+            schemaFailureCause = cause;
+          }
           nativeValidationCause ??= JSONParseError.isInstance(cause) ? "Native final output could not be parsed as JSON."
             : TypeValidationError.isInstance(cause) ? "Native final JSON did not match the required schema."
             : "Native final output validation failed (unclassified SDK error).";
@@ -479,22 +487,23 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
           if (chunk.type !== "finish-step") return;
           streamed.finishReason = chunk.finishReason;
           streamed.usage = chunk.usage.raw ? chunk.usage : undefined;
-          streamTruncated = chunk.rawFinishReason === "stream-truncated";
-          complete = chunk.finishReason === "stop" && chunk.rawFinishReason !== undefined;
+          streamedTruncated = chunk.rawFinishReason === "stream-truncated";
+          streamedComplete = chunk.finishReason === "stop" && chunk.rawFinishReason !== undefined;
         },
         onEnd: event => { output = event.output; },
         onError: ({ error }) => { streamError ??= error; },
       });
       await response.consumeStream({ onError: error => { streamError ??= error; } });
       deadlineSignal.throwIfAborted();
-      if (!complete) nativeValidationCause = streamed.finishReason === "length" ? "model reached output bound before complete output"
+      if (!streamedComplete) nativeValidationCause = streamed.finishReason === "length" ? "model reached output bound before complete output"
         : streamed.finishReason === null || streamed.finishReason === "stop" ? "Native output is missing an explicit normal finish."
-        : streamTruncated ? "Native output ended with a non-normal finish (stream-truncated)."
+        : streamedTruncated ? "Native output ended with a non-normal finish (stream-truncated)."
         : "Native output ended with a non-normal finish.";
       if (streamError !== undefined) throw streamError;
-      if (!complete || output === undefined) {
+      if (!streamedComplete || output === undefined) {
         nativeValidationCause ??= "Native final validation result is unavailable.";
-        throw new NoOutputGeneratedError({ message: "The native stream did not produce complete validated output." });
+        throw new NoOutputGeneratedError({ message: "The native stream did not produce complete validated output.",
+          ...(TypeValidationError.isInstance(schemaFailureCause) ? { cause: schemaFailureCause } : {}) });
       }
       return { output, usage: toStoredUsage(streamed.usage, tokenLimit, tokenLimitKind, outputBudget) };
     }
@@ -509,9 +518,12 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   } catch (error) {
     const localDeadlineObserved = deadlineSignal.aborted;
     const detail = structuredFailureDetail(error, result, streamed);
+    const failureCause = NoObjectGeneratedError.isInstance(error) ? error.cause
+      : NoOutputGeneratedError.isInstance(error) ? error.cause : error;
     let failure: string;
     if (detail || streamed?.usage || outputBudget) {
-      const failed = { output: null, usage: toStoredUsage(detail?.usage ?? streamed?.usage, tokenLimit, tokenLimitKind, outputBudget),
+      const retainedOutput = native && compactMode && ordinal === 2 && streamedComplete && !streamedTruncated && !responseBudgetExceeded && !deadlineSignal.aborted && schemaFailureOutput !== undefined && failureCause === schemaFailureCause ? schemaFailureOutput : null;
+      const failed = { output: retainedOutput, usage: toStoredUsage(detail?.usage ?? streamed?.usage, tokenLimit, tokenLimitKind, outputBudget),
         ...(compactMode ? { format: COMPACT_PRODUCER_FORMAT } : {}) };
       try { await put(env, revisionId, artifactName, failed, attemptId); } catch { /* Preserve the failure without repeating inference if storage is unavailable. */ }
     }

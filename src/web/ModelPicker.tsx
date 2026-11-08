@@ -104,6 +104,11 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, defau
   }
   const selectedIssue = value === '' ? null : routeIssue(value, selectedMatches);
   const inheritedIssue = defaultRoute ? routeIssue(defaultRoute, defaultMatches) : null;
+  const inheritedCompactCaption = inherited
+    ? emptyLabel
+      ? emptyLabel.includes(inherited.label) ? emptyLabel : emptyLabel + ' (' + inherited.label + ')'
+      : 'Default model (' + inherited.label + ')'
+    : defaultRoute ? 'Project default model' : 'Choose a provider first';
   const activeModel = value !== '' ? selected : inherited;
   const activeRoute = value !== '' ? value : defaultRoute;
   const activeIssue = value !== '' ? selectedIssue : inheritedIssue;
@@ -187,7 +192,7 @@ export function ModelPicker({ label, choices, value, onChange, emptyLabel, defau
                 title={selected?.label ?? inherited?.label}
                 value={displayedCompactValue} disabled={loading || error !== '' || effectiveProvider === ''}
                 onChange={(event) => chooseModel(event.currentTarget.value)}>
-                <option value='' disabled={compactProvider !== '' || defaultRoute === undefined}>{compactProvider === '' ? inherited?.label ?? (defaultRoute ? 'Project default model' : 'Choose a provider first') : 'Choose a model'}</option>
+                <option value='' disabled={compactProvider !== '' || defaultRoute === undefined}>{compactProvider === '' ? inheritedCompactCaption : 'Choose a model'}</option>
                 {value !== '' && compactProvider === currentProvider && !compactModels.some((model) => model.route === value)
                   ? <option value={value} disabled={!selected || !canSelect(selected)}>
                     {selected ? optionLabel(selected) + ' — saved selection' : 'Saved selection unavailable'}

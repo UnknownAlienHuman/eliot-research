@@ -369,6 +369,24 @@ function assertC3C4StaticSelftests() {
   assert.equal(c3('Adam defaults: alpha = 0.001 seconds, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8.'), false, 'A value with an incompatible unit must fail.');
   assert.equal(c3('Adam defaults: alpha = 0.001%, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8.'), false, 'A percentage suffix must fail.');
   assert.equal(c3('Adam uses alpha, beta1, beta2 and epsilon. The values are 0.001, 0.9, 0.999 and 1e-8.'), false, 'Unbound presence of roles and values must fail.');
+  // Actual stored C3 (eval/out/k2/k2-C3-e00b2530.json): alpha carries the
+  // parenthetical gloss "(шаг / learning rate)" before " = 0.001". The
+  // bounded structural gloss drop must bind alpha, while AdaMax/Transformer
+  // other-scope bindings stay excluded.
+  const actualC3 = [
+    'В статье «Adam: A Method for Stochastic Optimization» (Kingma & Ba, ICLR 2015, S7) в псевдокоде Algorithm 1 указаны «хорошие настройки по умолчанию для проверенных задач машинного обучения» [S7:12]:',
+    '- **α (шаг / learning rate) = 0.001**',
+    '- **β₁ = 0.9**',
+    '- **β₂ = 0.999**',
+    '- **ε = 10⁻⁸**',
+    'Дополнительно, для варианта **AdaMax** (на основе нормы бесконечности) рекомендованы по умолчанию α = 0.002, β₁ = 0.9 и β₂ = 0.999 [S7:49].',
+    'Замечание: в работе «Attention Is All You Need» (S9) для Transformer использовались те же β₁ = 0.9, но β₂ = 0.98 и ε = 10⁻⁹ [S9:35] — то есть β₂ и ε подбирались под задачу, а не брались из дефолтов Adam.',
+  ].join(EOL);
+  assert.equal(c3(actualC3), true, 'Actual stored C3 with parenthetical alpha gloss must bind alpha and exclude other-scope variants.');
+  assert.equal(c3(actualC3.replace('**α (шаг / learning rate) = 0.001**', '**α (шаг / learning rate) = 0.9**').replace('**β₁ = 0.9**', '**β₁ = 0.001**')), false, 'Swapped default alpha/beta roles in the actual C3 must fail.');
+  assert.equal(c3(actualC3.replace('**α (шаг / learning rate) = 0.001**', '**α не равно (шаг / learning rate) = 0.001**')), false, 'Negated alpha annotation in the actual C3 must fail.');
+  assert.equal(c3(actualC3.replace('**α (шаг / learning rate) = 0.001**', '**α (шаг / learning rate) = 0.001 seconds**')), false, 'Unit-bearing alpha value in the actual C3 must fail.');
+  assert.equal(c3(actualC3.replace('**α (шаг / learning rate) = 0.001**', '**α (seconds) = 0.001**')), false, 'Parenthetical-seconds alpha annotation in the actual C3 must fail.');
 
   assert.equal(c4('Transformer uses sinusoidal positional encodings, whereas BERT uses learned positional embeddings.'), true, 'English model/encoding bindings must pass.');
   assert.equal(c4('Transformer — синусоидальные позиционные кодировки, а BERT — обучаемые позиционные эмбеддинги.'), true, 'Russian model/encoding bindings must pass.');
@@ -1785,9 +1803,7 @@ if (journeyOnly) {
     assert(normSaved === normC3 || normSaved.endsWith(normC3), 'Saved body must preserve the C3 factual text after reference normalization.');
     const savePrefixLen = normSaved.length - normC3.length;
     assert(savePrefixLen >= 0 && savePrefixLen <= 300, 'Any save prefix must stay concise.');
-    const savedChecks = checkAnswer('C3', pageGet1.body.page.body);
-    const adamCheck = savedChecks.find((ch) => ch && ch.name === 'Adam defaults');
-    assert(adamCheck && adamCheck.passed === true, 'Saved body must keep the C3 calibration facts true.');
+    assert(checkAdamBindings(pageGet1.body.page.body) === true, 'Saved body must keep the C3 calibration facts true.');
     const pickPage = (p) => ({ body: p.body, labels: (p.citations || []).map((c) => c && c.label) });
     assert.deepEqual(pickPage(pageGet1.body.page), pickPage(saveRepeat.body.page), 'UI POST and API repeat must return the same stored body/cites.');
     assert.deepEqual(pickPage(pageGet2.body.page), pickPage(pageGet1.body.page), 'Repeated GETs must return the same stored body/cites.');

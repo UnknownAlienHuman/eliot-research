@@ -342,7 +342,9 @@ links. A completed-before-Stop or cancelled-before-text outcome remains `NOT_RUN
   the provider, not the questions, source bytes, citation rules or quality gates.
 - Every completed answer has at least one citation, `invalidLabels = 0`, and every cited range opens.
 - C1–C4 contain the expected values and conditions. O8 abstains where the corpus lacks the answer.
-- Owner judges O1, O2, O3 and O8 at least as useful and honest as the recorded NotebookLM baseline.
+- Owner manually reviews semantic entailment, coverage, usefulness and honesty for every O1–O8 answer against the
+  recorded NotebookLM baseline. All eight remain `REVIEW_REQUIRED / NOT_AUTOMATED`; the evaluator does not assess
+  owner acceptance. Mechanical checks, including O8 abstention, do not waive this review.
 - Each turn respects its recorded input/output, call and time bounds and provider limits; eval reports known token
   usage separately from unknown usage. It does not convert tokens into Cloudflare Neurons or infer monetary prices.
 
@@ -352,11 +354,36 @@ Promote tighter thresholds after three comparable runs rather than making one pr
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
-K2 is not fully accepted or deployed: citation validity, latency and owner quality review remain open. The unchanged
-twelve-question benchmark uses the tracked [baseline summary](../eval/arxiv-10/baseline.md). Full NotebookLM answers
-were retained under the git-ignored `eval/out/notebooklm-20261026/answers.md`; they are absent from a fresh checkout.
-See [evidence availability](../eval/README.md#comparison-evidence) for recovery and the summary fallback. Comparison
-results belong in the PR and do not replace these gates. Neither K2 nor K3 is deployed.
+K2 remains unaccepted and not deployed. On 2026-11-08, one full twelve-question invocation at `a0ad9afd` in chat
+`38162177-86be-4647-bbba-430ef07aaa0d` terminated with exit 1. All twelve turns were terminal: eleven completed and
+O6 partial. O2 took 97,506 ms, exceeding the unchanged 90-second hard gate. C3's initial false was a parenthetical/
+gloss-unit checker false-negative; pure/static guard checks, including the seconds-unit control, verify the four
+retained default values.
+An initial stored-only regrade 404 used caller fallback scope after `ELIOT_EVAL_PROJECT` was omitted, rather than
+the confirmed seeded project/chat. The correctly scoped stored-only regrade completed once: all twelve turn IDs
+and usage stayed unchanged, no rows were added, and C3 checks true. Comparison backup/new SHA-256 prefixes are
+`1766AC39`/`9C2B5F10`. Original exit 1 stays recorded; O2/O6 failures and O1–O8 semantic/owner reviews remain open.
+
+This run opened 337/337 exact citation ranges. First-text p50/p95 was 9,739/36,150 ms; total p50/p95 was
+44,301/97,506 ms. Reported usage is known: 2,592,971 input, 2,140,672 cached and 25,493 output tokens.
+Provider capacity is UNKNOWN for all twelve turns. The report's aggregate 0 sums no known capacity values and is
+not a zero provider limit. The native Flash global models and catalogue were unchanged; Gateway remained null.
+See the retained [comparison](../eval/out/k2/compare.md) and
+[single-run capture](../eval/out/k2-run-a0ad-20261108-055450/). These mechanical observations do not accept quality.
+
+A separate owner-created GLM 5.3 C2 control in chat `bb36bc4a-9ac3-44c1-8d93-bde749693b30`, turn
+`6f5597c1-cc58-4d86-84dd-61a84e4a904c`, completed with ten explicit source/revision pairs matching the seed in order.
+First text took 12,698 ms and total time 14,133 ms; usage was 208,881 input, 0 cached and 345 output tokens, with
+requested/applied budget 8,192/8,192 and zero invalid labels. Both ranges passed: block 35 `[20646,21521)` and
+block 36 `[21521,21979)`. Flash defaults, catalogue and null Gateway remained unchanged. The per-turn profile is
+not recorded; the catalogue advertises high. This single new-chat control has different history from the full
+benchmark and does not close model, K2 or owner acceptance. See the retained
+[GLM C2 capture](../eval/out/audit-compact-20261108/).
+
+The unchanged benchmark uses the tracked [baseline summary](../eval/arxiv-10/baseline.md). Full NotebookLM answers
+remain in ignored `eval/out/notebooklm-20261026/answers.md`, absent from a fresh checkout. See
+[evidence availability](../eval/README.md#comparison-evidence) for recovery and the summary fallback.
+Comparison results do not replace acceptance. Neither K2 nor K3 is deployed; K6 stays frozen.
 
 ## K3 — Distill
 
@@ -399,7 +426,10 @@ Large selections can answer from claims. An unchanged revision is never re-disti
    Call two receives unique evidence once plus candidate-to-`evidenceId` bindings. Its output boundary consumes only
    selections, rejections and guide, ignoring outer metadata; `Output.object`, strict decision fields, IDs and
    duplicate checks remain. Reasons stay nonempty diagnostic prose, with brevity requested rather than a 160-character
-   scalar bound; existing per-call limits apply, and full decoded reasons remain in Raw2 rather than owner facts.
+   scalar bound; existing per-call limits apply, and validated Raw2 retains reasons rather than owner facts.
+   Only a matching normal-final native compact call-two Zod-backed SDK TypeValidationError may retain already
+   SDK-decoded JSON privately in existing Raw2 as untrusted output. Strict validation still fails the attempt,
+   publishes zero claims and leaves `canRecover` false and Save at 409; other failure paths retain null output.
    Metadata values never enter evidence or published claims. Missing decisions remain
    unknown, with no added facts or rewritten statements. Compact envelope/non-array failures persist a safe reason
    in the existing attempt-fenced `distill_error` before Workflow reconstruction, preserving it after prototype loss.
@@ -477,17 +507,14 @@ K3 is not fully accepted or deployed. Retained legacy runs recorded ten baseline
 and four claim-mode overflow answers, but they do not qualify the compact producer or its current corpus.
 A1-A3, C1-C4, semantic support, full-corpus/reuse acceptance, latency and owner review remain open.
 
-On 2026-11-07, bounded compact controls used the same unchanged Transformer revision with Low reasoning.
-Flash call one failed on an array over 32 candidates after 82.506 s, reporting 12,298 input and 4,151 output tokens.
-A separate DeepSeek V4.1 call one ended with `length` after 60.108 s, reporting 12,057 input and 8,192 output tokens.
-Flash control `dc9ed7ac-baf1-4384-a9ce-bf099b238066` failed after 94.522 s, with 12,298 input and 5,037 output
-tokens; its 61-candidate JSON also contained `$schema` and was rejected by the decoded outer boundary before call two.
-Those three controls stopped before call two. Control `88d91f54-7a1d-40a2-95fb-a90e91cffa27` passed the first step,
-then failed review SDK validation at `selected.0.reason` over 160 characters. Its two calls took 91.560 s and
-reported 19,056 input, 5,176 output and 0 cached tokens, with requested budgets 8,192/4,096; it published zero claims
-and no guide or digest. The archived dc9 view matched its retained content except for `currentAttemptId`.
-The outer-metadata boundary is fixed offline. No paid repeat has run after the final reason-field fix; full K3
-semantic and corpus gates remain OPEN. Global defaults remain Flash; successor quality remains unqualified.
+On 2026-11-08, fresh Flash Low attempt `e30b364e-8f7f-404d-b3b7-c43d51074f3f` failed call-two SDK validation at
+`selected.10.candidateId` with `invalid_value`. Its two calls took 85.912 s and reported 19,651 input, 3,922 output
+and 0 cached tokens; it published zero claims and no guide or digest. The received candidate ID is UNKNOWN:
+immutable historical Raw2 contains `output: null`, and `canRecover` is false, so these artifacts cannot recover the
+attempt. The later retention rule does not retroactively enrich that null or reveal the received ID.
+The archived `88d91f54…` view matched all 16 compared fields; only the `currentAttemptId` projection changed.
+See the retained [terminal evidence](../eval/out/audit-compact-20261108/). This failed control does not qualify K3:
+A1-A3, C1-C4, scope/citation, full-corpus semantic and owner-review gates remain OPEN. K6 stays frozen.
 
 **Remaining quality work.** Diagnose each retained failure against its exact revision: conversion loss,
 missing evidence, lost statement conditions, numeric-format rejection or unsupported prose.

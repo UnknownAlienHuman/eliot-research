@@ -2663,6 +2663,60 @@ describe("compact K3 producer", () => {
     } finally { f.db.close(); }
   });
 
+  it("retains whole unknown-ID native compact review only as untrusted Raw2 and rejects publication", async () => {
+    const document = documentWithBlocks([{ type: "paragraph", text: "A projection update preserves the residual path.\n" }]);
+    const model: ModelSpec = { ...snapshot, route: "workers-ai:@cf/zai-org/glm-5.3-flash",
+      id: "@cf/zai-org/glm-5.3-flash", nativeReasoningEffort: "low" };
+    const f = fixture(model.route, document);
+    f.db.prepare("UPDATE source_revision SET distill_request_json=?,distill_token_limit_kind='unknown',distill_token_limit=NULL WHERE id=?")
+      .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), revisionId);
+    const extraction = { candidates: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The projection update preserves a residual path." }] };
+    const unknownReview = { selected: [{ candidateId: "C999", reason: "Fixture unknown ID." }], rejected: [] };
+    const sdk = await vi.importActual<typeof AISDK>("ai");
+    const transport = await vi.importActual<typeof ModelTransport>("../model-transport");
+    vi.mocked(experimental_streamTextLowMemory).mockImplementation(sdk.experimental_streamTextLowMemory);
+    vi.mocked(resolveModelTransport).mockImplementation(transport.resolveModelTransport);
+    vi.mocked(Output.json).mockReset(); vi.mocked(Output.object).mockReset();
+    let bindingCalls = 0;
+    vi.mocked(Output.json).mockImplementation(options => sdk.Output.json(options));
+    vi.mocked(Output.object).mockImplementation(options => sdk.Output.object(options));
+    Object.assign(f.env, { AI: { run: async () => {
+      const output = bindingCalls++ === 0 ? extraction : unknownReview;
+      const frame = (data: unknown) => "data: " + JSON.stringify(data) + "\n\n";
+      return new Response(frame({ choices: [{ index: 0, delta: { content: JSON.stringify(output) }, finish_reason: null }] })
+        + frame({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })
+        + frame({ choices: [], usage: { prompt_tokens: 201, completion_tokens: 17, total_tokens: 218 } })
+        + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    } } });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+    try {
+      const steps = await run(f, false, model, "compact-k3-v1");
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source", "verify source excerpts", "review and synthesize"]);
+      expect(experimental_streamTextLowMemory).toHaveBeenCalledTimes(2);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+      expect(bindingCalls).toBe(2);
+      const row = f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,claim_count AS count,distill_error AS error FROM source_revision WHERE id=?").get(revisionId);
+      expect(row).toMatchObject({ state: "failed", calls: 2, count: 0 });
+      expect(String((row as { error?: unknown }).error)).toContain("Native final JSON did not match the required schema");
+      const rawSecond = JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null");
+      expect(rawSecond).toMatchObject({ format: "compact-k3-v1", output: unknownReview });
+      expect(JSON.stringify(rawSecond.output)).toContain("C999");
+      expect(f.bodies.has(prefix + "guide.md")).toBe(false);
+      expect(f.bodies.has(prefix + "digest.md")).toBe(false);
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
+      await expect(requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true }))
+        .rejects.toMatchObject({ status: 409 });
+      expect(f.bodies.has(prefix + "checked/distill.json")).toBe(false);
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      expect(report).toMatchObject({ state: "failed", kept: 0, usage: { calls: 2 } });
+      expect(JSON.stringify(report)).not.toContain("C999");
+      expect(JSON.stringify(report)).not.toContain("Fixture unknown ID.");
+      const claims = f.db.prepare("SELECT COUNT(*) AS count FROM claim WHERE source_revision_id=?").get(revisionId) as { count: number };
+      expect(claims.count).toBe(0);
+      expect(network).not.toHaveBeenCalled();
+    } finally { vi.mocked(Output.json).mockReset(); vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
+  });
+
   it("recovers committed compact claims and digest as partial when finish-report publication is interrupted", async () => {
     const document = documentWithBlocks([{ type: "paragraph", text: "The projection update preserves the residual path.\n" }]);
     const model: ModelSpec = { ...snapshot, route: "workers-ai:fixture", id: "fixture", maxOutputTokens: null };

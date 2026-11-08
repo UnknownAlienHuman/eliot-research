@@ -592,9 +592,9 @@ boundary consumes only selections, rejections and guide, ignoring other outer me
 `Output.object`. Decision items, candidate IDs and duplicate checks remain strict; retained raw artifacts stay
 immutable. Review selects or rejects candidate IDs with nonempty diagnostic reasons. Brief wording is prompt
 guidance, not a 160-character scalar bound; existing per-call output and materialization limits bound this prose.
-Raw2 preserves the full decoded reason, which supplies no claim, guide or digest facts. A missing decision remains
-unknown and cannot implicitly select or reject that candidate. Review introduces no new facts, additional claims
-or rewritten statements. A selected
+Validated Raw2 preserves the full decoded reason, which supplies no claim, guide or digest facts.
+A missing decision remains unknown and cannot implicitly select or reject that candidate. Review introduces no new
+facts, additional claims or rewritten statements. A selected
 candidate must remain supported by its own bound evidence, including its qualifiers and conditions; matching quote
 bytes or numeric literals alone does not establish semantic support.
 
@@ -645,17 +645,14 @@ consumption and final validation under the same owned deadline. A local response
 local reason. There is no manual JSON/SSE collector, parser or repair call. Offline single-consumer checks do not
 measure exact V8 heap retention or establish model quality.
 
-On 2026-11-07, bounded compact controls used the same unchanged Transformer revision with Low reasoning.
-Flash call one failed on an array over 32 candidates after 82.506 s, reporting 12,298 input and 4,151 output tokens.
-A separate DeepSeek V4.1 call one ended with `length` after 60.108 s, reporting 12,057 input and 8,192 output tokens.
-Flash control `dc9ed7ac-baf1-4384-a9ce-bf099b238066` failed after 94.522 s, with 12,298 input and 5,037 output
-tokens; its 61-candidate JSON also contained `$schema` and was rejected by the decoded outer boundary before call two.
-Those three controls stopped before call two. Control `88d91f54-7a1d-40a2-95fb-a90e91cffa27` passed the first step,
-then failed review SDK validation at `selected.0.reason` over 160 characters. Its two calls took 91.560 s and
-reported 19,056 input, 5,176 output and 0 cached tokens, with requested budgets 8,192/4,096; it published zero claims
-and no guide or digest. The archived dc9 view matched its retained content except for `currentAttemptId`.
-The outer-metadata boundary is fixed offline. No paid repeat has run after the final reason-field fix; full K3
-semantic and corpus gates remain OPEN. Global defaults remain Flash; successor quality remains unqualified.
+On 2026-11-08, fresh Flash Low attempt `e30b364e-8f7f-404d-b3b7-c43d51074f3f` failed call-two SDK validation at
+`selected.10.candidateId` with `invalid_value`. Its two calls took 85.912 s and reported 19,651 input, 3,922 output
+and 0 cached tokens; it published zero claims and no guide or digest. The received candidate ID is UNKNOWN:
+immutable historical Raw2 contains `output: null`, and `canRecover` is false, so these artifacts cannot recover the
+attempt. The later retention rule does not retroactively enrich that null or reveal the received ID.
+The archived `88d91f54…` view matched all 16 compared fields; only the `currentAttemptId` projection changed.
+Evidence is retained under [the Nov 8 terminal capture](../eval/out/audit-compact-20261108/). This failure does not
+close A1-A3, C1-C4, scope/citation, full-corpus semantic or owner-review gates. K6 stays frozen.
 
 Final parsing delegates the selected public output specification's `parseCompleteOutput` once. Public syntax/schema
 errors and observed blank final text supply fixed safe categories; missing or non-normal finish remains separate.
@@ -669,6 +666,12 @@ provider error bodies, headers or credentials enter the safe reader error.
 Full valid decoded native Raw1 stays unchanged even when later candidate validation rejects units.
 In native compact call one, invalid/truncated JSON, a `length` finish, stream failure or missing normal finish
 retains `output: null` and known usage, with no call two, repaired guess or draft publication.
+Only native compact call two may retain already SDK-decoded JSON from a Zod-backed SDK TypeValidationError in the
+existing private Raw2, and only when it matches an explicit normal final finish. That JSON remains untrusted;
+strict ID and decision validation still rejects it. The attempt stays failed with zero published claims,
+`canRecover: false` and storage-only Save returning 409. No additional parser, state, artifact, prompt or model
+change is introduced. Malformed/truncated JSON, `length`, no normal finish, other faults, budget rejection and
+deadline expiry do not qualify; any failed output record in those cases remains null.
 Native usage is known only when the adapter supplies provider-reported `usage.raw`; SDK placeholders stay unknown.
 Each private raw artifact may retain `usage.providerUsage` as an object or null; the final report may retain at most
 two such entries. Missing counts remain unknown. A stream error, abort,
@@ -1068,8 +1071,34 @@ set. Citable prose mentioning page numbers and meaningful headings remain presen
 their original ranges remain unchanged, including for the reader and existing citations.
 
 Citation and numeric diagnostics do not prove semantic entailment. A normally completed answer with advisory warnings
-can still fail acceptance. Owner semantic review remains required. The unchanged C1–C4/O1–O8 question set, citation-opening checks and owner review
-are the K2 boundary in MAP; K2 is not fully accepted or deployed.
+can still fail acceptance. Every O1–O8 answer requires manual review of entailment, coverage, usefulness and honesty;
+all eight are `REVIEW_REQUIRED / NOT_AUTOMATED`, with owner acceptance unassessed by the evaluator. Mechanical checks
+and O8 abstention do not waive that review. The unchanged C1–C4/O1–O8 questions and citation-opening checks remain
+the K2 boundary in MAP; K2 is not fully accepted or deployed.
+
+The 2026-11-08 full twelve-question invocation at `a0ad9afd` in chat `38162177-86be-4647-bbba-430ef07aaa0d`
+terminated with exit 1: eleven turns completed and O6 was partial, with all twelve terminal. O2's 97,506 ms total
+exceeded the 90-second hard gate. C3's initial false was a parenthetical/gloss-unit checker false-negative; the
+pure/static guard correction, including the seconds-unit control, verifies the four retained default values.
+The initial stored-only regrade 404 came from
+caller fallback scope after omitting `ELIOT_EVAL_PROJECT`; the actual seeded project/chat exists.
+The correctly scoped stored-only regrade completed once: all twelve turn IDs and usage stayed unchanged, with no
+new rows and C3 checking true. Comparison backup/new SHA-256 prefixes are `1766AC39`/`9C2B5F10`.
+Original exit 1, O2/O6 failures and semantic/owner review stay open.
+All 337/337 exact citation ranges opened. First-text p50/p95 was 9,739/36,150 ms and total p50/p95 44,301/97,506 ms.
+Reported usage is known: 2,592,971 input, 2,140,672 cached and 25,493 output tokens. All twelve provider-capacity
+bounds remain UNKNOWN; the aggregate 0 sums no known bounds and is not zero capacity. Native Flash global models,
+catalogue and settings were unchanged, with Gateway null. See the retained [comparison](../eval/out/k2/compare.md)
+and [single-invocation evidence](../eval/out/k2-run-a0ad-20261108-055450/). Semantic/owner acceptance remains open.
+
+A separate owner-created GLM 5.3 C2 control in chat `bb36bc4a-9ac3-44c1-8d93-bde749693b30`, turn
+`6f5597c1-cc58-4d86-84dd-61a84e4a904c`, completed with ten explicit source/revision pairs matching the seed in order.
+First text took 12,698 ms and total time 14,133 ms; usage was 208,881 input, 0 cached and 345 output tokens, with
+requested/applied output budget 8,192/8,192 and zero invalid labels. Both exact ranges opened: block 35
+`[20646,21521)` and block 36 `[21521,21979)`. Flash defaults, catalogue and null Gateway remained unchanged.
+The per-turn reasoning profile is not recorded; the catalogue advertises high. This is one control with different
+history from the twelve-question benchmark, not full model or K2 acceptance. Its GET-only evidence is in the
+[GLM C2 capture](../eval/out/audit-compact-20261108/).
 
 Broadcast the first nonempty rendered answer immediately and measure `firstTokenMs` from that text, not the first
 network event. Keep recorded token bounds, actual token counts and any historical/provider-reported currency values
@@ -1627,8 +1656,8 @@ unambiguous catalogue choices is visibly unavailable; a missing Gateway connecti
 catalogue selection. Execution readiness still blocks Send/Understand and remains visible as an actionable reason.
 Model changes affect the next Send; each answer shows its stored
 model's name. New chats may Send with no sources, while existing chats wait for their history to load. Changing chats
-clears the previous queue view and ignores messages from the closed connection. The inherited model name is displayed
-without sending an explicit override.
+clears the previous queue view and ignores messages from the closed connection. Captions distinguish inherited
+default from a fixed route; the inherited model name is displayed without sending an explicit override.
 On desktop and phone, one Sources and model disclosure shows the current scope and model summary while the existing controls
 stay mounted. Opening it exposes scope navigation and the same picker; collapsing keeps draft/selection/provider
 state and leaves model errors, pending status and data-use warnings visible. The resizable question field starts

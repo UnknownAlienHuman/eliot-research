@@ -104,7 +104,12 @@ const ADAM_NEGATION = /(?:\b(?:not|no|never|without)\b|(?<![\p{L}\p{N}_])(?:не
 const ADAM_UNIT = /(?:%|°\s*[cf]?\b|\b(?:percent(?:age)?|seconds?|secs?|milliseconds?|minutes?|hours?|hz|khz|kg|grams?|meters?|centimeters?|millimeters?|neurons?|tokens?|dollars?|bits?|bytes?|s|ms|sec)\b|\b(?:per|на)\s+(?:second|секунд[а-яё]*)\b|(?<![\p{L}\p{N}_])(?:процент[а-яё]*|секунд[а-яё]*|мс|с|минут[а-яё]*|час[а-яё]*|кг|грамм[а-яё]*|метр[а-яё]*|герц|нейрон[а-яё]*|токен[а-яё]*)(?![\p{L}\p{N}_]))/iu;
 const ADAM_MODEL_SCOPE = /(?<![\p{L}\p{N}_])(?:adam|адам[а-яё]*|transformers?|трансформер[а-яё]*|bert|берт[а-яё]*)(?![\p{L}\p{N}_])/giu;
 function bindingBridgeWords(text) {
-  const focused = text.replace(/\(\s*(?:шаг\s+обучения\s*\/\s*learning\s+rate|шаг\s+обучения|learning\s+rate)\s*\)/giu, ' ');
+  // Drop parenthetical glosses structurally (bounded length, no exact-phrase
+  // whitelist) so e.g. "(шаг / learning rate) =" does not block binding.
+  // Negation keeps the original bridge span; ADAM_UNIT also checks the
+  // original bridge/gloss (an annotation like "(seconds)" is a unit, even
+  // where it is not a numeric suffix).
+  const focused = text.replace(/\([^()\n]{0,80}\)/gu, ' ');
   const words = focused.match(/[\p{L}]+/gu) || [];
   return words.every((word) => ADAM_BINDING_WORDS.has(word.toLowerCase()));
 }
@@ -142,7 +147,7 @@ function adamBindingsInSegment(answer) {
     const suffixText = text.slice(number.index + number[0].length, suffixEnd);
     const suffixBoundary = /[;.!?\n]/u.exec(suffixText);
     const suffix = suffixBoundary ? suffixText.slice(0, suffixBoundary.index) : suffixText;
-    bindings.get(label.name).push({ value, negated: ADAM_NEGATION.test(relation), unit: ADAM_UNIT.test(suffix) });
+    bindings.get(label.name).push({ value, negated: ADAM_NEGATION.test(relation), unit: ADAM_UNIT.test(suffix) || ADAM_UNIT.test(bridge) });
   }
   return { bindings, otherModelScope: !!firstScope && !/^(?:adam|адам)/iu.test(firstScope) };
 }

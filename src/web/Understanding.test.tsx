@@ -576,3 +576,27 @@ describe('Source claim evidence presentation', () => {
     }
   });
 });
+  it('labels the inherited compact option with the empty label plus the model name without duplicating the explicit route row', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host);
+    const choices: ModelRoute[] = [
+      { route: 'workers-ai:flash', id: 'flash', label: 'GLM 5.3 Flash', enabled: true, selectable: true, contextTokens: 1048576, maxOutputTokens: null, checkedOn: null },
+    ];
+    let selected = '';
+    const changed = vi.fn((route: string) => { selected = route; render(); });
+    const render = () => root.render(
+      <ModelPicker compact label='Model' choices={choices} value={selected} onChange={changed} emptyLabel='Use configured default (GLM 5.3 Flash)' defaultRoute='workers-ai:flash' />);
+    const model = () => host.querySelector('select[aria-label="Model"]');
+    try {
+      await act(async () => render());
+      const select = model();
+      if (!(select instanceof HTMLSelectElement)) throw new Error('The compact model picker did not render.');
+      const captions = Array.from(select.options).map(option => [option.value, option.textContent] as const);
+      expect(captions).toEqual([['', 'Use configured default (GLM 5.3 Flash)'], ['workers-ai:flash', 'GLM 5.3 Flash']]);
+      await act(async () => { select.value = 'workers-ai:flash'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(changed).toHaveBeenLastCalledWith('workers-ai:flash');
+      await act(async () => { select.value = ''; select.dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(changed).toHaveBeenLastCalledWith('');
+    } finally { await act(async () => root.unmount()); host.remove(); }
+  });
