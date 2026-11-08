@@ -459,6 +459,7 @@ Large selections can answer from claims. An unchanged revision is never re-disti
    Keep at most two calls, zero paid retries, six minutes per call, seven minutes per native step, the absolute
    fifteen-minute recovery ceiling and the existing 16 MiB allowance. Native delivery retains the public SDK
    single-consumer/final-validator boundary and safe failure/known-usage handling in IMPLEMENTATION §6.
+   OpenRouter structured request profiles follow the metadata policy in IMPLEMENTATION §11.
    Retained `claim-plan-*` and markerless output use only the compatibility path for old formats, history and Save.
 5. Assemble project overview deterministically from titles, available guide summaries and stored questions.
    Open it from Studio, page through all eligible sources and Refresh to rescan membership/heads.

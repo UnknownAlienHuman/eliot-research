@@ -423,6 +423,62 @@ describe.each([
   });
 });
 
+describe("mandatory minimal structured reasoning request", () => {
+  it("sends reasoning:{effort:'minimal'} only for structured OpenRouter jobs and leaves chat untouched", async () => {
+    const provider = { id: "openrouter", type: "openai-compatible" as const,
+      gatewaySlug: "openrouter", gatewayPath: "v1", enabled: true,
+      baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny" as const };
+    const base: ModelSpec = { route: "gateway:openrouter/fixture-mandatory-minimal", id: "fixture-mandatory-minimal", label: "Mandatory minimal fixture",
+      contextTokens: 64000, maxOutputTokens: 8192, outputReserveTokens: 8192, responseFormat: true, structuredOutputs: true,
+      checkedOn: "2026-11-08", enabled: true, routing: { provider, gatewayId: "fixture" } };
+    const bodies: Record<string, unknown>[] = [];
+    const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      throw new Error("Stopped after local request capture.");
+    });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network request."));
+    try {
+      const structured = await resolveModelTransport({ AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] },
+        { ...base, structuredReasoningEffort: "minimal" as const }, "mandatory-minimal-structured", { structuredOutput: true });
+      await expect(streamText({ model: structured, prompt: "Capture structured only.", maxRetries: 0 }).text).rejects.toThrow();
+      expect(bodies[0]?.reasoning).toEqual({ effort: "minimal" });
+      expect(bodies[0]).not.toHaveProperty("reasoning_effort");
+      expect(bodies[0]?.provider).toMatchObject({ allow_fallbacks: false, require_parameters: true, data_collection: "deny" });
+
+      const chat = await resolveModelTransport({ AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] },
+        { ...base, structuredReasoningEffort: "minimal" }, "mandatory-minimal-chat");
+      await expect(streamText({ model: chat, prompt: "Capture chat only.", maxRetries: 0 }).text).rejects.toThrow();
+      expect(bodies[1]).not.toHaveProperty("reasoning");
+      expect(bodies[1]).not.toHaveProperty("reasoning_effort");
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); }
+  });
+  it("leaves reasoning unset for mutually inconsistent optional and mandatory flags", async () => {
+    const provider = { id: "openrouter", type: "openai-compatible" as const,
+      gatewaySlug: "openrouter", gatewayPath: "v1", enabled: true,
+      baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny" as const };
+    const model: ModelSpec = { route: "gateway:openrouter/fixture-inconsistent", id: "fixture-inconsistent", label: "Inconsistent fixture",
+      contextTokens: 64000, maxOutputTokens: 8192, outputReserveTokens: 8192, responseFormat: true, structuredOutputs: true,
+      optionalReasoning: true, structuredReasoningEffort: "minimal" as const,
+      checkedOn: "2026-11-08", enabled: true, routing: { provider, gatewayId: "fixture" } };
+    let captured: Record<string, unknown> | undefined;
+    const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      throw new Error("Stopped after local request capture.");
+    });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network request."));
+    try {
+      const transport = await resolveModelTransport({ AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] }, model, "inconsistent-structured", { structuredOutput: true });
+      await expect(streamText({ model: transport, prompt: "Capture inconsistent only.", maxRetries: 0 }).text).rejects.toThrow();
+      expect(captured).not.toHaveProperty("reasoning");
+      expect(captured).not.toHaveProperty("reasoning_effort");
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); }
+  });
+});
+
 
 describe("empty completion log projection", () => {
   const base = { turnId: "aaaaaaaa-aaaa-4aaa-8aaa-000000000001", model: { id: "test-model", route: "gateway:openrouter/test-model" }, finishReason: "stop", usage: undefined };

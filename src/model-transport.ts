@@ -98,13 +98,16 @@ function compatibleBody(responseFormatAllowed: boolean, supportsTemperature: boo
     return out;
   };
 }
-function openRouterBody(responseFormatAllowed: boolean, options: { supportsTemperature: boolean; optionalReasoning: boolean; structuredOutput: boolean }, dataCollection: DataCollectionPolicy) {
+function openRouterBody(responseFormatAllowed: boolean, options: { supportsTemperature: boolean; optionalReasoning: boolean; structuredOutput: boolean; structuredReasoningEffort?: "minimal" | undefined }, dataCollection: DataCollectionPolicy) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
     const provider = { ...(args.provider as Record<string, unknown> | undefined), allow_fallbacks: false, require_parameters: true, data_collection: dataCollection };
     const out: Record<string, unknown> = { ...args, provider };
     if (!responseFormatAllowed) delete out.response_format;
     if (options.supportsTemperature) out.temperature = 0;
-    if (options.structuredOutput && options.optionalReasoning) out.reasoning = { enabled: false };
+    // Mutually inconsistent flags stay unset (fail closed); optional keeps
+    // the documented disabled form only without a mandatory minimal effort.
+    if (options.structuredOutput && options.structuredReasoningEffort === "minimal" && !options.optionalReasoning) out.reasoning = { effort: "minimal" };
+    else if (options.structuredOutput && options.optionalReasoning && options.structuredReasoningEffort === undefined) out.reasoning = { enabled: false };
     return out;
   };
 }
@@ -259,6 +262,7 @@ export async function resolveModelTransport(
       supportsTemperature: model.supportsTemperature === true,
       optionalReasoning: model.optionalReasoning === true,
       structuredOutput: options.structuredOutput === true,
+      structuredReasoningEffort: model.structuredReasoningEffort,
     };
     const openrouter = createOpenAICompatible<string, string, string, string>({
       name: "openrouter",
@@ -302,7 +306,7 @@ export async function resolveModelTransport(
         convertUsage: convertCompatibleUsage,
         transformRequestBody:
           isOpenRouterApiBase(ownerBase)
-            ? openRouterBody(responseFormatAllowed, { supportsTemperature, optionalReasoning: model.optionalReasoning === true, structuredOutput: options.structuredOutput === true }, provider.dataCollection ?? "deny")
+            ? openRouterBody(responseFormatAllowed, { supportsTemperature, optionalReasoning: model.optionalReasoning === true, structuredOutput: options.structuredOutput === true, structuredReasoningEffort: model.structuredReasoningEffort }, provider.dataCollection ?? "deny")
             : compatibleBody(responseFormatAllowed, supportsTemperature),
         fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: false }),
       }).languageModel(model.id);
@@ -330,6 +334,7 @@ export async function resolveModelTransport(
     supportsTemperature,
     optionalReasoning: model.optionalReasoning === true,
     structuredOutput: options.structuredOutput === true,
+    structuredReasoningEffort: model.structuredReasoningEffort,
   };
   return createOpenAICompatible({
     name: provider.id, baseURL, includeUsage: true,

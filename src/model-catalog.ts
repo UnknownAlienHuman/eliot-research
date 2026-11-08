@@ -216,12 +216,18 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
   // "temperature" in supported_parameters; otherwise omitted as unknown/not
   // advertised. No static model/provider IDs, no allowlist, no price handling.
   const supportsTemperature = parameters.includes("temperature");
-  // Optional reasoning is advertised-only: true only when the row publishes
-  // reasoning.mandatory === false (official OpenRouter ModelReasoning: false
-  // means reasoning can be disabled) AND supported_parameters includes
-  // "reasoning". Missing metadata stays omitted (unknown); no inference, no
-  // guessed reasoning budget, no model/provider-name allowlist.
-  const optionalReasoning = record(row.reasoning)?.mandatory === false && parameters.includes("reasoning");
+  // Reasoning profiles are advertised-only and mutually exclusive: optional
+  // needs mandatory === false; mandatory minimal needs mandatory === true,
+  // published "reasoning", and valid unique supported_efforts with "minimal".
+  const reasoning = record(row.reasoning);
+  const hasReasoningParameter = parameters.includes("reasoning");
+  const supportedEfforts = Array.isArray(reasoning?.supported_efforts) ? reasoning.supported_efforts : null;
+  const validUniqueEfforts = supportedEfforts !== null && supportedEfforts.length > 0 &&
+    supportedEfforts.every((effort) => typeof effort === "string" && effort.length > 0) &&
+    new Set(supportedEfforts as string[]).size === supportedEfforts.length;
+  const optionalReasoning = reasoning?.mandatory === false && hasReasoningParameter;
+  const structuredReasoningEffort = reasoning?.mandatory === true && hasReasoningParameter &&
+    validUniqueEfforts && (supportedEfforts as string[]).includes("minimal") ? "minimal" as const : undefined;
   // Chat support is explicit only: Command Code supported_endpoints when present,
   // otherwise OpenRouter architecture modalities when present. No endpoint guessing:
   // a catalogue without advertised capabilities remains selectable with unknown context.
@@ -246,6 +252,7 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
     ...(supportsTemperature ? { supportsTemperature: true } : {}),
     ...(Array.isArray(architecture?.input_modalities) ? { supportsImages: architecture.input_modalities.includes("image") } : {}),
     ...(optionalReasoning ? { optionalReasoning: true } : {}),
+    ...(structuredReasoningEffort !== undefined ? { structuredReasoningEffort } : {}),
     checkedOn,
     enabled: unavailableReason === null, ...(unavailableReason ? { unavailableReason } : {}),
   };

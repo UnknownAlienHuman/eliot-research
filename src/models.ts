@@ -84,6 +84,7 @@ export interface CatalogModel {
   supportsTemperature?: boolean;
   supportsImages?: boolean;
   optionalReasoning?: boolean;
+  structuredReasoningEffort?: "minimal";
   apiProtocol?: "openai-chat" | "openai-responses" | "anthropic" | "google";
   apiBaseUrl?: string;
   mayTrainOnYourPrompts?: boolean;
@@ -232,6 +233,8 @@ function isCatalogModel(value: unknown): value is CatalogModel {
   if (value.supportsTemperature !== undefined && typeof value.supportsTemperature !== "boolean") return false;
   if (value.supportsImages !== undefined && typeof value.supportsImages !== "boolean") return false;
   if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
+  if (value.structuredReasoningEffort !== undefined && value.structuredReasoningEffort !== "minimal") return false;
+  if (value.optionalReasoning === true && value.structuredReasoningEffort !== undefined) return false;
   if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low" && value.nativeReasoningEffort !== "high") return false;
   if (value.apiProtocol !== undefined && !["openai-chat", "openai-responses", "anthropic", "google"].includes(String(value.apiProtocol))) return false;
   if (value.apiBaseUrl !== undefined && typeof value.apiBaseUrl !== "string") return false;
@@ -283,7 +286,7 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     const fallback = MODELS.find((entry) => entry.route === model.route);
     const visible: CatalogModel = { route: model.route, id: model.id, label: model.label, contextTokens: model.contextTokens,
       maxOutputTokens: model.maxOutputTokens, checkedOn: model.checkedOn, enabled: model.enabled };
-    for (const field of ["contextWindowTokens", "outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning",
+    for (const field of ["contextWindowTokens", "outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning", "structuredReasoningEffort",
       "nativeReasoningEffort", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
       if (model[field] !== undefined) Object.assign(visible, { [field]: model[field] });
     }

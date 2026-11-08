@@ -1493,9 +1493,17 @@ The admitted external `ModelSpec` carries the provider configuration and Gateway
 transport uses this frozen routing instead of reading changed settings after admission.
 Published `supported_parameters` may advertise temperature support; those requests use temperature 0 for source-faithful
 generation, while missing metadata leaves the parameter unset. OpenRouter structured jobs disable reasoning only when
-the same snapshot advertises its control and explicitly marks it non-mandatory. Chat, mandatory reasoning and unknown
-capabilities are not silently given that override. The existing output/call bounds remain unchanged; truncation is a
-failed structured result, retained for inspection without an automatic repair call.
+the same snapshot advertises its control and explicitly marks it non-mandatory. Mandatory-reasoning metadata may
+instead set the optional `CatalogModel.structuredReasoningEffort: 'minimal'` profile, only when the published row has
+`reasoning.mandatory === true`, an advertised `reasoning` parameter, and a valid non-empty unique
+`supported_efforts` containing `minimal`; missing, malformed or inconsistent metadata leaves it unset, with no
+model or provider allowlist. When frozen in the admitted spec, existing OpenRouter Gateway bodies for structured
+jobs send `reasoning: { effort: 'minimal' }` through the existing transport; the non-mandatory disabled form and
+chat/native behaviour are unchanged. The `minimal` request profile is a behaviour contract, not a quality, length
+or speed guarantee. Checked 2026-11-08 against the
+[OpenRouter models catalogue](https://openrouter.ai/api/v1/models) and
+[chat API reference](https://openrouter.ai/docs/client-sdks/python/api-reference/chat); the OpenRouter publication
+date was not exposed. The policy is implemented; real Crouton K3 control `3081b9fc…` failed on call one with HTTP 400 after 1,815 ms, with `minimal` confirmed in the snapshot and frozen Workflow spec, upstream wire effort unverified and the exact 400 cause UNKNOWN, leaving the control unqualified and K2/K3 gates OPEN.
 
 Cloudflare documents R2 object consistency in the [Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 (dateModified: 2026-07-31), supporting the single-object snapshot timestamp contract.

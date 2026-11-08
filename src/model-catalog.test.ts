@@ -211,6 +211,34 @@ describe("provider model catalogue discovery", () => {
     expect(models.every((model) => model.enabled)).toBe(true);
   });
 
+  it("derives mandatory minimal structured reasoning only from the exact published profile", async () => {
+    catalogues([], [
+      { id: "provider/crouton-like", context_length: 100000, architecture: textChat,
+        supported_parameters: ["reasoning", "reasoning_effort", "response_format", "structured_outputs"],
+        reasoning: { mandatory: true, supported_efforts: ["max", "xhigh", "high", "medium", "low", "minimal"], default_effort: "max" } },
+      { id: "provider/mandatory-false", context_length: 100000, architecture: textChat,
+        supported_parameters: ["reasoning"], reasoning: { mandatory: false, supported_efforts: ["max", "minimal"] } },
+      { id: "provider/missing-efforts", context_length: 100000, architecture: textChat,
+        supported_parameters: ["reasoning"], reasoning: { mandatory: true } },
+      { id: "provider/malformed-efforts", context_length: 100000, architecture: textChat,
+        supported_parameters: ["reasoning"], reasoning: { mandatory: true, supported_efforts: ["minimal", "minimal", 7] } },
+      { id: "provider/shorthand-only", context_length: 100000, architecture: textChat,
+        supported_parameters: ["reasoning_effort"], reasoning: { mandatory: true, supported_efforts: ["minimal"] } },
+      { id: "provider/no-minimal", context_length: 100000, architecture: textChat,
+        supported_parameters: ["reasoning"], reasoning: { mandatory: true, supported_efforts: ["max", "high"] } },
+    ]);
+    const models = await discoverGatewayModels(defaultProviders());
+    const byId = new Map(models.map((model) => [model.id, model]));
+    expect(byId.get("provider/crouton-like")).toMatchObject({ structuredReasoningEffort: "minimal", structuredOutputs: true, enabled: true });
+    expect(byId.get("provider/crouton-like")).not.toHaveProperty("optionalReasoning");
+    expect(byId.get("provider/mandatory-false")).toMatchObject({ optionalReasoning: true });
+    expect(byId.get("provider/mandatory-false")).not.toHaveProperty("structuredReasoningEffort");
+    for (const id of ["provider/missing-efforts", "provider/malformed-efforts", "provider/shorthand-only", "provider/no-minimal"]) {
+      expect(byId.get(id)).not.toHaveProperty("structuredReasoningEffort");
+      expect(byId.get(id)).not.toHaveProperty("optionalReasoning");
+    }
+  });
+
   it("propagates temperature and optional reasoning only from advertised metadata", async () => {
     catalogues([], [
       { id: "provider/synth-both", context_length: 100000, architecture: textChat, supported_parameters: ["temperature", "reasoning"], reasoning: { mandatory: false } },
