@@ -254,7 +254,7 @@ export async function runK1OcrEval() {
     await expect(sourceLink.locator('..').locator('.er-lib__badge')).toHaveText('Not analyzed');
     const readerText = page.locator('.er-lib__text');
     await expect.poll(() => readerText.textContent()).toBe(preview);
-    const outlineLinks = page.getByRole('navigation', { name: 'Outline', exact: true }).locator('.er-lib__outline-list a');
+    const outlineLinks = page.locator('details.er-lib__outline').locator('.er-lib__outline-list a');
     const appliedOutline = await outlineLinks.allTextContents();
     // Keep this Reader mounted: reloading would hide the same-revision content-clearing bug.
     await page.getByRole('button', { name: 'OCR original PDF', exact: true }).click();
