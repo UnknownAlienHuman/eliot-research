@@ -67,7 +67,7 @@ function compactCandidateSchema(labels: [string, ...string[]]) {
   return z.object({
     quoteBlock,
     kind: kind.optional(),
-    statement: z.string().min(1).max(1200),
+    statement: z.string().min(1).max(1200).describe("One independently checkable assertion with its necessary source qualifiers and conditions. Split independent assertions into separate candidates even when they occur in the same paragraph; do not copy a paragraph as one candidate. Keep a multi-step definition together when its steps define one procedure, and keep conditions integral to a single comparison with that comparison."),
   }).strict();
 }
 type CompactCandidateDraft = z.infer<ReturnType<typeof compactCandidateSchema>>;
@@ -905,7 +905,7 @@ async function synthesizeCompact(env: Env, revisionId: string, model: ModelSpec,
   reserve(memory, sourceContextJsonAllocation(sourceContext, authorityLabels));
   const content = sourceContextJson(sourceContext, authorityLabels);
   const raw = await call(env, revisionId, 2,
-    "Treat every first-call statement as a hypothesis. The evidence array is the unique dictionary of exact canonical block quotes, grouped locally: each group shows one quote with the candidate hypotheses nested inside it. Review each candidate only against its own group's quote. Return selected entries with a short support reason and rejected entries with a short rejection reason. Review each candidate at most once. Do not add, rewrite, combine or propose claims, evidence, questions, glossary entries, guide prose or digest prose. Optionally return guide as a small ordered array of candidateIds chosen only from selected. Missing candidate decisions are unknown, not selections. Preserve the complete statement's qualifiers and scope; reject evidence that incompletely supports its candidate (e.g. a pronoun or condition antecedent that cannot be read inside that quote). Exact quote and numeric checks run in code, while semantic support remains a model review rather than a truth guarantee.",
+    "Treat every first-call statement as a hypothesis. The evidence array is the unique dictionary of exact canonical block quotes, grouped locally: each group shows one quote with the candidate hypotheses nested inside it. Review each candidate only against its own group's quote. Return selected entries with a short support reason and rejected entries with a short rejection reason. Review each candidate at most once. Do not add, rewrite, combine or propose claims, evidence, questions, glossary entries, guide prose or digest prose. Optionally return guide as a small ordered array of candidateIds chosen only from selected. Missing candidate decisions are unknown, not selections. Reject a whole candidate if it bundles independently checkable assertions or if any clause or condition is unsupported by its own quote. Keep a single multi-step definition together when its steps jointly define one procedure, and keep conditions integral to a single comparison with that comparison. Exact quote and numeric checks run in code, while semantic support remains a model review rather than a truth guarantee.",
     content, compactReviewSchema(verified.candidates.map((candidate) => candidate.id)),
     documentLanguage(verified.evidence.map((item) => item.quote)), model, memory, attemptId, 4096, true);
   await put(env, revisionId, "distill-call2.json", { ...raw, format: COMPACT_PRODUCER_FORMAT }, attemptId);
