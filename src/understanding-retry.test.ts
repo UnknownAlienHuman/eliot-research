@@ -261,7 +261,7 @@ describe("explicit understanding retry", () => {
       }
       expect(openRouterModel).not.toHaveProperty("openRouterReasoningEffort");
       expect(generateText).toHaveBeenCalledTimes(2); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
-      expect(vi.mocked(generateText).mock.calls.map(([options]) => options.maxOutputTokens)).toEqual([8192, 4096]);
+      expect(vi.mocked(generateText).mock.calls.map(([options]) => options.maxOutputTokens)).toEqual([8192, 8192]);
     } finally { vi.mocked(generateText).mockReset(); f.db.close(); }
   });
   it.each(["native", "openrouter"] as const)("retains a queued original %s Low intent on repeat and rejects a conflicting profile", async provider => {

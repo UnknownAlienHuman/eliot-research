@@ -460,7 +460,10 @@ Large selections can answer from claims. An unchanged revision is never re-disti
    An optional guide is an ordered subset of selected IDs, rendered as whole frozen statements with citations;
    the digest is deterministic from selected claims. Missing or bad guide output keeps reviewed claims and digest
    as `partial`. Missing or invalid call two never publishes call-one drafts.
-   Fresh compact extraction requests 8,192 output tokens and review 4,096, clipped after the actual prompt/schema
+   Fresh compact extraction requests 8,192 output tokens and review 4,096 by default. Experimentally, only a frozen
+   explicit owner `high`/`xhigh`/`max` on the official OpenRouter root with matching published-list membership requests
+   8,192 for compact review; native compact/Automatic/Low review remain at 4,096, while legacy formats retain their
+   existing/frozen caps. This does not guarantee completion or qualify model quality. Budgets are clipped after the actual prompt/schema
    estimate by `requestedOutputLimit`. Existing raw artifacts and reports record requested/applied budgets;
    optional report `producerFormat` identifies the contract, while absent historical fields stay unknown.
    Legacy in-flight attempts retain their frozen cap policy.

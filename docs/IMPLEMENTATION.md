@@ -659,13 +659,21 @@ remaining absolute fifteen-minute recovery ceiling; the native paid step has a s
 bounds and the existing 16 MiB cumulative materialization allowance remain unchanged. The eval observer may wait
 one additional minute for storage/reconciliation, without extending paid execution.
 
-Fresh compact extraction requests 8,192 output tokens and review requests 4,096. After estimating the actual
-instructions, messages and schema, `requestedOutputLimit(model, inputEstimate, requestedTokens)` clips each job
+Fresh compact extraction requests 8,192 output tokens and review requests 4,096 by default. As an experimental
+qualification policy, compact review requests 8,192 only when the admitted frozen explicit owner effort is
+`high`, `xhigh` or `max`, the provider is the official OpenRouter API root, and that effort belongs to the same
+snapshot's published list. Native compact, Automatic and Low review remain at 4,096; legacy formats retain their
+existing/frozen caps. After estimating the actual instructions, messages and schema,
+`requestedOutputLimit(model, inputEstimate, requestedTokens)` clips each job
 budget to a known provider maximum and the estimated remainder of a known combined window. The existing
 conservative input estimate includes framing overhead; it is not provider tokenization. Unknown provider maxima
 and combined windows remain unknown. Each new raw artifact and final report records the requested and applied call
 budgets separately from declared capacity and reported usage. Missing historical budget fields remain unknown.
 Already admitted or in-flight legacy attempts retain their frozen cap policy.
+Retained High control `62ed…` produced 30 complete first-call candidates, then a second-call `length` failure with
+null output at requested/applied 4,096. Reported completion 0 and reasoning 134 contradict each other; this does not
+establish 4,096 tokens consumed or an upstream cause. The experimental budget is not a guaranteed fix; K2/K3 gates
+remain OPEN. Terminal retry identity and retained R2 output are unchanged; another run requires a new explicit attempt.
 
 Native K3 delivery uses the installed public `ai@7.0.152` `experimental_streamTextLowMemory` API with one
 `consumeStream` consumer. Only native compact call one uses public `Output.json()` for complete JSON decoding;

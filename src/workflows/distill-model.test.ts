@@ -2377,11 +2377,15 @@ describe("DistillWorkflow admitted model snapshot", () => {
 });
 
 describe("compact K3 producer", () => {
-  it.each(["valid", "absent", "object", "over-five", "empty", "unselected-guide", "unknown-id", "extra-decision-field", "duplicate", "missing-kind"] as const)(
+  it.each(["valid", "absent", "object", "over-five", "empty", "unselected-guide", "unknown-id", "extra-decision-field", "duplicate", "missing-kind", "owner-high", "owner-low", "unpublished-high"] as const)(
     "uses closed generation schemas and existing decoding through both real Gateway SDK calls: %s", async mode => {
+      const ownerEffort = mode === "owner-high" || mode === "unpublished-high" ? "high" : mode === "owner-low" ? "low" : undefined;
+      const reviewBudget = mode === "owner-high" ? 8192 : 4096;
       const model: ModelSpec = Object.freeze({ route: "gateway:openrouter/stealth/crouton-alpha", id: "stealth/crouton-alpha", label: "Frozen OpenRouter fixture",
         contextTokens: 1048576, contextWindowTokens: 1048576, maxOutputTokens: 943718, outputReserveTokens: 8192,
         responseFormat: true, structuredOutputs: true, structuredReasoningEffort: "minimal", checkedOn: "2026-11-08", enabled: true,
+        ...(ownerEffort === undefined ? {} : { openRouterReasoningEffort: ownerEffort,
+          openRouterReasoningEfforts: mode === "unpublished-high" ? ["low"] : [ownerEffort] }),
         routing: { provider: { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1",
           baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true }, gatewayId: "offline-compact" } } satisfies ModelSpec);
       const document = documentWithBlocks([
@@ -2430,9 +2434,9 @@ describe("compact K3 producer", () => {
         await run(f, false, model, "compact-k3-v1");
         expect(fetch).toHaveBeenCalledTimes(2); expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
         expect(bodies.map(body => body.model)).toEqual([model.id, model.id]);
-        expect(bodies.map(body => body.max_tokens)).toEqual([8192, 4096]);
+        expect(bodies.map(body => body.max_tokens)).toEqual([8192, reviewBudget]);
         for (const body of bodies) {
-          expect(body.reasoning).toEqual({ effort: "minimal" }); expect(body).not.toHaveProperty("reasoning_effort");
+          expect(body.reasoning).toEqual({ effort: ownerEffort ?? "minimal" }); expect(body).not.toHaveProperty("reasoning_effort");
           expect(body.provider).toMatchObject({ allow_fallbacks: false, require_parameters: true, data_collection: "deny" });
           expect(body.response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true } });
           const root = body.response_format.json_schema.schema;
@@ -2456,10 +2460,11 @@ describe("compact K3 producer", () => {
           expect(decision?.properties?.candidateId?.enum).toEqual(["C0", "C1", "C2"]);
         }
         const invalidDecision = ["unknown-id", "extra-decision-field", "duplicate"].includes(mode);
+        const guideAvailable = !["absent", "object", "over-five", "empty", "unselected-guide"].includes(mode);
         const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
-        expect(report).toMatchObject({ state: invalidDecision ? "failed" : ["valid", "missing-kind"].includes(mode) ? "done" : "partial",
+        expect(report).toMatchObject({ state: invalidDecision ? "failed" : guideAvailable ? "done" : "partial",
           kept: invalidDecision ? 0 : 2, usage: { calls: 2, outputBudgets: [
-            { requestedTokens: 8192, appliedTokens: 8192 }, { requestedTokens: 4096, appliedTokens: 4096 },
+            { requestedTokens: 8192, appliedTokens: 8192 }, { requestedTokens: reviewBudget, appliedTokens: reviewBudget },
           ] } });
         if (mode === "unknown-id" || mode === "extra-decision-field") {
           const error = failures[0];
@@ -2475,7 +2480,7 @@ describe("compact K3 producer", () => {
         if (!invalidDecision) {
           expect(view.claims.map(claim => claim.statement)).toEqual([extraction.candidates[0]?.statement, extraction.candidates[2]?.statement]);
           expect(view.digest).toContain(extraction.candidates[0]?.statement);
-          if (!["valid", "missing-kind"].includes(mode)) expect(view.guide).toBe("");
+          if (!guideAvailable) expect(view.guide).toBe("");
           expect(JSON.stringify(view)).not.toContain("UNTRUSTED_REVIEW_METADATA");
           if (mode === "missing-kind") {
             expect(JSON.parse(rawFirst ?? "null").output.candidates[0]).not.toHaveProperty("kind");

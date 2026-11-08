@@ -922,10 +922,14 @@ async function synthesizeCompact(env: Env, revisionId: string, model: ModelSpec,
   const sourceContext = { evidence: evidenceGroups };
   reserve(memory, sourceContextJsonAllocation(sourceContext, authorityLabels));
   const content = sourceContextJson(sourceContext, authorityLabels);
+  const reviewOutputTokens = model.route.startsWith("gateway:") && isOpenRouterApiBase(model.routing?.provider.baseUrl)
+    && model.openRouterReasoningEffort !== undefined && ["high", "xhigh", "max"].includes(model.openRouterReasoningEffort)
+    && Array.isArray(model.openRouterReasoningEfforts) && model.openRouterReasoningEfforts.includes(model.openRouterReasoningEffort)
+    ? 8192 : 4096;
   const raw = await call(env, revisionId, 2,
     "Treat every first-call statement as a hypothesis. The evidence array is the unique dictionary of exact canonical block quotes, grouped locally: each group shows one quote with the candidate hypotheses nested inside it. Review each candidate only against its own group's quote. Reject a candidate whose necessary referent is absent from that quote; do not borrow it from another group's quote, a nearby heading or another candidate. Return selected entries with a short support reason and rejected entries with a short rejection reason. Review each candidate at most once. Do not add, rewrite, combine or propose claims, evidence, questions, glossary entries, guide prose or digest prose. Form guide only from candidateIds actually in your returned selected entries, preserving original candidate order and using at most five IDs; return [] when unavailable. Missing candidate decisions are unknown, not selections. Reject a whole candidate if it bundles independently checkable assertions or if any clause or condition is unsupported by its own quote. Reject the whole candidate when any necessary source-stated qualifier, condition, scope, comparison, limitation or uncertainty is missing or wrong, even if every remaining clause is supported by its own quote. Independent outcomes, different metrics or different task results must remain separate candidates. Keep a single multi-step definition together when its steps jointly define one procedure, and retain a single comparison's own setting, baseline and conditions. Exact quote and numeric checks run in code, while semantic support remains a model review rather than a truth guarantee.",
     content, compactReviewSchema(verified.candidates.map((candidate) => candidate.id)),
-    documentLanguage(verified.evidence.map((item) => item.quote)), model, memory, attemptId, 4096, true,
+    documentLanguage(verified.evidence.map((item) => item.quote)), model, memory, attemptId, reviewOutputTokens, true,
     !model.route.startsWith("workers-ai:") && model.structuredOutputs === true
       ? compactReviewGenerationSchema(verified.candidates.map((candidate) => candidate.id)) : undefined);
   await put(env, revisionId, "distill-call2.json", { ...raw, format: COMPACT_PRODUCER_FORMAT }, attemptId);
