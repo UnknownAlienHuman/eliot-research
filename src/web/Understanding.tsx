@@ -237,7 +237,10 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
     : busy ? 'Sending request.'
       : (awaitingStatus === 'accepted' ? 'Request accepted.' : 'Request outcome is unknown.')
         + (understanding.isFetching ? ' Reading status.' : ' Reload understanding to check its status.');
-  const reloadSnapshot = () => { setCatalogError(''); setCatalogWarnings([]); setCatalogVersion((v) => v + 1); };
+  const reloadSnapshot = () => {
+    setCatalogError(''); setCatalogWarnings([]); setCatalogVersion((v) => v + 1);
+    void understanding.refetch({ cancelRefetch: false });
+  };
   return (
     <section className='er-und' aria-label='Understanding' aria-busy={busy || understanding.isFetching || !statusReady}>
       <h2 className='er-und__title'>Understanding</h2>

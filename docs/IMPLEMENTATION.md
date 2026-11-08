@@ -404,6 +404,13 @@ The job took 202.325 seconds (one full-job sample). Per-page nearest-rank latenc
 14.614 seconds and p95 25.923 seconds. Monetary cost, Neurons and remaining provider quota are unknown.
 This is one reviewed full-PDF case, not full-corpus OCR quality or K2/K3 acceptance.
 
+On 2026-11-08, a separate fifteen-page run on the frozen Transformer PDF stored reviewed revision
+`c9e84a3b-ebca-4276-a701-36fd9e030964` (44,148 UTF-8 bytes, prefix `4f76`) in fifteen calls (62,145 input,
+11,293 output, zero cached tokens). The old 39,999-byte (`450f`) revision, its 66 blocks and 21 claims were
+retained. Same-job repeated Apply returned that same revision with no new call or revision. Three saved page
+bodies/heads/citations stayed unchanged and were observed stale at capture; their stored input membership is
+UNKNOWN. This run's per-page latency is not taken from the earlier case above.
+
 ## 5. Blocks, labels, citations and quote verification
 
 `blocks.json` stores ordered heading/paragraph/list/table/code/quote blocks with nearest heading and exact UTF-8 byte
@@ -607,9 +614,10 @@ immutable. Review selects or rejects candidate IDs with nonempty diagnostic reas
 guidance, not a 160-character scalar bound; existing per-call output and materialization limits bound this prose.
 Validated Raw2 preserves the full decoded reason, which supplies no claim, guide or digest facts.
 A missing decision remains unknown and cannot implicitly select or reject that candidate. Review introduces no new
-facts, additional claims or rewritten statements. A selected
-candidate must remain supported by its own bound evidence, including its qualifiers and conditions; matching quote
-bytes or numeric literals alone does not establish semantic support.
+facts, additional claims or rewritten statements. The guide is up to five selected candidate IDs. Review
+rejects whole independently-checkable bundles or unsupported clauses while retaining integral definitions and
+comparisons as single units. A selected candidate must remain supported by its own bound evidence, including
+its qualifiers and conditions; matching quote bytes or numeric literals alone does not establish semantic support.
 
 The optional guide is an ordered subset of selected candidate IDs. Code renders each complete frozen statement
 with its original citation binding, without generating guide prose, trimming statements or adding facts. The
@@ -673,6 +681,9 @@ Earlier Low `deb8555e…` retains its 27-claim partial core; High `87ae6801…` 
 History opened the 27 predecessor cards and 21 current cards. Archived predecessor claims, report and usage match
 exactly; original/canonical hashes and all 21 quote ranges are unchanged/exact. No quality acceptance follows:
 all quality, full-corpus, claim-mode and owner-review gates remain OPEN. K6 stays frozen.
+A subsequent free K3 run is partial (27 items across 2 calls, 23,648 input / 4,302 output), with A1 present
+only in the bundled item, 1 unsupported quote plus many bundled items, and an invalid guide carrying 29 IDs
+including rejected ones; all quality gates stay OPEN.
 Earlier Flash Low `e30b364e…` still failed call two at `selected.10.candidateId`; its received ID remains UNKNOWN
 because immutable historical Raw2 has `output: null` and cannot recover that attempt. It is not retroactively enriched.
 See the retained [current and historical captures](../eval/out/audit-compact-20261108/).
@@ -918,6 +929,8 @@ compressing eligible sources with the greatest savings first. Readable sources w
 whole when they fit; no source is dropped or reordered. Mixed requests retain `claims` mode whenever any source
 is compressed. Recompute history against the final label inventory and reject before inference if nothing fits.
 This process starts no source understanding or search.
+The free Dots C2 control (25.327 s, 229,627 input / 1,807 output, 3 exactly-opened cited ranges) keeps its
+unmarked stability/divergence explanations as caveats; semantic gates stay OPEN.
 
 Fresh chat requests an experimental job budget of 8,192 output tokens. After estimating the actual instructions
 and messages, `requestedOutputLimit(model, inputEstimate, requestedTokens)` validates the positive finite budget
@@ -1662,6 +1675,9 @@ owns the draft text and visible source selection; ChatView retains the Send/Stop
 A nonblank different draft requires confirmation, with Keep draft/Escape preserving its text and selection. Route
 changes dismiss the pending choice. The composer displays its current source scope. Chat freezes current readable
 heads on explicit Send; historical Reader questions stay read-only. Prefill creates no chat or inference request.
+Reloading the model list in Source Understanding refreshes the existing understanding view query alongside the
+catalogue version, so the inherited default caption and native reasoning-effort eligibility follow the current
+default while an explicit modelChoice stays unchanged.
 
 Routes: K0 `/`, `/settings`; K1 `/p/:projectId/sources`, `/p/:projectId/source/:sourceId?start=&end=`; K2
 `/p/:projectId/chat/:chatId?`, `/p/:projectId/studio`; K3 `/p/:projectId/overview` and understanding in the source reader.
