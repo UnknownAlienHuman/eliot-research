@@ -94,9 +94,9 @@ describe("explicit understanding retry", () => {
       expect(old.progress).not.toHaveProperty("nativeReasoningEffort");
       await requestUnderstanding(f.env, actor, lowInput);
       expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId)).toEqual({
-        request: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: model.route, nativeReasoningEffort: "low" }),
+        request: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: model.route, nativeReasoningEffort: "low", producerFormat: "compact-k3-v1" }),
       });
-      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-attempt-${retryId}`, params: { revisionId, attemptId: retryId, model: { ...high, nativeReasoningEffort: "low" } } });
+      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-attempt-${retryId}`, params: { revisionId, attemptId: retryId, model: { ...high, nativeReasoningEffort: "low" }, producerFormat: "compact-k3-v1" } });
       expect(high.nativeReasoningEffort).toBe("high");
       expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress.nativeReasoningEffort).toBe("low");
       expect(await getUnderstanding(f.env, actor, { sourceId, revisionId, attemptId: revisionId })).toEqual({ ...old, currentAttemptId: retryId });
@@ -122,7 +122,7 @@ describe("explicit understanding retry", () => {
       expect(f.db.prepare("SELECT * FROM claim WHERE source_revision_id=?").all(revisionId)).toEqual(claims);
       expect(f.db.prepare("SELECT attempt_id,snapshot_key,rejection,request_json FROM distill_history").all()).toEqual([
         { attempt_id: retryId, snapshot_key: null, rejection: detail,
-          request_json: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: unavailable.route, nativeReasoningEffort: "low" }) },
+          request_json: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: unavailable.route, nativeReasoningEffort: "low", producerFormat: "compact-k3-v1" }) },
       ]);
       expect(f.bodies).toEqual(bodies); expect(f.create).not.toHaveBeenCalled();
       expect(await getUnderstanding(f.env, actor, { sourceId, revisionId, requestId: retryId })).toMatchObject({ knownRequestId: retryId, requestRejection: detail, attemptId: revisionId });
@@ -156,14 +156,14 @@ describe("explicit understanding retry", () => {
     try {
       await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: model.route, nativeReasoningEffort: "low" });
       const request = f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId);
-      expect(request).toEqual({ request: JSON.stringify({ sourceId, revisionId, model: model.route, nativeReasoningEffort: "low" }) });
+      expect(request).toEqual({ request: JSON.stringify({ sourceId, revisionId, model: model.route, nativeReasoningEffort: "low", producerFormat: "compact-k3-v1" }) });
       await expect(requestUnderstanding(f.env, actor, { sourceId, revisionId, nativeReasoningEffort: "high" })).rejects.toMatchObject({ status: 409 });
       expect(f.create).not.toHaveBeenCalled();
       expect(f.db.prepare("SELECT distill_state AS state FROM source_revision WHERE id=?").get(revisionId)).toEqual({ state: "queued" });
       f.db.prepare("UPDATE source_revision SET distill_state='paused' WHERE id=?").run(revisionId);
       f.db.prepare("UPDATE source_revision SET distill_state='none' WHERE id IN (?,?)").run(otherId, retryId);
       await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: model.route });
-      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-${revisionId}`, params: { revisionId, model: { ...high, nativeReasoningEffort: "low" } } });
+      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-${revisionId}`, params: { revisionId, model: { ...high, nativeReasoningEffort: "low" }, producerFormat: "compact-k3-v1" } });
       expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId)).toEqual(request);
       expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress.nativeReasoningEffort).toBe("low");
     } finally { f.db.close(); }
@@ -418,8 +418,8 @@ describe("explicit understanding retry", () => {
       await requestUnderstanding(f.env, actor, input);
       expect(f.create).toHaveBeenCalledTimes(1);
       expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId))
-        .toEqual({ request: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: model.route }) });
-      expect(f.create.mock.calls[0]).toEqual([{ id: `distill-attempt-${retryId}`, params: { revisionId, attemptId: retryId, model } }]);
+        .toEqual({ request: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: model.route, producerFormat: "compact-k3-v1" }) });
+      expect(f.create.mock.calls[0]).toEqual([{ id: `distill-attempt-${retryId}`, params: { revisionId, attemptId: retryId, model, producerFormat: "compact-k3-v1" } }]);
       const archived = f.db.prepare("SELECT snapshot_key FROM distill_history WHERE attempt_id=?").get(revisionId) as { snapshot_key: string };
       expect(JSON.parse(f.bodies.get(archived.snapshot_key) ?? "null").revision).toEqual(before);
       expect(f.bodies.get(`source/${revisionId}/distill.json`)).toBe(f.original);

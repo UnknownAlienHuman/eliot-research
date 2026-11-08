@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { admitTurn } from "./cost";
-import { modelOutputLimit, modelTokenLimit, type ModelSpec } from "./models";
+import { modelOutputLimit, modelTokenLimit, requestedOutputLimit, type ModelSpec } from "./models";
 
 const model: ModelSpec = { route: "gateway:fixture/model", id: "model", label: "Fixture",
   contextTokens: 64000, maxOutputTokens: null, outputReserveTokens: 8192, checkedOn: "2026-11-04", enabled: true };
@@ -115,5 +115,20 @@ describe("strict migrated model admission", () => {
     expect(modelTokenLimit({ ...model, maxOutputTokens: 4096 })).toBe(68096);
     expect(modelOutputLimit({ ...model, contextWindowTokens: 128000, maxOutputTokens: 65536 }, 40000)).toBe(65536);
     expect(modelOutputLimit({ ...model, contextTokens: 120000, contextWindowTokens: 128000, maxOutputTokens: 65536 }, 100000)).toBe(28000);
+  });
+
+  it("applies a job output budget independently from provider metadata and assembly reserve", () => {
+    expect(requestedOutputLimit(model, 40000, 8192)).toBe(8192);
+    expect(requestedOutputLimit({ ...model, maxOutputTokens: 4096 }, 40000, 8192)).toBe(4096);
+    expect(requestedOutputLimit({ ...model, contextWindowTokens: 44000 }, 40000, 8192)).toBe(4000);
+    expect(requestedOutputLimit({ ...model, contextWindowTokens: 44000, maxOutputTokens: 2048 }, 40000, 8192)).toBe(2048);
+    // Without a published combined window, input-only context metadata does not reduce the explicit job budget.
+    expect(requestedOutputLimit({ ...model, contextTokens: 64000 }, 63999, 8192)).toBe(8192);
+    expect(model.maxOutputTokens).toBeNull();
+    expect(model.outputReserveTokens).toBe(8192);
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])("rejects an invalid job output budget %s", (requestedTokens) => {
+    expect(() => requestedOutputLimit(model, 1024, requestedTokens)).toThrow();
   });
 });

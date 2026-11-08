@@ -129,6 +129,27 @@ export function modelOutputLimit(model: Pick<CatalogModel, "contextTokens" | "co
   // published output capacity rather than inventing remaining headroom.
   return window === undefined ? model.maxOutputTokens : Math.min(model.maxOutputTokens, window - inputEstimate);
 }
+export function requestedOutputLimit(
+  model: Pick<CatalogModel, "contextTokens" | "contextWindowTokens" | "maxOutputTokens">,
+  inputEstimate: number,
+  requestedTokens: number,
+): number {
+  const inputCeiling = model.contextTokens ?? 0, window = model.contextWindowTokens;
+  if (!Number.isFinite(requestedTokens) || !Number.isSafeInteger(requestedTokens) || requestedTokens <= 0)
+    throw new LibraryError("unavailable", "This request has no usable output budget.", 503);
+  if (!Number.isSafeInteger(inputCeiling) || inputCeiling <= 0 || !Number.isSafeInteger(inputEstimate) ||
+    inputEstimate < 0 || inputEstimate > inputCeiling ||
+    (window !== undefined && (!Number.isSafeInteger(window) || window <= inputEstimate)))
+    throw new LibraryError("unavailable", "This request has no usable output context.", 503);
+  if (model.maxOutputTokens !== null &&
+    (!Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens <= 0))
+    throw new LibraryError("unavailable", "The model has no usable output maximum.", 503);
+  // estimateModelInput already includes JSON serialization, per-message framing,
+  // and its 1,024-token floor. Do not infer an output ceiling from input-only
+  // metadata or turn the local job budget into a catalogue/provider maximum.
+  return Math.min(requestedTokens, model.maxOutputTokens ?? Infinity,
+    window === undefined ? Infinity : window - inputEstimate);
+}
 export function modelTokenReservation(model: Pick<CatalogModel, "contextTokens" | "outputReserveTokens" | "maxOutputTokens">): number {
   const output = modelOutputReserve(model), total = (model.contextTokens ?? 0) + output;
   if (!Number.isSafeInteger(model.contextTokens) || (model.contextTokens ?? 0) <= 0 ||

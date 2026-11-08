@@ -7,7 +7,7 @@ import { createModelHistoryReader } from "./model-history";
 import { answerWarnings, numericCitationLabels, persistentResolvedAnswer, resolveCitations } from "./citations";
 import type { LabelSource } from "./citations";
 import { admitTurn } from "./cost";
-import { modelInputLimit, modelOutputLimit, requireAvailableModel } from "./models";
+import { modelInputLimit, requestedOutputLimit, requireAvailableModel } from "./models";
 import { chatModelMessages, estimateModelInput } from "./model-input";
 import type { ModelSpec } from "./models";
 import { modelFailure, resolveModelTransport, safeEmptyCompletionLog } from "./model-transport";
@@ -32,6 +32,7 @@ function turnProjection(turn: TurnView): D1TurnProjection {
 }
 const SETTLEMENT_PENDING = "This answer is saved, but its usage could not be confirmed. Reopen this conversation to try saving usage again; the answer will not be sent again.";
 const SETTLEMENT_MISMATCH = "This answer's stored usage does not match its recorded result. Both records were preserved; no answer was sent again. The records need review.";
+const CHAT_EXPERIMENTAL_OUTPUT_BUDGET_TOKENS = 8192;
 function parseStoredTurn(payload: string): TurnView {
   const { input, ...turn } = JSON.parse(payload) as Omit<TurnView, "input"> & { input?: StoredInput };
   return { ...turn, tokenLimit: turn.tokenLimit ?? null, ...(input ? { input:
@@ -305,14 +306,10 @@ export class ChatAgent extends Agent<Env, ChatState> {
     const turn = this.readTurn(turnId);
     if (!turn || !["completed", "partial"].includes(turn.state) || !turn.answer.trim()) throw new LibraryError("conflict", "This answer is not ready to save.", 409);
     const saved = persistentResolvedAnswer(turn.answer, turn.citations);
-    const warnings = turn.warnings ?? [];
-    const warningNote = warnings.length > 0
-      ? `Note: ${warnings.length} statement(s) lack a verified adjacent citation or numeric support.\n\n`
-      : "";
     const partialNote = turn.state === "partial"
       ? `Partial answer — ${(turn.error ?? "This answer needs review.").replace(/[\\`*_{}[\]()<>#+.!|~-]/g, "\\$&")}\n\n` : "";
     const historyNote = turn.historyNotice ? turn.historyNotice + "\n\n" : "";
-    return { answer: partialNote + historyNote + warningNote + saved.text,
+    return { answer: partialNote + historyNote + saved.text,
       citations: saved.citations, revisionIds: turn.revisionIds, state: turn.state };
   }
   private startTurn(input: RunTurnInput): Promise<TurnView> {
@@ -443,14 +440,15 @@ export class ChatAgent extends Agent<Env, ChatState> {
       const messages = chatModelMessages(context.messages, input.question);
       const inputTokens = estimateModelInput({ instructions, messages });
       if (inputTokens > modelInputLimit(model)) throw new LibraryError("invalid", "This question and source set exceed whole-reading context. Narrow the selection.", 400);
-      const maxOutputTokens = modelOutputLimit(model, inputTokens);
+      const appliedOutputTokens = requestedOutputLimit(model, inputTokens, CHAT_EXPERIMENTAL_OUTPUT_BUDGET_TOKENS);
+      turn.outputBudget = { requestedTokens: CHAT_EXPERIMENTAL_OUTPUT_BUDGET_TOKENS, appliedTokens: appliedOutputTokens };
       this.writeTurn(turn);
       await this.env.DB.prepare("UPDATE chat_turn SET scope_json=?,context_mode=? WHERE chat_id=? AND turn_id=? AND state='started'")
         .bind(JSON.stringify(turn.revisionIds), context.mode, this.name, turn.turnId).run();
       if (controller.signal.aborted) throw controller.signal.reason;
       dispatched = true;
       const result = streamText({ model: transport, instructions, messages,
-        ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0, ...(selectedModel?.supportsTemperature ? { temperature: 0 } : {}), abortSignal: controller.signal,
+        maxOutputTokens: appliedOutputTokens, maxRetries: 0, ...(selectedModel?.supportsTemperature ? { temperature: 0 } : {}), abortSignal: controller.signal,
         onError: ({ error }) => { if (error instanceof Error && ["AI_InvalidPromptError", "AI_InvalidArgumentError"].includes(error.name)) dispatched = false;
           streamError = modelFailure(error, model); console.error("Chat model stream failed", streamError); } });
       let lastWrite = 0;
@@ -489,11 +487,15 @@ export class ChatAgent extends Agent<Env, ChatState> {
       if (finish === "stop" && !streamError) turn.state = "completed";
       else {
         turn.state = "partial";
-        turn.error = streamError || `The model stopped before a normal completion (${finishDetail}).`;
+        turn.error = streamError || (finish === "length"
+          ? "The model reached its output-token limit. This answer may be incomplete."
+          : `The model stopped before a normal completion (${finishDetail}).`);
       }
       if (!turn.answer.trim()) {
         turn.state = "failed";
-        turn.error = streamError || `The model returned no answer text (finish: ${finishDetail}).`;
+        turn.error = streamError || (finish === "length"
+          ? "The model reached its output-token limit before returning answer text."
+          : `The model returned no answer text (finish: ${finishDetail}).`);
         try {
           const response = await Promise.resolve(result.response).catch(() => undefined);
           console.warn("Chat empty completion", safeEmptyCompletionLog({ turnId: turn.turnId, model, finishReason: finish, response, usage }));

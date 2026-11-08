@@ -223,6 +223,15 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const configuredUsable = configuredSpec !== undefined && configuredSpec.enabled && usableModel(configuredSpec);
   const pickerEmptyLabel = 'Use configured default' + (configuredLabel !== null ? ' (' + configuredLabel + ')' : '');
   const understandDisabled = busy || failure !== '' || understanding.isFetching || modelRoutePending || (modelChoice === '' ? !configuredUsable : chosenDisabled || !chosenUsable);
+  const hasGuide = typeof view.guide === 'string' && view.guide.trim() !== '';
+  const hasDigest = typeof view.digest === 'string' && view.digest.trim() !== '';
+  const claimDetailsDropped = view.report?.dropped.some(({ reason }) => !reason.startsWith('guide-') && !reason.startsWith('glossary-')) ?? false;
+  const partialNotice = !hasGuide && hasDigest
+    ? view.claims.length > 0 ? 'Guide unavailable; claims and digest are available below.' : 'Guide unavailable; the digest is available below.'
+    : hasGuide && !hasDigest
+      ? view.claims.length > 0 ? 'Digest unavailable; guide and claims are available below.' : 'Digest unavailable; the guide is available below.'
+      : view.claims.length === 0 && (hasGuide || hasDigest) ? 'No claims were retained; available source material is shown below.'
+        : claimDetailsDropped ? 'Some claims could not be retained.' : 'This understanding needs review.';
   const requestStatus = awaitingStatus === null
     ? statusReady ? stateLabel(view.state) : 'Checking understanding status.'
     : busy ? 'Sending request.'
@@ -279,7 +288,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
         {history.hasNextPage ? <button className='er-button er-button--text' type='button' disabled={history.isFetching} onClick={() => void history.fetchNextPage()}>Load more attempts</button> : null}
       </div> : null}
       {(historical || view.state === 'done' || view.state === 'partial') ? (<>
-        {view.state === 'partial' ? <p className='er-und__hint'>Partial understanding — some material could not be verified.</p> : view.report && (view.report.dropped.length > 0 || view.report.clearedNumbers > 0) ? <p className='er-und__hint'>Some claims or numeric details could not be verified.</p> : null}
+        {view.state === 'partial' ? <p className='er-und__hint'>{partialNotice}</p> : view.report && (view.report.dropped.length > 0 || view.report.clearedNumbers > 0) ? <p className='er-und__hint'>Some claims or numeric details could not be retained.</p> : null}
         {view.guide !== null && view.guide !== '' ? (<div className='er-und__guide'><h3>Guide</h3><div className='er-und__answer'><Markdown text={view.guide} references={references} /></div></div>) : null}
         <Questions questions={view.report?.questions ?? []} onUse={historical ? undefined : onUseQuestion} />
         {view.digest !== null && view.digest !== '' ? (<div className='er-und__guide'><h3>Digest</h3><div className='er-und__answer'><Markdown text={view.digest} references={references} /></div></div>) : null}

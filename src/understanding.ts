@@ -19,11 +19,13 @@ export interface UnderstandingClaim { id: string; kind: ClaimKind; statement: st
   dataset: string | null; valueText: string | null; valueNumber: number | null; unit: string | null; conditions: string | null }
 
 export interface DistillUsage { calls: number; inputTokens: number | null; cachedTokens: number | null;
-  outputTokens: number | null; tokenLimit?: number | null; tokenLimitKind?: "published" | "unknown" | "legacy"; wallMs: number; providerUsage?: (JSONObject | null)[] }
+  outputTokens: number | null; tokenLimit?: number | null; tokenLimitKind?: "published" | "unknown" | "legacy"; wallMs: number;
+  providerUsage?: (JSONObject | null)[]; outputBudgets?: ({ requestedTokens: number; appliedTokens: number } | null)[] }
 
 export interface DistillReport { questions: string[]; usage: DistillUsage; kept: number;
   dropped: { index: number; reason: string }[]; clearedNumbers: number;
   raw: { first: string | null; second: string | null }; error: string | null;
+  producerFormat?: "compact-k3-v1";
   artifacts?: { guide: string; digest: string; glossary: string } }
 
 export interface RecordedUnderstandingUsage { tokenLimit: number | null; tokenLimitKind: "published" | "unknown" | "legacy" | null; calls: number; inputTokens: number | null; cachedTokens: number | null;

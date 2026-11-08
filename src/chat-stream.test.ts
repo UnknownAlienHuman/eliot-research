@@ -1442,11 +1442,12 @@ describe("chat-stream K2 wire regression", () => {
     { capacity: 32768, context: 1048576 }, { capacity: 4096, context: 1048576 },
     { capacity: null, context: 1048576 }, { capacity: 32768, context: 20000, window: 20000 },
     { capacity: 943718, context: 1048576, window: 1048576 },
-  ])("sends published $capacity within context $context without treating the reserve as an output cap", async ({ capacity, context, window }) => {
+    { capacity: null, context: 6000, window: 6000, reserve: 2048 },
+  ])("sends an explicit job budget through the pinned SDK for capacity $capacity and context $context", async ({ capacity, context, window, reserve }) => {
     const h = makeHarness();
     const base = await requireAvailableModel(h.env, "gateway:command-code/native-beam");
     vi.mocked(requireAvailableModel).mockResolvedValueOnce({ ...base, contextTokens: context,
-      ...(window === undefined ? {} : { contextWindowTokens: window }), maxOutputTokens: capacity, outputReserveTokens: 8192 });
+      ...(window === undefined ? {} : { contextWindowTokens: window }), maxOutputTokens: capacity, outputReserveTokens: reserve ?? 8192 });
     try {
       await h.agent.onStart();
       nextSSE = sse([chunk({ content: "The source [S1:1]." }, "stop")]);
@@ -1455,10 +1456,14 @@ describe("chat-stream K2 wire regression", () => {
         scopeMode: "explicit", sourceIds: ["s1"] }, true));
       const request = vi.mocked(ai.streamText).mock.calls[0]?.[0];
       if (!request || !request.messages) throw new Error("Missing application model request.");
-      const input = Math.ceil(new TextEncoder().encode(JSON.stringify({ instructions: request.instructions, messages: request.messages })).byteLength / 3)
-        + request.messages.length * 32 + 1024;
-      if (capacity === null) expect(sentBodies[0]).not.toHaveProperty("max_tokens");
-      else expect(sentBodies[0]?.max_tokens).toBe(window === undefined ? capacity : Math.min(capacity, window - input));
+      // `streamText` is the pinned public AI SDK. The request body is captured after
+      // its OpenAI-compatible adapter crosses the existing fake Env.AI.fetch binding.
+      expect(request.maxOutputTokens).toBe(turn.outputBudget?.appliedTokens);
+      expect(sentBodies[0]?.max_tokens).toBe(turn.outputBudget?.appliedTokens);
+      expect(turn.outputBudget?.requestedTokens).toBe(8192);
+      if (capacity === null && window === undefined) expect(turn.outputBudget?.appliedTokens).toBe(8192);
+      if (capacity === 4096) expect(turn.outputBudget?.appliedTokens).toBe(4096);
+      if (reserve === 2048) expect(turn.outputBudget?.appliedTokens).toBeLessThan(8192);
       expect(fetchCalls).toBe(1);
       expect(turn).toMatchObject({ state: "completed", inputTokens: null, outputTokens: null });
       expect(turn.tokenLimitKind).toBe(capacity === null ? "unknown" : "published");
@@ -1622,10 +1627,11 @@ describe("chat-stream K2 wire regression", () => {
       expect(r1.answer.slice(r1.warnings?.[0]?.start ?? 0, r1.warnings?.[0]?.end ?? 0).length).toBeGreaterThan(0);
       expect(fetchCalls).toBe(1);
       const saved = await h.agent.getStoredTurn(projectId, t1);
-      expect(saved.answer).toContain("Supported fact [R");
-      expect(saved.answer).toContain("Note:");
-      expect(saved.answer).toContain("lack a verified adjacent citation");
+      const citation = saved.citations[0];
+      if (!citation) throw new Error("The saved answer lost its resolved citation.");
+      expect(saved.answer).toBe(`Supported fact [R${citation.revisionId}:${citation.block}]. Uncited factual sentence.`);
       expect(saved.citations.length).toBe(1);
+      expect((await h.agent.getTurns(projectId)).find((turn) => turn.turnId === t1)?.warnings).toEqual(r1.warnings);
     } finally { h.db.close(); }
   });
 
@@ -1851,13 +1857,30 @@ describe("chat-stream K2 wire regression", () => {
       nextSSE = sse([chunk({ content: "Supported fact [S1:1]. Uncited factual sentence." }, "length", { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 })]);
       const t1 = "66666666-6666-4666-8666-000000000011";
       const r1 = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId: t1, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
-      expect(r1.state).toBe("partial");
-      expect(r1.error ?? "").toContain("stopped before a normal completion");
+      expect(r1).toMatchObject({ state: "partial", answer: "Supported fact [S1:1]. Uncited factual sentence.",
+        error: expect.stringContaining("output-token limit"), inputTokens: 8, outputTokens: 6,
+        outputBudget: { requestedTokens: 8192, appliedTokens: 8192 } });
       expect(r1.citations.length).toBe(1);
       expect(r1.invalidLabels).toBe(0);
       expect(r1.warnings?.map((item) => item.kind)).toContain("missing-citation");
+      expect((await h.agent.getTurns(projectId)).find((turn) => turn.turnId === t1)?.outputBudget).toEqual(r1.outputBudget);
       expect(fetchCalls).toBe(1);
+      expect(vi.mocked(ai.streamText)).toHaveBeenCalledTimes(1);
     } finally { h.db.close(); }
+  });
+  it("reports an empty length finish as failed with known usage and no continuation", async () => {
+    const h = makeHarness();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await h.agent.onStart();
+      nextSSE = sse([chunk({ content: "" }, "length", { prompt_tokens: 8, completion_tokens: 0, total_tokens: 8 })]);
+      const turnId = "66666666-6666-4666-8666-000000000014";
+      const turn = requireTurn(await h.agent.submitTurn({ projectId, chatId, turnId, question: "Q1", scopeMode: "explicit", sourceIds: ["s1"], model: "gateway:command-code/native-beam" }, true));
+      expect(turn).toMatchObject({ state: "failed", answer: "", error: expect.stringContaining("output-token limit"),
+        inputTokens: 8, outputTokens: 0, outputBudget: { requestedTokens: 8192, appliedTokens: 8192 } });
+      expect(fetchCalls).toBe(1);
+      expect(vi.mocked(ai.streamText)).toHaveBeenCalledTimes(1);
+    } finally { warn.mockRestore(); h.db.close(); }
   });
   it.each([true, false])("retains a nonstandard provider finish code in the stored error (text: %s)", async (hasText) => {
     const h = makeHarness();
@@ -2041,6 +2064,7 @@ describe("chat-stream K2 wire regression", () => {
       expect(found.tokenLimit).toBeNull();
       expect((found as unknown as { estimatedCostMicrousd: number }).estimatedCostMicrousd).toBe(123);
       expect(found.inputTokens).toBe(10);
+      expect(found).not.toHaveProperty("outputBudget");
     } finally { h.db.close(); h.d1.close(); }
   });
 

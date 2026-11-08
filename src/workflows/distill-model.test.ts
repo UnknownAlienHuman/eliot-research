@@ -32,7 +32,7 @@ vi.mock("cloudflare:workers", () => ({
 }));
 vi.mock("ai", async () => {
   const actual = await vi.importActual<Record<string, unknown>>("ai");
-  return { ...actual, generateText: vi.fn(), experimental_streamTextLowMemory: vi.fn(), Output: { object: vi.fn() } };
+  return { ...actual, generateText: vi.fn(), experimental_streamTextLowMemory: vi.fn(), Output: { object: vi.fn(), json: vi.fn() } };
 });
 vi.mock("../model-transport", async () => ({
   ...await vi.importActual<typeof ModelTransport>("../model-transport"),
@@ -52,6 +52,7 @@ import { availableModels, modelTokenLimit, requireAvailableModel, requireCatalog
 import { discoverGatewayModels } from "../model-catalog";
 import { discoverNativeModels } from "../native-model-catalog";
 import { DistillWorkflow, extractionSchema, hasAvailableUnderstanding, requestUnderstanding, scheduleDistillation } from "./distill";
+import { getUnderstanding } from "../understanding";
 
 const revisionId = "d9b7d198-0dd2-4d5f-8176-e824e25bb6d0";
 const sourceId = "fb3c275a-46c0-43f6-9d49-deea18581c44";
@@ -202,16 +203,20 @@ beforeEach(() => {
   for (const lookup of forbiddenLookups) vi.mocked(lookup).mockReset().mockRejectedValue(new Error("Unexpected catalogue lookup"));
 });
 
-async function run(f: ReturnType<typeof fixture>, serializeErrors = false, model = snapshot) {
+async function run(f: ReturnType<typeof fixture>, serializeErrors = false, model = snapshot, producerFormat?: "compact-k3-v1" | "legacy-v4", failBeforeFinish = false) {
   const stepDo = vi.fn(async (_name: string, _options: unknown, callback: () => Promise<unknown>) => {
-    try { return await callback(); } catch (error) {
+    try {
+      if (failBeforeFinish && _name === "finish understanding")
+        throw new LibraryError("unavailable", "Simulated report publication interruption.", 503);
+      return await callback();
+    } catch (error) {
       // eslint-disable-next-line preserve-caught-error -- Simulate Workflow serialization stripping the error class and cause.
       if (serializeErrors && error instanceof Error) throw new Error(error.message);
       throw error;
     }
   });
   await new DistillWorkflow({} as ExecutionContext, f.env).run(
-    { payload: { revisionId, model } } as WorkflowEvent<DistillInput>,
+    { payload: { revisionId, model, ...(producerFormat === undefined ? {} : { producerFormat }) } } as WorkflowEvent<DistillInput>,
     { do: stepDo } as unknown as WorkflowStep);
   return stepDo;
 }
@@ -231,9 +236,9 @@ function finished(f: ReturnType<typeof fixture>, error: string) {
 }
 
 describe("DistillWorkflow admitted model snapshot", () => {
-  it.each(["valid", "malformed final JSON", "invalid final schema", "no final text", "reported usage then failure", "missing finish", "length with valid output", "SDK placeholder zeros", "response budget"] as const)(
+  it.each(["valid", "malformed final JSON", "invalid final schema", "nested output bound", "no final text", "reported usage then failure", "missing finish", "length with valid output", "SDK placeholder zeros", "response budget"] as const)(
     "stores only final native onEnd output and preserves usage/guards: %s", async mode => {
-      const realParser = ["valid", "malformed final JSON", "invalid final schema", "no final text", "missing finish"].includes(mode);
+      const realParser = ["valid", "malformed final JSON", "invalid final schema", "nested output bound", "no final text", "missing finish"].includes(mode);
       const id = realParser ? "@cf/zai-org/glm-5.3-flash" : "fixture";
       const model: ModelSpec = { ...snapshot, route: "workers-ai:" + id, id, nativeReasoningEffort: "high" };
       delete model.responseFormat;
@@ -289,7 +294,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
           bindingEfforts.push(options.reasoning_effort);
           const output = bindingCalls === 1 ? first : second;
           const content = mode === "malformed final JSON" ? '{"claims":' + privateText : mode === "no final text" ? ""
-            : JSON.stringify(mode === "invalid final schema" ? { ...first, questions: privateText, [privateText]: privateText } : output);
+            : JSON.stringify(mode === "invalid final schema" ? { ...first, questions: privateText, [privateText]: privateText }
+              : mode === "nested output bound" ? { ...first, claims: [{ ...first.claims[0], statement: "x".repeat(1201) }] } : output);
           const frame = (value: unknown) => "data: " + JSON.stringify(value) + "\n\n";
           let body = frame({ choices: [{ index: 0, delta: { content }, finish_reason: null }] })
             + frame({ choices: [], usage: usage.raw });
@@ -327,8 +333,10 @@ describe("DistillWorkflow admitted model snapshot", () => {
           expect(report.error).toBe("Local response materialization budget exceeded. No retry was started.");
           expect(f.bodies.has(prefix + "distill-call1.json")).toBe(false);
         } else {
-          const raw = JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null");
+          const rawBody = f.bodies.get(prefix + "distill-call1.json") ?? "null";
+          const raw = JSON.parse(rawBody);
           expect(raw.output).toEqual(succeeds ? first : null);
+          if (mode === "nested output bound") expect(rawBody).not.toContain("x".repeat(1201));
           expect(raw.usage).toMatchObject({ inputTokens: unknown ? null : 71, outputTokens: unknown ? null : 19, cachedTokens: unknown ? null : 0 });
           if (succeeds) {
             expect(raw.format).toBe("claim-plan-guide-v4"); expect(f.bodies.get(prefix + "guide.md")).toContain("The method uses normalization.");
@@ -337,6 +345,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
         }
         if (mode === "reported usage then failure") expect(report.error).toBe("Model stream failed (HTTP 408).");
         if (mode === "length with valid output") expect(report.error).toBe("model reached output bound before complete output");
+        if (mode === "invalid final schema") expect(report.error).toBe("Native final JSON did not match the required schema. Schema issue: path=questions; code=invalid_type; expected=array.");
+        if (mode === "nested output bound") expect(report.error).toBe("Native final JSON did not match the required schema. Schema issue: path=claims.0.statement; code=too_big; type=string; maximum=1200.");
         if (realParser) {
           expect(bindingCalls).toBe(mode === "valid" ? 2 : 1); expect(finalParses).toBe(mode === "valid" ? 2 : 1); expect(modelFailure).not.toHaveBeenCalled();
           expect(bindingEfforts).toEqual(mode === "valid" ? ["low", "low"] : ["high"]);
@@ -350,7 +360,8 @@ describe("DistillWorkflow admitted model snapshot", () => {
               .toEqual({ state: "done", calls: 2, kept: 1, inputTokens: 142, outputTokens: 38, cachedTokens: 0 });
           } else {
             const expected = mode === "malformed final JSON" ? "Native final output could not be parsed as JSON."
-              : mode === "invalid final schema" ? "Native final JSON did not match the required schema. Field: questions; code: invalid_type."
+              : mode === "invalid final schema" ? "Native final JSON did not match the required schema. Schema issue: path=questions; code=invalid_type; expected=array."
+              : mode === "nested output bound" ? "Native final JSON did not match the required schema. Schema issue: path=claims.0.statement; code=too_big; type=string; maximum=1200."
               : mode === "no final text" ? "Native final output contained no text." : "Native output ended with a non-normal finish (stream-truncated).";
             expect(report.error).toBe(expected);
             expect(f.db.prepare("SELECT distill_error AS error FROM source_revision WHERE id=?").get(revisionId)).toEqual({ error: expected });
@@ -2355,6 +2366,344 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(row.tokenLimit).toBeNull();
       expect(row.cost).toBe(322766);
       expect(generateText).not.toHaveBeenCalled();
+    } finally { f.db.close(); }
+  });
+});
+
+describe("compact K3 producer", () => {
+  it("retains all 61 native candidates, strips outer metadata and keeps prefix output partial after Recheck", async () => {
+    const metadata = "OUTER_METADATA_MUST_NOT_REACH_OWNER_OUTPUT";
+    const longReason = "The bound source block states this complete configuration with its original condition, and selection keeps the frozen statement unchanged. ".repeat(2).trim();
+    const document = documentWithBlocks(Array.from({ length: 61 }, (_, index) => ({ type: "paragraph" as const,
+      text: `Configuration ${index + 1} preserves the residual path through ${index + 1} projection layers.\n` })));
+    const extraction = { $schema: "https://schema.invalid/" + metadata, extraMetadata: { note: metadata },
+      candidates: document.blocks.map((block, index) => ({ quoteBlock: `[S1:${block.id}]`,
+      kind: "method" as const, statement: `Configuration ${index + 1} preserves the residual path through ${index + 1} projection layers.` })) };
+    const review = { $schema: "https://schema.invalid/" + metadata, extraMetadata: { note: metadata },
+      selected: extraction.candidates.slice(0, 32).map((_, index) => ({ candidateId: `C${index}`,
+      reason: index === 0 ? longReason : "The bound source block states this complete configuration." })), rejected: [], guide: ["C0", "C1", "C2"] };
+    const tailDrops = Array.from({ length: 29 }, (_, index) => ({ index: index + 32, reason: "unreviewed-work-limit" }));
+    const model: ModelSpec = { ...snapshot, route: "workers-ai:@cf/zai-org/glm-5.3-flash",
+      id: "@cf/zai-org/glm-5.3-flash", nativeReasoningEffort: "low" };
+    const f = fixture(model.route, document);
+    f.db.prepare("UPDATE source_revision SET distill_request_json=?,distill_token_limit_kind='unknown',distill_token_limit=NULL WHERE id=?")
+      .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), revisionId);
+    const sdk = await vi.importActual<typeof AISDK>("ai");
+    const transport = await vi.importActual<typeof ModelTransport>("../model-transport");
+    vi.mocked(experimental_streamTextLowMemory).mockImplementation(sdk.experimental_streamTextLowMemory);
+    vi.mocked(resolveModelTransport).mockImplementation(transport.resolveModelTransport);
+    vi.mocked(Output.json).mockReset(); vi.mocked(Output.object).mockReset();
+    let jsonParses = 0, objectParses = 0, bindingCalls = 0;
+    const caps: unknown[] = [];
+    vi.mocked(Output.json).mockImplementation(options => {
+      const spec = sdk.Output.json(options);
+      return { ...spec, parseCompleteOutput: (...args: Parameters<typeof spec.parseCompleteOutput>) => {
+        jsonParses++; return spec.parseCompleteOutput(...args);
+      } };
+    });
+    vi.mocked(Output.object).mockImplementation(options => {
+      const spec = sdk.Output.object(options);
+      return { ...spec, parseCompleteOutput: (...args: Parameters<typeof spec.parseCompleteOutput>) => {
+        objectParses++; return spec.parseCompleteOutput(...args);
+      } };
+    });
+    Object.assign(f.env, { AI: { run: async (modelId: string, inputs: Record<string, unknown>) => {
+      expect(modelId).toBe(model.id); expect(inputs.stream).toBe(true);
+      expect(inputs).not.toHaveProperty("response_format"); caps.push(inputs.max_tokens);
+      const output = bindingCalls++ === 0 ? extraction : review;
+      const frame = (data: unknown) => "data: " + JSON.stringify(data) + "\n\n";
+      return new Response(frame({ choices: [{ index: 0, delta: { content: JSON.stringify(output) }, finish_reason: null }] })
+        + frame({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })
+        + frame({ choices: [], usage: { prompt_tokens: 101, completion_tokens: 17, total_tokens: 118 } })
+        + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    } } });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+    try {
+      await run(f, false, model, "compact-k3-v1");
+      expect(bindingCalls).toBe(2); expect(caps).toEqual([8192, 4096]);
+      expect(jsonParses).toBe(1); expect(objectParses).toBe(1);
+      expect(Output.json).toHaveBeenCalledTimes(1); expect(Output.object).toHaveBeenCalledTimes(1);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(2); expect(generateText).not.toHaveBeenCalled();
+      for (const [request] of vi.mocked(experimental_streamTextLowMemory).mock.calls)
+        expect(request).toMatchObject({ maxRetries: 0, streamRetries: 0 });
+      const firstRequest = vi.mocked(experimental_streamTextLowMemory).mock.calls[0]?.[0];
+      const marker = "Return one JSON object conforming to this schema: ";
+      const instructions = String(firstRequest?.instructions);
+      const promptSchema = JSON.parse(instructions.slice(instructions.lastIndexOf(marker) + marker.length));
+      expect(promptSchema.properties.candidates.maxItems).toBe(32);
+      const messages = vi.mocked(experimental_streamTextLowMemory).mock.calls[1]?.[0].messages;
+      const payload = JSON.parse(String((messages?.[0] as { content: string }).content)) as { candidates: { id: string }[] };
+      expect(payload.candidates.map(candidate => candidate.id)).toEqual(Array.from({ length: 32 }, (_, index) => `C${index}`));
+      expect(JSON.stringify(messages)).not.toContain(metadata);
+      const reviewSchema = vi.mocked(Output.object).mock.calls[0]?.[0].schema as z.ZodType;
+      expect(reviewSchema.safeParse({ selected: [{ candidateId: "C32", reason: "Not offered for review." }], rejected: [], guide: [] }).success).toBe(false);
+      const rawFirst = f.bodies.get(prefix + "distill-call1.json");
+      const rawSecond = f.bodies.get(prefix + "distill-call2.json");
+      expect(JSON.parse(rawFirst ?? "null").output).toEqual(extraction);
+      expect(JSON.parse(rawSecond ?? "null").output).toEqual({ selected: review.selected, rejected: review.rejected, guide: review.guide });
+      expect(longReason.length).toBeGreaterThan(160);
+      expect(JSON.parse(rawSecond ?? "null").output.selected[0].reason).toBe(longReason);
+      const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
+      expect(verified).toMatchObject({ dropped: tailDrops });
+      expect(verified.candidates).toHaveLength(32);
+      const report = f.bodies.get(prefix + "distill.json");
+      expect(JSON.parse(report ?? "null")).toMatchObject({ state: "partial", kept: 32,
+        dropped: expect.arrayContaining(tailDrops), usage: { calls: 2 } });
+      const view = await getUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId });
+      expect(view.state).toBe("partial");
+      expect(view.claims.map(claim => claim.statement)).toEqual(extraction.candidates.slice(0, 32).map(candidate => candidate.statement));
+      expect(view.guide).toContain(extraction.candidates[0]?.statement);
+      expect(view.digest).toContain(extraction.candidates[31]?.statement);
+      expect(view.digest).not.toContain(extraction.candidates[32]?.statement);
+      expect(JSON.stringify({ guide: view.guide, digest: view.digest, claims: view.claims })).not.toContain(longReason);
+      expect(JSON.stringify({ guide: view.guide, digest: view.digest, claims: view.claims, report: view.report })).not.toContain(metadata);
+      await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true });
+      const rechecked = await getUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId });
+      expect(rechecked.state).toBe("partial"); expect(rechecked.claims).toHaveLength(32);
+      expect(JSON.parse(f.bodies.get(prefix + "checked/distill.json") ?? "null")).toMatchObject({ state: "partial", kept: 32 });
+      expect(rechecked.claims.map(claim => claim.statement)).toEqual(view.claims.map(claim => claim.statement));
+      expect(rechecked.guide).toBe(view.guide); expect(rechecked.digest).toBe(view.digest);
+      expect(rechecked.report?.dropped).toEqual(expect.arrayContaining(tailDrops));
+      expect(f.bodies.get(prefix + "distill-call1.json")).toBe(rawFirst);
+      expect(f.bodies.get(prefix + "distill-call2.json")).toBe(rawSecond);
+      expect(f.bodies.get(prefix + "distill.json")).toBe(report);
+      expect(bindingCalls).toBe(2); expect(network).not.toHaveBeenCalled();
+    } finally { vi.mocked(Output.json).mockReset(); vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
+  });
+
+  it("retains the safe compact verification reason when Workflow reconstruction replaces the error prototype", async () => {
+    const model: ModelSpec = { ...snapshot, route: "workers-ai:fixture", id: "fixture" };
+    const f = fixture(model.route);
+    f.db.prepare("UPDATE source_revision SET distill_request_json=? WHERE id=?")
+      .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), revisionId);
+    const privatePayload = "PRIVATE_INVALID_CANDIDATES_VALUE";
+    const privateRawError = "PRIVATE_RECONSTRUCTED_ERROR_TEXT";
+    const extraction = { $schema: "https://schema.invalid/fixture", candidates: privatePayload };
+    const usage = { inputTokens: 41, inputTokenDetails: { cacheReadTokens: 0 }, outputTokens: 9,
+      raw: { prompt_tokens: 41, completion_tokens: 9, total_tokens: 50 } };
+    const safeReason = "The retained compact extraction candidates are not an array.";
+    let reconstructions = 0;
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(experimental_streamTextLowMemory).mockImplementation(options => ({ consumeStream: async () => {
+      await options.onChunk?.({ chunk: { type: "finish-step", finishReason: "stop", rawFinishReason: "stop", usage } } as never);
+      await options.onEnd?.({ output: extraction, totalUsage: usage } as never);
+    } } as never));
+    const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) => {
+      try { return await callback(); }
+      catch (error) {
+        if (name !== "verify source excerpts") throw error;
+        expect(error).toBeInstanceOf(LibraryError);
+        expect(f.db.prepare("SELECT distill_error AS error,distill_calls AS calls,distill_state AS state FROM source_revision WHERE id=?").get(revisionId))
+          .toEqual({ error: safeReason, calls: 1, state: "running" });
+        const reconstructed = new Error(privateRawError);
+        expect(reconstructed).not.toBeInstanceOf(LibraryError);
+        reconstructions++;
+        throw reconstructed;
+      }
+    });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+    try {
+      await new DistillWorkflow({} as ExecutionContext, f.env).run(
+        { timestamp: new Date(), instanceId: `distill-${revisionId}`, workflowName: "DistillWorkflow",
+          payload: { revisionId, model, producerFormat: "compact-k3-v1" } },
+        { do: stepDo } as unknown as WorkflowStep);
+      expect(reconstructions).toBe(1);
+      expect(stepDo.mock.calls.map(([name]) => name)).toEqual(["extract source", "verify source excerpts"]);
+      expect(experimental_streamTextLowMemory).toHaveBeenCalledTimes(1); expect(generateText).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,claim_count AS count,distill_error AS error FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "failed", calls: 1, count: 0, error: safeReason });
+      const raw = JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null");
+      expect(raw.output).toEqual(extraction);
+      expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
+      expect(f.bodies.has(prefix + "digest.md")).toBe(false);
+      const report = f.bodies.get(prefix + "distill.json") ?? "null";
+      expect(JSON.parse(report)).toMatchObject({ state: "failed", error: safeReason, kept: 0, usage: { calls: 1 } });
+      expect(report).not.toContain(privatePayload); expect(report).not.toContain(privateRawError);
+      const view = await getUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId });
+      expect(view.state).toBe("failed"); expect(view.error).toBe(safeReason); expect(view.claims).toHaveLength(0);
+      expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); f.db.close(); }
+  });
+
+  it("sends a unique evidence dictionary, keeps reviewed claims and digest when guide IDs include rejected or unreported candidates", async () => {
+    const document = documentWithBlocks([
+      { type: "paragraph", text: "A low-rank update changes the projection weights in each layer.\n" },
+      { type: "paragraph", text: "The report records 92.5% accuracy on the held-out corpus.\n" },
+      { type: "paragraph", text: "The method assumes the sampled corpus remains stable.\n" },
+    ]);
+    const model: ModelSpec = { ...snapshot, route: "workers-ai:fixture", id: "fixture", maxOutputTokens: null };
+    const f = fixture(model.route, document);
+    f.db.prepare("UPDATE source_revision SET distill_request_json=? WHERE id=?")
+      .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), revisionId);
+    const extraction = { candidates: [
+      { quoteBlock: "[S1:1]", kind: "method", statement: "The low-rank update changes projection weights." },
+      { quoteBlock: "[S1:1]", kind: "method", statement: "The update changes weights in every layer." },
+      { quoteBlock: "[S1:2]", kind: "result", statement: "Accuracy on the held-out corpus is reported at 92.5%." },
+      { quoteBlock: "[S1:3]", kind: "limitation", statement: "The method assumes a stable sampled corpus." },
+    ] };
+    const review = { selected: [
+      { candidateId: "C0", reason: "The linked block states the update mechanism." },
+      { candidateId: "C2", reason: "The linked block gives the same accuracy value and condition." },
+    ], rejected: [{ candidateId: "C1", reason: "This repeats the first candidate." }], guide: ["C0", "C1", "C3"] };
+    const usage = { inputTokens: 101, inputTokenDetails: { cacheReadTokens: 0 }, outputTokens: 17,
+      outputTokenDetails: { textTokens: 17 }, totalTokens: 118,
+      raw: { prompt_tokens: 101, completion_tokens: 17, total_tokens: 118 } };
+    let ordinal = 0;
+    const requests: { maxOutputTokens?: number; instructions?: string; messages?: unknown }[] = [];
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(experimental_streamTextLowMemory).mockImplementation((options) => {
+      const output = ordinal++ === 0 ? extraction : review;
+      const captured = options as unknown as { maxOutputTokens?: number; instructions?: string; messages?: unknown;
+        onChunk?: (event: never) => Promise<void> | void; onEnd?: (event: never) => Promise<void> | void };
+      requests.push(captured);
+      return { consumeStream: async () => {
+        await captured.onChunk?.({ chunk: { type: "finish-step", finishReason: "stop", rawFinishReason: "stop", usage } } as never);
+        await captured.onEnd?.({ output, totalUsage: usage } as never);
+      } } as never;
+    });
+    try {
+      const steps = await run(f, false, model, "compact-k3-v1");
+      expect(steps.mock.calls.map(([name]) => name)).toEqual([
+        "extract source", "verify source excerpts", "review and synthesize", "store understanding", "finish understanding",
+      ]);
+      expect(requests.map((request) => request.maxOutputTokens)).toEqual([8192, 4096]);
+
+      const first = requests[0];
+      if (!first || typeof first.instructions !== "string") throw new Error("The compact extraction request was not captured.");
+      const schemaMarker = "Return one JSON object conforming to this schema: ";
+      const schemaAt = first.instructions.lastIndexOf(schemaMarker);
+      const firstSchema = JSON.parse(first.instructions.slice(schemaAt + schemaMarker.length)) as {
+        properties?: { candidates?: { items?: { properties?: Record<string, unknown> } } };
+      };
+      expect(Object.keys(firstSchema.properties ?? {})).toEqual(["candidates"]);
+      expect(Object.keys(firstSchema.properties?.candidates?.items?.properties ?? {})).toEqual(["quoteBlock", "kind", "statement"]);
+      const firstMessages = first.messages as { role: string; content: unknown }[];
+      expect(firstMessages[1]?.content).not.toContain("The glossary must");
+      expect(firstMessages[1]?.content).not.toContain("Write the guide, questions");
+
+      const second = requests[1];
+      if (!second) throw new Error("The compact review request was not captured.");
+      const secondMessages = second.messages as { role: string; content: unknown }[];
+      if (typeof secondMessages[0]?.content !== "string") throw new Error("The compact review context was not JSON text.");
+      const payload = JSON.parse(secondMessages[0].content) as {
+        evidence: { id: string; label: string; quote: string }[];
+        candidates: { id: string; evidenceId: string; statement: string; kind: string; quote?: string }[];
+      };
+      expect(payload.evidence).toHaveLength(3);
+      expect(payload.candidates[0]?.evidenceId).toBe(payload.candidates[1]?.evidenceId);
+      expect(payload.candidates.every((candidate) => candidate.quote === undefined)).toBe(true);
+      const sourceBytes = new TextEncoder().encode(document.text);
+      expect(payload.evidence.map(({ quote }) => quote)).toEqual(document.blocks.map((block) =>
+        new TextDecoder().decode(sourceBytes.slice(block.start, block.end))));
+
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null") as DistillReport & { state: string; producerFormat?: string };
+      expect(report.state).toBe("partial");
+      expect(report.producerFormat).toBe("compact-k3-v1");
+      expect(report.questions).toEqual([]);
+      expect(report.usage.outputBudgets).toEqual([
+        { requestedTokens: 8192, appliedTokens: 8192 }, { requestedTokens: 4096, appliedTokens: 4096 },
+      ]);
+      expect(report.dropped).toEqual(expect.arrayContaining([
+        { index: 1, reason: "review-rejected: This repeats the first candidate." },
+        { index: 3, reason: "review-reason-unknown" },
+        { index: 4, reason: "guide-invalid-selection" },
+      ]));
+      expect(f.db.prepare("SELECT claim_count AS count,guide_summary AS summary FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ count: 2, summary: null });
+      expect(f.bodies.get(prefix + "guide.md")).toBe("");
+      expect(f.bodies.get(prefix + "digest.md")).toContain("92.5%");
+      expect(JSON.parse(f.bodies.get(prefix + "glossary.json") ?? "null")).toEqual([]);
+
+      const view = await getUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId });
+      expect(view.state).toBe("partial");
+      expect(view.canRecover).toBe(true);
+      expect(view.guide).toBe("");
+      expect(view.digest).toContain("92.5%");
+      expect(view.claims).toHaveLength(2);
+      expect(view.report?.producerFormat).toBe("compact-k3-v1");
+      await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true });
+      expect(experimental_streamTextLowMemory).toHaveBeenCalledTimes(2);
+      expect(f.db.prepare("SELECT distill_state AS state,claim_count AS count FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "partial", count: 2 });
+    } finally { f.db.close(); }
+  });
+
+  it("does not promote call-one drafts when call-two JSON is invalid", async () => {
+    const document = documentWithBlocks([{ type: "paragraph", text: "A projection update preserves the residual path.\n" }]);
+    const f = fixture(snapshot.route, document);
+    f.db.prepare("UPDATE source_revision SET distill_request_json=? WHERE id=?")
+      .run(JSON.stringify({ sourceId, revisionId, model: snapshot.route, producerFormat: "compact-k3-v1" }), revisionId);
+    const extraction = { candidates: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The projection update preserves a residual path." }] };
+    const usage = { inputTokens: 41, inputTokenDetails: { noCacheTokens: 41, cacheReadTokens: 0, cacheWriteTokens: 0 }, outputTokens: 9,
+      outputTokenDetails: { textTokens: 9, reasoningTokens: undefined }, totalTokens: 50,
+      raw: { prompt_tokens: 41, completion_tokens: 9, total_tokens: 50 } };
+    const invalidText = '{"selected":[{"candidateId":"C0","reason":"private malformed result"}';
+    const invalid = new NoObjectGeneratedError({ message: "Invalid JSON from provider.", text: invalidText,
+      response: { id: "fixture-invalid-json", timestamp: new Date(), modelId: "fixture/admitted" }, usage, finishReason: "stop" });
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ output: extraction, totalUsage: usage } as never)
+      .mockRejectedValueOnce(invalid);
+    try {
+      const steps = await run(f, false, snapshot, "compact-k3-v1");
+      expect(steps.mock.calls.map(([name]) => name)).toEqual(["extract source", "verify source excerpts", "review and synthesize"]);
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,claim_count AS count FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "failed", calls: 2, count: 0 });
+      expect(f.bodies.has(prefix + "guide.md")).toBe(false);
+      expect(f.bodies.has(prefix + "digest.md")).toBe(false);
+      const rawFirst = JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null");
+      const rawSecond = JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null");
+      expect(rawFirst).toMatchObject({ format: "compact-k3-v1", output: extraction });
+      expect(rawSecond).toMatchObject({ format: "compact-k3-v1", output: null,
+        usage: { outputBudget: { requestedTokens: 4096, appliedTokens: 4096 } } });
+      expect(JSON.stringify(rawSecond)).not.toContain(invalidText);
+      expect(await hasAvailableUnderstanding(f.env, revisionId)).toBe(false);
+      const rowClaims = f.db.prepare("SELECT COUNT(*) AS count FROM claim WHERE source_revision_id=?").get(revisionId) as { count: number };
+      expect(rowClaims.count).toBe(0);
+    } finally { f.db.close(); }
+  });
+
+  it("recovers committed compact claims and digest as partial when finish-report publication is interrupted", async () => {
+    const document = documentWithBlocks([{ type: "paragraph", text: "The projection update preserves the residual path.\n" }]);
+    const model: ModelSpec = { ...snapshot, route: "workers-ai:fixture", id: "fixture", maxOutputTokens: null };
+    const f = fixture(model.route, document);
+    f.db.prepare("UPDATE source_revision SET distill_request_json=? WHERE id=?")
+      .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), revisionId);
+    const extraction = { candidates: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The projection update preserves a residual path." }] };
+    const review = { selected: [{ candidateId: "C0", reason: "The linked block states the method." }], rejected: [] };
+    const usage = { inputTokens: 41, inputTokenDetails: { cacheReadTokens: 0 }, outputTokens: 9,
+      outputTokenDetails: { textTokens: 9 }, totalTokens: 50, raw: { prompt_tokens: 41, completion_tokens: 9, total_tokens: 50 } };
+    let ordinal = 0;
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    vi.mocked(experimental_streamTextLowMemory).mockImplementation((options) => {
+      const output = ordinal++ === 0 ? extraction : review;
+      const captured = options as unknown as { onChunk?: (event: never) => Promise<void> | void; onEnd?: (event: never) => Promise<void> | void };
+      return { consumeStream: async () => {
+        await captured.onChunk?.({ chunk: { type: "finish-step", finishReason: "stop", rawFinishReason: "stop", usage } } as never);
+        await captured.onEnd?.({ output, totalUsage: usage } as never);
+      } } as never;
+    });
+    try {
+      const steps = await run(f, false, model, "compact-k3-v1", true);
+      expect(steps.mock.calls.map(([name]) => name)).toEqual([
+        "extract source", "verify source excerpts", "review and synthesize", "store understanding", "finish understanding",
+      ]);
+      expect(experimental_streamTextLowMemory).toHaveBeenCalledTimes(2);
+      expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+      expect(f.db.prepare("SELECT distill_state AS state,claim_count AS count,guide_summary AS summary FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "partial", count: 1, summary: null });
+      expect(f.bodies.get(prefix + "guide.md")).toBe("");
+      expect(f.bodies.get(prefix + "digest.md")).toContain("The projection update preserves a residual path.");
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null") as DistillReport & { state: string };
+      expect(report.state).toBe("partial");
+      expect(report.error).toBe("Simulated report publication interruption.");
+      expect(report.kept).toBe(1);
+      const view = await getUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId });
+      expect(view.state).toBe("partial");
+      expect(view.error).toBe(report.error);
+      expect(view.guide).toBe("");
+      expect(view.digest).toContain("The projection update preserves a residual path.");
+      expect(view.claims).toHaveLength(1);
     } finally { f.db.close(); }
   });
 });

@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { assertEvalOrigin, assertEvalBrowserOrigin, fetchEval } from './origin.mjs';
 import { uncitedStatements, unsupportedNumericStatements } from '../../src/citations.ts';
+import { checkAdamBindings, checkPositionalEncodingBindings } from './calibration.ts';
 const EOL = String.fromCharCode(10);
 const TAB = String.fromCharCode(9);
 const BACKSLASH = String.fromCharCode(92);
@@ -51,6 +52,7 @@ const outDir = fileURLToPath(new URL('../../eval/out/k2/', import.meta.url));
 const notebookAnswersPath = staticSelftest || modelsOnly || pickerOnly ? '' : (process.env.ELIOT_K2_NOTEBOOKLM_ANSWERS ?? '').trim()
   || fileURLToPath(new URL('../../eval/out/notebooklm-20261026/answers.md', import.meta.url));
 const order = ['C1', 'C2', 'C3', 'C4', 'O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8'];
+const OWNER_REVIEW_QIDS = new Set(order.filter((qid) => qid.startsWith('O')));
 if (!staticSelftest && !pickerOnly) await mkdir(outDir, { recursive: true });
 async function apiJson(path, init) {
   // Finite READ default; an explicit signal (including null for model waits) is preserved.
@@ -272,7 +274,12 @@ function checkAnswer(qid, ans) {
   const has = (...ss) => ss.every((s) => m.includes(s));
   const checks = [];
   const add = (name, passed, detail) => checks.push({ name, passed: Boolean(passed), hard: true, detail });
-  if (typeof ans !== 'string' || !ans.trim()) return [{ name: 'answer present', passed: false, hard: true, detail: 'No answer text was stored.' }];
+  if (typeof ans !== 'string' || !ans.trim()) {
+    checks.push({ name: 'answer present', passed: false, hard: true, detail: 'No answer text was stored.' });
+    if (OWNER_REVIEW_QIDS.has(qid)) checks.push({ name: 'semantic quality', status: 'REVIEW_REQUIRED', automated: false,
+      ownerReviewRequired: true, detail: 'No semantic judgment is automated; owner review remains required.' });
+    return checks;
+  }
   if (qid === 'C1') {
     add('d_model=512', m.includes('512'), 'Expected Transformer base model d_model 512.');
     const w = m.split(' ');
@@ -294,13 +301,12 @@ function checkAnswer(qid, ans) {
       && sqrtModelExponent && sqrtStepExponent && sqrtWarmupExponent;
     add('learning-rate formula and warmup=4000', strictFormula || sqrtFormula, 'Expected d_model^-0.5 min(step^-0.5, step·warmup^-1.5), warmup 4000, or an equivalent square-root expression.');
   }
-  if (qid === 'C3') add('Adam defaults', has('0.001') && has('0.9') && has('0.999') && (has('1e-8') || m.includes('10 -8') || m.includes('10 - 8') || m.includes('10-8') || has('0.00000001')), 'Expected alpha=0.001, beta1=0.9, beta2=0.999 and epsilon=1e-8.');
-  if (qid === 'C4') add('positional encoding contrast', (m.includes('синус') || m.includes('sinus')) && (m.includes('обуч') || m.includes('learn')), 'Expected sinusoidal versus learned positional encodings.');
+  if (qid === 'C3') add('Adam parameter/value bindings', checkAdamBindings(ans), 'Expected alpha→0.001, beta1→0.9, beta2→0.999 and epsilon→1e-8; each value must be positively bound to its parameter without a unit.');
+  if (qid === 'C4') add('model/positional-encoding bindings', checkPositionalEncodingBindings(ans), 'Expected Transformer→sinusoidal and BERT→learned positional encoding.');
   if (qid === 'O8') add('honest abstention', /нет в корпусе|в корпусе нет|не решают|не содержат|ни одн(?:а|ой|ого|у)|в корпусе отсутствуют методы борьбы с галлюцинациями|нет работы, которая предлагает решение проблемы галлюцинаций|abstain|not in (the )?corpus|no paper/i.test(ans), 'Expected an answer that the corpus does not solve hallucinations.');
-  if (['O1', 'O2', 'O3', 'O8'].includes(qid))
-    checks.push({ name: 'semantic quality', ownerReviewRequired: true, detail: 'Gold facts are shown for owner review; the evaluator does not judge entailment or usefulness.' });
-  else if (['O4', 'O5', 'O6', 'O7'].includes(qid))
-    checks.push({ name: 'semantic coverage', passed: false, skipped: 'not automated', detail: 'Gold facts are shown; no automatic semantic judgment is made.' });
+  if (OWNER_REVIEW_QIDS.has(qid))
+    checks.push({ name: 'semantic quality', status: 'REVIEW_REQUIRED', automated: false, ownerReviewRequired: true,
+      detail: 'Gold facts are shown for owner review; entailment, coverage and usefulness are not automated.' });
   return checks;
 }
 function assertC2StaticSelftests() {
@@ -325,6 +331,66 @@ function assertC2StaticSelftests() {
   assert.equal(c2('d_model⁻⁰·⁵ · min(step_num⁻⁰·⁵, step_num · warmup_steps⁻¹·⁵), warmup_steps 2000'), false, 'Wrong warmup value must fail for warmup_steps aliases.');
   assert.equal(c2('d_model⁻⁰·⁵ · min(previous_step_num⁻⁰·⁵, step_num · warmup_steps⁻¹·⁵), warmup_steps 4000'), false, 'previous_step_num must not count as the schedule step.');
   assert(!normMath('2·3').includes('2.3'), 'An ordinary middle dot must not become a decimal point.');
+}
+function assertC3C4StaticSelftests() {
+  const c3 = (answer) => checkAnswer('C3', answer).find((check) => check.name === 'Adam parameter/value bindings')?.passed;
+  const c4 = (answer) => checkAnswer('C4', answer).find((check) => check.name === 'model/positional-encoding bindings')?.passed;
+  const correctC3 = 'Adam defaults: alpha = 0.001, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8.';
+  assert.equal(c3(correctC3), true, 'English parameter/value bindings must pass.');
+  const russianC3 = 'По умолчанию: α = 0,001; β₁ = 0,9; β₂ = 0,999; ε = 10⁻⁸.';
+  assert.equal(c3(russianC3), true, 'Russian labels, decimal commas and Unicode exponents must pass.');
+  assert.equal(c3('\\(\\alpha = 0.001, \\beta_{1} = 0.9, \\beta_{2} = 0.999, \\varepsilon = 10^{-8}\\)'), true, 'LaTeX parameter/value bindings must pass.');
+  assert.equal(c3('| Parameter | Default |\n| --- | --- |\n| **alpha** | **0.001** |\n| **beta_1** | **0.9** |\n| **beta_2** | **0.999** |\n| **epsilon** | **1e-8** |'), true, 'A formatted Markdown table must pass.');
+  const savedC3 = [
+    '## Настройки по умолчанию для проверенных задач машинного обучения',
+    '- **α (шаг обучения / learning rate):** 0.001 [S4:12]',
+    '- **β₁:** 0.9 [S4:12]',
+    '- **β₂:** 0.999 [S4:12]',
+    '- **ε:** 10⁻⁸ [S4:12]',
+    '## Для варианта AdaMax',
+    '- **α:** 0.002 [S4:49]',
+    '- **β₁:** 0.9 [S4:49]',
+    '- **β₂:** 0.999 [S4:49]',
+    '## Пример использования в других работах',
+    'BERT при предобучении использовал Adam с learning rate 1e-4, β₁ = 0.9, β₂ = 0.999 [S1:93].',
+    'Attention Is All You Need использовала Adam с β₁ = 0.9, β₂ = 0.98 и ε = 10⁻⁹ [S2:35].',
+  ].join(EOL);
+  assert.equal(c3(savedC3), true, 'The saved Adam-default excerpt must pass while variant/application sections stay out of scope.');
+  assert.equal(c3(correctC3 + ' Transformer uses Adam with beta2 = 0.98 and epsilon = 1e-9. BERT uses Adam with alpha = 1e-4.'), true,
+    'Sectionless English comparison clauses must retain their leading model scope.');
+  assert.equal(c3(russianC3 + ' Трансформер использует Adam с β₁ = 0,9, β₂ = 0,98 и ε = 10⁻⁹. BERT использовал Adam с α = 1e-4.'), true,
+    'Sectionless Russian comparison clauses must retain their leading model scope.');
+  const swappedSavedC3 = savedC3.replace('**α (шаг обучения / learning rate):** 0.001 [S4:12]', '**α (шаг обучения / learning rate):** 0.9 [S4:12]')
+    .replace('**β₁:** 0.9 [S4:12]', '**β₁:** 0.001 [S4:12]');
+  assert.equal(c3(swappedSavedC3), false, 'Swapped roles in the saved Adam-default section must fail.');
+  const negatedSavedC3 = savedC3.replace('α (шаг обучения / learning rate):** 0.001', 'α не равно (шаг обучения / learning rate):** 0.001');
+  assert.equal(c3(negatedSavedC3), false, 'Negation of the saved Adam-default binding must fail.');
+  assert.equal(c3('Adam defaults: alpha = -0.001, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8.'), false, 'A negative value must not pass by numeric presence.');
+  assert.equal(c3('Adam defaults: alpha = 0.001 seconds, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8.'), false, 'A value with an incompatible unit must fail.');
+  assert.equal(c3('Adam defaults: alpha = 0.001%, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8.'), false, 'A percentage suffix must fail.');
+  assert.equal(c3('Adam uses alpha, beta1, beta2 and epsilon. The values are 0.001, 0.9, 0.999 and 1e-8.'), false, 'Unbound presence of roles and values must fail.');
+
+  assert.equal(c4('Transformer uses sinusoidal positional encodings, whereas BERT uses learned positional embeddings.'), true, 'English model/encoding bindings must pass.');
+  assert.equal(c4('Transformer — синусоидальные позиционные кодировки, а BERT — обучаемые позиционные эмбеддинги.'), true, 'Russian model/encoding bindings must pass.');
+  assert.equal(c4('**Transformer**: *sinusoidal positional encoding*; **BERT**: *learned positional embeddings*.'), true, 'Formatted model/encoding bindings must pass.');
+  assert.equal(c4('Transformer uses sinusoidal positional encodings and experimented with learned alternatives; BERT uses learned positional embeddings.'), true,
+    'A correctly bound Transformer default must pass when learned alternatives are also discussed.');
+  assert.equal(c4('Transformer experimented with learned positional encodings but selected sinusoidal positional encodings; BERT uses learned positional embeddings.'), true,
+    'Selected Transformer sinusoidal encoding must pass when the same answer notes experimented learned alternatives.');
+  assert.equal(c4('Transformer uses sinusoidal positional encodings; BERT uses learned positional embeddings. Transformer uses learned positional encodings; BERT uses sinusoidal positional embeddings.'), false,
+    'Explicit positive core bindings that contradict the expected pair must fail.');
+  assert.equal(c4('Transformer uses learned positional embeddings, while BERT uses sinusoidal positional encodings.'), false, 'Reversed model/encoding roles must fail.');
+  assert.equal(c4('Transformer does not use sinusoidal positional encodings; BERT uses learned positional embeddings.'), false, 'A negated core model/encoding binding must fail.');
+  assert.equal(c4('Transformer and BERT use positional encodings; sinusoidal and learned are both mentioned.'), false, 'Unbound encoding presence must fail.');
+
+  for (const qid of OWNER_REVIEW_QIDS) {
+    const semantic = checkAnswer(qid, 'Mechanical checks do not assess this answer.').find((check) => check.name === 'semantic quality');
+    assert.equal(semantic?.status, 'REVIEW_REQUIRED', qid + ' semantic status must remain REVIEW_REQUIRED.');
+    assert.equal(semantic?.automated, false, qid + ' semantic judgment must remain NOT_AUTOMATED.');
+    assert.equal(semantic?.ownerReviewRequired, true, qid + ' must retain owner review.');
+    const missingAnswerSemantic = checkAnswer(qid, '').find((check) => check.name === 'semantic quality');
+    assert.equal(missingAnswerSemantic?.status, 'REVIEW_REQUIRED', qid + ' missing answer must still leave semantics unassessed.');
+  }
 }
 function assertDispatchStopStaticSelftests() {
   assert.equal(dispatchUnavailable(404, { error: { code: 'not_found', message: 'External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.' } }, null), true, 'HTTP 404 response status must stop the batch.');
@@ -352,16 +418,44 @@ function classifyStopOutcome(turn) {
   if (state === 'completed') return 'not-run';
   return 'failed';
 }
+const JOURNEY_REQUESTED_OUTPUT_TOKENS = 8192;
 function journeyExpectedLimits(entry) {
   const context = entry && typeof entry.contextTokens === 'number' ? entry.contextTokens : NaN;
-  const max = entry && typeof entry.maxOutputTokens === 'number' ? entry.maxOutputTokens : null;
-  const reserve = entry && typeof entry.outputReserveTokens === 'number' ? entry.outputReserveTokens : null;
-  const bound = reserve !== null ? reserve : max;
-  const output = bound === null ? NaN : Math.min(bound, max !== null ? max : bound);
-  if (!Number.isSafeInteger(context) || context <= 0 || !Number.isSafeInteger(output) || output <= 0) return null;
-  const total = context + output;
-  if (!Number.isSafeInteger(total)) return null;
-  return { outputLimit: output, callTokenLimit: total };
+  const max = entry?.maxOutputTokens;
+  // Match existing route readiness only; this reserve never caps generation.
+  const reserve = entry?.outputReserveTokens ?? max;
+  const window = entry?.contextWindowTokens;
+  if (!Number.isSafeInteger(context) || context <= 0
+    || (max !== null && (!Number.isSafeInteger(max) || max <= 0 || !Number.isSafeInteger(context + max)))
+    || !Number.isSafeInteger(Math.min(reserve ?? 0, max ?? Infinity)) || Math.min(reserve ?? 0, max ?? Infinity) <= 0
+    || (window !== undefined && (!Number.isSafeInteger(window) || window <= 0))) return null;
+  const tokenLimit = max === null ? null : Math.min(context + max, window ?? Infinity);
+  if (tokenLimit !== null && (!Number.isSafeInteger(tokenLimit) || tokenLimit <= 0)) return null;
+  return { requestedOutputTokens: JOURNEY_REQUESTED_OUTPUT_TOKENS, tokenLimit,
+    tokenLimitKind: tokenLimit === null ? 'unknown' : 'published' };
+}
+function inspectOutputBudget(outputBudget, entry) {
+  if (!outputBudget || typeof outputBudget !== 'object' || Array.isArray(outputBudget))
+    return { status: 'UNKNOWN', valid: false, requestedTokens: null, appliedTokens: null, reason: 'no stored outputBudget' };
+  const requestedTokens = outputBudget.requestedTokens;
+  const appliedTokens = outputBudget.appliedTokens;
+  if (!Number.isSafeInteger(requestedTokens) || requestedTokens !== JOURNEY_REQUESTED_OUTPUT_TOKENS
+    || !Number.isSafeInteger(appliedTokens) || appliedTokens <= 0 || appliedTokens > requestedTokens)
+    return { status: 'INVALID', valid: false, requestedTokens: requestedTokens ?? null, appliedTokens: appliedTokens ?? null,
+      reason: 'requested/applied outputBudget must be safe positive integers and applied must not exceed the requested 8192 tokens' };
+  const max = entry?.maxOutputTokens;
+  if (max !== undefined && max !== null && appliedTokens > max)
+    return { status: 'INVALID', valid: false, requestedTokens, appliedTokens, reason: 'applied outputBudget exceeds the published provider output maximum' };
+  const window = entry?.contextWindowTokens;
+  if (window !== undefined && appliedTokens > window)
+    return { status: 'INVALID', valid: false, requestedTokens, appliedTokens, reason: 'applied outputBudget exceeds the published combined context window' };
+  return { status: 'VALID', valid: true, requestedTokens, appliedTokens, reason: null };
+}
+function outputBudgetText(outputBudget) {
+  if (!outputBudget || typeof outputBudget !== 'object' || Array.isArray(outputBudget)) return 'UNKNOWN (not stored)';
+  const requested = Number.isSafeInteger(outputBudget.requestedTokens) ? outputBudget.requestedTokens : 'UNKNOWN';
+  const applied = Number.isSafeInteger(outputBudget.appliedTokens) ? outputBudget.appliedTokens : 'UNKNOWN';
+  return 'requested ' + requested + ' / applied ' + applied + ' tokens';
 }
 function validTokenLimitPair(tokenLimit, kind) {
   if (kind === 'unknown') return tokenLimit === null;
@@ -395,7 +489,8 @@ function invalidEvidenceText(row) {
 }
 function classifyBenchmarkOutcome(qids, rows, hardFailureCount, ownerReviewRequired) {
   const hardChecksPassed = hardFailureCount === 0 && qids.every((qid) => rows.get(qid)?.passed === true);
-  const needsOwnerReview = ownerReviewRequired || qids.some((qid) => rows.get(qid)?.ownerReviewRequired === true);
+  const needsOwnerReview = ownerReviewRequired || qids.some((qid) => OWNER_REVIEW_QIDS.has(qid))
+    || qids.some((qid) => rows.get(qid)?.ownerReviewRequired === true);
   return {
     hardChecksPassed,
     ownerReviewRequired: needsOwnerReview,
@@ -415,8 +510,8 @@ function assertK2OutcomeStaticSelftests() {
     { hardChecksPassed: true, ownerReviewRequired: true, exitCode: 2 },
     'Completed hard-passing rows keep advisory counts nonfatal while owner review selects exit 2.');
   assert.deepEqual(classifyBenchmarkOutcome(['C1', 'O6'], new Map([['C1', { passed: true }]]), 0, false),
-    { hardChecksPassed: false, ownerReviewRequired: false, exitCode: 1 },
-    'A missing required row is a hard failure.');
+    { hardChecksPassed: false, ownerReviewRequired: true, exitCode: 1 },
+    'A missing required row is a hard failure and O semantics remain pending owner review.');
   assert.deepEqual(classifyBenchmarkOutcome(['C1'], new Map([['C1', { passed: true }]]), 0, false),
     { hardChecksPassed: true, ownerReviewRequired: false, exitCode: 0 },
     'All hard-passing rows without owner review exit 0.');
@@ -428,16 +523,28 @@ function assertJourneyStaticSelftests() {
   assert.equal(classifyStopOutcome({ state: 'partial', answer: 'Some text.', error: 'The answer exceeded the 90 s time bound. A new Send starts a new turn; no retry was started.' }), 'failed', 'A deadline partial must not pass as an owner Stop.');
   assert.equal(classifyStopOutcome({ state: 'failed', answer: '', error: 'External model request failed (HTTP 404).' }), 'failed', 'A provider failure must not pass as an owner Stop.');
   assert.equal(classifyStopOutcome({ state: 'partial', answer: 'Some text.', error: 'The model stopped before a normal completion (stop).' }), 'failed', 'A generic stop finish without the owner-Stop cause must not pass.');
-  assert.deepEqual(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: 131072, outputReserveTokens: 8192 }), { outputLimit: 8192, callTokenLimit: 1008192 }, 'The admitted call bound uses the SDK job reserve, not published capacity.');
-  assert.deepEqual(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: 131072 }), { outputLimit: 131072, callTokenLimit: 1131072 }, 'Without a job reserve the published max bounds the call.');
-  assert.equal(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: null }), null, 'Missing output metadata admits nothing.');
+  assert.deepEqual(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: 131072, outputReserveTokens: 2048 }),
+    { requestedOutputTokens: 8192, tokenLimit: 1131072, tokenLimitKind: 'published' }, 'Provider tokenLimit uses published capacity, independent of outputReserveTokens.');
+  assert.deepEqual(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: 131072, contextWindowTokens: 1100000 }),
+    { requestedOutputTokens: 8192, tokenLimit: 1100000, tokenLimitKind: 'published' }, 'Provider tokenLimit is capped only by its published combined window.');
+  assert.deepEqual(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: null, outputReserveTokens: 8192 }),
+    { requestedOutputTokens: 8192, tokenLimit: null, tokenLimitKind: 'unknown' }, 'Nullable provider output capacity remains unknown while the local request budget is separate.');
+  assert.equal(journeyExpectedLimits({ contextTokens: 1000000, maxOutputTokens: null }), null, 'Unknown provider maximum without the existing usable metadata reserve is not executable.');
+  assert.equal(journeyExpectedLimits({ contextTokens: 1000000, outputReserveTokens: 8192 }), null, 'Missing provider-capacity metadata is not reinterpreted as explicit unknown.');
   assert.equal(journeyExpectedLimits({ contextTokens: null, maxOutputTokens: 131072, outputReserveTokens: 8192 }), null, 'Missing context metadata admits nothing.');
+  assert.deepEqual(inspectOutputBudget(undefined, { maxOutputTokens: null }),
+    { status: 'UNKNOWN', valid: false, requestedTokens: null, appliedTokens: null, reason: 'no stored outputBudget' }, 'A legacy turn without outputBudget stays unknown; do not fabricate 8192.');
+  assert.deepEqual(inspectOutputBudget({ requestedTokens: 8192, appliedTokens: 4096 }, { maxOutputTokens: null }),
+    { status: 'VALID', valid: true, requestedTokens: 8192, appliedTokens: 4096, reason: null }, 'Stored requested/applied outputBudget is validated with nullable provider capacity.');
+  assert.equal(inspectOutputBudget({ requestedTokens: 8192, appliedTokens: 4096 }, { maxOutputTokens: 2048 }).status, 'INVALID', 'Applied outputBudget cannot exceed published capacity.');
+  assert.equal(inspectOutputBudget({ requestedTokens: 4096, appliedTokens: 4096 }, { maxOutputTokens: null }).status, 'INVALID', 'Fresh turns must retain the requested 8192-token budget.');
 }
 function assertInvalidEvidenceStaticSelftests() {
   assert.equal(invalidEvidenceText({ turnId: 't1', invalidLabels: 17, invalidLabelExamples: ['[S9:26, S9:27]'] }), 'invalidLabels: 17 (unique samples: [S9:26, S9:27]; complete original occurrences/positions unavailable)', 'Occurrence count must not be arithmetically reduced by the deduplicated sample set.');
   assert.equal(invalidEvidenceText({ turnId: 't1', invalidLabels: null, invalidLabelExamples: [] }), 'invalidLabels UNKNOWN (no stored count available)', 'A missing stored count must be explicit.');
 }
 assertC2StaticSelftests();
+assertC3C4StaticSelftests();
 assertDispatchStopStaticSelftests();
 assertO8StaticSelftests();
 assertJourneyStaticSelftests();
@@ -518,7 +625,7 @@ const compareRows = new Map(order.map((qid) => [qid, {
   model: null,
   turnState: 'skipped',
   passed: false,
-  ownerReviewRequired: false,
+  ownerReviewRequired: OWNER_REVIEW_QIDS.has(qid),
   skipped: 'no exact stored turn has been selected',
   factChecks: [],
   citationRanges: [],
@@ -528,7 +635,7 @@ const compareRows = new Map(order.map((qid) => [qid, {
   reason: null,
 } ]));
 function markQuestionSkipped(qid, reason, turnState = 'skipped') {
-  compareRows.set(qid, { ...compareRows.get(qid), passed: false, ownerReviewRequired: false, skipped: reason, reason, turnState });
+  compareRows.set(qid, { ...compareRows.get(qid), passed: false, ownerReviewRequired: OWNER_REVIEW_QIDS.has(qid), skipped: reason, reason, turnState });
 }
 function mdCell(value) {
   return String(value ?? '—').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -556,6 +663,7 @@ async function writeCompare(rows, metadata) {
   const uncitedAdvisoryCount = uncitedCheckDetails.reduce((total, detail) => total + (Number(/([0-9]+) found/.exec(detail)?.[1]) || 0), 0);
   const inputs = sumKnown('inputTokens'), cached = sumKnown('cachedTokens'), outputs = sumKnown('outputTokens');
   const limits = sumKnown('tokenLimit');
+  const outputBudgetRows = turnRows.filter((row) => row.outputBudget && typeof row.outputBudget === 'object' && !Array.isArray(row.outputBudget)).length;
   const lines = [
     '# K2 — Eliot / NotebookLM comparison',
     '',
@@ -568,23 +676,26 @@ async function writeCompare(rows, metadata) {
     '- Chat: ' + mdCell(metadata.chatId ?? 'UNKNOWN') + '.',
     '- Stored turn rows before/after: ' + (metadata.turnCountBefore ?? 'unknown') + '/' + (metadata.turnCountAfter ?? 'unknown') + '; original records preserved: ' + String(metadata.originalTurnRecordsPreserved === true) + '.',
     '- Turn records with usage: ' + turnRows.length + ' / 12.',
-    '- Per-turn usage totals: input ' + inputs.sum + ' (' + inputs.unknown + ' unknown), cached ' + cached.sum + ' (' + cached.unknown + ' unknown), output ' + outputs.sum + ' (' + outputs.unknown + ' unknown), tokenLimit ' + limits.sum + ' (' + limits.unknown + ' unknown).',
+    '- Per-turn execution totals: input ' + inputs.sum + ' (' + inputs.unknown + ' unknown), cached ' + cached.sum + ' (' + cached.unknown + ' unknown), output ' + outputs.sum + ' (' + outputs.unknown + ' unknown), provider tokenLimit ' + limits.sum + ' (' + limits.unknown + ' unknown; published capacity or UNKNOWN).',
+    '- Stored local outputBudget: ' + outputBudgetRows + '/' + turnRows.length + ' rows; missing values remain UNKNOWN and are never inferred as 8192.',
     '- Latency sample n=' + turnRows.filter((row) => typeof row.timing?.firstTokenMs === 'number' && typeof row.timing?.totalMs === 'number').length + ' ms: first p50/p95 ' + percentile(firstTimes, 0.50) + '/' + percentile(firstTimes, 0.95) + '; total p50/p95 ' + percentile(totalTimes, 0.50) + '/' + percentile(totalTimes, 0.95) + '.',
     '- Exact citation ranges checked: ' + ranges.filter((range) => range.passed === true).length + '/' + ranges.length + '; failed ' + ranges.filter((range) => range.passed === false).length + '.',
     '- Unsupported numeric statements (advisory WARN, not a hard gate): ' + unsupportedNumericCount + '.',
     '- Uncited factual statements (advisory WARN, not a hard gate): ' + uncitedAdvisoryCount + '.',
     '- Actual Eliot turn model is shown per row; non-default stored answers are diagnostic only.',
-    '- Owner semantic gate required: ' + String(metadata.ownerReviewRequired === true) + '; this report does not judge meaning.',
-    '- Hard checks passed: ' + String(metadata.hardChecksPassed === true) + (metadata.stopReason ? ' — ' + mdCell(metadata.stopReason) : ''),
+    '- Mechanical execution checks: terminal state, timing, usage and token-limit fields are listed per row.',
+    '- Semantic review: O1–O8 REVIEW_REQUIRED / NOT_AUTOMATED; this evaluator does not judge entailment, coverage or usefulness.',
+    '- Owner acceptance: NOT_ASSESSED by this evaluator.',
+    '- Mechanical hard checks passed: ' + String(metadata.hardChecksPassed === true) + (metadata.stopReason ? ' — ' + mdCell(metadata.stopReason) : ''),
     '- Full K2 accepted: false (this report is scoped evidence only).',
     '',
-    '| # | Turn ID | Question | Gold facts | NotebookLM answer | Eliot answer | Model / state | Checks passed | ownerReviewRequired | Fact checks | Citation ranges / quotes | Time / usage |',
-    '|---|---|---|---|---|---|---|---|---|---|---|---|',
+    '| # | Turn ID | Question | Gold facts | NotebookLM answer | Eliot answer | Model / state | Checks passed | Semantic / owner status | Fact checks | Citation ranges / quotes | Time / usage | Local outputBudget |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|---|',
   ];
   for (const qid of order) {
     const row = rows.get(qid) || {};
     const checkParts = Array.isArray(row.factChecks) ? row.factChecks.map((check) => {
-      const value = check.ownerReviewRequired ? 'ownerReviewRequired' : check.skipped ? 'skipped' : String(check.passed === true);
+      const value = check.status ?? (check.ownerReviewRequired ? 'REVIEW_REQUIRED / NOT_AUTOMATED' : check.skipped ? 'skipped' : String(check.passed === true));
       return check.name + ': ' + value + (check.detail ? ' (' + check.detail + ')' : '');
     }) : [];
     if (Array.isArray(row.hardFailures)) checkParts.push(...row.hardFailures);
@@ -597,12 +708,13 @@ async function writeCompare(rows, metadata) {
       ? row.citationRanges.map((r) => r.label + ' ' + r.revisionId + ':' + r.block + '[' + r.start + ',' + r.end + ') ' + String(r.passed === true) + (r.skipped ? ' skipped' : '') + (r.reason ? ' (' + r.reason + ')' : '') + (r.quote ? ' quote=' + r.quote : '')).join('<br>')
       : row.citationSummary ?? 'skipped';
     const usage = row.usage ? [row.usage.inputTokens, row.usage.cachedTokens, row.usage.outputTokens].map((v) => v ?? 'UNKNOWN').join('/')
-      + ' tok; limit ' + (row.usage.tokenLimit ?? 'UNKNOWN')
+      + ' tok; provider tokenLimit ' + (row.usage.tokenLimit ?? 'UNKNOWN') + ' (' + (row.usage.tokenLimitKind ?? 'UNKNOWN') + ')'
       : 'skipped';
     const time = row.timing ? 'first ' + (row.timing.firstTokenMs ?? 'UNKNOWN') + ' ms / total ' + (row.timing.totalMs ?? 'UNKNOWN') + ' ms'
       + (row.timing.wallMs === null || row.timing.wallMs === undefined ? '' : ' / wall ' + row.timing.wallMs + ' ms') : 'skipped';
     lines.push('| ' + [qid, row.turnId ?? 'skipped', Q.get(qid), goldFacts.get(qid), notebookAnswers.get(qid), row.answer ?? 'skipped',
-      (row.model ?? 'unknown') + ' [' + (row.routeStatus ?? 'unknown-route') + '] / ' + (row.turnState ?? 'skipped'), String(row.passed === true), String(row.ownerReviewRequired === true), factText, rangeText, time + '; ' + usage]
+      (row.model ?? 'unknown') + ' [' + (row.routeStatus ?? 'unknown-route') + '] / ' + (row.turnState ?? 'skipped'), String(row.passed === true),
+      OWNER_REVIEW_QIDS.has(qid) ? 'REVIEW_REQUIRED / NOT_AUTOMATED' : 'not applicable', factText, rangeText, time + '; ' + usage, outputBudgetText(row.outputBudget)]
       .map(mdCell).join(' | ') + ' |');
   }
   lines.push('');
@@ -1391,7 +1503,7 @@ if (journeyOnly) {
       project: journeyProjectTitle, fixtureChat: journeyFixtureChat,
       frozenModelFrom: 'GET /api/settings at live time (frozen, never overridden; no catalogue refresh)',
       stopQuestionChars: JOURNEY_STOP_QUESTION.length, stopScopeMode: 'empty',
-      boundPreflight: 'SDK modelOutputLimit min(outputReserveTokens ?? maxOutputTokens, maxOutputTokens ?? reserve); admitted bound = contextTokens + output (Nemo: 1000000 + 8192 = 1008192)',
+      outputBudgetPreflight: 'Fresh turn stores requestedTokens=8192 and its appliedTokens; provider tokenLimit remains published total capacity or UNKNOWN and is not derived from outputReserveTokens.',
       plan: ['preflight existing C3 (completed, invalidLabels 0, cites>0, frozen model, exact current scope, every cited range opens)',
         'create ONE stop chat, dispatch ONE empty-scope turn (async 202, exact request id, no retry)',
         'watch the stream in the real UI; after first non-empty text click the existing Stop button',
@@ -1401,7 +1513,8 @@ if (journeyOnly) {
     process.exit(2);
   }
   const jreport = { journey: 'stop-reconnect-save', mode: 'live', origin: journeyOrigin, project: journeyProjectTitle,
-    fixtureChat: journeyFixtureChat, frozenAnswerModel: null, frozenModelMetadata: null, expectedCallTokenLimit: null,
+    fixtureChat: journeyFixtureChat, frozenAnswerModel: null, frozenModelMetadata: null,
+    requestedOutputTokens: JOURNEY_REQUESTED_OUTPUT_TOKENS, expectedProviderTokenLimit: null, expectedProviderTokenLimitKind: null,
     preflight: null, stop: null, reconnect: null, save: null, freezes: null, deltas: null, outcome: 'unknown' };
   let journeyNotRun = false;
   let jbrowser: any = null;
@@ -1424,11 +1537,14 @@ if (journeyOnly) {
     assert(frozenEntry, 'The frozen global answer model must exist in the cached catalogue; no refresh is started.');
     assert.equal(frozenEntry.enabled, true, 'The frozen global answer model must be enabled for admission.');
     const expectedLimits = journeyExpectedLimits(frozenEntry);
-    assert(expectedLimits, 'The frozen catalogue entry must carry usable context/output metadata; unusable metadata admits nothing.');
+    assert(expectedLimits, 'The frozen catalogue entry must carry usable input context and well-formed capacity/window metadata; nullable provider output capacity remains unknown.');
     jreport.frozenModelMetadata = { route: frozenEntry.route, contextTokens: frozenEntry.contextTokens,
+      contextWindowTokens: frozenEntry.contextWindowTokens === undefined ? null : frozenEntry.contextWindowTokens,
       maxOutputTokens: frozenEntry.maxOutputTokens === undefined ? null : frozenEntry.maxOutputTokens,
-      outputReserveTokens: frozenEntry.outputReserveTokens === undefined ? null : frozenEntry.outputReserveTokens };
-    jreport.expectedCallTokenLimit = expectedLimits.callTokenLimit;
+    };
+    jreport.requestedOutputTokens = expectedLimits.requestedOutputTokens;
+    jreport.expectedProviderTokenLimit = expectedLimits.tokenLimit;
+    jreport.expectedProviderTokenLimitKind = expectedLimits.tokenLimitKind;
     let jprojects = [];
     let jcursor = undefined;
     for (let i = 0; i < 5; i++) {
@@ -1594,15 +1710,22 @@ if (journeyOnly) {
       }
     }
     const stopOutcome = classifyStopOutcome(stopRow);
+    const outputBudget = inspectOutputBudget(stopRow.outputBudget, frozenEntry);
+    if (stopRow.outputBudget !== undefined || ['partial', 'completed'].includes(stopRow.state)) {
+      assert.equal(outputBudget.status, 'VALID', 'A fresh turn that reached generation must expose a valid stored outputBudget: ' + outputBudget.reason);
+    }
     if (stopRow.state === 'partial') {
-      assert.equal(stopRow.tokenLimit, jreport.expectedCallTokenLimit, 'The reserved bound must equal the SDK admission bound for the frozen catalogue entry (context + job reserve).');
+      assert.equal(stopRow.tokenLimit, jreport.expectedProviderTokenLimit, 'Provider tokenLimit must equal declared total capacity, or remain null when provider output capacity is unknown.');
+      assert.equal(stopRow.tokenLimitKind, jreport.expectedProviderTokenLimitKind, 'Provider tokenLimitKind must preserve published versus unknown capacity.');
     } else {
-      assert(stopRow.tokenLimit === null || stopRow.tokenLimit === 0 || stopRow.tokenLimit === jreport.expectedCallTokenLimit, 'A cancelled or unproven stop turn must hold no reservation beyond the admitted bound.');
+      assert(stopRow.tokenLimit === null || stopRow.tokenLimit === 0 || stopRow.tokenLimit === jreport.expectedProviderTokenLimit, 'A cancelled or unproven stop turn must retain only its published provider-capacity value or known undispatched zero.');
     }
     assert.equal(stopRow.model, frozenAnswerModel, 'The stop turn must use the frozen global answer model.');
     jreport.stop = { requestTurnId: requestTurnId, sawText: sawText, clickedStop: clickedStop, preTerminal: preTerminal,
       state: stopRow.state, cause: stopRow.error, answerChars: typeof stopRow.answer === 'string' ? stopRow.answer.length : 0,
-      tokenLimit: stopRow.tokenLimit, model: stopRow.model, totalMs: stopRow.totalMs === undefined ? null : stopRow.totalMs,
+      tokenLimit: stopRow.tokenLimit, tokenLimitKind: stopRow.tokenLimitKind ?? null,
+      outputBudget: stopRow.outputBudget ?? null, outputBudgetStatus: outputBudget.status,
+      model: stopRow.model, totalMs: stopRow.totalMs === undefined ? null : stopRow.totalMs,
       outcome: stopOutcome, uiStopPosts: jstopPosts, cleanupStops: cleanupStops };
     if (stopOutcome === 'failed') {
       throw new Error('Stop test failed: state=' + stopRow.state + ' cause=' + JSON.stringify(stopRow.error));
@@ -1834,6 +1957,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
     qid,
     turnId: typeof turn?.turnId === 'string' ? turn.turnId : null,
     answer: typeof turn?.answer === 'string' ? turn.answer : null,
+    outputBudget: turn?.outputBudget ?? null,
     model: typeof turn?.model === 'string' ? turn.model : null,
     turnState: typeof turn?.state === 'string' ? turn.state : 'unknown',
     routeStatus: turn?.model === defaultModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
@@ -1935,7 +2059,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   for (const check of factChecks) if (check.hard && !check.passed && !check.skipped) failures.push(check.name + ' failed');
   row.hardFailures = [...failures];
   row.diagnosticOnly = storedDiagnostic && row.routeStatus !== 'GLOBAL_DEFAULT';
-  row.ownerReviewRequired = ['O1', 'O2', 'O3', 'O8'].includes(qid) && !row.diagnosticOnly;
+  row.ownerReviewRequired = OWNER_REVIEW_QIDS.has(qid);
   row.source = source;
   row.passed = failures.length === 0 && !row.diagnosticOnly;
   return row;
@@ -1950,7 +2074,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   await checkRange(s0.currentRevisionId, 0, end);
 }
 async function saveTurn(qid, turn, extra) {
-  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, invalidLabelExamples: Array.isArray(turn.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [], inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, tokenLimit: turn.tokenLimit ?? null, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
+  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, invalidLabelExamples: Array.isArray(turn.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [], inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, outputBudget: turn.outputBudget ?? null, tokenLimit: turn.tokenLimit ?? null, tokenLimitKind: turn.tokenLimitKind ?? null, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
   await writeFile(outDir + '/k2-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
 }
 function dispatchUnavailable(status, body, turn) {
@@ -1991,7 +2115,7 @@ if (!runModel && !storedOnly) {
 if (storedOnly) {
   const sUsed = new Set();
   let storedFailures = 0;
-  let ownerRequired = false;
+  let ownerRequired = OWNER_REVIEW_QIDS.size > 0;
   let stopReason = null;
   for (const qid of order) {
     const turn = exactStoredTurn(qid, h0.turns, sUsed);
@@ -2035,7 +2159,7 @@ if (storedOnly) {
 }
 const firstMs = [], totalMs = [];
 let newTokenLimit = 0, reportedTokenLimit = 0, unknownTokenLimits = 0, unknownNewTokenLimits = 0;
-let newCount = 0, hardFailures = 0, ownerRequired = false, manual = 0;
+let newCount = 0, hardFailures = 0, ownerRequired = OWNER_REVIEW_QIDS.size > 0, manual = 0;
 let dispatchStopped = false, stopReason = null;
 const used = new Set();
 const unknownDispatchIds = new Map();
@@ -2065,7 +2189,7 @@ async function observeDispatchedTurn(requestTurnId, qid) {
 }
 async function adoptReconciledTurn(qid, stored, wall, via) {
   // Inspect an already-accepted stored turn found by read reconciliation and
-  // fold its actual state/body/citations/reserved tokenLimit into the aggregates.
+  // fold its actual state/body/citations/provider tokenLimit into the aggregates.
   // Unknown input/output stays UNKNOWN; nothing is re-dispatched.
   let persistenceError = null;
   try { await saveTurn(qid, stored, { src: via, wall, question: Q.get(qid) }); }
@@ -2236,9 +2360,9 @@ else {
   // Final-read reconciliation: any still-unresolved dispatched id is looked up
   // once more in the final storage snapshot. Only an accepted matching terminal
   // turn (completed/partial/failed/cancelled) is adopted with its actual
-  // state/body/citations/reserved tokenLimit (unknown input/output preserved);
+  // state/body/citations/provider tokenLimit (unknown input/output preserved);
   // a still-pending visible turn (started/streaming/running/unknown) or an
-  // unresolvable id keeps DISPATCH_UNKNOWN with reservation UNKNOWN,
+  // unresolvable id keeps DISPATCH_UNKNOWN with tokenLimit UNKNOWN,
   // never zero. No POST anywhere.
   for (const pendingQid of unknownDispatchIds.keys()) {
     const pendingRow = compareRows.get(pendingQid);

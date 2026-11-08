@@ -208,6 +208,17 @@ describe('Source claim evidence presentation', () => {
       const empty = render();
       expect(empty).toContain('No claims stored for this revision.');
       expect(empty).not.toContain('verified claims');
+      client.setQueryData(['understanding', 's1', 'r1', ''], { ...view, state: 'partial', guide: null,
+        digest: '## Selected claims\n\nA compact digest from selected statements.',
+        report: { questions: [], usage: { calls: 2, inputTokens: null, cachedTokens: null, outputTokens: null, wallMs: 0 },
+          kept: 1, dropped: [], clearedNumbers: 0, raw: { first: 'call1', second: 'call2' }, error: null,
+          producerFormat: 'compact-k3-v1' } });
+      const partial = render();
+      expect(partial).toContain('Guide unavailable; claims and digest are available below.');
+      expect(partial).not.toContain('guarantee they are true');
+      expect(partial).toContain('A compact digest from selected statements.');
+      expect(partial).toContain('<h3>Claims and source excerpts</h3>');
+      expect(partial).toContain('<blockquote class="er-und__quote">' + quote + '</blockquote>');
     } finally { client.clear(); }
   });
 

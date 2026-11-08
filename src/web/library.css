@@ -90,9 +90,9 @@
 }
 .er-lib__progress { display: grid; gap: var(--eliot-space-tight); margin: 0; border-radius: var(--eliot-shape-large-increased); list-style: none; }
 .er-lib__progress li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-tight) var(--eliot-space-panel); overflow-wrap: anywhere; }
-.er-lib__reader { display: grid; grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr); gap: var(--eliot-space-gutter); align-items: start; min-width: 0; }
+.er-lib__reader { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--eliot-space-gutter); align-items: start; min-width: 0; }
 .er-lib__outline { display: grid; gap: var(--eliot-space-block-control); min-width: 0; }
-.er-lib__outline h2 { margin: 0; font-size: var(--eliot-type-title-medium-size); font-weight: var(--eliot-type-font-weight-medium); }
+.er-lib__outline > summary { min-block-size: var(--eliot-size-control); padding-block: var(--eliot-space-tight); cursor: pointer; }
 .er-lib__outline-list { display: grid; gap: var(--eliot-space-tight); margin: 0; padding: 0; list-style: none; }
 .er-lib__outline-list a { overflow-wrap: anywhere; }
 .er-lib__text {

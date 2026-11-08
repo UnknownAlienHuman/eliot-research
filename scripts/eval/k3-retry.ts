@@ -56,15 +56,25 @@ try {
   await request('/__start?revisionId=' + revision); await wait('distill-' + revision);
   const old = await db.prepare('SELECT * FROM source_revision WHERE id=?').bind(revision).first();
   const oldReport = await bucket.get(prefix + 'distill.json'), oldBody = await oldReport.text(), oldEtag = oldReport.etag;
-  const guide = ['The method retains evidence.', 'The source describes normalization.', 'The method is described in the source.'].map(text => ({ labels: ['[S1:1]'], text }));
-  const usage = { inputTokens: 17, cachedTokens: 0, outputTokens: 8, tokenLimit: 263168 };
+  // Synthetic fixture telemetry only; callbacks are intercepted and no inference occurs.
+  const syntheticOutputBudget = { requestedTokens: 8192, appliedTokens: 1024 };
+  const usage = { inputTokens: 17, cachedTokens: 0, outputTokens: 8, tokenLimit: 263168, outputBudget: syntheticOutputBudget };
   const attempted = prefix + 'understanding/' + retryId + '/';
-  await bucket.put(attempted + 'distill-call1.json', JSON.stringify({ output: { guide, questions: ['Which method?', 'Which evidence?', 'What source?'], claims: [{ quoteBlock: '[S1:1]', kind: 'method', statement: 'The method retains canonical evidence.', task: null, metric: null, dataset: null, valueText: null, unit: null, conditions: null }] }, usage }));
-  await bucket.put(attempted + 'distill-call2.json', JSON.stringify({ output: { supportedClaims: [], additionalClaims: [], guide, digest: [guide[0]], glossary: [] }, usage }));
+  const compactCall1 = { format: 'compact-k3-v1', output: { candidates: [{ quoteBlock: '[S1:1]', kind: 'method', statement: 'The method retains canonical evidence.' }] }, usage };
+  const compactCall2 = { format: 'compact-k3-v1', output: { selected: [{ candidateId: 'C0', reason: 'Supported by its linked quote.' }], rejected: [] }, usage };
+  await bucket.put(attempted + 'distill-call1.json', JSON.stringify(compactCall1));
+  await bucket.put(attempted + 'distill-call2.json', JSON.stringify(compactCall2));
   const p = '/api/sources/' + source + '/understanding', input = { revisionId: revision, model: model.route, retry: { attemptId: retryId, previousAttemptId: revision } };
   assert.equal((await request(p, input)).attemptId, retryId); await wait('distill-attempt-' + retryId);
   assert.equal((await request(p, input)).attemptId, retryId);
-  const current = await request(p + '?revisionId=' + revision); assert.equal(current.state, 'partial'); assert.equal(current.progress.attempts, 2); assert.equal(current.claims.length, 0);
+  const current = await request(p + '?revisionId=' + revision);
+  assert.equal(current.state, 'partial'); assert.equal(current.progress.attempts, 2);
+  assert.equal(current.report.producerFormat, 'compact-k3-v1');
+  assert.equal(current.claims.length, 1); assert(typeof current.digest === 'string' && current.digest.trim());
+  assert(current.guide === '' || current.guide === null, 'No compact guide was requested; absence remains optional, not semantic acceptance.');
+  assert.equal(current.report.usage.tokenLimit, 2 * (model.contextTokens + model.maxOutputTokens),
+    'K3 tokenLimit records two calls of published provider capacity; local outputBudgets remain per call.');
+  assert.deepEqual(current.report.usage.outputBudgets, [syntheticOutputBudget, syntheticOutputBudget]);
   await request(p, { revisionId: revision, saveAvailable: true });
   assert.equal((await request(p + '?revisionId=' + revision)).report.artifacts.guide, attempted + 'checked/guide.md');
   const history = await request(p + '/history?revisionId=' + revision); assert.equal(history.attempts.length, 1);
@@ -83,11 +93,17 @@ try {
   const partialBefore = await db.prepare('SELECT * FROM source_revision WHERE id=?').bind(revision).first();
   const thirdId = crypto.randomUUID(), third = prefix + 'understanding/' + thirdId + '/';
   await bucket.put(third + 'distill-call1.json', await (await bucket.get(attempted + 'distill-call1.json')).text());
-  const thirdOutput = JSON.parse(await (await bucket.get(attempted + 'distill-call2.json')).text()); thirdOutput.output.supportedClaims = ['C0'];
+  const thirdOutput = JSON.parse(await (await bucket.get(attempted + 'distill-call2.json')).text()); thirdOutput.output.guide = ['C0'];
   await bucket.put(third + 'distill-call2.json', JSON.stringify(thirdOutput));
   await request(p, { revisionId: revision, model: model.route, retry: { attemptId: thirdId, previousAttemptId: retryId } }); await wait('distill-attempt-' + thirdId);
-  assert.equal((await request(p + '?revisionId=' + revision)).state, 'done');
-  const partialHistory = await request(p + '?revisionId=' + revision + '&attemptId=' + retryId); assert.equal(partialHistory.state, 'partial'); assert(partialHistory.guide);
+  const completed = await request(p + '?revisionId=' + revision);
+  assert.equal(completed.state, 'done'); assert.equal(completed.report.producerFormat, 'compact-k3-v1');
+  assert.deepEqual(completed.report.usage.outputBudgets, [syntheticOutputBudget, syntheticOutputBudget]);
+  const partialHistory = await request(p + '?revisionId=' + revision + '&attemptId=' + retryId);
+  assert.equal(partialHistory.state, 'partial'); assert.equal(partialHistory.report.producerFormat, 'compact-k3-v1');
+  assert.equal(partialHistory.claims.length, 1); assert(typeof partialHistory.digest === 'string' && partialHistory.digest.trim());
+  assert(partialHistory.guide === '' || partialHistory.guide === null, 'Archived compact attempt keeps its optional guide absent.');
+  assert.deepEqual(partialHistory.report.usage.outputBudgets, [syntheticOutputBudget, syntheticOutputBudget]);
   assert.deepEqual((await (await bucket.get(attempted + 'history/' + thirdId + '.json')).json()).revision, partialBefore);
   assert.equal((await request(p + '/history?revisionId=' + revision)).attempts.length, 2);
 
@@ -190,5 +206,5 @@ try {
     assert.deepEqual(errors, []);
     await context.close();
   }
-  console.log(JSON.stringify({ scope: 'K3_EXPLICIT_RETRY', nativeWorkflow: true, strictMigrations: true, archivedReceiptExact: true, oldBytesEtagsPreserved: true, attemptScopedSaveGet: true, browserWidths: [1440, 390], lostMalformedReplyRemountReplay: true, delayedAcceptance: true, openHistoryReceiptRefresh: true, firstAndCachedPreAcceptanceHistoryReadsReplaced: true, postReceiptHistoryReopenCoalesced: true, crossTabHistoryReopen: true, partialRetry: true, durableRejectionAndNewModel: true, modelCalls: 0, paidProducerCallbacks: 'SKIPPED_WITH_RETAINED_SYNTHETIC_OUTPUT' }));
+  console.log(JSON.stringify({ scope: 'K3_EXPLICIT_RETRY', nativeWorkflow: true, strictMigrations: true, archivedReceiptExact: true, oldBytesEtagsPreserved: true, attemptScopedSaveGet: true, browserWidths: [1440, 390], lostMalformedReplyRemountReplay: true, delayedAcceptance: true, openHistoryReceiptRefresh: true, firstAndCachedPreAcceptanceHistoryReadsReplaced: true, postReceiptHistoryReopenCoalesced: true, crossTabHistoryReopen: true, partialRetry: true, durableRejectionAndNewModel: true, modelCalls: 0, paidProducerCallbacks: 'SKIPPED_WITH_RETAINED_SYNTHETIC_OUTPUT', outputBudget: { source: 'synthetic fixture, not inference', requestedTokens: syntheticOutputBudget.requestedTokens, appliedTokens: syntheticOutputBudget.appliedTokens } }));
 } finally { await browser?.close(); if (server) await new Promise<void>(resolve => server.close(() => resolve())); await mf.dispose(); }

@@ -1,6 +1,7 @@
 import { unsupportedNumbers, parseSingleNumber, countNumericQuantities } from "../../src/numbers.ts";
 import { unsupportedNumericStatements } from "../../src/citations.ts";
 import { assertEvalOrigin, fetchEval } from "./origin.mjs";
+import { checkAdamBindings, checkPositionalEncodingBindings } from "./calibration.ts";
 // K3 Distill eval harness (docs/MAP.md K3; docs/IMPLEMENTATION.md 6, 8, 10, 11).
 // Interface assumptions (backend contract under test):
 //   GET  /api/sources/:sourceId/understanding?revisionId=<rev>
@@ -269,7 +270,6 @@ function hasNonUnitCoefficient(math) {
 }
 function checkClaimAnswer(qid, ans) {
   const m = normMath(ans);
-  const has = (...ss) => ss.every((s) => m.includes(s));
   if (qid === 'C1') {
     assert(m.includes('512'), 'C1 must contain 512.');
     const w = m.split(' ');
@@ -283,8 +283,8 @@ function checkClaimAnswer(qid, ans) {
   if (qid === 'C2') {
     assert(c2FormulaPass(m), 'C2 must contain the schedule formula with warmup 4000, or its sqrt equivalent.');
   }
-  if (qid === 'C3') assert(has('0.001') && has('0.9') && has('0.999') && (has('1e-8') || m.includes('10 -8') || m.includes('10 - 8') || m.includes('10-8') || has('0.00000001')), 'C3 must contain Adam defaults with the numeric epsilon 1e-8 (the word alone does not pass).');
-  if (qid === 'C4') assert((m.includes('синус') || m.includes('sinus')) && (m.includes('обуч') || m.includes('learn')), 'C4: sinusoidal vs learned.');
+  if (qid === 'C3') assert(checkAdamBindings(ans), 'C3 must bind each Adam parameter to its default value.');
+  if (qid === 'C4') assert(checkPositionalEncodingBindings(ans), 'C4 must bind Transformer to sinusoidal and BERT to learned positional encoding.');
 }
 assert.equal(c2FormulaPass(normMath('d_model⁻⁰·⁵ · min(step⁻⁰·⁵, step · warmup⁻¹·⁵), warmup 4000')), true, 'C2 Unicode superscript schedule must pass.');
 assert.equal(c2FormulaPass(normMath('1/sqrt(d_model) · min(1/sqrt(step), step/warmup^1.5), warmup 4000')), true, 'C2 equivalent square-root schedule must pass.');
@@ -583,6 +583,58 @@ const POLL_MS = 5000;
 // This observer grace does not extend any paid execution deadline.
 const REV_TIMEOUT_MS = 16 * 60_000;
 const DISTILL_STATES = ['none', 'queued', 'running', 'paused', 'done', 'partial', 'failed'];
+const COMPACT_K3_FORMAT = 'compact-k3-v1';
+function isCompactK3(u) { return u?.report?.producerFormat === COMPACT_K3_FORMAT; }
+function hasArtifactContent(value) {
+  return typeof value === 'string' && /[\p{L}\p{N}]/u.test(value.replace(/\[R[0-9a-fA-F-]{36}:\d+\]/gu, ' '));
+}
+function compactArtifactProblems(u) {
+  if (!isCompactK3(u) || !['done', 'partial'].includes(u.state)) return [];
+  const problems = [];
+  if (!Array.isArray(u.claims) || u.claims.length === 0) problems.push('compact producer requires reviewed claims');
+  if (!hasArtifactContent(u.digest)) problems.push('compact producer requires non-empty digest content');
+  if (u.guide !== null && typeof u.guide !== 'string') problems.push('compact guide must be null|string');
+  if (typeof u.guide === 'string' && u.guide.trim() && !hasArtifactContent(u.guide)) problems.push('provided compact guide has no content beyond citations/formatting');
+  if (!Array.isArray(u.report?.questions)) problems.push('compact report.questions must be an array');
+  else if (u.report.questions.some((question) => typeof question !== 'string' || !question.trim())) problems.push('provided compact questions must be non-empty strings');
+  if (!Array.isArray(u.glossary)) problems.push('compact glossary must be an array');
+  else for (const [index, entry] of u.glossary.entries()) {
+    if (!entry || !hasArtifactContent(entry.en) || !hasArtifactContent(entry.ru) || !hasArtifactContent(entry.definition)
+      || !Array.isArray(entry.labels) || entry.labels.length === 0 || entry.labels.some((label) => typeof label !== 'string' || !label.trim()))
+      problems.push('provided compact glossary entry ' + index + ' must have EN/RU terms, a definition and citation labels');
+  }
+  return problems;
+}
+function assertOutputBudgetRecords(report, what) {
+  const budgets = report?.usage?.outputBudgets;
+  if (budgets === undefined) return;
+  assert(Array.isArray(budgets) && budgets.length <= 2, what + ': report.usage.outputBudgets must be an array of at most two call records when present.');
+  for (const [index, budget] of budgets.entries()) {
+    if (budget === null) continue;
+    assert(budget && typeof budget === 'object' && Number.isSafeInteger(budget.requestedTokens) && budget.requestedTokens > 0
+      && Number.isSafeInteger(budget.appliedTokens) && budget.appliedTokens > 0 && budget.appliedTokens <= budget.requestedTokens,
+    what + ': outputBudgets[' + index + '] must retain a valid requested/applied pair or null unknown.');
+  }
+}
+function formatOutputBudgets(budgets) {
+  if (!Array.isArray(budgets)) return 'UNKNOWN (not recorded)';
+  if (budgets.length === 0) return 'none recorded';
+  return budgets.map((budget, index) => budget === null ? (index + 1) + ':UNKNOWN'
+    : (index + 1) + ':' + budget.requestedTokens + '→' + budget.appliedTokens).join(',');
+}
+function optionalArtifactStatus(u) {
+  const format = isCompactK3(u) ? COMPACT_K3_FORMAT : 'legacy/unspecified';
+  const guide = typeof u?.guide === 'string' && u.guide.trim() ? 'provided' : 'NOT_PROVIDED (not a semantic pass)';
+  const questions = Array.isArray(u?.report?.questions) ? u.report.questions.length : 'UNKNOWN';
+  const glossary = Array.isArray(u?.glossary) ? u.glossary.length : 'UNKNOWN';
+  const digest = hasArtifactContent(u?.digest) ? 'available' : 'UNKNOWN';
+  return format + '; guide=' + guide + '; questions=' + questions + '; glossary=' + glossary + '; digest=' + digest;
+}
+const compactOptionalFixture = { state: 'partial', report: { producerFormat: COMPACT_K3_FORMAT, questions: [] },
+  guide: null, digest: 'Supported findings.', glossary: [], claims: [{}] };
+assert.deepEqual(compactArtifactProblems(compactOptionalFixture), [], 'Compact producer permits absent guide and empty questions/glossary when digest and claims are present.');
+assert(compactArtifactProblems({ ...compactOptionalFixture, digest: '', claims: [] }).length >= 2,
+  'Compact producer still requires digest content and reviewed claims.');
 function assertUnderstanding(u, what) {
   assert(u && typeof u === 'object', 'GET understanding must return the direct Understanding object (' + what + ').');
   assert(typeof u.sourceId === 'string' && typeof u.revisionId === 'string', 'Understanding must carry sourceId/revisionId (' + what + ').');
@@ -593,6 +645,11 @@ function assertUnderstanding(u, what) {
   assert(Array.isArray(u.glossary), 'Understanding.glossary must be an array (' + what + ').');
   assert(Array.isArray(u.claims), 'Understanding.claims must be an array (' + what + ').');
   assert(u.report === null || typeof u.report === 'object', 'Understanding.report must be null|object (' + what + ').');
+  assert(u.report?.producerFormat === undefined || u.report.producerFormat === COMPACT_K3_FORMAT,
+    'Understanding.report.producerFormat must be absent or compact-k3-v1 (' + what + ').');
+  assertOutputBudgetRecords(u.report, what);
+  if (isCompactK3(u) && (u.state === 'done' || u.state === 'partial'))
+    assert.deepEqual(compactArtifactProblems(u), [], 'Compact K3 artifact requirements failed (' + what + ').');
   const recorded = u.progress?.recordedTokenLimit ?? u.report?.usage?.tokenLimit ?? null;
   const basis = u.progress?.tokenLimitKind ?? u.report?.usage?.tokenLimitKind ?? 'legacy';
   assert(isTokenObservation(recorded), 'Recorded capacity/reservation must be numeric or null unknown (' + what + ').');
@@ -728,6 +785,42 @@ async function checkRange(rev, st, en) {
   assert.equal(r.status, 200, 'Each cited range must open (GET range 200).');
   assert(r.bytes.equals(w.subarray(st, en)), 'Cited range must equal the whole-text slice.');
 }
+async function assertCompactArtifactReferences(u, revisionId, what) {
+  if (!isCompactK3(u)) return;
+  const citations = Array.isArray(u.citations) ? u.citations : [];
+  const byBlock = new Map(citations.map((citation) => [citation.block, citation]));
+  const referencedBlocks = new Set();
+  const inspect = (text, tag) => {
+    if (typeof text !== 'string' || !text.trim()) return;
+    for (const marker of text.match(/\[(?:R|S)[^\]]*\]/giu) || []) {
+      const body = marker.slice(1, -1).trim();
+      assert(!/^S\d+:/iu.test(body), what + ': compact ' + tag + ' must use persistent revision labels.');
+      assert(body.split(',').every((part) => /^R[0-9a-fA-F-]{36}:\d+$/u.test(part.trim())),
+        what + ': malformed compact ' + tag + ' citation marker.');
+    }
+    for (const token of text.match(/R[0-9a-fA-F-]{36}:\d+/g) || []) {
+      const match = token.match(/^R([0-9a-fA-F-]{36}):(\d+)$/u);
+      assert(match, what + ': malformed compact ' + tag + ' citation.');
+      assert.equal(match[1], revisionId, what + ': compact ' + tag + ' citation must name its own revision.');
+      const block = Number(match[2]);
+      assert(byBlock.has(block), what + ': compact ' + tag + ' citation block must exist in its block map.');
+      referencedBlocks.add(block);
+    }
+  };
+  inspect(u.guide, 'guide');
+  inspect(u.digest, 'digest');
+  for (const [index, entry] of (Array.isArray(u.glossary) ? u.glossary : []).entries()) for (const label of entry.labels) {
+    assert((label.match(/R[0-9a-fA-F-]{36}:\d+/g) || []).length > 0,
+      what + ': compact glossary[' + index + '] label must contain a persistent citation.');
+    inspect(label, 'glossary[' + index + ']');
+  }
+  for (const block of referencedBlocks) {
+    const citation = byBlock.get(block);
+    assert(Number.isSafeInteger(citation.start) && Number.isSafeInteger(citation.end) && citation.end > citation.start,
+      what + ': compact artifact citation must carry an exact byte range.');
+    await checkRange(revisionId, citation.start, citation.end);
+  }
+}
 const probeRev = scoped[0] ?? (nativeOnly ? sources.find((s) => s.currentRevisionId && ['readable', 'readable_with_warnings'].includes(s.readableState)) : undefined);
 assert(probeRev, 'A readable K1 source is required for route probes.');
 const u0 = await apiJson('/api/sources/' + encodeURIComponent(probeRev.id) + '/understanding?revisionId=' + encodeURIComponent(probeRev.currentRevisionId));
@@ -756,6 +849,8 @@ if (unchangedOnly) {
     try {
       assertUnderstanding(r.body, 'unchanged preflight ' + s.originalFilename);
       assertUnderstandingIdentity(r.body, s.id, s.currentRevisionId, 'unchanged preflight ' + s.originalFilename);
+      if (r.body.state === 'done' || r.body.state === 'partial')
+        await assertCompactArtifactReferences(r.body, s.currentRevisionId, 'unchanged preflight ' + s.originalFilename);
     } catch (e) { preflightViolations.push(s.originalFilename + ': ' + String((e && e.message) || e).split(EOL)[0]); continue; }
     if (r.body.state !== 'done' && r.body.state !== 'partial') { preflightViolations.push(s.originalFilename + ': state=' + r.body.state + ' (need terminal done/partial, no POST)'); continue; }
     const rep = r.body.report;
@@ -791,6 +886,8 @@ if (unchangedOnly) {
     const r = await apiJson('/api/sources/' + encodeURIComponent(f.sourceId) + '/understanding?revisionId=' + encodeURIComponent(f.revisionId));
     if (r.status !== 200) { reuseViolations.push(f.filename + ': re-GET ' + r.status); continue; }
     try { assertUnderstandingIdentity(r.body, f.sourceId, f.revisionId, 'unchanged re-read ' + f.filename); }
+    catch (e) { reuseViolations.push(f.filename + ': ' + String((e && e.message) || e).split(EOL)[0]); continue; }
+    try { await assertCompactArtifactReferences(r.body, f.revisionId, 'unchanged re-read ' + f.filename); }
     catch (e) { reuseViolations.push(f.filename + ': ' + String((e && e.message) || e).split(EOL)[0]); continue; }
     if (r.body.state !== f.record.body.state) reuseViolations.push(f.filename + ': state moved ' + f.record.body.state + ' -> ' + r.body.state);
     const recordAfter = storedRevisionSnapshot(r.body, 'unchanged re-read ' + f.filename);
@@ -898,9 +995,10 @@ if (nativeOnly) {
         assert(p.body && p.body.revisionId === rev, 'POST saveAvailable must echo {revisionId}.');
         const u1 = await getUnderstanding(recSource, rev);
         assert(u1.state === 'done' || u1.state === 'partial', 'Recovered revision must be done/partial, got ' + u1.state + '.');
+        await assertCompactArtifactReferences(u1, rev, '(recovered)');
         assert(u1.report && u1.report.artifacts && u1.report.artifacts.guide === 'source/' + rev + '/checked/guide.md' && u1.report.artifacts.digest === 'source/' + rev + '/checked/digest.md' && u1.report.artifacts.glossary === 'source/' + rev + '/checked/glossary.json', 'Recovered report must carry checked artifacts (checked/guide.md, checked/digest.md, checked/glossary.json).');
         assert(u1.canRecover === false, 'Recovered checked head must clear canRecover.');
-        assert(typeof u1.guide === 'string' && u1.guide.length > 0, 'Recovered guide must be readable.');
+        if (!isCompactK3(u1)) assert(typeof u1.guide === 'string' && u1.guide.length > 0, 'Recovered guide must be readable.');
         assert(Array.isArray(u1.claims) && u1.claims.length > 0, 'Recovered revision must carry saved claims.');
         for (const c of u1.claims) {
           assert(c && typeof c.quote === 'string' && c.quote.length > 0, 'Recovered claim needs a non-empty quote.');
@@ -944,6 +1042,7 @@ if (nativeOnly) {
       const crep = cu.report;
       assert(crep && typeof crep === 'object', 'Check report must be present.');
       const cusage = crep.usage || {};
+      assertOutputBudgetRecords(crep, 'check source');
       owningCallCount(cu, 'native check source');
       for (const kk of ['calls', 'wallMs']) assert(typeof cusage[kk] === 'number', 'Check report.usage.' + kk + ' must be numeric owning-revision usage.');
       assert(isTokenObservation(cusage.tokenLimit), 'Check report.usage.tokenLimit must remain known or null unknown.');
@@ -952,10 +1051,10 @@ if (nativeOnly) {
       const cclaims = Array.isArray(cu.claims) ? cu.claims : [];
       assert(cclaims.length <= 32, 'Check claims capped at 32.');
       assert(typeof crep.kept === 'number' && crep.kept === cclaims.length, 'Check report.kept must equal served claim count.');
-      assert(typeof cu.guide === 'string' && cu.guide.length > 0, 'Check guide must be readable.');
-      const cDeLabeled = cu.guide.replace(/\[(?:S\d+:\d+|R[0-9a-fA-F-]{36}:\d+)\]/g, ' ');
+      if (!isCompactK3(cu)) assert(typeof cu.guide === 'string' && cu.guide.length > 0, 'Check guide must be readable.');
+      const cDeLabeled = (typeof cu.guide === 'string' ? cu.guide : '').replace(/\[(?:S\d+:\d+|R[0-9a-fA-F-]{36}:\d+)\]/g, ' ');
       const cseg = [...new Intl.Segmenter(['en', 'ru'], { granularity: 'sentence' }).segment(cDeLabeled)].map((s) => s.segment.trim()).filter((s) => s.length > 0);
-      assert(cseg.length >= 3 && cseg.length <= 5, 'Check guide must be 3-5 sentences, got ' + cseg.length + '.');
+      if (!isCompactK3(cu)) assert(cseg.length >= 3 && cseg.length <= 5, 'Check guide must be 3-5 sentences, got ' + cseg.length + '.');
       for (const cc of cclaims) {
         await assertStoredQuote(crev, cc, '(check)');
         assert.deepEqual([...numericsUnsupported(cc.quote, cc.valueText, cc.valueNumber, cc.statement, cc.conditions), ...compoundResultUnsupported(cc)], [], 'Check numeric must be quote-supported.');
@@ -989,7 +1088,7 @@ if (nativeOnly) {
       assertUnderstandingIdentity(cprobe2.body, checkSource, crev, 'check re-read');
       assert.deepEqual((Array.isArray(cprobe2.body.claims) ? cprobe2.body.claims : []).map((c) => c && c.id), cclaims.map((c) => c && c.id), 'Check normal head must return stable claim IDs across GETs.');
       checkLines.push('- check source: ' + checkSource + ' rev ' + String(crev).slice(0, 8) + ' (' + cu.state + ', read-only, no POST)');
-      checkLines.push('- check guide sentences: ' + cseg.length + '; claims: ' + cclaims.length + ' (kept ' + crep.kept + '); calls: ' + cusage.calls);
+      checkLines.push('- check artifacts: ' + optionalArtifactStatus(cu) + '; guide sentences: ' + (isCompactK3(cu) ? 'not required (' + cseg.length + ' present)' : cseg.length) + '; claims: ' + cclaims.length + ' (kept ' + crep.kept + '); calls: ' + cusage.calls);
       checkLines.push('- check labels resolve own revision ranges (' + cblocks.size + ' blocks probed); quotes byte-exact; numerics quote-supported');
       checkLines.push('- check normal head deterministic: claim IDs identical across two GETs');
       for (const line of checkLines) recLines.push(line);
@@ -1293,6 +1392,7 @@ async function assertClaimSourcesReady(preflight) {
   for (const source of rows) {
     const u = await getUnderstanding(source.id, source.currentRevisionId);
     assert(['done', 'partial'].includes(u.state) && u.claims.length > 0, 'K3 claim source must be understood with usable claims before answer POST: ' + source.originalFilename + ' is ' + u.state);
+    await assertCompactArtifactReferences(u, source.currentRevisionId, 'claim readiness ' + source.originalFilename);
   }
 }
 let claimPreflight = null, claimPreflightError = '';
@@ -1329,6 +1429,7 @@ if (!runModel) {
       sRows.push('| ' + s.originalFilename + ' | ' + u.state + ' | - | - |');
       continue;
     }
+    await assertCompactArtifactReferences(u, rev, 'stored-only ' + s.originalFilename);
     const claims = Array.isArray(u.claims) ? u.claims : [];
     if (claims.length > 32) violations.push(s.originalFilename + ': claims exceed 32');
     const fileQuotes = [];
@@ -1494,6 +1595,7 @@ async function distillOne(s) {
   }
   if (u.state === 'paused') { admit = false; pausedRevs.push(s.originalFilename); rows.push('| ' + s.originalFilename + ' | paused | - | admission blocked, operator action, no retry |'); return; }
   if (u.state === 'failed') { failedRevs.push(s.originalFilename); rows.push('| ' + s.originalFilename + ' | failed | - | no auto retry |'); admit = false; return; }
+  await assertCompactArtifactReferences(u, rev, s.originalFilename);
   const claims = Array.isArray(u.claims) ? u.claims : [];
   assert(claims.length <= 32, 'Claims per revision capped at 32 (' + s.originalFilename + ').');
   const fileQuotes = [];
@@ -1518,13 +1620,16 @@ async function distillOne(s) {
     cachedTokens: storedUsage.cachedTokens,
     outputTokens: storedUsage.outputTokens,
     tokenLimit: storedUsage.tokenLimit,
+    outputBudgets: storedUsage.outputBudgets ?? null,
     wallMs: storedUsage.wallMs,
   };
   for (const kk of ['calls', 'wallMs']) assert(typeof usage[kk] === 'number', 'report.usage.' + kk + ' must be numeric owning-revision usage (' + s.originalFilename + ').');
   assert(isTokenObservation(usage.tokenLimit), 'report.usage.tokenLimit must remain known or null unknown (' + s.originalFilename + ').');
   for (const kk of ['inputTokens', 'cachedTokens', 'outputTokens']) assert(isTokenObservation(usage[kk]), 'report.usage.' + kk + ' must be a nonnegative safe integer or null unknown (' + s.originalFilename + ').');
   assert(usage.calls >= 0 && usage.calls <= 2, 'report.usage.calls bounded 0-2 (' + s.originalFilename + ').');
-  assert(Array.isArray(rep.questions) && rep.questions.length >= 3, 'report.questions (3-5 guide questions) required (' + s.originalFilename + ').');
+  assert(Array.isArray(rep.questions) && (isCompactK3(u) || rep.questions.length >= 3),
+    isCompactK3(u) ? 'compact report.questions must be an array; empty is allowed (' + s.originalFilename + ').'
+      : 'report.questions (3-5 guide questions) required (' + s.originalFilename + ').');
   assert(typeof rep.kept === 'number', 'report.kept must be a number (' + s.originalFilename + ').');
   assert(Array.isArray(rep.dropped), 'report.dropped must be an array of {index,reason} (' + s.originalFilename + ').');
   assert(typeof rep.clearedNumbers === 'number', 'report.clearedNumbers must be a number (' + s.originalFilename + ').');
@@ -1552,8 +1657,12 @@ async function distillOne(s) {
     return;
   }
   firstPass.set(rev, stable);
-  await writeFile(outDir + '/k3-' + String(rev).slice(0, 8) + '.json', JSON.stringify({ revisionId: rev, source: s.originalFilename, state: u.state, claims: claims.length, usage, kept: rep.kept, dropped: rep.dropped, clearedNumbers: rep.clearedNumbers }, null, 2));
-  rows.push('| ' + s.originalFilename + ' | ' + u.state + ' | ' + claims.length + ' | ' + usage.calls + ' | ' + (usage.inputTokens ?? 'unknown') + '/' + (usage.cachedTokens ?? 'unknown') + '/' + (usage.outputTokens ?? 'unknown') + ' | ' + usage.tokenLimit + ' | ' + usage.wallMs + ' |');
+  await writeFile(outDir + '/k3-' + String(rev).slice(0, 8) + '.json', JSON.stringify({ revisionId: rev, source: s.originalFilename, state: u.state,
+    producerFormat: rep.producerFormat ?? 'legacy/unspecified', optionalArtifacts: optionalArtifactStatus(u), claims: claims.length,
+    usage, kept: rep.kept, dropped: rep.dropped, clearedNumbers: rep.clearedNumbers }, null, 2));
+  rows.push('| ' + s.originalFilename + ' | ' + optionalArtifactStatus(u) + ' | ' + u.state + ' | ' + claims.length + ' | ' + usage.calls + ' | '
+    + (usage.inputTokens ?? 'unknown') + '/' + (usage.cachedTokens ?? 'unknown') + '/' + (usage.outputTokens ?? 'unknown') + ' | ' + usage.tokenLimit
+    + ' | ' + formatOutputBudgets(usage.outputBudgets) + ' | ' + usage.wallMs + ' |');
 }
 const pending = scoped.slice();
 async function pump() {
@@ -1636,7 +1745,7 @@ if (settingsAfterRun.status !== 200 || !settingsAfterRun.body || !settingsAfterR
 else if (JSON.stringify(settingsAfterRun.body.settings) !== settingsBeforeRun) tailV.push('Stored settings changed during K3 work.');
 const executedCallsKnown = [...executionCalls.values()].reduce((sum, calls) => sum + (calls ?? 0), 0);
 const executedCallRowsUnknown = [...executionCalls.values()].filter((calls) => calls === null).length;
-const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- revision POST attempts this run: ' + attemptedRevisions.size + '; accepted 202 responses: ' + posted + ' (second scan needs 0)', '- owning revision rows before/after: ' + revisionRecordsBefore.size + '/' + revisionRowsReadAfter, '- owning revision claim rows before/after: ' + revisionClaimRowsBefore + '/' + revisionClaimRowsAfter, '- recorded owning revision calls before/after (known subtotal): ' + revisionCallsBefore + '/' + revisionCallsAfter + '; unknown rows ' + revisionCallRowsUnknownBefore + '/' + revisionCallRowsUnknownAfter, '- exact owning revision records stable on reread: ' + terminalSnapshotsStable + '/' + revisionRowsReadAfter, '- calls this run on attempted revisions (known delta subtotal): ' + executedCallsKnown + '; unknown delta rows ' + executedCallRowsUnknown + '; input/output tokens on accepted revision records (known subtotal): ' + newTokens + '; unknown token rows ' + newTokensUnknown, '- settings record preserved: ' + String(settingsAfterRun.status === 200 && JSON.stringify(settingsAfterRun.body?.settings) === settingsBeforeRun), '- claim-mode C1-C4: skipped (hard gate remains open)', '- fullK3Accepted: false', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | state | claims | recorded calls | in/cached/out | tokenLimit | wall_ms |', '|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
+const md = ['# K3 Distill eval', '', '- project: ' + title + ' (10 arxiv, no re-ingest)', '- revision POST attempts this run: ' + attemptedRevisions.size + '; accepted 202 responses: ' + posted + ' (second scan needs 0)', '- owning revision rows before/after: ' + revisionRecordsBefore.size + '/' + revisionRowsReadAfter, '- owning revision claim rows before/after: ' + revisionClaimRowsBefore + '/' + revisionClaimRowsAfter, '- recorded owning revision calls before/after (known subtotal): ' + revisionCallsBefore + '/' + revisionCallsAfter + '; unknown rows ' + revisionCallRowsUnknownBefore + '/' + revisionCallRowsUnknownAfter, '- exact owning revision records stable on reread: ' + terminalSnapshotsStable + '/' + revisionRowsReadAfter, '- calls this run on attempted revisions (known delta subtotal): ' + executedCallsKnown + '; unknown delta rows ' + executedCallRowsUnknown + '; input/output tokens on accepted revision records (known subtotal): ' + newTokens + '; unknown token rows ' + newTokensUnknown, '- outputBudgets are reported per call as requested/applied; missing or null values remain UNKNOWN, never inferred from provider tokenLimit.', '- optional artifacts show NOT_PROVIDED explicitly and do not count as semantic acceptance.', '- settings record preserved: ' + String(settingsAfterRun.status === 200 && JSON.stringify(settingsAfterRun.body?.settings) === settingsBeforeRun), '- claim-mode C1-C4: skipped (hard gate remains open)', '- fullK3Accepted: false', '- overview: membership + deterministic re-read required; see Open gates', '', '| source | producer / optional artifacts | state | claims | recorded calls | in/cached/out | provider tokenLimit | outputBudgets (requested→applied) | wall_ms |', '|---|---|---|---|---|---|---|---|---|'].concat(rows).concat(['', '## Open gates']).concat(tailV.length > 0 ? tailV.map((v) => '- ' + v) : ['- none']).concat(['']).join(EOL);
 console.log(md);
 await writeFile(outDir + '/k3-' + Date.now() + '.md', boundReport + EOL + EOL + md);
 const claimV = [];

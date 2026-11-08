@@ -2,7 +2,7 @@ import { generateText, experimental_streamTextLowMemory, Output, streamText, typ
 import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { modelFailure, resolveModelTransport, safeEmptyCompletionLog } from "./model-transport";
-import { DEFAULT_MODEL, MODELS, modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, type ModelSpec } from "./models";
+import { DEFAULT_MODEL, MODELS, modelInputLimit, modelOutputLimit, modelOutputReserve, modelTokenLimit, requestedOutputLimit, type ModelSpec } from "./models";
 import { chatModelMessages, estimateModelInput } from "./model-input";
 import { nativeModel } from "./native-model-catalog";
 import { extractionSchema } from "./workflows/distill";
@@ -125,6 +125,81 @@ describe("native fallback reasoning request", () => {
         scopeType: "array", scopeMinItems: 0, scopeMaxItems: 1, scopeItemType: "object",
         scopeNullableBranch: false, itemNullableBranch: false, hasMaxTokens: false, hasMaxCompletionTokens: false, returnRawResponse: true });
       expect(captured?.stream).toBe("omitted");
+    } finally { network.mockRestore(); }
+  });
+
+  it("forwards an explicit job output budget to native AI.run without inference", async () => {
+    const seed = MODELS.find((entry) => entry.route === DEFAULT_MODEL);
+    if (!seed) throw new Error("The built-in native model fallback is missing.");
+    const model = { ...seed, maxOutputTokens: null };
+    const instructions = "Capture the native output budget only.";
+    const messages = [{ role: "user" as const, content: "Offline request." }];
+    const estimate = estimateModelInput({ instructions, messages });
+    const appliedOutputTokens = requestedOutputLimit(model, estimate, 8192);
+    let captured: { modelId: string; maxTokens: unknown } | undefined;
+    const run = vi.fn(async (modelId: string, inputs: Record<string, unknown>) => {
+      captured = { modelId, maxTokens: inputs.max_tokens };
+      throw new Error("Offline native boundary reached; inference is disabled.");
+    });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+    try {
+      const transport = await resolveModelTransport({ AI: { run } as unknown as Env["AI"], DB: {} as Env["DB"] }, model, "chat-output-budget");
+      await expect(streamText({ model: transport, instructions, messages, maxOutputTokens: appliedOutputTokens, maxRetries: 0 }).text)
+        .rejects.toThrow();
+      expect(appliedOutputTokens).toBe(8192);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(captured).toEqual({ modelId: model.id, maxTokens: appliedOutputTokens });
+      expect(model.maxOutputTokens).toBeNull();
+      expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); }
+  });
+
+  it("keeps native text requests identical while complete JSON decoding retains 33 candidates", async () => {
+    const seed = MODELS.find(model => model.route === DEFAULT_MODEL);
+    if (!seed) throw new Error("The native factory fixture is missing.");
+    const model = { ...seed, nativeReasoningEffort: "low" as const };
+    const schema = z.object({ candidates: z.array(z.object({ quoteBlock: z.literal("[S1:1]"),
+      kind: z.literal("method").optional(), statement: z.string().min(1).max(1200) }).strict()).max(32) }).strict();
+    const value = { candidates: Array.from({ length: 33 }, (_, index) => ({ quoteBlock: "[S1:1]", kind: "method",
+      statement: `Configuration ${index + 1} preserves the residual path through ${index + 1} projection layers.` })) };
+    const schemaText = JSON.stringify(z.toJSONSchema(schema));
+    const instructions = "Return one JSON object conforming to this schema: " + schemaText;
+    const messages = [{ role: "user" as const, content: value.candidates.map(candidate => candidate.statement).join("\n") }];
+    const maxOutputTokens = requestedOutputLimit(model, estimateModelInput({ instructions, messages, schema: z.toJSONSchema(schema) }), 8192);
+    const requests: { modelId: string; inputs: Record<string, unknown> }[] = [];
+    const run = async (modelId: string, inputs: Record<string, unknown>) => {
+      requests.push({ modelId, inputs: JSON.parse(JSON.stringify(inputs)) as Record<string, unknown> });
+      const frame = (data: unknown) => "data: " + JSON.stringify(data) + "\n\n";
+      return new Response(frame({ choices: [{ index: 0, delta: { content: JSON.stringify(value) }, finish_reason: null }] })
+        + frame({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })
+        + frame({ choices: [], usage: { prompt_tokens: 101, completion_tokens: 17, total_tokens: 118 } })
+        + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    };
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+    try {
+      for (const mode of ["object", "json"] as const) {
+        const spec = mode === "json" ? Output.json() : Output.object({ schema });
+        let finalParses = 0, ends = 0, final: unknown;
+        const output = { ...spec, parseCompleteOutput(...args: Parameters<typeof spec.parseCompleteOutput>) {
+          finalParses++; return spec.parseCompleteOutput(...args);
+        } };
+        const transport = await resolveModelTransport({ AI: { run } as unknown as Env["AI"], DB: {} as Env["DB"] },
+          model, "offline-compact-complete-json", { structuredOutput: true });
+        const result = experimental_streamTextLowMemory({ model: transport, output, instructions, messages,
+          maxOutputTokens, maxRetries: 0, streamRetries: 0, onEnd: event => { ends++; final = event.output; } });
+        expect("output" in result).toBe(false);
+        await result.consumeStream();
+        expect(finalParses).toBe(1); expect(ends).toBe(1);
+        expect(final).toEqual(mode === "json" ? value : undefined);
+        expect(await result.finishReason).toBe("stop");
+        await expect(result.consumeStream()).rejects.toMatchObject({ name: "AI_StreamAlreadyConsumedError" });
+      }
+      expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
+      expect(requests[0]?.modelId).toBe(model.id);
+      expect(requests[0]?.inputs).toMatchObject({ stream: true, max_tokens: 8192, reasoning_effort: "low" });
+      expect(requests[0]?.inputs).not.toHaveProperty("response_format");
+      expect((requests[0]?.inputs.messages as { content: string }[]).some(message => message.content.includes(schemaText))).toBe(true);
+      expect(network).not.toHaveBeenCalled();
     } finally { network.mockRestore(); }
   });
 

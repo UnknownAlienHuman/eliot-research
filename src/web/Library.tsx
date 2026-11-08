@@ -709,9 +709,9 @@ function SourceReader({ replacingSources, beginReplacement, endReplacement, onUs
       </div></details>
       {hasRange ? (<div className="er-card er-field er-lib__excerpt" role="note">{openingPassage ? <p>Opening the selected passage.</p> : passage ? <p>The selected passage is highlighted in the full source text below.</p> : <p className="er-lib__error" role="alert">This passage could not be opened in the loaded text. Clear it and choose another passage.</p>}<Link className="er-button er-button--text" to={"?revisionId=" + encodeURIComponent(revisionId || activeRevision)} onClick={() => preRef.current?.focus({ preventScroll: true })}>Clear passage</Link></div>) : null}
       <div className="er-lib__reader">
-        <nav className="er-lib__outline" aria-label="Outline"><h2>Outline</h2>
+        <details className="er-lib__outline"><summary>Outline</summary>
           {!textReady || outline.length === 0 ? <p className="er-lib__hint">No outline available.</p> : (<ul className="er-lib__outline-list">{outline.map((b, i) => (<li key={b.start + ":" + b.end + ":" + i}><Link to={"?revisionId=" + encodeURIComponent(activeRevision) + "&start=" + b.start + "&end=" + b.end}>{b.label}</Link></li>))}</ul>)}
-        </nav>
+        </details>
         <div>
           <div className="er-lib__actions"><button className="er-button er-button--tonal" type="button" onClick={copySelectionLink}>Copy link to selection</button>{activeRevision ? <a className="er-button er-button--text" href={"/api/revisions/" + encodeURIComponent(activeRevision) + "/original"}>Original</a> : null}{copied ? <span className="er-lib__hint" role="status">Link copied.</span> : null}</div>
           {projectId && sourceId && activeRevision && activeRevision === source.revisionId && rev?.originalMime === "application/pdf" && activeState !== "pending"

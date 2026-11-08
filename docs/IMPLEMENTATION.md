@@ -453,7 +453,7 @@ ambiguous duplicates, and drop unmatched claims. Numeric support compares comple
 signs and exponents, rather than digits borrowed from a fraction or another quantity. `0.50` does not support `50`;
 `41.0` and a separate `8` do not support `41.8` or `41,8`. Unambiguous decimal commas match decimal points; ambiguous
 comma-thousands retain their written grouping. This check also applies to statements, conditions, legacy prose-digest
-and zero-claim `partialDigest` items, and glossary. Fresh claim-plan digest entries inherit the checked claim fields.
+and zero-claim `partialDigest` items, and glossary. Compact digests inherit complete selected claim statements.
 Code checks numeric identity without converting fractions to percentages. Unit, row, metric and condition association
 must also be supported by the same quote, but remain the model's own-quote review and the semantic acceptance gate.
 A missing literal percent sign alone does not establish a false number: a table may state its measurement in words.
@@ -484,448 +484,381 @@ Workerd/D1/R2. Current extraction resolves whole canonical blocks and normally t
 fresh-model or corpus failure is attributed to this fallback. The fixture establishes range/storage correctness,
 not semantic support, missing-anchor recovery or live model quality.
 Legacy prose-digest, zero-claim `partialDigest` and glossary numeric statements are checked against only the verified
-quotes selected by their labels; a valid label alone does not authorize a new number or experiment condition. Fresh
-claim-plan digest items are assembled only from final-checked claim units (§6).
+quotes selected by their labels; a valid label alone does not authorize a new number or experiment condition.
+Compact digests and retained selection-plan digests use only final-checked claim units (§6).
 
-Claims retain source-language task/metric/dataset, value text, optional parsed number/unit, conditions, quote and exact
-range. K6 owns cross-source normalization; K3 must not pretend raw multilingual strings are canonical.
+Retained typed claims keep source-language task/metric/dataset, value text, optional parsed number/unit, conditions,
+quote and exact range. Compact claims keep those nullable typed fields null and preserve qualifiers in the complete
+statement (§6). K6 owns cross-source normalization; raw multilingual strings are not canonical comparison keys.
 
 ## 6. One-time distillation
 
-Model-facing source JSON Unicode-escapes literal square brackets inside strings while retaining the exact authority
-label strings. JSON decoding preserves the original value; canonical bytes and stored artifacts remain unchanged.
-Extraction and synthesis preserve table row, metric and column/split identity; blank cells are unreported results.
+Model-facing source JSON Unicode-escapes literal square brackets inside strings while retaining the exact
+authority label strings. JSON decoding preserves the original value; canonical bytes and stored artifacts remain
+unchanged. Extraction and synthesis preserve table row, metric and column/split identity; blank cells are
+unreported results.
 
-States: `none|queued|running|paused|done|partial|failed`. Ingest leaves readable revisions at `none`. Only an explicit
-Understand request queues its requested revision and attempts admission, subject to concurrency and usable model metadata.
-A full concurrency window leaves work `queued`; Workflow completion and cron admit already requested `queued` rows
-with zero calls, in creation order, using their stored model route. Unavailable models or unusable limits become visible
-`paused` until another explicit request. Upstream quota/billing rejections during dispatch fail the attempt without retry.
-Cron also reconciles stale `running` rows against Workflow ID
-`distill-<revisionId>` for original attempts and `distill-attempt-<attemptId>` for explicit retries, without restarting uncertain work. Migration `0007_manual_understanding.sql`
-removes the obsolete `settings.auto_distill` switch and pauses unstarted legacy queued revisions so the owner can
-resume them explicitly. Settings no longer accepts or exposes `autoDistill`.
+States: `none|queued|running|paused|done|partial|failed`. Ingest leaves readable revisions at `none`. Only an
+explicit Understand request queues its requested revision and attempts admission, subject to concurrency and
+usable model metadata. A full concurrency window leaves work `queued`; Workflow completion and cron admit already
+requested `queued` rows with zero calls, in creation order, using their stored model route. Unavailable models or
+unusable limits become visible `paused` until another explicit request. Upstream quota/billing rejections during
+dispatch fail the attempt without retry. Cron also reconciles stale `running` rows against Workflow ID
+`distill-<revisionId>` for original attempts and `distill-attempt-<attemptId>` for explicit retries, without
+restarting uncertain work. Migration `0007_manual_understanding.sql` removes the obsolete `settings.auto_distill`
+switch and pauses unstarted legacy queued revisions so the owner can resume them explicitly. Settings no longer
+accepts or exposes `autoDistill`.
 
-After a successful Understand or Save-existing POST the reader invalidates the active `sources` query for that project
-and rereads understanding. Infinite source pages retain loaded pagination and source selection. A failed follow-up GET
-shows the accepted request with a storage-only Reload action; Understand/Save stay unavailable until a successful read.
-The reader locks before dispatch. Any POST error—including a lost reply, non-2xx response or unreadable JSON—leaves the
-outcome unknown and keeps both actions unavailable until Reload succeeds. A successful read of `none` only enables a
-later explicit request; it never resubmits.
-Mounting the reader always refreshes status, and a failed status read blocks actions until Reload succeeds.
-The existing QueryClient owns revision-scoped status reads, passes their AbortSignal and polls queued/running work
-without overlapping reads. A read error stops polling until Reload; the last received view is retained with its error.
-Navigation cancels reads and ignores the departed reader's action continuation. Submitted POSTs keep their original
-source/revision; a successful late POST may still invalidate its owning project's source badge query. These reads never
-dispatch understanding, and no document reload or new server state is introduced.
+After a successful Understand or Save-existing POST the reader invalidates the active `sources` query for that
+project and rereads understanding. Infinite source pages retain loaded pagination and source selection. A failed
+follow-up GET shows the accepted request with a storage-only Reload action; Understand/Save stay unavailable until
+a successful read. The reader locks before dispatch. Any POST error—including a lost reply, non-2xx response or
+unreadable JSON—leaves the outcome unknown and keeps both actions unavailable until Reload succeeds. A successful
+read of `none` only enables a later explicit request; it never resubmits. Mounting the reader always refreshes
+status, and a failed status read blocks actions until Reload succeeds. The existing QueryClient owns
+revision-scoped status reads, passes their AbortSignal and polls queued/running work without overlapping reads. A
+read error stops polling until Reload; the last received view is retained with its error. Navigation cancels reads
+and ignores the departed reader's action continuation. Submitted POSTs keep their original source/revision; a
+successful late POST may still invalidate its owning project's source badge query. These reads never dispatch
+understanding, and no document reload or new server state is introduced.
 
 **Bibliographic metadata — implementation and acceptance in MAP.** Current ingest/OCR inputs have no separate,
 reliably attributed author/date fields; PDF conversion explicitly disables PDF metadata. Canonical text, including
 front matter, bylines, references and date-looking strings, is content rather than a typed bibliographic input.
-Distillation no longer requests authors/publication in the extraction schema or promotes model guesses into `source`.
-New sources retain the schema defaults: authors `''`, publication `NULL`. Only a future explicit source metadata
-producer with an identifiable field boundary may populate them; no name/date parser or paid metadata pass is added.
+Distillation no longer requests authors/publication in the extraction schema or promotes model guesses into
+`source`. New sources retain the schema defaults: authors `''`, publication `NULL`. Only a future explicit source
+metadata producer with an identifiable field boundary may populate them; no name/date parser or paid metadata pass
+is added.
 
 Legacy raw call output may still contain author/date guesses. Verification ignores those fields without rewriting
-the immutable raw bytes or source text, quotes and ranges. Existing source-wide D1 authors/publication remain unchanged
-during verification, GET and explicit Save-existing reuse, including when reading later revisions of that source.
-This repair does not certify or correct historical values; correction requires its own explicit stored-data change.
-Accounting and the existing two-call bound remain unchanged. Checked 2026-11-03 against the pinned D1/R2/Workflows types
-and official [prepared statements](https://developers.cloudflare.com/d1/worker-api/prepared-statements/),
-[conditional R2 writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and
-[Workflow steps](https://developers.cloudflare.com/workflows/build/workers-api/) contracts.
-`pnpm eval k3 --metadata-only` runs the production verification/storage/GET/Save paths on isolated Workerd/D1/R2,
-with retained synthetic outputs and both paid producer callbacks skipped. It checks default/historical metadata,
-replacement heads and immutable bytes/ETags. A separate synthetic cached-candidate case uses storage-only Save to
-recheck normalized supplementary-Unicode quotes, then verifies D1 and exact revision/range reads and repeated Save.
-The two recorded calls remain historical fixture data; no producer is invoked. It establishes storage behavior,
-not model quality or paid-step replay.
+the immutable raw bytes or source text, quotes and ranges. Existing source-wide D1 authors/publication remain
+unchanged during verification, GET and explicit Save-existing reuse, including when reading later revisions of
+that source. This repair does not certify or correct historical values; correction requires its own explicit
+stored-data change. Accounting and the existing two-call bound remain unchanged. Checked 2026-11-03 against the
+pinned D1/R2/Workflows types and official [prepared
+statements](https://developers.cloudflare.com/d1/worker-api/prepared-statements/), [conditional R2
+writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and [Workflow
+steps](https://developers.cloudflare.com/workflows/build/workers-api/) contracts. `pnpm eval k3 --metadata-only`
+runs the production verification/storage/GET/Save paths on isolated Workerd/D1/R2, with retained synthetic outputs
+and both paid producer callbacks skipped. It checks default/historical metadata, replacement heads and immutable
+bytes/ETags. A separate synthetic cached-candidate case uses storage-only Save to recheck normalized
+supplementary-Unicode quotes, then verifies D1 and exact revision/range reads and repeated Save. The two recorded
+calls remain historical fixture data; no producer is invoked. It establishes storage behavior, not model quality
+or paid-step replay.
 
-`DistillWorkflow` uses two bounded calls:
+### Compact producer and retained formats
 
-1. Labelled canonical text → candidate claims, complete qualified guide candidates, 3–5 questions and at most twelve glossary candidates shaped
-   `{ labels, en, ru, definition }`. The first verifier freezes each accepted candidate with its original G0–G11
-   index before dropped entries can leave gaps.
-2. Verified excerpts → supported claim selection, whole guide-unit selection, digest selection and, for frozen glossary candidates,
-   a glossary selection.
+New compact attempts pin `producerFormat: "compact-k3-v1"` in the existing accepted intent and internal Workflow
+parameters. The admitted model and this producer choice stay fixed throughout that attempt. An absent marker on
+queued intent or Workflow parameters keeps the queued legacy format. Reads, history, reconnect and Save never
+regenerate raw output or opt an old attempt into the compact producer. The public report may expose optional
+`producerFormat` for the new contract; an old missing field remains unknown.
+
+Call one is requested to return `{ candidates: [{ quoteBlock, kind?, statement }] }` with at most 32 candidates.
+The prompt/schema keeps that requested bound; code separately limits normalization and review work to 32 original
+positions. Each statement must be one complete atomic assertion with its source qualifiers, conditions,
+comparisons and limitations, selecting a label from the frozen canonical block inventory. This call requests no
+scalar tuple, guide, suggested questions or glossary. Source JSON escapes literal square brackets inside strings
+while preserving authority labels and the decoded source text.
+
+Raw1 retains the full syntactically valid decoded native JSON unchanged as untrusted provider output, including
+arrays longer than requested. Syntactic JSON validity does not validate candidates, evidence or owner-visible facts.
+The persisted Raw envelope remains strict. Its decoded output is projected to `candidates` only, ignoring other
+outer metadata without a metadata-key whitelist or rewriting Raw1. Code requires that field to be an array, then
+strictly validates each existing unit at original positions 0 through 31. Candidate fields remain strict.
+It resolves each valid `quoteBlock` to its canonical block and exact UTF-8 range, then applies the existing quote,
+numeric-literal and declared-reference checks. Ignored metadata values never enter review evidence or owner facts.
+Invalid prefix units leave gaps in original C indexes; later positions never backfill them. Normalized review
+candidates number at most 32, retain original order and IDs, and alone may be offered to call two.
+
+Every later array index receives `unreviewed-work-limit`, meaning work was not reviewed rather than semantically
+rejected. Raw reads and prefix processing share the existing materialization allowance; code charges allocation
+before creating prefix/tail diagnostic arrays. A tail drop derives `requiresReview` from the retained diagnostics
+and forces `partial` on publication and storage-only Save/Recheck, even with a valid guide and every offered
+candidate selected. No new persisted state field or byte guard is introduced.
+
+Unknown references and empty citation wrappers reject a candidate. Only its own declared block reference,
+persistent equivalent or corresponding block annotation may be cleaned; code literals retain their meaning.
+Canonical bytes, source scope and citation identities are unchanged.
+
+Compact claims store nullable `task`, `metric`, `dataset`, `valueText`, `valueNumber`, `unit` and `conditions` as
+null. Qualifiers remain in the complete statement rather than being inferred into those fields. The current
+`find_claims` interface searches claim text within the requested scope; it has no typed task/metric/dataset
+filters. Cross-source numeric comparison remains frozen at K6.
+
+Call two consumes one dictionary of unique canonical evidence plus candidate-to-`evidenceId` bindings. Each
+candidate carries its frozen statement and stable ID; repeated evidence is supplied once. The call-two output
+boundary consumes only selections, rejections and guide, ignoring other outer metadata while retaining
+`Output.object`. Decision items, candidate IDs and duplicate checks remain strict; retained raw artifacts stay
+immutable. Review selects or rejects candidate IDs with nonempty diagnostic reasons. Brief wording is prompt
+guidance, not a 160-character scalar bound; existing per-call output and materialization limits bound this prose.
+Raw2 preserves the full decoded reason, which supplies no claim, guide or digest facts. A missing decision remains
+unknown and cannot implicitly select or reject that candidate. Review introduces no new facts, additional claims
+or rewritten statements. A selected
+candidate must remain supported by its own bound evidence, including its qualifiers and conditions; matching quote
+bytes or numeric literals alone does not establish semantic support.
+
+The optional guide is an ordered subset of selected candidate IDs. Code renders each complete frozen statement
+with its original citation binding, without generating guide prose, trimming statements or adding facts. The
+digest is assembled deterministically from selected claims. Missing or invalid guide output preserves reviewed
+claims and the digest as `partial`; it does not discard them or buy a repair call. Questions and glossary are
+optional reader data and are not requested by these two compact calls. The compact format has no
+minimum-three-guide-sentences or required-glossary completion rule. Zero selected claims cannot produce `done`.
+Missing or invalid call-two output never publishes call-one drafts.
+
+The compatibility boundary alone handles retained `claim-plan-guide-v1` through `v4`, `claim-plan-glossary-v1`,
+`claim-plan-v1` and markerless artifacts. It preserves each format's original schema, guide/glossary/digest rules,
+typed-field checks and completion requirements, including old minimum guide counts where applicable. Raw and
+verified markers must agree; unknown IDs, duplicate selections and incompatible formats are rejected rather than
+reinterpreted. Frozen H/C/G/A identities, source ranges and immutable raw bytes are never synthesized, renumbered
+or rewritten. GET, history and storage-only Save retain these old formats; an explicitly accepted new attempt is
+the only path to the compact producer.
+Retained legacy controls without final text/finish flags keep their specific cause UNKNOWN; the prefix policy
+does not reclassify them or establish a general HTTP 408 fix.
+
+### Delivery, budgets and completion
+
+Each attempt has at most two model calls and zero paid retries. Each call uses the smaller of six minutes and the
+remaining absolute fifteen-minute recovery ceiling; the native paid step has a seven-minute bound. These product
+bounds and the existing 16 MiB cumulative materialization allowance remain unchanged. The eval observer may wait
+one additional minute for storage/reconciliation, without extending paid execution.
+
+Fresh compact extraction requests 8,192 output tokens and review requests 4,096. After estimating the actual
+instructions, messages and schema, `requestedOutputLimit(model, inputEstimate, requestedTokens)` clips each job
+budget to a known provider maximum and the estimated remainder of a known combined window. The existing
+conservative input estimate includes framing overhead; it is not provider tokenization. Unknown provider maxima
+and combined windows remain unknown. Each new raw artifact and final report records the requested and applied call
+budgets separately from declared capacity and reported usage. Missing historical budget fields remain unknown.
+Already admitted or in-flight legacy attempts retain their frozen cap policy.
 
 Native K3 delivery uses the installed public `ai@7.0.152` `experimental_streamTextLowMemory` API with one
-`consumeStream` consumer and final strict `Output.object` validation through `onEnd.output`. It never reads eager
-final-content getters or partial/replay streams. Ordinary `streamText` replay is not used: growing partial-object
-snapshots must not be retained behind text-only allocation accounting. The unchanged complete schema is included in
-the actual prompt/input estimate; native structured-output parameter middleware requests upstream text for stream
-operations only, omitting `response_format` while preserving native `doGenerate` JSON Mode. Cloudflare's complete
-JSON Mode page was independently reread 2026-11-07 (updated 2026-09-14)
-and states that JSON Mode does not support streaming. External Gateway generation and native chat/OCR remain unchanged.
-The existing 16 MiB allowance charges schema serialization and response text/reasoning before SDK parsing, under
-the same owned deadline through full consumption and final validation. A local response-budget rejection keeps a
-fixed local reason rather than becoming a provider error. No manual collector, JSON/SSE parser or repair call is added.
-The offline many-small-chunk regression verifies the public single-consumer/no-replay boundary, final callback,
-strict schema and reported usage; it does not measure V8 heap bytes or independently prove the SDK's exact retained
-memory. Delivery and semantic qualification remain open; the cause of earlier HTTP 408s remains unknown.
-The 2026-11-07 one-call native control `dcecc316…` on `d461…` recorded 288,119 ms and provider-reported
-15,071 input / 20,133 output / 0 cached / 35,204 total tokens, with no HTTP 408 observed in that control.
-It failed with the generic incomplete/invalid structured-output reason before call two. Final text and finish flags
-were not retained, so its specific cause is UNKNOWN; this does not establish invalid JSON, a global HTTP 408 fix or
-K3 acceptance. That result and its history are not rewritten or regraded.
-For future attempts, the existing public `Output.object.parseCompleteOutput` is delegated exactly once. Its public
-JSON-parse/schema-validation error classes and an observed blank final text supply fixed safe categories; absent or
-non-normal finish is classified separately without weakening its guard. The fixed `stream-truncated` subreason is
-included only when the public raw finish equals that adapter constant. SDK-swallowed final-parse errors therefore
-reach the existing `distill_error`/report/reader rather than an undifferentiated failure. No extra parse, validation,
-repair call or raw record field is added. A public TypeValidationError with an actual ZodError cause may additionally
-retain only its first issue code and top-level field, and only if that field is an own property of the generated
-schema's `properties`; otherwise the schema reason stays generic. No model text, reasoning, arbitrary response keys,
-values, full paths, exception messages, request headers or bodies are retained; unknown SDK errors stay unclassified.
+`consumeStream` consumer. Only native compact call one uses public `Output.json()` for complete JSON decoding;
+accepted output comes from final `onEnd.output` after the explicit normal-finish guard, never partial JSON.
+Review and every other call retain `Output.object` schema validation. No eager final-content getters, replay
+streams or growing partial-object snapshots are read. The unchanged requested schema, including the 32-item
+bound, still counts in the actual prompt/input estimate. The native request remains text streaming with
+`response_format` omitted; there is no switch to synchronous JSON Mode. Existing native `doGenerate`, external
+Gateway generation and native chat/OCR transport contracts remain unchanged.
 
-Fresh call one and call two use raw marker `claim-plan-guide-v4`, also recorded on the new verified artifact.
-`Verified.guideCandidates` keeps the existing frozen representation with original H0–H4
-identities, complete text, qualifiers and source labels. Call two returns strict `supportedGuide` IDs, not replacement
-guide prose. Missing/malformed, unknown or duplicate selections reject the fresh plan without a prose fallback.
-Retained `claim-plan-guide-v2` keeps its nullable-object scope parser and flat digest plan; v3 retains array scope and
-its original flat digest-plan parser. Raw call two must match the exact frozen v2/v3/v4 marker, including cached Save;
-no version is reinterpreted as another.
-Legacy `claim-plan-guide-v1` keeps its previously frozen guide units and nested digest plan; no assertion/scope assembly
-or promotion of old dropped guide candidates occurs during GET/history/Save. Verified artifacts without H candidates
-continue the previous producer: `claim-plan-glossary-v1` selects
-frozen glossary candidates, while `claim-plan-v1` also retains prose glossary generation when those candidates are absent.
-Fresh call two and the retained `claim-plan-glossary-v1` branch return strict
-`supportedGlossary` G IDs only, not replacement glossary text; code maps those IDs to the frozen original candidates,
-rechecks labels/content/numbers, and copies the complete `{ labels, en, ru, definition }` units with their exact
-selected-label binding converted to persistent revision citations. G IDs remain their original extraction indexes;
-unsupported/dropped candidates do not renumber later ones, and duplicate or unknown selections reject the plan. This
-verifies declared references and numeric/content constraints, not semantic glossary quality.
-For Russian mathematical definitions, schema descriptions and first-call drafting require explicit source object or
-symbol names for every operation and operand, preserving operand identities, operation order, composition and sum
-relationships, and stated conditions. Call two must review those roles in the frozen wording and reject the whole G unit
-when an ambiguous pronoun changes the referent, a predicate is assigned to another object, or a relationship is
-unsupported. It must not rewrite the definition to repair it. These are semantic review contracts, not a heuristic
-classifier or deterministic entailment proof.
+The 16 MiB allowance charges schema serialization and response text/reasoning before SDK parsing, through full
+consumption and final validation under the same owned deadline. A local response-budget rejection keeps its fixed
+local reason. There is no manual JSON/SSE collector, parser or repair call. Offline single-consumer checks do not
+measure exact V8 heap retention or establish model quality.
 
-Fresh call two returns one `digestPlan` object assigning each selected candidate ID exactly one
-`methods|findings|limits` group. Pinned Zod `partialRecord` closes its keys to the candidate set; public schema metadata
-encodes `maxProperties: 8` in the actual SDK JSON schema, with a matching local count check. A parsed candidate has
-one assignment. Reader groups remain methods, findings, then limits, preserving authored property order within each
-group and copying each complete checked fact. V2/v3 flat arrays retain their original globally bounded parser and
-duplicate rejection. Legacy nested group formats retain their old reader/validation behavior: an over-eight-total
-plan is rejected, never truncated or rewritten. All formats retain exact final fact-survival checks.
-The closed selection set is the exact C candidate indexes supplied to call two plus A0–A7, the original zero-based
-`additionalClaims` indexes. After final claim validation, code renders each selected surviving checked unit with its
-complete statement isolated as a blockquote, qualifying structured scope fields intact and its authority citation
-outside authored content; it does not paraphrase, renumber or substitute. Unknown or rejected IDs reject the fresh
-plan. If no claim survives, the assignment object is empty (an empty array or groups for retained formats) and a validated `partialDigest` is stored only as partial with
-zero claims. `claim-plan-v1` remains the digest-only continuation for legacy `Verified` artifacts lacking frozen
-glossary candidates; it keeps their existing prose glossary. Markerless cached call two retains the full legacy prose
-digest/Save path. The call count remains two, with no retry or third call.
+On 2026-11-07, bounded compact controls used the same unchanged Transformer revision with Low reasoning.
+Flash call one failed on an array over 32 candidates after 82.506 s, reporting 12,298 input and 4,151 output tokens.
+A separate DeepSeek V4.1 call one ended with `length` after 60.108 s, reporting 12,057 input and 8,192 output tokens.
+Flash control `dc9ed7ac-baf1-4384-a9ce-bf099b238066` failed after 94.522 s, with 12,298 input and 5,037 output
+tokens; its 61-candidate JSON also contained `$schema` and was rejected by the decoded outer boundary before call two.
+Those three controls stopped before call two. Control `88d91f54-7a1d-40a2-95fb-a90e91cffa27` passed the first step,
+then failed review SDK validation at `selected.0.reason` over 160 characters. Its two calls took 91.560 s and
+reported 19,056 input, 5,176 output and 0 cached tokens, with requested budgets 8,192/4,096; it published zero claims
+and no guide or digest. The archived dc9 view matched its retained content except for `currentAttemptId`.
+The outer-metadata boundary is fixed offline. No paid repeat has run after the final reason-field fix; full K3
+semantic and corpus gates remain OPEN. Global defaults remain Flash; successor quality remains unqualified.
 
-Each input block is a separate JSON record containing its exact `quoteBlock` and text, so a label does not implicitly
-name following blocks or an entire section. The first-call schema and instructions draft atomic claim cards before guide
-prose; claim coverage is independent of guide/digest content and deduplication applies only among claim cards.
-Each claim still selects one `quoteBlock` from the closed compact label set for that immutable revision. Code resolves
-it to the full original block as its own quote, preserving PDF line-break hyphens, brackets and Markdown bytes;
-the model does not transcribe canonical evidence. Claim quote/range and numeric checks remain against that one block,
-and a statement that adds numbers absent from it is rejected. Each call-two candidate carries that exact verified quote
-beside its statement and structured fields; `quoteBlock` remains its source identity.
+Final parsing delegates the selected public output specification's `parseCompleteOutput` once. Public syntax/schema
+errors and observed blank final text supply fixed safe categories; missing or non-normal finish remains separate.
+Only the exact public raw `stream-truncated` constant supplies that fixed subreason.
+For a public TypeValidationError with an
+actual ZodError cause, `safeSchemaIssueDetail` may retain an issue code, a path of at most eight schema-owned
+keys/indices, and schema origin and numeric bound where applicable. These details contain no payload values.
+Unknown SDK errors remain unclassified. No model text, reasoning, arbitrary response values, unbounded paths,
+provider error bodies, headers or credentials enter the safe reader error.
 
-Fresh guide items declare `{ labels, scope: [] | [{ labels, text }], assertion }`: 1–4 source-block labels, at most one
-combined domain scope clause, then one coherent independently scoped assertion, without mixing unrelated experiments.
-`scope` is required: the actual SDK/provider JSON schema encodes a non-null array with `minItems: 0`, `maxItems: 1`,
-and non-null object items. Missing/malformed scopes, two or more clauses, and v2 null/object wire values reject fresh
-v3/v4 output without downgrade. Empty/singleton arrays produce exactly the same frozen text as v2 null/object values;
-normalization occurs only after the version-specific schema accepts the raw artifact.
-The assertion is structurally bounded to 800 characters and scope text to 300, keeping the assembled sentence below
-the existing 1200-character bound. Scope labels must be a subset of assertion labels; its meaningful content,
-references and numbers are checked against only its own declared canonical quotes. Before freezing or call two,
-code preserves the assertion verbatim apart from outer whitespace and prefixes the complete scope in parentheses,
-with no technical field heading in the owner text. It deletes no authored symbols, operators or punctuation; it adds
-a terminal period only when the assertion lacks an ending period, exclamation mark or ellipsis. Question-ending
-assertions are rejected before construction. No verbatim scope echo, case folding or semantic guess is required.
-The assembled text is checked as a complete unit and frozen using the existing `{id,labels,qualifiers,text}` shape,
-with the combined scope retained as its single qualifier (or an empty array for absent scope). H IDs retain original
-call-one indexes through drops. Call two reviews that exact assembled text, scope and original excerpts, and must
-reject missing/wrong source scope, conditions, comparisons or limitations even when scope is absent. These checks
-do not establish semantic completeness.
-Final code rechecks selected complete units and copies their text and original bindings into the existing public
-guide Markdown, converting only declared citations to persistent labels. It counts all actual sentences without
-trimming text: fewer than three, more than five or ambiguous markup stays readable `partial`; an empty guide fails.
-The retained excerpt pool remains the union of declared claim `quoteBlock` selections, guide `labels` and original
-valid glossary-candidate labels, including valid selections from later dropped candidates. No bindings are inferred.
-This is a bounded compatibility experiment, not a proven Cloudflare defect or runtime/quality pass. A retained
-pinned-SDK comparison measured v1/v2 first schemas at 9812/9967 bytes, which does not establish substantial schema
-growth. Whether the v2 structured `anyOf[object,null]` branch affects provider handling remains unproven until real
-qualification. The offline v2/v3 SDK-schema comparison changes only `guide.scope` and its necessary description;
-existing primitive-nullable fields remain identical.
-Legacy raw call one keeps its original verifier: v2 keeps nullable-object scope assembly, v1 its complete-text/qualifier checks,
-and pre-H raw output retains first-supported-sentence handling. Legacy verified/cached guide paths keep their existing
-GET/history/Save behavior. Missing new scope/assertion fields do not opt old output into the fresh protocol, and
-historical H/C/G identities are never synthesized or renumbered.
-Glossary candidates use `{ labels, en, ru, definition }`; fresh `claim-plan-guide-v4` and retained guide/glossary plans see those frozen
-units with their exact excerpts and return only `supportedGlossary` G IDs. Code rechecks the selected full candidates
-and copies their fields and label bindings; it does not request, accept or substitute free glossary prose in this
-branch. `claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without frozen glossary
-candidates, and markerless cached output retains the full legacy prose path. Legacy prose digests and zero-claim
-`partialDigest` keep their declared-label sentence checks; a fresh claim-plan digest carries only the bounded closed
-C/A selection plan and is materialized from surviving final-checked claims. Storage binds citations and numeric checks
-to those sources but does not prove semantic entailment; this review stays within call two and does not close the
-fresh-result quality gate.
-Historical cached synthesis rechecks do not consume `Verified.guide` or expand its frozen evidence pool, so this new
-producer shape does not rebind or rewrite old artifacts. Raw selections are retained in R2, stored labels use the full
-revision UUID, and a final user task explicitly states the English/Russian response language in both calls. These
-request/validation changes do not establish paid-service or quality acceptance.
+Full valid decoded native Raw1 stays unchanged even when later candidate validation rejects units.
+In native compact call one, invalid/truncated JSON, a `length` finish, stream failure or missing normal finish
+retains `output: null` and known usage, with no call two, repaired guess or draft publication.
+Native usage is known only when the adapter supplies provider-reported `usage.raw`; SDK placeholders stay unknown.
+Each private raw artifact may retain `usage.providerUsage` as an object or null; the final report may retain at most
+two such entries. Missing counts remain unknown. A stream error, abort,
+missing finish or missing validated call-two result cannot publish partial draft text.
 
-Code verifies quotes and numbers between calls. Draft statements are hypotheses, not evidence: the second call checks
-each retained candidate against its own quote and can add a small number of atomic facts from the same frozen excerpts.
-The `dataset` field names only a reported dataset, corpus or benchmark, never a model or architecture; it is `null`
-when no such data identity is stated. Source-stated model/configuration and other qualifiers belong in `conditions`.
-Before drafting the statement, extraction and additional-claim generation must record every non-primary numerical
-comparison, baseline, improvement and qualifying quantity it will mention in `conditions`, preserving the stated
-relationship, or draft a separate result as its own atomic card. The shared field description precedes `statement`
-in both schemas. This drafting contract does not prove model compliance or semantic quality; unchanged numeric gates
-still reject incomplete structured context rather than dropping a statement's comparison. Call two must reject a
-candidate with wrong field roles even when its literal field values occur in the quote; it does not reassign fields.
-`valueText` is the primary reported scalar and `unit` only its unit/scale; secondary results require separate cards.
-Both fields must be `null` for non-result kinds; source-stated formulas/configurations stay in statement/conditions.
-Extraction and additional-claim schemas and prompts share these roles, and call-two review rejects wrong roles.
-Before call-two candidate creation and during final retained/additional rechecks, code rejects whole cards with
-non-null non-result measurement fields or multiple nonblank semicolon-separated clauses in `valueText`/`unit`, rather
-than clearing or rewriting them. This delimiter check preserves scientific, dimensional and normalization units;
-it is not a general unit parser or semantic classifier. Existing scalar numeric-support checks remain unchanged.
-Fresh candidates that already fail the scalar-result projection are excluded before the second call. Their originally
-selected source blocks remain in the same declared evidence pool; code neither splits a compound candidate nor creates
-facts from it. Historical verified candidate IDs are not recomputed during cached-output rechecks.
-Only its supported, code-checked output is committed to the claim reader. Result claims describe one scalar result
-per task/dataset/metric/condition instead of a compound table row. A result's `valueText` may contain at most one numeric
-quantity; an explicit list such as two percentages is rejected even when both values occur in the quote and
-`valueNumber` is null. Scientific powers count as one quantity. Code does not split the list, infer conditions or relabel
-it to retain a card. Citation annotations are resolved separately from factual numbers; an unknown annotation rejects
-its item. First-call claim statements use the same declared-reference cleaner as guide text and second-call additions
-before numeric verification. Only the claim's own `quoteBlock`, its persistent form and corresponding `[block N]`
-annotation may be removed; unknown references and annotation-only statements reject the candidate. Code literals
-remain literal and factual numbers still need the original quote. Drop indexes identify the original candidates;
-diagnostic entries need not be sorted. Surviving claims retain their order.
-The raw first output, original block/range and frozen evidence selections remain unchanged. Historical cached candidate
-IDs are not recomputed and no output is automatically rechecked or regenerated. Synthetic retained outputs reproduce
-this gap through current whole-block verification and Workerd/D1/R2 storage; the inspected corpus reports contained no
-such inline annotations. This does not explain their missing anchors or establish model quality.
-Paid steps have no retry; only deterministic storage steps
-may use bounded native Workflow retries, with immutable R2 writes and natural `(revision, ordinal)` claim keys.
-Result cards preserve the original statement selected by call two instead of replacing it with a synthetic scalar
-sentence. Its primary numeric value must occur in that statement, and every authored number must be represented in
-the structured primary result or context, all supported by the same exact quote. Missing numeric conditions reject
-the card instead of disappearing during formatting. Qualifiers and delta descriptions remain authored prose;
-semantic support is still a separate quality gate.
-Code also rejects a result whose simple literal dataset name carries one explicit data split while its own quote
-names that same dataset with a different unambiguous split. It does not rewrite fields or infer dataset aliases;
-ambiguous splits and other task/metric/dataset semantics remain for quality review.
-New second-call additional claims require the same nullable structured fields as extraction. Cached outputs may
-omit these fields; storage-only rechecks retain that shape and treat omissions as null without inventing metadata.
-Store raw result/report in R2, compact verified claims in D1, and usage
-and kept/dropped reasons on the revision. Assemble project overview deterministically from titles, guide summaries
-and questions; do not buy an extra overview call. Quality is anchor facts and citation validity, not claim count.
-`GET /api/projects/:id/overview` returns `{ sources, nextCursor }`: 50 active attached sources with current readable
-heads, ordered by immutable source `(created_at,id)` ascending. Its value cursor includes the project ID; only returned
-rows load R2 reports, never the lookahead. Title/head/understanding updates do not move the boundary. An old-created
-source that becomes eligible before the boundary requires Refresh; one scan is not a membership snapshot.
-Studio opens the overview. Load more retains the preceding rows; Retry repeats the failed page. Refresh discards the
-scan and requests page one, while project changes/unmount cancel the prior query. Rows open their exact revision in
-Reader. The existing QueryClient owns this storage-only read state while mounted; leaving the overview discards its pages.
-The K3 A3 GPU-memory gate accepts the frozen source sentence or exact EN/RU assertion forms naming LoRA,
-GPT-3 175B and threefold memory reduction. Both complete fields must match; otherwise `REVIEW_REQUIRED` blocks
-automatic acceptance without a factual-failure verdict. No sentence is discarded. The retained paragraph block 5,
-bytes `[1011,1940)`, matches its canonical R2 range (929 bytes) and requires review. Passing the isolated source sentence
-does not close this actual anchor. `pnpm eval k3 --anchors-only` runs synthetic checks before API calls and rejects
-model opt-in. This is not general semantic verification; frozen questions and production claim verification are unchanged.
-Each private R2 `distill-call1.json` / `distill-call2.json` may retain `usage.providerUsage` from AI SDK `usage.raw`
-as a JSON object or null. A typed structured-output failure, invalid final native callback output, or stream failure
-after reported usage retains `output: null` and known usage in the same immutable artifact. Native usage is known only
-when the adapter supplies provider-reported `usage.raw`; SDK placeholders stay unknown. Stream error, abort, missing
-finish or missing final validated output cannot publish even parseable partial text. Its safe failure cause is exposed
-by the owning report; request bodies, headers and private protocol fields
-are excluded.
-It remains failed and unavailable for Save unless complete compatible output exists. The final report retains
-`usage.providerUsage` as an array of at most two such entries for
-saved call responses; older artifacts may omit the field. This is provider usage telemetry, not request bodies,
-headers or credentials, and adds no table, ledger or model call. Missing token counts remain unknown.
-Capture the fixed safe provider-failure projection on the owning revision before crossing the Workflow step boundary.
-The final report and reader retain that cause even when Workflow serialization strips the original error class;
-provider response bodies, request headers and credentials remain excluded.
-At catch entry, each call snapshots whether its own existing deadline signal has expired and persists a fixed
-"Local model-call deadline expiry observed" reason before Workflow serialization. This observes the local deadline,
-not a provider/server timeout cause or completed billing; elapsed wall time alone never supplies that classification.
-Known typed structured-output usage/artifacts are still retained; unknown usage stays unknown. The 6-minute call and
-7-minute step bounds are a product-owned, UNQUALIFIED completion-tail experiment. Each call uses
-`min(6 minutes, remaining 15-minute recovery ceiling)`, with at most two calls and zero paid retries.
-These are local execution bounds, not Cloudflare hard maxima or a quality pass. The absolute 15-minute ceiling
-remains unchanged and wins when less than 6 minutes remain. Historical 180 s failures are not reclassified or rewritten.
-The K3 eval observer waits up to 16 minutes: the existing 15-minute recovery ceiling plus one minute for
-storage/reconciliation observation. This grace does not extend paid execution or start a continuation.
-`done` records a completed pipeline with supported artifacts; rejecting individual candidate hypotheses is normal
-filtering and remains diagnostic. `partial` records a missing required component, ambiguous Markdown visibility or an interrupted/error outcome,
-not a nonzero drop percentage. The same exact-quote, numeric-support and anchor gates apply to both states.
-In particular, a nonempty validated final guide and zero-claim `partialDigest` may be stored as `partial`; missing
-claims alone must not discard those readable artifacts. Zero claims never produces `done`: both normal finish and storage-only
-Save available output require at least three guide sentences and at least one kept final claim for `done`; fresh H-unit
-guides require three to five actual sentences and retain whole overlong units as `partial`. Only the
-second call's supported selections/additions become cards; first-call draft candidates are never promoted to fill an
-empty final claim set. A readable zero-claim partial result is not full K3 acceptance or proof of semantic quality.
-Known empty claim statements (whitespace or punctuation/formatting wrappers around declared references) do not count
-as kept claims, including cached rechecks. Additional-claim drop reasons retain their original call-two array indexes.
-Guide and glossary describe the paper for the owner rather than candidate review or model reasoning. Fresh claim-plan
-digests present selected surviving statements under Methods/Findings/Limitations; conflicting source values remain
-attributed to their separate passages instead of being silently reconciled. Guide sentences, legacy prose-digest and
-`partialDigest` sentences, and glossary entries need content beyond declared citations and punctuation/formatting
-wrappers; `[S1:1].`, `([S1:1])` and `**[S1:1]**` do not count toward completion. A fresh claim-plan digest uses
-nonempty verified claim statements rather than authored digest sentences. Glossary entries require nonblank EN/RU terms.
-Ordinary letters, numbers, Unicode symbols and nonblank supported fenced/inline code remain content. The bounded
-check does not parse Markdown: explicit links, images, HTML/entities, footnotes, reference definitions, indented code
-and ambiguous marker-only output are kept as whole review units rather than sentence-split, and force `partial`
-even with three guide units and kept claims. Only the existing fenced/inline forms promise code-literal treatment;
-other constructs retain the existing reference-cleaning policy, and the original raw output remains available.
-Ambiguous surviving claim statements, such as a tilde-only remainder, also prevent `done` without discarding the card.
-Claim review uses the original statement before reference cleaning or result formatting, and counts only final kept
-cards. Retained claims recover this origin from call one and its recorded claim-drop indexes, with block/text alignment;
-missing or unmatched legacy origins conservatively keep surviving cards as `partial`. No stored field is added.
-This gives up automatic visibility classification of those constructs; it does not discard them or establish
-semantic support. Both normal completion and storage-only Save apply this policy without another model call.
-Known inline reference annotations are excluded from numeric verification but preserved as full persistent labels
-in prose guide, legacy digest/`partialDigest` and glossary storage, including within sentence-level validation. Fresh
-claim-plan digest citations are appended outside the copied authored statement. Code literals remain literal; unknown
-annotations still reject the item. This avoids erasing an inline citation and leaving broken prose such as `block .`.
+Compact invalid-envelope and non-array failures store a safe local reason in the existing owning
+`source_revision.distill_error` before Workflow error reconstruction. The UPDATE is fenced by revision, attempt,
+running state and call ordinal one. A reconstructed plain Error retains that diagnostic through the stored field;
+arbitrary raw error text and payload values are excluded. At catch entry,
+an expired owned deadline signal records the fixed local deadline observation; elapsed wall time alone does not
+identify a provider timeout or completed billing. Workflow serialization must not erase that cause. Known usage
+survives failure; no failure category authorizes another call.
 
-K3 records `distill_calls` (hard maximum two per explicit attempt), `distill_started_at` and `distill_ms` on the owning revision. Admission
-records declared capacity when known before dispatch, with at most two revisions running. Each
-new internal `DistillInput` is `{ revisionId, model: ModelSpec, attemptId? }`: after admission and before Workflow creation,
-snapshot the resolved metadata and use it throughout the job, without a new R2/D1 artifact, state or ledger.
-Admission basis is `published`, `unknown` or `legacy`. New declared capacity is the input ceiling plus published
-output capacity per call, capped by an explicitly known combined context window. An input-only ceiling does not
-imply a combined window; unknown output leaves the numeric capacity `null`. Previously admitted values remain
-unchanged, including older conservative sums that exceed a now-known combined window. `progress.maximumTokens` exposes only
-a positive published value; `recordedTokenLimit` retains the owning row/report value separately. Legacy reservations
-are not provider maxima. Zero is the existing released-reservation sentinel when no call dispatched, with known-zero
-usage; it is not published provider capacity. Only unstarted work without a recorded value may forecast from metadata.
-Changing defaults never recomputes stored admission values. Legacy replay retains its original output cap, and old R2
+`done` means the format's required pipeline completed; it does not certify semantic quality. `partial` preserves
+reviewed usable output with missing components, ambiguous Markdown or an interrupted outcome.
+Candidate rejection alone is diagnostic rather than a failure percentage threshold. Both states retain
+exact-quote, numeric-support, scope and semantic acceptance requirements. Statements must contain content beyond
+declared references and punctuation. Ambiguous Markdown stays a whole review unit and prevents automatic
+completion rather than being silently trimmed or parsed by a new Markdown engine. Legacy zero-claim partial
+digests remain readable under their own compatibility rules.
+
+### Overview and acceptance boundary
+
+Store raw output and reports in immutable R2 artifacts, compact claims in D1, and usage plus kept/dropped/unknown
+review reasons on the owning attempt. The reader labels cards "Claims and source excerpts"; exact quote matching
+does not establish the generated statement's meaning.
+
+Project overview remains deterministic from source titles, available stored guide summaries and questions. It
+performs no extra model call. `GET /api/projects/:id/overview` returns `{ sources, nextCursor }` with 50 active
+attached sources and current readable heads, ordered by immutable source `(created_at,id)` ascending. The value
+cursor includes the project ID; only returned rows load reports, never the lookahead. Title/head/understanding
+changes do not move the boundary. Earlier newly eligible sources require Refresh; a scan is not a membership
+snapshot. Load more retains rows, Retry repeats the failed page and Refresh restarts the scan. Project
+changes/unmount cancel the QueryClient-owned reads, and each row opens its exact shown revision.
+
+The unchanged A1-A3 source anchors and C1-C4 claim-mode questions remain open for the compact producer. The A3
+GPU-memory gate requires complete recognized EN/RU statement and quote forms; unmatched input is
+`REVIEW_REQUIRED`, without dropping a sentence or declaring factual failure. The retained block 5 range
+`[1011,1940)` is 929 canonical bytes and still requires review. Synthetic guards and storage-only Save/range
+checks do not close that source anchor, the full corpus, semantic support, owner review or real claim-mode
+acceptance. The bounded failed controls above leave these gates OPEN.
+
+K3 records `distill_calls` (hard maximum two per explicit attempt), `distill_started_at` and `distill_ms` on the
+owning revision. Admission records declared capacity when known before dispatch, with at most two revisions
+running. `DistillInput` retains `{ revisionId, model: ModelSpec, attemptId? }`; internal `DistillWorkflowParams`
+extends it with optional `producerFormat`. After admission and before Workflow creation, snapshot the resolved
+metadata and accepted producer choice for the whole job, without adding an R2/D1 artifact, state or ledger.
+Admission basis is `published`, `unknown` or
+`legacy`. New declared capacity is the input ceiling plus published output capacity per call, capped by an
+explicitly known combined context window. An input-only ceiling does not imply a combined window; unknown output
+leaves the numeric capacity `null`. Previously admitted values remain unchanged, including older conservative sums
+that exceed a now-known combined window. `progress.maximumTokens` exposes only a positive published value;
+`recordedTokenLimit` retains the owning row/report value separately. Legacy reservations are not provider maxima.
+Zero is the existing released-reservation sentinel when no call dispatched, with known-zero usage; it is not
+published provider capacity. Only unstarted work without a recorded value may forecast from metadata. Changing
+defaults never recomputes stored admission values. Legacy replay retains its original output cap, and old R2
 reports are not rewritten; API copies mark missing historical basis as legacy. OCR keeps its frozen per-page cap.
-Queued work retains its selected route. Repeating the request without an override keeps that selection; an explicit
-different route conflicts before scheduling. Only a successful `none`/`paused` transition may establish a new selection.
-Old terminal reports and cached Save retain their recorded usage and shape. Each
-Workflow paid step has zero retries; an atomic per-revision dispatch count prevents step replay from buying a duplicate
-call. Explicit Understand schedules only its requested revision. Ingest never queues understanding. Completion and cron
-may admit only already requested, undispatched queued work; admission atomically rechecks revision/source liveness,
-readability, the frozen model route and the two-slot limit after asynchronous model/provider checks. Missing stored
-routes pause rather than adopting a new default. A failure draining the queue cannot retry the finalized Workflow.
-Completed or unchanged work is not automatically re-distilled, and failed paid work is never retried automatically. The
-pipeline uses at most two bounded model calls with zero paid-step retries. Completed/partial revisions return existing
-artifacts on repeat. Budget-paused work resumes
-only by explicit request. Unknown Workflow dispatch/status never authorizes another instance.
-Each background distillation call has a 6-minute deadline (native paid-step deadline 7 minutes). Ordinary chat uses Stop
-and platform/provider limits; its K2 latency gate remains separate from execution. The owner reader shows availability,
-progress, useful model names and verification caveats. Calls, reservations,
-token counts and wall time remain in API/eval diagnostics rather than the reading interface. Long papers can use the
-same bounded two-call pipeline without a chat-sized timeout or a reduced quality target.
-An unconfirmed Workflow dispatch with zero paid calls is terminalized by a `running AND distill_calls=0` compare-and-set,
-releasing its concurrency slot and unused reservation. If paid dispatch already won, its usage/reservation is retained.
-A 15-minute product recovery ceiling (not a Cloudflare limit) prevents later paid dispatch; reconciliation finalizes
-expired or lost instances instead of holding both slots forever. Status/storage errors remain visible. Failed work is
-never recreated automatically, and uncertainty after a paid call never releases its conservative usage reservation.
-Raw call output and verification details remain in immutable R2 artifacts. The final artifact is written before its D1
-state; a lost D1 reply reconciles that same stored result without overwriting it or repeating inference. A conditional
-write that finds an existing artifact must verify equal content; different content is a conflict. Legacy prose-digest
-and zero-claim `partialDigest` paragraphs are checked one authored sentence at a time with the same declared evidence,
-retaining supported sentences and rejecting unsupported numbers without rewriting them. Fresh claim-plan digests
-are assembled from selected surviving checked claims. Guide/digest links resolve against the immutable block map,
-while claim cards open their exact original quote ranges. The reader labels these cards “Claims and source excerpts”,
-not “Verified claims”: matching quote bytes and numeric literals does not establish the generated claim's meaning.
+Queued work retains its selected route. Repeating the request without an override keeps that selection; an
+explicit different route conflicts before scheduling. Only a successful `none`/`paused` transition may establish a
+new selection. Old terminal reports and cached Save retain their recorded usage and shape. Each Workflow paid step
+has zero retries; an atomic per-revision dispatch count prevents step replay from buying a duplicate call.
+Explicit Understand schedules only its requested revision. Ingest never queues understanding. Completion and cron
+may admit only already requested, undispatched queued work; admission atomically rechecks revision/source
+liveness, readability, the frozen model route and the two-slot limit after asynchronous model/provider checks.
+Missing stored routes pause rather than adopting a new default. A failure draining the queue cannot retry the
+finalized Workflow. Completed or unchanged work is not automatically re-distilled, and failed paid work is never
+retried automatically. The pipeline uses at most two bounded model calls with zero paid-step retries.
+Completed/partial revisions return existing artifacts on repeat. Budget-paused work resumes only by explicit
+request. Unknown Workflow dispatch/status never authorizes another instance. Each background distillation call has
+a 6-minute deadline (native paid-step deadline 7 minutes). Ordinary chat uses Stop and platform/provider limits;
+its K2 latency gate remains separate from execution. The owner reader shows availability, progress, useful model
+names and verification caveats. Calls, reservations, token counts and wall time remain in API/eval diagnostics
+rather than the reading interface. Long papers can use the same bounded two-call pipeline without a chat-sized
+timeout or a reduced quality target. An unconfirmed Workflow dispatch with zero paid calls is terminalized by a
+`running AND distill_calls=0` compare-and-set, releasing its concurrency slot and unused reservation. If paid
+dispatch already won, its usage/reservation is retained. A 15-minute product recovery ceiling (not a Cloudflare
+limit) prevents later paid dispatch; reconciliation finalizes expired or lost instances instead of holding both
+slots forever. Status/storage errors remain visible. Failed work is never recreated automatically, and uncertainty
+after a paid call never releases its conservative usage reservation. Raw call output and verification details
+remain in immutable R2 artifacts. The final artifact is written before its D1 state; a lost D1 reply reconciles
+that same stored result without overwriting it or repeating inference. A conditional write that finds an existing
+artifact must verify equal content; different content is a conflict. Compact digests use selected frozen claims;
+retained prose-digest formats keep their original declared-evidence and numeric checks. Guide/digest links resolve
+against the immutable block map, while claim cards open their exact original quote ranges. The reader labels these
+cards “Claims and source excerpts”, not “Verified claims”: matching quote bytes and numeric literals does not
+establish the generated claim's meaning.
 
-If both bounded calls finished, the owner can explicitly **Save available output** after failure or **Recheck saved
-output** after a verifier correction. `POST /api/sources/:id/understanding` with `saveAvailable:true` validates the
-retained current-shape synthesis against frozen canonical excerpts and commits supported artifacts only. This path
-never admits, dispatches or retries a model call and works with no remaining model budget. Missing/incompatible output
-returns 409. Original `distill.json`, any earlier recovery report, and original derived bodies remain intact.
+If both bounded calls finished, the owner can explicitly **Save available output** after failure or **Recheck
+saved output** after a verifier correction. `POST /api/sources/:id/understanding` with `saveAvailable:true`
+validates the retained current-shape synthesis against frozen canonical excerpts and commits supported artifacts
+only. This path never admits, dispatches or retries a model call and works with no remaining model budget.
+Missing/incompatible output returns 409. Original `distill.json`, any earlier recovery report, and original
+derived bodies remain intact.
 
-The corrected guide, digest, glossary and report use fixed immutable `source/<revision>/checked/` keys. The report's
-`artifacts` map names those three bodies; nullable `source_revision.distill_report_key` selects the current report.
-Publish this head, `guide_summary`, `claim_count` and the current claim rows in one D1 batch guarded by the old head.
-Current claims are the ordinal prefix `[0, claim_count)`; upserts retain existing row IDs, and old trailing derived rows
-are retained but excluded by readers, context and later FTS queries. No original or legacy/live data is deleted.
-Calls, tokens, estimated cost, original model wall time and retained provider usage telemetry remain unchanged.
-A repeated save of the checked head returns the same result. GET exposes `canRecover` from compatible stored output
-only; failed output is never re-queued.
-**Explicit terminal-attempt retry.** Migration `0013_understanding_retry.sql` adds nullable current
-`distill_attempt_id` and canonical `distill_request_json` to `source_revision`; the revision remains the sole active
-state/counter owner. Null means the original revision-scoped attempt. `distill_history` is an immutable terminal
-archive with a real reader: GET `/api/sources/:id/understanding/history?revisionId=...` pages stable archived identities;
-GET understanding with `attemptId` opens their exact saved receipt, claims and artifact pointers. A new retry uses
+Compatible corrected artifacts and the report use the fixed immutable `source/<revision>/checked/` keys. The
+report's `artifacts` map names the available bodies; nullable `source_revision.distill_report_key` selects the
+current report. Optional compact output does not create a missing guide or glossary. Publish this head,
+`guide_summary`, `claim_count` and the current claim rows in one D1 batch guarded by the old head. Current claims
+are the ordinal prefix `[0, claim_count)`; upserts retain existing row IDs, and old trailing derived rows are
+retained but excluded by readers, context and later FTS queries. No original or legacy/live data is deleted.
+Calls, tokens, estimated cost, original model wall time and retained provider usage telemetry remain unchanged. A
+repeated save of the checked head returns the same result. GET exposes `canRecover` from compatible stored output
+only; failed output is never re-queued. **Explicit terminal-attempt retry.** Migration
+`0013_understanding_retry.sql` adds nullable current `distill_attempt_id` and canonical `distill_request_json` to
+`source_revision`; the revision remains the sole active state/counter owner. Null means the original
+revision-scoped attempt. `distill_history` is an immutable terminal archive with a real reader: GET
+`/api/sources/:id/understanding/history?revisionId=...` pages stable archived identities; GET understanding with
+`attemptId` opens their exact saved receipt, claims and artifact pointers. A new retry uses
 `source/<revision>/understanding/<attemptId>/` for raw output, verification, bodies and checked reports. Canonical
-original/text/block keys and citation identities do not change. Future K9 source-prefix export/cleanup must include
-these paths; this change implements no lifecycle mutation.
-Forward migration `0014_distill_attempt_switch_guard.sql` replaces only `distill_attempt_switch_guard`: failed,
-partial and done predecessors require an archived snapshot pointer and an unused nonnull new identity. Applied `0013`
-is unchanged. Ordinary Understand and repeated reads still reuse done output; only an explicit retry body opts into
-a new attempt under the existing two-call bound.
+original/text/block keys and citation identities do not change. Future K9 source-prefix export/cleanup must
+include these paths; this change implements no lifecycle mutation. Forward migration
+`0014_distill_attempt_switch_guard.sql` replaces only `distill_attempt_switch_guard`: failed, partial and done
+predecessors require an archived snapshot pointer and an unused nonnull new identity. Applied `0013` is unchanged.
+Ordinary Understand and repeated reads still reuse done output; only an explicit retry body opts into a new
+attempt under the existing two-call bound.
 
-POST understanding accepts `retry:{attemptId,previousAttemptId}` separately from `saveAvailable`. The client retains
-that UUID and exact body in session storage before dispatch. Server replay checks current and archived identities
-before model lookup or admission work; a reused identity with a different canonical body conflicts. New acceptance
-requires the exact expected current failed, partial or done predecessor. Every done predecessor requires confirmed
-`complete|errored|terminated` [Workflow status](https://developers.cloudflare.com/workflows/build/workers-api/#instancestatus),
-even when its legacy call counter is zero; paid failed/partial predecessors require the same check.
-Unknown, active or unreadable status blocks retry, including retention cases that cannot be distinguished from a
-transient failure. The existing failed/partial zero-call exception uses its state and new identity to fence an uncertain
-old dispatch. It never applies to done, and no elapsed-time guess proves quiescence. If the settled reread newly needs
-terminal confirmation, reject that intent rather than switch through the zero-call exception.
+POST understanding accepts `retry:{attemptId,previousAttemptId}` separately from `saveAvailable`. The client
+retains that UUID and exact body in session storage before dispatch. Server replay checks current and archived
+identities before model lookup or admission work; a reused identity with a different canonical body conflicts. New
+acceptance requires the exact expected current failed, partial or done predecessor. Every done predecessor
+requires confirmed `complete|errored|terminated` [Workflow
+status](https://developers.cloudflare.com/workflows/build/workers-api/#instancestatus), even when its legacy call
+counter is zero; paid failed/partial predecessors require the same check. Unknown, active or unreadable status
+blocks retry, including retention cases that cannot be distinguished from a transient failure. The existing
+failed/partial zero-call exception uses its state and new identity to fence an uncertain old dispatch. It never
+applies to done, and no elapsed-time guess proves quiescence. If the settled reread newly needs terminal
+confirmation, reject that intent rather than switch through the zero-call exception.
 
-Before switching, immutable `history/<retryRequestId>.json` beneath the predecessor attempt prefix preserves the exact owning revision row (including legacy cost/pricing,
-unknown token counts and zero sentinels) and current claims. It contains no request-time timestamp or newly generated value; the caller request ID makes a distinct snapshot key when a competing Save changes that predecessor.
-The owning row is reread after confirmed Workflow quiescence so an in-flight legacy settlement cannot be lost.
-`Understanding.recordedUsage` exposes that exact current/archived D1 accounting separately from unchanged R2
-`report.usage`; nulls, zeros and legacy currency/date fields are retained verbatim. Snapshot failure or unequal existing bytes blocks retry. A single [D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch) archives that pointer and changes the current
-identity/projection with the settled state, attempt identity and report head as CAS predicates; a concurrent state/head
-change cannot publish the earlier snapshot. The old attempt's fields are never reconstructed from current model defaults. A lost batch reply
-rereads the same identity; cron can admit only the already accepted queued attempt. Finish captures the owning claim count in its initial attempt-scoped SQL snapshot, before R2 waits; later claims from another attempt cannot enter the old report. Every admission, dispatch, failure,
+Before switching, immutable `history/<retryRequestId>.json` beneath the predecessor attempt prefix preserves the
+exact owning revision row (including legacy cost/pricing, unknown token counts and zero sentinels) and current
+claims. It contains no request-time timestamp or newly generated value; the caller request ID makes a distinct
+snapshot key when a competing Save changes that predecessor. The owning row is reread after confirmed Workflow
+quiescence so an in-flight legacy settlement cannot be lost. `Understanding.recordedUsage` exposes that exact
+current/archived D1 accounting separately from unchanged R2 `report.usage`; nulls, zeros and legacy currency/date
+fields are retained verbatim. Snapshot failure or unequal existing bytes blocks retry. A single [D1
+batch](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch) archives that pointer and changes the
+current identity/projection with the settled state, attempt identity and report head as CAS predicates; a
+concurrent state/head change cannot publish the earlier snapshot. The old attempt's fields are never reconstructed
+from current model defaults. A lost batch reply rereads the same identity; cron can admit only the already
+accepted queued attempt. Finish captures the owning claim count in its initial attempt-scoped SQL snapshot, before
+R2 waits; later claims from another attempt cannot enter the old report. Every admission, dispatch, failure,
 verification, claim publication, finish and Save publication is fenced by the owning attempt. Old artifacts remain
-immutable and late old writes cannot publish into the new current attempt. Context freezes attempt, report, claim count,
-summary and state, then checks them in its single claims read; a changed projection rejects before inference.
+immutable and late old writes cannot publish into the new current attempt. Context freezes attempt, report, claim
+count, summary and state, then checks them in its single claims read; a changed projection rejects before
+inference.
 
-The reader distinguishes Retry understanding (a new model run under the existing provider plan), storage-only Reload and Save.
-A lost/malformed retry reply stays unresolved across remount; GET with `requestId` returns that exact `knownRequestId` only when it is
-already current or archived; an older cached acknowledgement cannot clear a later pending request. Reading its old predecessor does not clear the pending identity. After a successful status
-read, Send same request explicitly resends the retained body; it may start that run if never accepted. Only a confirmed
-receipt permits a later explicit new retry. Previous-attempt controls perform reads only. Partial and done retry archive the working prior guide/claims/report before
-switching, so that result remains readable in history. Terminal pre-admission rejections use the same immutable
-`distill_history` table with `rejection` instead of a snapshot pointer; they do not appear as model runs in history.
-The rejection insert refuses an accepted current identity, while acceptance refuses any rejected identity, so the
-D1 winner is definitive even when a duplicate preflight fails while the original request is still in flight.
-POST returns a matching `rejected` outcome and GET returns `requestRejection` beside its exact `knownRequestId`.
-The matching accepted GET receipt owns history invalidation, including recovery after a lost or malformed POST reply;
-it explicitly cancels any pre-accept history fetch before starting a fresh read, including a first fetch without cached
-data. An already open history refreshes without remounting. Rejected receipts do not invalidate run history.
-Reopening a cached Previous attempts list explicitly refetches it, coalescing an in-flight receipt read and retaining
-the selected historical reader and loaded pagination; the first open enables one initial fetch.
-Only this durable outcome clears a rejected pending request and permits a fresh explicit model/ID choice; an ordinary
+The reader distinguishes Retry understanding (a new model run under the existing provider plan), storage-only
+Reload and Save. A lost/malformed retry reply stays unresolved across remount; GET with `requestId` returns that
+exact `knownRequestId` only when it is already current or archived; an older cached acknowledgement cannot clear a
+later pending request. Reading its old predecessor does not clear the pending identity. After a successful status
+read, Send same request explicitly resends the retained body; it may start that run if never accepted. Only a
+confirmed receipt permits a later explicit new retry. Previous-attempt controls perform reads only. Partial and
+done retry archive the working prior artifacts, claims and report before switching, so that result remains
+readable in history. Terminal pre-admission rejections use the same immutable `distill_history` table with
+`rejection` instead of a snapshot pointer; they do not appear as model runs in history. The rejection insert
+refuses an accepted current identity, while acceptance refuses any rejected identity, so the D1 winner is
+definitive even when a duplicate preflight fails while the original request is still in flight. POST returns a
+matching `rejected` outcome and GET returns `requestRejection` beside its exact `knownRequestId`. The matching
+accepted GET receipt owns history invalidation, including recovery after a lost or malformed POST reply; it
+explicitly cancels any pre-accept history fetch before starting a fresh read, including a first fetch without
+cached data. An already open history refreshes without remounting. Rejected receipts do not invalidate run
+history. Reopening a cached Previous attempts list explicitly refetches it, coalescing an in-flight receipt read
+and retaining the selected historical reader and loaded pagination; the first open enables one initial fetch. Only
+this durable outcome clears a rejected pending request and permits a fresh explicit model/ID choice; an ordinary
 HTTP error leaves the request unknown. Replays adopt either accepted or rejected winners before model work.
 Understanding POST also accepts optional `nativeReasoningEffort: "low" | "high"` for a native model that already
 advertises a known native profile. Null, empty/other values and unsupported routes/capabilities reject before
 queueing or archiving. This is an explicit attempt choice, not a transport fallback or a global setting. Omission
-preserves the legacy canonical retry JSON bytes and catalogue policy; a supplied literal participates in retry
-identity, so the same UUID with a changed effort conflicts before new model resolution. Save cannot select effort.
-The literal lives only in existing `distill_request_json`. Queue drain applies it to a copy of the freshly resolved
-`ModelSpec` before admission and freezes that same spec for both calls. Repeated queued requests cannot change it;
-resuming an accepted paused retry retains its recorded intent. Admitted snapshots are never overridden in transport.
-An undispatched original none/paused attempt retains effort on the same route. Changing its resolved route with
-effort omitted clears the old native effort from both model selection and stored intent; accepted retry intent stays unchanged.
-Admission, scheduler/metadata failure pauses and none/paused queue updates compare the selected exact request JSON
-with null-safe equality, so a stale Low lookup cannot claim or pause a same-route High intent, including original null attempt IDs.
-Reader `progress.nativeReasoningEffort` means requested profile, read only from current/archived recorded intent;
-old missing fields stay omitted without inferring High from today's catalogue. The source Material choice changes
-no settings and starts no request until Understand/Retry; unresolved/busy requests retain the exact pending body.
-As of 2026-11-07, High latency as a cause remains a hypothesis; this explicit Low strategy's runtime and quality are
-NOT_RUN. Source bytes, gates, two calls/zero retries, 6-minute call/7-minute step/15-minute ceiling and 16 MiB remain unchanged.
-`pnpm eval k3 --retry-only` applies strict migrations and exercises pinned Workerd/Workflows/D1/R2 and the production
-browser controls at 1440/390 widths. Both paid producer callbacks are replaced with retained synthetic output and external
-network is denied. This verifies storage/replay/fencing behavior, not model quality, provider availability or deployed
-migration compatibility. Production migration/deployment are NOT_RUN. Once retry rows exist, the Worker and Workflow
-binding must execute attempt-aware code; old unfenced code cannot safely process the new identity/artifact paths.
-This change does not establish a safe rollback to an older build.
+keeps retained canonical retry JSON bytes and catalogue policy. Fresh compact intents also retain their pinned
+producer marker; a supplied effort participates in retry identity, so changing it under the same UUID conflicts
+before new model resolution. Save cannot select effort. The literal lives only in existing `distill_request_json`.
+Queue drain applies it to a copy of the freshly resolved `ModelSpec` before admission and freezes that same spec
+for both calls. Repeated queued requests cannot change it; resuming an accepted paused retry retains its recorded
+intent. Admitted snapshots are never overridden in transport. An undispatched original none/paused attempt retains
+effort on the same route. Changing its resolved route with effort omitted clears the old native effort from both
+model selection and stored intent; accepted retry intent stays unchanged. Admission, scheduler/metadata failure
+pauses and none/paused queue updates compare the selected exact request JSON with null-safe equality, so a stale
+Low lookup cannot claim or pause a same-route High intent, including original null attempt IDs. Reader
+`progress.nativeReasoningEffort` means requested profile, read only from current/archived recorded intent; old
+missing fields stay omitted without inferring High from today's catalogue. The source Material choice changes no
+settings and starts no request until Understand/Retry; unresolved/busy requests retain the exact pending body.
+Compact Low quality and delivery remain unqualified; High latency as a failure cause remains unproven.
+Source bytes, gates, two calls/zero retries, 6-minute call/7-minute step/15-minute ceiling and 16 MiB
+remain unchanged. `pnpm eval k3 --retry-only` applies strict migrations and exercises pinned
+Workerd/Workflows/D1/R2 and the production browser controls in desktop and compact layouts. Both paid producer
+callbacks are replaced with retained synthetic output and external network is denied. This verifies
+storage/replay/fencing behavior, not model quality, provider availability or deployed migration compatibility.
+Production migration/deployment are NOT_RUN. Once retry rows exist, the Worker and Workflow binding must execute
+attempt-aware code; old unfenced code cannot safely process the new identity/artifact paths. This change does not
+establish a safe rollback to an older build.
 
 ## 7. Shared tools
 
@@ -949,29 +882,37 @@ Each original block in whole or compact evidence is one JSON `{label,text}` reco
 source brackets, and each label applies only to its record's text. The inventory and derived claim statements remain
 separate orientation, not evidence; aliases, resolution and canonical byte ranges are unchanged.
 
-Freeze readable revision IDs at turn start. Context modes are whole labelled text, verified K3 guides/claims when whole
-text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. The input estimate must fit the published input/assembly ceiling. Only when an explicit combined
-`contextWindowTokens` is known, also reserve existing output headroom inside that window: the input budget is
-`min(contextTokens, contextWindowTokens - outputReserveTokens)`; without a known window it is `contextTokens`. If the complete scope does not fit, choose whole or
-compact evidence per source within that same budget, compressing eligible sources with the greatest savings first.
-Readable sources without usable knowledge remain whole when they fit; no source is dropped or reordered. Mixed
-requests retain `claims` mode whenever any source is compressed. Recompute history against the final label inventory
-and reject the full request before inference if no representation fits. No source understanding or search is started.
-`outputReserveTokens` is assembly headroom, not the provider's generation maximum. Chat and source understanding
-use a published `maxOutputTokens`, clamped by an estimated remaining allowance, not measured provider tokenization.
-`contextWindowTokens` retains a declared combined window independently of the input/assembly ceiling. Clamp output
-by estimated remaining headroom only when that combined window is known. Old cached rows and generic refreshes may
-retain no combined-window metadata; then preserve published output capacity without subtracting the input ceiling.
-An unknown
-maximum stays `null` in the catalogue and Eliot omits the SDK option; SDK/provider defaults may then apply,
-not an inferred 8,192-token maximum or an unlimited output promise. A non-null chat `token_limit_kind` is its admission
-claim even with `token_limit=null`; the atomic claim cannot repeat or change while started. Migration 0012 marks only
-previously admitted started rows as legacy; terminal rows are never backfilled. GET, stream and repeat receipts expose
-the same basis without changing old payloads. Actual reported usage is retained even if it contradicts declared capacity.
-OCR retains its separate frozen
-per-page output cap described in section 4.
-For compressed sources, include the stored guide with its exact
-quoted source passages. Deduplicate identical (block, quote) pairs within each frozen revision while retaining distinct
+Freeze readable revision IDs at turn start. Context modes are whole labelled text, stored K3 guides/claims when whole
+text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. The input estimate must fit
+the published input ceiling. When combined `contextWindowTokens` is known, assembly uses the smaller of that input
+ceiling and the window after the existing effective output reserve. Without that window, the input ceiling remains
+`contextTokens`. `outputReserveTokens` leaves assembly headroom; it does not set the generation budget.
+If the complete scope does not fit, choose whole or compact evidence per source within that same budget,
+compressing eligible sources with the greatest savings first. Readable sources without usable knowledge remain
+whole when they fit; no source is dropped or reordered. Mixed requests retain `claims` mode whenever any source
+is compressed. Recompute history against the final label inventory and reject before inference if nothing fits.
+This process starts no source understanding or search.
+
+Fresh chat requests an experimental job budget of 8,192 output tokens. After estimating the actual instructions
+and messages, `requestedOutputLimit(model, inputEstimate, requestedTokens)` validates the positive finite budget
+and clips it to a known provider maximum and the estimated remainder of a known combined window.
+The existing input estimate includes conservative framing overhead. An input-only ceiling does not establish
+a combined window, and unknown window metadata supplies no inferred output limit.
+Every fresh chat dispatch passes the applied value as the SDK `maxOutputTokens`, including when the provider's
+catalogue `maxOutputTokens` is null. That catalogue field remains null; the local budget is separate metadata.
+
+The existing DO turn JSON and public `TurnView` expose optional
+`outputBudget: { requestedTokens: number; appliedTokens: number }`. New budgeted turns retain both actual values;
+old turns without this field keep it omitted and unknown. Reads never reconstruct it from today's defaults.
+`modelOutputLimit` retains its metadata-only behavior, including undefined for an unknown provider maximum.
+Legacy callers and OCR retain their existing frozen cap policies; fresh compact K3 budgets are defined in §6.
+
+A non-null chat `token_limit_kind` is its admission claim even with `token_limit=null`; a started claim cannot
+repeat or change. Migration 0012 marks only previously admitted started rows as legacy, without backfilling
+terminal rows. GET, stream and repeat receipts expose the recorded basis. Actual reported usage is retained
+even if it exceeds declared capacity or the requested budget; unknown usage is never replaced by that budget.
+For compressed sources, include available stored guide evidence and claim quotes. Deduplicate identical
+(block, quote) pairs within each frozen revision while retaining distinct
 quotes from the same block. Keep derived claim statements and conditions in a separate orientation message marked as
 non-evidence; only original quoted passages provide evidence and citation labels. Source and orientation text both
 count toward the same context budget.
@@ -992,11 +933,11 @@ response body, reasoning or provider metadata. Diagnostic failures do not change
 instrumentation, not a proven cause or fix, and does not add a call, retry or response-stream consumer.
 
 Estimate the final instructions/messages JSON as UTF-8 bytes / 3 plus existing per-message and fixed framing overhead.
-Assembly and dispatch use the same estimate without copying the full source JSON. This is a heuristic, not a guaranteed
-token upper bound or proof that a provider will accept the request. Unknown output defaults can also exceed the reserved
-headroom (the pinned Anthropic Claude adapter can serialize `max_tokens=128000` when Eliot omits the option); capacity
-and accounting stay unknown rather than adopting that default as published metadata. `estimatedInputTokens` retains
-its content-only API meaning. Select newest in-scope exchanges through the model-only bounded SQL reader using the
+Assembly and dispatch use the same estimate without copying the full source JSON. This heuristic is not a guaranteed
+token upper bound or proof of provider acceptance. The explicit chat output budget does not make unknown provider
+capacity or usage known, and historical SDK defaults are not adopted as catalogue metadata.
+`estimatedInputTokens` retains its content-only API meaning. Select newest in-scope exchanges through the
+model-only bounded SQL reader using the
 remaining input budget after the current question, instructions and source evidence. Neither a percentage quota nor
 the UI's 50-row page limits model history. Charge JSON escaping, each separating array comma and message framing during
 selection while retaining content-only totals. Public assistant history retains
@@ -1082,8 +1023,10 @@ unaccepted draft text is not persisted in the URL, localStorage or another clien
 Ordinary chat has no application wall-clock or idle-abort timer. Stop signals abort and preserves received text;
 its response acknowledges that signal, not upstream completion. The pinned SDK can close its consumer and release
 the local queue even if transport cancellation stalls; missing provider usage stays unknown. Provider/platform failures
-remain failed without text or partial with text. Only explicit owner Stop can produce
-cancelled. After the SDK iterator closes, read any resolved usage and check the signal before accepting a normal finish:
+remain failed without text or partial with text. A `length` finish visibly records the output-limit cause, retains
+received text and known usage, and ends as partial with text or failed without it. It starts no continuation.
+Only explicit owner Stop can produce cancelled. After the SDK iterator closes, read any resolved usage and check
+the signal before accepting a normal finish:
 abort can close the iterator normally. The eval's model POST wait has no 90-second client cutoff; a failed wait is
 reconciled by bounded reads of that same submitted turn ID, never another Send.
 Platform facts checked 2026-11-04: [Durable Objects RPC/HTTP](https://developers.cloudflare.com/durable-objects/platform/limits/)
@@ -1107,7 +1050,9 @@ conservative existing behavior. Answer bytes, source blocks and saved revision r
 Truncation, stream/protocol failure and invalid resolved labels remain real failures. A normally finished answer with rejected references stays partial; its error names the bounded
 rejected-marker samples. Saving a partial answer preserves its recorded failure reason as escaped Markdown text;
 it does not claim generation was interrupted when only references failed. Historical partials without a reason receive
-a neutral review note. Saved output also carries a concise review note when warnings exist. D1 schema and usage are unchanged.
+a neutral review note. New Save bodies omit advisory missing-citation and numeric-support counter prefixes;
+`TurnView.warnings` remains available to API/eval readers. Recorded partial-error and history-omission notes are
+preserved. Existing pages are not rewritten. D1 schema and usage are unchanged.
 An answer over a nonempty whole/claim source scope with no resolved citation is incomplete; this hard citation-presence
 gate is separate from advisory spans. General answers in explicitly empty scope do not require Library citations.
 
@@ -1351,11 +1296,19 @@ showed semantic errors. Requesting `high` is not a semantic-quality guarantee or
 Model routes preserve provider-native identity: `workers-ai:<model>` or `gateway:<provider>/<native ID>`. Provider
 APIs supply current catalogue entries and capabilities; unknown metadata remains visible and does not by itself ban
 selection. Local admission requires usable input metadata, without a price lookup or a locally invented monthly
-allowance. Providers enforce their quota/billing restrictions. Record declared input plus published output capacity when both are known (twice
-for distillation), otherwise `null` with an independent admission claim. Freeze the admitted `ModelSpec` and retain
-unknown usage as unknown. The assembly reserve does not become a provider maximum; legacy/OCR snapshots retain
-their admitted per-call cap. Provider errors/limits remain visible; there is no artificial
-quota, paid fallback or model-name allowlist/banlist.
+allowance. Providers enforce their quota/billing restrictions. Record declared input plus published output capacity
+when both are known, capped by an explicitly known combined window, otherwise null with an independent admission
+claim. Distillation retains its two-call capacity accounting. Freeze the admitted `ModelSpec` and preserve unknown
+usage; the local job budget does not supply missing provider capacity or actual token counts.
+
+Generation budgets are separate from catalogue maxima and assembly reserves. Fresh chat requests 8,192 output
+tokens, clipped after its actual input estimate to any known provider maximum and remaining known combined window.
+Its SDK `maxOutputTokens` is always present. The optional DO/public `TurnView.outputBudget` records
+`requestedTokens` and `appliedTokens`; missing historical fields stay omitted. A catalogue maximum of null stays
+unknown, and an unknown combined window is not inferred from the input ceiling. `outputReserveTokens` serves
+assembly only. A `length` finish retains text and known usage as a visible partial/failed outcome, without another
+call. Fresh compact K3 uses the separate 8,192/4,096 call budgets in §6; legacy and OCR snapshots retain their
+frozen cap policies. Provider errors and limits remain visible under the existing admission rules.
 
 **Providers.** Migration `0008_model_providers.sql` stores the editable provider configuration in
 `settings.model_providers_json`: ID, adapter type (`workers-ai` or `openai-compatible`), HTTPS API base URL, enabled
@@ -1456,8 +1409,9 @@ scheduler. Deployment must account for already queued or running work. The Neuro
 During refresh, each enabled compatible provider supplies its bounded JSON `/models` catalogue; Workers AI uses its
 native binding. Partial failure preserves that provider's last good metadata and its original routing configuration.
 Changing a provider's base URL or Gateway route invalidates old external metadata until an explicit refresh succeeds.
-Neither API nor HTML prices are required or parsed for new model selection/admission. Missing usable context/output
-metadata blocks dispatch. The UI filters do not run discovery or change selection.
+Neither API nor HTML prices are required or parsed for new model selection/admission. Missing usable input metadata
+or assembly headroom blocks dispatch; a provider output maximum may remain unknown. UI filters perform no discovery
+and do not change selection.
 Catalogue and metadata URLs pass the existing public-URL guard, and redirects are rejected. If a public catalogue
 denies access with 401/403, an explicitly configured Gateway can read that same provider path using stored BYOK;
 credentials are never sent by the app or forwarded to a different origin. A refused authenticated read remains a
@@ -1472,6 +1426,12 @@ failed structured result, retained for inspection without an automatic repair ca
 
 Cloudflare documents R2 object consistency in the [Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 (dateModified: 2026-07-31), supporting the single-object snapshot timestamp contract.
+
+Cloudflare's [notice](https://developers.cloudflare.com/changelog/post/2026-11-05-planned-model-deprecations/)
+announcement of 2026-11-05, checked 2026-11-07, retires GLM 5.3 Flash on 2026-11-20; later requests return HTTP 410
+with error code 5028. The native catalogue already offers `@cf/deepseek-ai/deepseek-v4.1-flash-1017` and
+`@cf/zai-org/glm-5.3`, both with 1M context and `maxOutputTokens: null`. Their current model cards support `low`.
+Replacement qualification on comparable Eliot tasks remains pending; this fact does not select a new default.
 
 The factory fallback remains native Workers AI Flash (`workers-ai:@cf/zai-org/glm-5.3-flash`); the stored global answer
 and understanding defaults are owner choices; retiring the local usage selector does not change either selection.
@@ -1494,7 +1454,8 @@ selected provider/native-ID pair. Usable model bounds remain required locally; p
 The catalogue's read-only `selectable` projection permits choosing/saving a known model from an enabled configured
 provider independently of Gateway connection and execution readiness. `enabled`/`unavailableReason` continue to guard
 execution; disabled/unconfigured providers, unsupported model capabilities and ambiguous identities are not made
-selectable. Unknown bounds remain visible/selectable but paid resolution still requires usable input/output bounds.
+selectable. Unknown bounds remain visible/selectable, while paid resolution requires usable input metadata and
+assembly headroom. An explicit job budget does not turn an unknown provider maximum into published capacity.
 Selecting or saving a default never grants credential access, connects a Gateway, refreshes metadata or starts a job.
 Global `PUT /api/settings` accepts either or both model fields. Save sends only edited defaults; the API validates and
 updates only changed values, leaving an untouched missing/disabled saved route intact. An unchanged stale replay is a
@@ -1597,9 +1558,12 @@ Studio, but cannot retire a newer pending retry. A confirmed Save permits a late
 persistence is added.
 Proposal review closes its modal before route navigation focuses the Reader, including repeated clicks on the same
 citation. The selected draft remains available when review reopens; modified links leave the current review open.
-The source Reader highlights a citation's exact UTF-8 range inside the complete canonical text and focuses/scrolls
-to it on passage navigation. The surrounding text and the pre's complete text content stay unchanged. Copy link
-handles selections within or across the mark; invalid ranges retain full text with an error and Clear passage.
+The source Reader places Outline in a native disclosure, closed by default above one canonical text column.
+Opening Outline exposes the existing heading links; it does not create a sidebar or reduce the passage column.
+The complete canonical text remains in one `<pre>` with the existing reading measure and original whitespace.
+Passage navigation highlights the exact UTF-8 range and focuses/scrolls to it. Surrounding text and the pre's complete
+text content stay unchanged. Copy link handles selections within or across the mark, preserving exact byte-range
+destinations. Invalid ranges retain full text with an error and Clear passage.
 Current-attempt reads refresh a stale Sources badge when its state or claim count changes, without a refetch loop;
 historical revisions and attempts never supply the badge.
 A confirmed file replacement cancels in-flight source-list reads before invalidating their caches because a source is
@@ -1685,7 +1649,8 @@ from selection.
 **Conversation decomposition — UI extraction complete; Sol audit passed; CI Cancel/Confirm paths passed; manual extension Cancel remains unverified.** The composer
 presentation lives in `web/ChatComposer.tsx` and receives existing values and callbacks; it owns no state or refs. Chrome
 spot-check observed the composer/draft rendering and History opening. e622 CI runs `42337156849` and `42337156855`
-passed native/browser History/New chat Cancel/Confirm/draft+scope at 1440/390. Manual extension Cancel was not verified:
+passed native/browser History/New chat Cancel/Confirm/draft+scope in desktop and compact layouts.
+Manual extension Cancel was not verified:
 the test tab was removed and the dialog is gone; no user action is pending. These browser checks do not close K2/K3
 quality gates. Keep the active conversation's
 HTTP/socket/history/version/cursor/scroll lifecycle together. Each route, connection and source selection keeps one state

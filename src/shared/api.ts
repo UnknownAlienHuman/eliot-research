@@ -165,6 +165,8 @@ export interface TurnView {
   cachedTokens: number | null;
   outputTokens: number | null;
   providerUsage?: ProviderUsage | null;
+  /** Local per-turn generation cap; independent of catalogue metadata and reported usage. */
+  outputBudget?: { requestedTokens: number; appliedTokens: number };
   tokenLimit: number | null;
   tokenLimitKind?: "published" | "unknown" | "legacy";
   firstTokenMs: number | null;

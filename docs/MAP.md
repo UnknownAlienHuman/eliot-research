@@ -185,7 +185,9 @@ its text preview, and Apply a new readable revision while retaining the original
 - The native Markdown browser fixture keeps an unambiguous table caption and its rows in one bounded stored block;
   opening its exact range shows both caption and rows, and the old range survives replacement.
 - Eval prints converter, original/text bytes, blocks, wall time and conversion tokens when Cloudflare returns them.
-- Owner opens three citations and one copied range link on phone.
+- At 1440 px and 390 px, Outline starts closed as a native disclosure above a single canonical-text column.
+  Opening it preserves the existing reading measure, heading/passage links and exact `<pre>` text content.
+- Owner opens three citations and one copied range link on phone; UTF-8 selection and copied ranges stay exact.
 
 `pnpm eval k1` includes the real phone journey, immutable old-revision checks and recovery from an offline upload.
 The browser journeys also exercise duplicate pasted text and duplicate static URLs through explicit Attach existing.
@@ -226,7 +228,8 @@ stop/reconnect, reopen chat and save an answer as a page.
 2. Read provider catalogues from the R2 snapshot. The owner edits the provider configuration in Settings; owner-only
    `POST /api/models/refresh` discovers JSON models and available provider quota data; a partial provider failure preserves that provider's prior slice and
    returns a warning. If no snapshot exists, use the native Flash fallback. Paid admission remains separate and
-   requires usable context/output bounds, without per-model price prerequisites. Providers enforce quota/billing rules.
+   requires usable input metadata and assembly headroom, without per-model price prerequisites.
+   Providers enforce quota/billing rules.
    A valid stored catalogue is authoritative; a successful native slice cannot be supplemented with an absent fallback
    route. Preserve a failed native refresh's prior slice and show warnings on read/Refresh without changing selections.
    Keep Command Code and add Kilo, Nous Portal and OpenCode Go through that same configuration. Go's live IDs join its
@@ -266,7 +269,12 @@ stop/reconnect, reopen chat and save an answer as a page.
 7. Add label/context/cost cases and `pnpm eval k2`.
 
 **Behavioral contract.** Only Send starts answer inference. Each turn freezes its source revisions and admitted model
-metadata. Context reserve is separate from the published generation maximum; unknown maxima retain provider/SDK defaults.
+metadata. Fresh chat requests an experimental 8,192-token job budget and always passes its applied value as the SDK
+`maxOutputTokens`. Known provider maxima and estimated remaining known combined windows clip that value;
+`outputReserveTokens` serves assembly only, while a null provider maximum remains unknown.
+Optional `TurnView.outputBudget` stores `requestedTokens` and `appliedTokens` in existing DO JSON and public reads;
+old missing fields remain omitted. A `length` finish preserves text and known usage as partial/failed, without
+automatic continuation.
 Admission has its own claim; a missing numeric capacity never permits another call for the same turn.
 Fresh native rows request `high` only when one `reasoning_effort` property uniquely advertises it in `supported_efforts`;
 otherwise the SDK option is omitted, while stored `low` remains literal. This is a request policy, not semantic acceptance.
@@ -285,9 +293,12 @@ frozen-scope validation; unknown identities and shorthand remain failures.
 Inline citations use compact passage numbers; full titles remain available to assistive technology and on hover.
 Keyboard and pointer activation keep the same immutable Reader target.
 Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
-canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only. Stop preserves partial output; a failed paid turn is
-never retried automatically. Save preserves a partial answer's recorded reason, distinguishing interrupted generation
-from rejected source references. An explicit repeat of an unconfirmed Save in the mounted workspace reuses its
+canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only.
+Stop preserves partial output; a failed paid turn is never retried automatically. New Save bodies omit advisory
+missing-citation and numeric-support counter prefixes; `TurnView.warnings` remains in API/eval output.
+Save preserves recorded partial-error and history-omission notes, distinguishing interrupted generation from
+rejected source references. Existing pages are not rewritten.
+An explicit repeat of an unconfirmed Save in the mounted workspace reuses its
 mutation UUID and returns the committed page rather than duplicating it; confirmed saves remain distinct copies.
 Stream checkpoints also flush a received tail during provider pauses. Stored text retains resolved citation targets through restart and Save, with no source reread or automatic model continuation.
 For a nonstandard provider finish normalized to `other`, the stored failure includes a bounded safe provider code.
@@ -349,185 +360,149 @@ results belong in the PR and do not replace these gates. Neither K2 nor K3 is de
 
 ## K3 — Distill
 
-**Owner outcome.** Each new readable revision receives one guide, verified claim set, digest and EN/RU glossary. The
-project overview is assembled from guides. Large selections can answer from claims. An unchanged revision is never
-re-distilled automatically.
+**Owner outcome.** An explicitly understood readable revision exposes reviewed claims and a deterministic digest,
+with a guide, suggested questions and glossary when available. The project overview reuses stored summaries.
+Large selections can answer from claims. An unchanged revision is never re-distilled automatically.
 
 **Build**
 
-1. Apply `migrations/0003_distill.sql`, `0007_manual_understanding.sql`, `0013_understanding_retry.sql` and forward guard `0014_distill_attempt_switch_guard.sql`; add `DistillWorkflow` and quote/number verification.
-2. Ingest makes a revision readable without queueing understanding. Understand explicitly requests one revision;
-   unchanged completed or partial output is returned without another model call.
-3. An Understand request admits only its requested revision while concurrency and provider allowance permit.
-   A full concurrency window leaves explicitly requested work `queued`; Workflow completion and cron drain that queue.
-   Unavailable models or provider allowance leave work visibly `paused` until another explicit request. Cron also
-   reconciles stale `running` rows against deterministic Workflow IDs without restarting uncertain or paid work.
-   Keep an already queued model selection on repeat; reject a conflicting explicit model before dispatch.
-   Failed, partial and completed attempts support explicit Retry understanding with a stable request ID and predecessor compare-and-set.
-   Completed predecessors require confirmed terminal Workflow status even when a legacy call counter is zero.
-   Only a retry body opts into rerunning completed output; normal Understand and repeated reads reuse it with zero new calls.
-   Archive the exact old receipt and claim projection before switching; previous attempts remain readable without
-   models. Reload and Save existing output remain storage only. Unknown retry replies retain the same request across
-   reload/remount; a successful read of its old predecessor cannot authorize a different retry ID. A durable rejected intent enables a fresh explicit model choice without an in-flight duplicate later accepting that rejected ID.
-   Native models advertising a known profile allow an explicit attempt-scoped Low/High choice on Understand/Retry.
-   Its optional literal is retained in existing intent, applied before scheduler admission and frozen for both calls;
-   omission keeps legacy canonical bytes/policy, and changed effort under the same retry ID conflicts. Reader progress
-   shows only the recorded requested profile, omitting old missing fields. No route aliases/default changes or
-   automatic effort fallback; changing the Material selection alone starts no work. Low runtime/quality is NOT_RUN,
-   and High latency as the failure cause remains a hypothesis.
-4. Use at most two bounded calls with zero paid retries. The product-owned 6-minute call/7-minute step bounds are an
-   UNQUALIFIED completion-tail experiment: each call uses min(6 minutes, remaining absolute 15-minute recovery
-   ceiling). These are not Cloudflare hard maxima or quality acceptance. Historical 180 s failures remain unchanged.
-   Native K3's unqualified delivery experiment uses pinned SDK `experimental_streamTextLowMemory`: one consumer,
-   no replay/partial streams or eager content getters, and only final strict `onEnd.output` may be stored. The full
-   unchanged schema remains in the prompt/input estimate while upstream JSON Mode is omitted. Existing 16 MiB,
-   admission/call/time/error/unknown-usage guards remain; reported usage survives invalid/interrupted output. Many
-   small chunks test the public single-consumer contract, not exact V8 heap retention. A Nov 7 one-call control recorded
-   288,119 ms, 15,071 input / 20,133 output / 0 cached / 35,204 total tokens and no HTTP 408, then failed generically
-   before call two; absent final text/flags leave its cause UNKNOWN. Future final-parser failures retain fixed safe
-   syntax/schema/empty-text categories through the same one-pass public validator, separately from finish failures.
-   Schema details are limited to the first actual Zod issue code and a schema-owned top-level field; raw finish may
-   expose only the fixed known `stream-truncated` subreason, with all other data/messages omitted.
-   Historical output is unchanged. Earlier HTTP 408 cause and delivery/semantic qualification remain open; this is not
-   K3 acceptance or a global HTTP 408 fix. External generation and native chat/OCR are unchanged.
-   Labelled canonical text produces atomic claim cards, draft guide and at most twelve
-   glossary candidates. Fresh guide items declare source labels, a required scope array of zero or one non-null
-   combined domain clause (at most 300 characters, with subset source labels) and one coherent assertion (at most 800 characters). Before review,
-   code prefixes the complete scope in parentheses, preserves the assertion apart from outer whitespace, adds only
-   missing sentence punctuation and freezes the checked full sentence as its original H0–H4 unit. Authored symbols
-   are never deleted; question-ending assertions are rejected. It preserves
-   ID gaps and the existing qualifier representation. No assertion echo or semantic classifier is used.
-   Fresh `claim-plan-guide-v4` call two selects whole supported H units without rewriting; semantic
-   review must reject missing/wrong source scope even when no clause was declared. Final code rechecks and
-   copies complete text/bindings into guide Markdown. DONE requires 3–5 actual sentences; insufficient, ambiguous or
-   over-five coverage stays readable PARTIAL without trimming, and the guide must remain nonempty. It also freezes
-   glossary candidates with `{labels,en,ru,definition}`; code verifies quotes/ranges/numbers. Candidate glossary IDs
-   are frozen as their original G0–G11 indexes before invalid candidates are dropped, leaving intentional gaps. Fresh
-   call two returns `supportedGlossary` G IDs only; retained `claim-plan-glossary-v1` continues old verified artifacts
-   without H candidates. It does not rewrite glossary entries. Code rechecks and copies each selected frozen candidate with its original
-   citation binding. Russian mathematical definitions name source objects/symbols and operands explicitly, preserving
-   operation/composition/sum relationships and conditions; call-two selection must reject whole units with unsupported
-   roles or ambiguous referents without rewriting them. The same response uses a `digestPlan` object assigning each
-   selected ID one methods/findings/limits group, with the global eight-property bound encoded in the SDK/provider
-   JSON schema and checked locally. Reader groups retain authored property order within each group,
-   selecting IDs from the exact C candidate indexes or A0–A7 original
-   `additionalClaims` indexes. After final claim
-   validation, code materializes surviving checked units with complete statements as blockquotes, qualifying
-   structured scope fields and authority citations outside authored content; unknown/rejected IDs fail.
-   For each claim, `dataset` names a reported dataset/corpus/benchmark or remains `null` when absent; model/architecture
-   names never fill that field, and source-stated model/configuration belong in `conditions`. Extraction/additions
-   share this role contract and, before drafting statements, retain every non-primary numerical comparison,
-   baseline, improvement and qualifying quantity in `conditions` or a separate atomic result. Call-two review must
-   reject wrong roles even when the words occur in the quote. This fresh repair remains semantically unqualified.
-   If no claim survives, the assignment object is empty and a validated `partialDigest` remains partial with zero claims. `claim-plan-v1`
-   is the digest-only continuation for legacy `Verified` artifacts without frozen glossary candidates; markerless
-   cached call two retains the full legacy prose Save/history path. `claim-plan-guide-v1` retains its old complete
-   guide/nested-plan behavior; v2 retains its nullable-object scope/flat-plan parser and v3 its scope-array/flat-plan
-   parser, including duplicate rejection. V2/v3/v4 raw and verified markers must match exactly, including Save.
-   The v3 scope-array substitution remains an unproven provider-compatibility hypothesis, not a quality or runtime
-   pass. Old over-eight-total plans are rejected without truncation or raw mutation. The bound remains two calls with no paid retry.
-   Preserve a safe failure reason for the reader without retaining raw provider errors or credentials.
-5. Assemble project overview deterministically from source titles, guide summaries and suggested questions; do not buy
-   an extra overview model call. Open it from Studio, load sources in bounded pages and Refresh to rescan changed
-   membership/heads. Each row opens the immutable revision whose summary was shown.
-6. Add claim context mode. Preserve whole originals where the shared budget permits; compress eligible sources only
-   as needed, retaining the complete frozen scope and aliases. The same answer prompt and citation resolver are used.
-7. Add reader guide/claims UI, quote cases and `pnpm eval k3`. Claim cards show statements beside exact source excerpts,
-   without a semantic-verification label. Reader metadata shows availability and verification
-   caveats; quote links retain exact identities without displaying UUIDs or call/token/time/reservation counters.
-   Stored questions in the overview and current Reader prepare an editable chat draft with only that source visibly
-   selected. Replacing an existing draft requires confirmation; historical Reader questions remain read-only.
-   API progress retains the admitted job bound independently of later model-default or catalogue changes.
-   A successful Understand or Save refreshes the workspace source badge without reloading the document or resetting
-   loaded pages or source selection; list/progress reads perform no inference.
-   If the following status read fails, the accepted request remains visible and Reload understanding retries only
-   the read. A lost, non-2xx or unreadable POST reply leaves its outcome unknown and blocks Understand/Save until a
-   successful status read; a returned `none` only enables a later explicit request. Mounting always refreshes status.
+1. Apply the existing distillation, manual-understanding and retry migrations through
+   `0014_distill_attempt_switch_guard.sql`; retain `DistillWorkflow` and canonical quote/number verification.
+2. Ingest makes a revision readable at understanding `none`. Understand explicitly requests one revision;
+   normal requests reuse completed or partial output without another model call.
+3. Admit only the requested revision under the existing two-slot concurrency limit and usable model metadata.
+   Explicitly requested work waits `queued` when slots are full; completion and cron drain only undispatched work.
+   Missing routes or unusable metadata leave it visibly `paused`; provider rejection fails without paid retry.
+   Keep the queued route and accepted intent on repeat, rejecting conflicting explicit choices before dispatch.
+   Explicit Retry uses a stable request ID and predecessor compare-and-set, archives the exact old receipt and
+   claims, and requires confirmed terminal Workflow status for completed predecessors, including legacy zero calls.
+   Unknown replies retain that request across remount; reads, Reload, Save and previous-attempt controls remain
+   storage only. Preserve durable accepted/rejected retry identity and the attempt-scoped native Low/High choice.
+   Changing a selection starts no work. Compact Low quality and delivery remain unqualified;
+   High latency as a failure cause remains unproven.
+4. Pin `producerFormat: "compact-k3-v1"` in new accepted intent and internal Workflow parameters.
+   An absent marker keeps queued legacy work on its existing format; raw output and history are never regenerated.
+   Call one is requested to return at most 32 `{ quoteBlock, kind?, statement }` candidates with complete atomic
+   statements, qualifiers, conditions and comparisons. It requests no scalar tuple, guide, questions or glossary.
+   Native compact call one uses public `Output.json()` complete decoding from final `onEnd` output after a normal
+   finish; review and other paths retain `Output.object`. The outgoing native text request and prompt schema stay
+   unchanged. Full valid decoded Raw1 is stored unchanged and untrusted; syntactic JSON is not owner-visible facts.
+   The persisted Raw envelope remains strict. Code consumes only `candidates` from decoded output, ignoring outer
+   metadata without rewriting raw artifacts or using a metadata-key whitelist. Original positions 0-31 retain
+   strict candidate-field, canonical quote, UTF-8 range, numeric and reference checks. Drops preserve C indexes;
+   later positions never backfill them, and normalized review candidates number at most 32.
+   Every later index is `unreviewed-work-limit`, not a semantic rejection. Existing allocation is charged before
+   diagnostic arrays are created. Tail drops derive `requiresReview`, keeping publication and storage-only Recheck
+   partial even with a valid guide and every offered candidate selected. Invalid/truncated first-call JSON or
+   `length` retains null output and known usage, with no second call or guessed repair.
+   Compact nullable typed fields stay null; current `find_claims` uses text query and scope, without typed filters.
+   Call two receives unique evidence once plus candidate-to-`evidenceId` bindings. Its output boundary consumes only
+   selections, rejections and guide, ignoring outer metadata; `Output.object`, strict decision fields, IDs and
+   duplicate checks remain. Reasons stay nonempty diagnostic prose, with brevity requested rather than a 160-character
+   scalar bound; existing per-call limits apply, and full decoded reasons remain in Raw2 rather than owner facts.
+   Metadata values never enter evidence or published claims. Missing decisions remain
+   unknown, with no added facts or rewritten statements. Compact envelope/non-array failures persist a safe reason
+   in the existing attempt-fenced `distill_error` before Workflow reconstruction, preserving it after prototype loss.
+   An optional guide is an ordered subset of selected IDs, rendered as whole frozen statements with citations;
+   the digest is deterministic from selected claims. Missing or bad guide output keeps reviewed claims and digest
+   as `partial`. Missing or invalid call two never publishes call-one drafts.
+   Fresh compact extraction requests 8,192 output tokens and review 4,096, clipped after the actual prompt/schema
+   estimate by `requestedOutputLimit`. Existing raw artifacts and reports record requested/applied budgets;
+   optional report `producerFormat` identifies the contract, while absent historical fields stay unknown.
+   Legacy in-flight attempts retain their frozen cap policy.
+   Keep at most two calls, zero paid retries, six minutes per call, seven minutes per native step, the absolute
+   fifteen-minute recovery ceiling and the existing 16 MiB allowance. Native delivery retains the public SDK
+   single-consumer/final-validator boundary and safe failure/known-usage handling in IMPLEMENTATION §6.
+   Retained `claim-plan-*` and markerless output use only the compatibility path for old formats, history and Save.
+5. Assemble project overview deterministically from titles, available guide summaries and stored questions.
+   Open it from Studio, page through all eligible sources and Refresh to rescan membership/heads.
+   Each row opens the immutable revision whose stored summary was shown; overview performs no model call.
+6. Preserve whole originals where the shared context budget permits. Compress eligible sources only as needed,
+   retaining the complete frozen scope, order and aliases with the same answer prompt and citation resolver.
+7. Show claims beside exact source excerpts, useful availability/progress and verification caveats.
+   Optional guide/questions/glossary do not block reviewed compact claims and digest from remaining readable.
+   Quote links retain exact identities; call/token/time/reservation counters stay in API/eval diagnostics.
+   Available current questions prepare an editable draft with that source selected; replacing a draft requires
+   confirmation, and historical questions remain read-only. Understand/Save refresh the source badge without
+   reloading text or resetting pagination/selection. Lost or unreadable POST replies remain unknown until a
+   successful status read; Reload retries only that read, and `none` enables only a later explicit request.
+   Mount refreshes status, and read failure blocks actions until Reload succeeds.
 
 **Hard acceptance — `pnpm eval k3`**
 
-- Before model work, verify the exact ten baseline source/revision identities and original/canonical bytes, the
-  separate twelve-source overflow scope, its already-understood extras and its prepared claim chat. Missing or
-  ambiguous inputs stop the run before any paid call; duplicate stored answers are never silently reused. Check the
-  extras' own recorded call counts separately. An admission or unfinished/failed answer stops later eval submissions;
-  completed answers that fail a quality check remain failed checks while the remaining fixed controls may run.
-  Already accepted jobs retain their results; queued revisions keep their stored model selection.
-- All ten papers reach `done` or a documented `partial` state; a second eval run performs no re-distillation of unchanged revisions.
-  `pnpm eval k3 --unchanged-only` preflights all ten terminal revisions, submits each exact revision ID once and compares
-  the stored reports, claims, call counts and usage. This reuse check does not waive the semantic or claim-mode gates.
-- Every stored quote is an exact byte range; numeric result fields are cleared when not supported by their quote.
-  Parsed numeric fields use the same literal interpretation as quote verification; source spelling stays unchanged.
-- Claim statements retain non-whitespace text after declared reference annotations are removed.
-- Guide/digest/claims exclude known empty citation wrappers; glossary terms are nonblank. Ambiguous Markdown
-  output is retained as `partial`; no full Markdown parser is added to the Worker.
-- Numbers in statements and conditions must match complete numeric literals in that same quote, rather than
-  borrowing digits from a decimal axis tick, another number or another excerpt. Units, metrics and conditions must
-  also be supported by that quote; numeric occurrence alone does not pass the semantic quality gate.
-- A result's `valueText` contains at most one numeric quantity. Compound lists are rejected rather than split or
-  silently retained with `valueNumber=null`; scientific notation remains one quantity.
-- `valueText`/`unit` hold only the primary result scalar and its unit/scale; non-result kinds require both to be null,
-  with formulas/configurations in statement/conditions and secondary results in separate cards. Code rejects whole
-  cards with non-result measurement fields or semicolon-separated measurement clauses before synthesis and at final
-  rechecks, preserving scientific/dimensional/normalization units. Other field-role semantics remain call-two review.
-- Formatting preserves the selected statement's qualifiers and conditions. Missing structured numeric context rejects
-  the card rather than rewriting it into a bare scalar; the primary numeric value must occur in the stored statement.
-- Transformer, ResNet and LoRA anchor expectations in `eval/arxiv-10/questions.md` are present with correct conditions;
-  no unsupported number is stored. Claim count and drop rate are reported, not quality gates.
-- An anchor must be expressed by an EN/RU stored claim statement and supported by that same claim's exact quote; a matching
-  phrase only inside a broad quote does not establish that the claim card contains the fact. Guides/digests are not
-  anchor evidence.
-- Claim mode keeps C1–C4 correct and citations valid; overview pages through every active readable project source
-  without a model call. Tied timestamps, deleted cursor anchors, project isolation, Retry/Refresh and pinned Reader
-  links pass `--overview-only` and `--overview-browser`; newly eligible earlier sources require Refresh.
-- The automatic claims path is exercised in a separate real overflow project: reuse the ten baseline sources and
-  attach the public papers in `eval/arxiv-10/overflow.json`. Measured source bytes must exceed the unchanged model
-  whole-reading cap, and all four turns must report `contextMode=claims`. The baseline PDFs/questions remain unchanged;
-  no forced mode, reduced model cap, repeated padding or K5 search infrastructure is used.
-- Eval prints per-revision calls, known/unknown tokens, recorded token bounds, kept/dropped reasons and wall time.
-  Recorded historical calls and observed calls since the run's preflight are separate totals; an unconfirmed request
-  remains unknown until its accepted submission or terminal observation is known. Overflow uses the actual job output
-  reserve within published capacity, rather than treating published output capacity as a reservation.
+All gates below remain OPEN for `compact-k3-v1`; implementation or storage-only checks do not close them.
 
-**Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation.
+- Before model work, verify all ten baseline source/revision identities and original/canonical bytes, the separate
+  twelve-source overflow scope, its already-understood extras and prepared claim chat. Missing or ambiguous inputs
+  stop before any paid call. Count the extras' recorded calls separately and never silently reuse duplicate answers.
+  Admission or unfinished/failed answers stop later submissions; completed quality failures remain failed checks.
+- Every baseline paper reaches `done` or a documented `partial` result. A full unchanged-revision reuse run performs
+  no re-distillation. `--unchanged-only` compares reports, claims, calls and usage for every exact terminal revision;
+  this does not waive semantic or claim-mode gates. Queued revisions keep their accepted route and producer format.
+- Every stored quote and citation resolves to its exact original UTF-8 bytes within the frozen revision and scope.
+  Candidate/reference filtering preserves surviving order and IDs. No source is dropped to make an answer fit.
+- Statements retain complete qualifiers, conditions, units and comparisons supported by their own quote.
+  Complete numeric literals and references remain required; finding the same numbers does not establish meaning.
+  Compact typed nullable fields remain null. Legacy scalar/guide/glossary checks apply only to their retained format.
+- Review publishes only explicitly selected, rechecked candidates. Missing decisions remain unknown.
+  Raw1 remains untrusted and unchanged; only strict validated original positions 0-31 may enter review, without
+  tail backfill. Every later index has `unreviewed-work-limit`, forcing partial publish and storage-only Recheck
+  even when all offered candidates are selected and the guide is valid.
+  Guide IDs must be an ordered subset of selected IDs, with whole frozen statements and original citation bindings.
+  Missing/bad guide yields readable partial claims and digest; missing/invalid call two publishes no draft claims.
+  Compact completion does not require three guide sentences, suggested questions or a glossary.
+- A1-A3 in `eval/arxiv-10/questions.md` retain their complete existing expectations and conditions for Transformer,
+  ResNet and LoRA. Each anchor must occur in an EN/RU claim statement supported by that claim's own exact quote;
+  a phrase only inside a broad excerpt, guide or digest does not establish claim coverage.
+  The A3 unmatched form remains `REVIEW_REQUIRED`. Claim count and drop rate are diagnostics rather than quality gates.
+- Semantic support and owner review remain required across the full corpus, including reviewed claims and every
+  available derived view. Exact ranges, valid references and numeric occurrence alone cannot accept quality.
+  Explicit storage-only Recheck revalidates the same frozen format into a separate checked report, preserving
+  original artifacts. It applies no new prompt or producer and does not close semantic acceptance.
+- C1-C4 remain correct with valid citations in real automatic claim mode. The separate overflow project reuses
+  the ten baseline sources plus the unchanged public extras in `overflow.json`; measured bytes must exceed the
+  model's whole-reading cap and all four turns must report `contextMode=claims`.
+  Do not force the mode, reduce model capacity, add repeated padding or introduce K5 infrastructure.
+- Overview pages through every eligible current readable source without inference. Timestamp ties, deleted cursor
+  anchors, project isolation, Retry/Refresh and pinned Reader links pass the existing overview gates.
+  Newly eligible sources before the cursor require Refresh.
+- Eval selects completion rules by the stored producer marker, preserving old-format requirements.
+  It reports per-attempt historical and newly observed calls separately, known/unknown usage, requested/applied
+  output budgets, declared capacity, kept/dropped/unknown decisions and wall time.
+  An unconfirmed request stays unknown until acceptance or a terminal observation is established.
 
-K3 is not fully accepted or deployed. Historical retained runs recorded the ten baseline papers as `done`, an
-unchanged-revision reuse with no new inference, and four overflow answers in `claims` mode. Those runs predate the
-current `claim-plan-guide-v4` producer and do not qualify the exact current baseline corpus or producer. Required
-conditions for the French Transformer result and some LoRA anchors remain unresolved; statement-local numeric,
-citation and semantic-support gates remain open. Storage-only Save/recheck does not dispatch inference and does not
-qualify K3.
+**Not now.** Cross-source topic map/comparison, claim editor, recurring re-distillation or another verifier call.
 
-**Remaining quality repairs (proposed).** Diagnose each failure against its exact source revision: incorrect canonical
-text, wrong/missing selected evidence, lost statement conditions, numeric-format rejection or unsupported prose.
-A narrow supplementary-Unicode normalized-quote mapping repair is covered by synthetic regressions and storage-only
-Save/GET/range replay (IMPLEMENTATION §5), accepted in [#476](https://github.com/UnknownAlienHuman/eliot-research/pull/476)
-as `ec6ffbfa`. Current whole-block extraction takes exact matching; this is not evidence of
-a repaired fresh-model/corpus failure and does not close the semantic, anchor, claim-mode or latency gates.
-A separate first-call statement-reference repair applies the existing declared-label check before numeric verification
-and preserves surviving claim order and original candidate indexes (IMPLEMENTATION §6). It has a synthetic whole-block/storage reproduction; no
-inline annotations were found in the inspected retained corpus reports, so it does not close their coverage failures.
-That repair was accepted in [#477](https://github.com/UnknownAlienHuman/eliot-research/pull/477) as `e57c9df0`.
-The A3 GPU-memory evaluation gate requires complete recognized statement/quote forms; unmatched input is
-`REVIEW_REQUIRED`, not a factual-failure verdict (IMPLEMENTATION §6). The actual retained 929-byte source block
-requires review, so A3 acceptance remains open. [#478](https://github.com/UnknownAlienHuman/eliot-research/pull/478)
-was accepted only as this guard (`96ee0d27`).
-[#479](https://github.com/UnknownAlienHuman/eliot-research/pull/479) unified citation/distillation code ranges;
-an unmatched backtick inside a fence cannot mask later prose references. Quote verification now reuses local canonical
-bytes and folds only fallback slices; this reduces repeated work without changing evidence or quality gates.
-Repair defective PDF text only through the existing reviewed OCR/immutable Apply path; preserve old bytes and citations.
-For correct input, keep candidate statements atomic and complete, then review each against its own frozen evidence
-within the existing two calls. Fresh `claim-plan-guide-v4` selects original assembled H0–H4 guide and G0–G11 glossary candidates by ID and
-rechecks the copied `{labels,en,ru,definition}` units; fresh claim-plan digests use the closed C/A indexes above.
-`claim-plan-v1` is the digest-only continuation for legacy `Verified` artifacts without glossary candidates, while
-markerless cached output retains the full legacy prose path. These producer checks do not establish semantic support
-or full K3 acceptance. Existing eval anchors are unchanged, and no extra model call is added.
-Adding a third verifier, paper-specific prompts or weakening anchors is not a remedy.
-Fix numeric-format regressions narrowly, without inferring units or conditions.
+K3 is not fully accepted or deployed. Retained legacy runs recorded ten baseline papers as `done`, unchanged reuse
+and four claim-mode overflow answers, but they do not qualify the compact producer or its current corpus.
+A1-A3, C1-C4, semantic support, full-corpus/reuse acceptance, latency and owner review remain open.
+
+On 2026-11-07, bounded compact controls used the same unchanged Transformer revision with Low reasoning.
+Flash call one failed on an array over 32 candidates after 82.506 s, reporting 12,298 input and 4,151 output tokens.
+A separate DeepSeek V4.1 call one ended with `length` after 60.108 s, reporting 12,057 input and 8,192 output tokens.
+Flash control `dc9ed7ac-baf1-4384-a9ce-bf099b238066` failed after 94.522 s, with 12,298 input and 5,037 output
+tokens; its 61-candidate JSON also contained `$schema` and was rejected by the decoded outer boundary before call two.
+Those three controls stopped before call two. Control `88d91f54-7a1d-40a2-95fb-a90e91cffa27` passed the first step,
+then failed review SDK validation at `selected.0.reason` over 160 characters. Its two calls took 91.560 s and
+reported 19,056 input, 5,176 output and 0 cached tokens, with requested budgets 8,192/4,096; it published zero claims
+and no guide or digest. The archived dc9 view matched its retained content except for `currentAttemptId`.
+The outer-metadata boundary is fixed offline. No paid repeat has run after the final reason-field fix; full K3
+semantic and corpus gates remain OPEN. Global defaults remain Flash; successor quality remains unqualified.
+
+**Remaining quality work.** Diagnose each retained failure against its exact revision: conversion loss,
+missing evidence, lost statement conditions, numeric-format rejection or unsupported prose.
+The quote-range, declared-reference and code-range repairs in
+[#476](https://github.com/UnknownAlienHuman/eliot-research/pull/476),
+[#477](https://github.com/UnknownAlienHuman/eliot-research/pull/477) and
+[#479](https://github.com/UnknownAlienHuman/eliot-research/pull/479) establish their bounded storage/static behavior,
+not fresh-model quality. [#478](https://github.com/UnknownAlienHuman/eliot-research/pull/478) guards the A3 decision;
+the retained 929-byte block still requires review. Repair defective PDF text only through reviewed OCR and immutable
+Apply, preserving old bytes and citations. Review each complete compact statement against its frozen evidence
+within the same two calls; no paper-specific prompt, weaker anchor or paid repair chain closes the gap.
 [#430](https://github.com/UnknownAlienHuman/eliot-research/pull/430),
 [#454](https://github.com/UnknownAlienHuman/eliot-research/pull/454) and
-[#459](https://github.com/UnknownAlienHuman/eliot-research/pull/459) are unaccepted attempts at the checked commit;
-reuse only applicable changes after reading their failed observations. K6 stays frozen. Reusing stored output must not
-regrade historical failures or trigger a new paid job.
+[#459](https://github.com/UnknownAlienHuman/eliot-research/pull/459) remain unaccepted attempts.
+K6 stays frozen, and reusing stored output never starts paid work.
 
 ---
 
