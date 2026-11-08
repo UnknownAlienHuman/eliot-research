@@ -624,13 +624,18 @@ immutable. Review selects or rejects candidate IDs with nonempty diagnostic reas
 guidance, not a 160-character scalar bound; existing per-call output and materialization limits bound this prose.
 Validated Raw2 preserves the full decoded reason, which supplies no claim, guide or digest facts.
 A missing decision remains unknown and cannot implicitly select or reject that candidate. Review introduces no new
-facts, additional claims or rewritten statements. The guide is up to five selected candidate IDs. Review
-rejects whole independently-checkable bundles or unsupported clauses while retaining integral definitions and
-comparisons as single units. A selected candidate must remain supported by its own bound evidence, including
-its qualifiers and conditions; matching quote bytes or numeric literals alone does not establish semantic support.
+facts, additional claims or rewritten statements. Review rejects whole candidates with unsupported clauses or bundles of
+independent outcomes, different metrics or different task results, while retaining integral definitions/procedures
+and a single comparison with its own setting, baseline and conditions. It rejects a whole candidate when any
+necessary source-stated qualifier, condition, scope, comparison, limitation or uncertainty is missing or wrong,
+even when every remaining clause is supported. Necessary referents must be established by the candidate's own
+quote, without borrowing from another group's quote, nearby headings or another candidate. Matching quote bytes
+or numeric literals alone does not establish semantic support.
 
-The optional guide is an ordered subset of selected candidate IDs. Code renders each complete frozen statement
-with its original citation binding, without generating guide prose, trimming statements or adding facts. The
+The optional guide is an ordered subset of at most five selected candidate IDs. Review is instructed to use only
+IDs actually in its returned `selected` entries, preserve original candidate order and return `[]` when unavailable.
+Code renders each complete frozen statement with its original citation binding, without generating guide prose,
+trimming statements or adding facts. The
 digest is assembled deterministically from selected claims. Missing or invalid guide output preserves reviewed
 claims and the digest as `partial`; it does not discard them or buy a repair call. Questions and glossary are
 optional reader data and are not requested by these two compact calls. The compact format has no
