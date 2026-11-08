@@ -414,6 +414,15 @@ On new scans, an ordered marker interrupts a paragraph only with numeric start 1
 An existing list keeps unindented continuation lines until a blank line or another recognized block.
 Only new readable representations use this rule; stored block maps and citation ranges remain unchanged.
 
+New scans coalesce one adjacent citable paragraph, non-citable structural heading and citable paragraph triple
+only when neither paragraph starts an explicit table caption and the gaps contain only whitespace. The complete
+original UTF-8 span must be at most 4,096 bytes. The joined paragraph retains every byte from start through end,
+including the heading and whitespace. The heading may be a standalone `Page N` marker or an empty heading;
+joins are not chained. Citable headings, non-citable paragraphs, other block types, caption
+boundaries and oversized spans are not joined by this rule. Only newly scanned maps change; old maps and text stay
+unchanged. The retained 39,999-byte case yields 48 new blocks while keeping its stored 66-block map; old blocks
+31–33 form the exact 1,779-byte span `[17893,19672)`.
+
 New scans join an explicit adjacent `Table <number>:` or `Table <number>.` caption with its sole neighboring
 whole table when the complete original span, including intervening whitespace, fits 4,096 bytes. A caption between
 two tables, a table with two candidate captions, or a caption/table split by the size bound stays separate. The
@@ -586,9 +595,13 @@ null. Qualifiers remain in the complete statement rather than being inferred int
 `find_claims` interface searches claim text within the requested scope; it has no typed task/metric/dataset
 filters. Cross-source numeric comparison remains frozen at K6.
 
-Call two consumes one dictionary of unique canonical evidence plus candidate-to-`evidenceId` bindings. Each
-candidate carries its frozen statement and stable ID; repeated evidence is supplied once. The call-two output
-boundary consumes only selections, rejections and guide, ignoring other outer metadata while retaining
+Call two receives `{ evidence: [...] }`, with each unique entry carrying its ID, label, exact quote and nested
+candidate hypotheses `{ id, kind, statement }`. Each frozen C hypothesis is copied unchanged under its own evidence
+group; first-evidence order and candidate order within each group are preserved, and each quote is supplied once.
+Final publication filters the original frozen candidate sequence, preserving its order independently of group traversal.
+This local input projection leaves persisted formats and `evidenceId` bindings unchanged. Statements remain
+hypotheses: review must use each group's own quote, without borrowing an antecedent or predicate from another group.
+The call-two output boundary consumes only selections, rejections and guide, ignoring outer metadata while retaining
 `Output.object`. Decision items, candidate IDs and duplicate checks remain strict; retained raw artifacts stay
 immutable. Review selects or rejects candidate IDs with nonempty diagnostic reasons. Brief wording is prompt
 guidance, not a 160-character scalar bound; existing per-call output and materialization limits bound this prose.
@@ -645,14 +658,24 @@ consumption and final validation under the same owned deadline. A local response
 local reason. There is no manual JSON/SSE collector, parser or repair call. Offline single-consumer checks do not
 measure exact V8 heap retention or establish model quality.
 
-On 2026-11-08, fresh Flash Low attempt `e30b364e-8f7f-404d-b3b7-c43d51074f3f` failed call-two SDK validation at
-`selected.10.candidateId` with `invalid_value`. Its two calls took 85.912 s and reported 19,651 input, 3,922 output
-and 0 cached tokens; it published zero claims and no guide or digest. The received candidate ID is UNKNOWN:
-immutable historical Raw2 contains `output: null`, and `canRecover` is false, so these artifacts cannot recover the
-attempt. The later retention rule does not retroactively enrich that null or reveal the received ID.
-The archived `88d91f54…` view matched all 16 compared fields; only the `currentAttemptId` projection changed.
-Evidence is retained under [the Nov 8 terminal capture](../eval/out/audit-compact-20261108/). This failure does not
-close A1-A3, C1-C4, scope/citation, full-corpus semantic or owner-review gates. K6 stays frozen.
+On 2026-11-08, grouped GLM 5.3 Low attempt `76cf607b…` reached Workflow Completed with a public partial core of
+21 claims and a digest, without a guide, on the unchanged `17be1897…` revision and stored 66-block map.
+Two calls took 29.986 s, reporting 20,136 input, 12,224 cached and 5,090 output tokens. Requested/applied budgets
+were 8,192/4,096 unchanged; provider capacity and cost remain UNKNOWN. Raw1 retained 37 candidates: positions
+32–36 were five `unreviewed-work-limit` items, and five numeric drops in the prefix left 27 candidates offered.
+Raw2 selected 21 and rejected six; its guide was an invalid-selection object, so both tail work and invalid guide
+require partial state. Own-quote review classified 19 of 21 as supported: `854a71c5…` is unsupported in block 13
+because its antecedent is in block 12; `42a39696…` is uncertain under the flattened factor `1√dk` despite the
+original's inverse scaling. The bounded A1 case `a34b54dc…` passes in its own block 7, including both scores and
+the French 3.5-day/eight-GPU condition. Grouped delivery works, but the evidence-binding gap remains. Raw1 also
+differs from the previous control, so the changed outcome cannot be attributed solely to grouping.
+Earlier Low `deb8555e…` retains its 27-claim partial core; High `87ae6801…` remains a first-call `length` failure.
+History opened the 27 predecessor cards and 21 current cards. Archived predecessor claims, report and usage match
+exactly; original/canonical hashes and all 21 quote ranges are unchanged/exact. No quality acceptance follows:
+all quality, full-corpus, claim-mode and owner-review gates remain OPEN. K6 stays frozen.
+Earlier Flash Low `e30b364e…` still failed call two at `selected.10.candidateId`; its received ID remains UNKNOWN
+because immutable historical Raw2 has `output: null` and cannot recover that attempt. It is not retroactively enriched.
+See the retained [current and historical captures](../eval/out/audit-compact-20261108/).
 
 Final parsing delegates the selected public output specification's `parseCompleteOutput` once. Public syntax/schema
 errors and observed blank final text supply fixed safe categories; missing or non-normal finish remains separate.
@@ -1065,10 +1088,11 @@ copy atomic source markers verbatim with commentary outside their brackets, reta
 ground source facts with supplied labels, answer directly with detail proportional to the question, preserve requested
 facts and conditions, omit unrelated background and repetition, distinguish inference, abstain when evidence is missing, and treat source text
 as untrusted data. Project instructions remain caller-provided context; no fixed-corpus coaching is added. The same
-server citation resolver maps valid labels to exact source/revision and UTF-8 ranges. Bare `Page N` / `Страница N`
-page markers and empty headings are omitted from the model's whole-reading projection as well as its citation-label
-set. Citable prose mentioning page numbers and meaningful headings remain present. Canonical bytes, block IDs and
-their original ranges remain unchanged, including for the reader and existing citations.
+server citation resolver maps valid labels to exact source/revision and UTF-8 ranges. Only standalone non-citable
+`Page N` / `Страница N` blocks and empty heading blocks are omitted from whole-reading input and its label set.
+Structural-heading bytes embedded inside a joined citable paragraph remain verbatim under its block citation;
+there is no synthetic stripping inside the passage. Meaningful headings and citable prose mentioning page numbers
+remain present. Canonical bytes and old block maps/ranges remain unchanged for the Reader and existing citations.
 
 Citation and numeric diagnostics do not prove semantic entailment. A normally completed answer with advisory warnings
 can still fail acceptance. Every O1–O8 answer requires manual review of entailment, coverage, usefulness and honesty;
@@ -1099,6 +1123,12 @@ requested/applied output budget 8,192/8,192 and zero invalid labels. Both exact 
 The per-turn reasoning profile is not recorded; the catalogue advertises high. This is one control with different
 history from the twelve-question benchmark, not full model or K2 acceptance. Its GET-only evidence is in the
 [GLM C2 capture](../eval/out/audit-compact-20261108/).
+
+A separate Kimi K2.6 C2 control with project-default scope completed in 52,865 ms, with first text at 46,777 ms.
+It reported 207,502 input, 0 cached and 2,832 output tokens, budget 8,192/8,192, eleven citations and zero invalid
+labels. Opening citation 1 showed block 36's formula and warmup 4000. The extra unrequested discussion of other
+papers has not been semantically audited. This is one control with different history from the full benchmark,
+not full model or K2 qualification; see the [Kimi capture and citation image](../eval/out/audit-compact-20261108/).
 
 Broadcast the first nonempty rendered answer immediately and measure `firstTokenMs` from that text, not the first
 network event. Keep recorded token bounds, actual token counts and any historical/provider-reported currency values

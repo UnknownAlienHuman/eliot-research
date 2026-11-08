@@ -283,7 +283,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
       {historical ? <p className='er-und__hint'>Viewing a previous attempt. Its saved failure, usage and output are preserved.</p> : null}
       {showHistory ? <div className='er-und__guide'>
         {history.error ? <p role='alert'>{history.error.message}</p> : null}
-        {history.data?.pages.flatMap(page => page.attempts).map((attempt, index) => <button className='er-button er-button--text' type='button' key={attempt.attemptId} disabled={busy || understanding.isFetching} onClick={() => setHistoryAttempt(attempt.attemptId)}>View previous attempt {index + 1}</button>)}
+        {history.data?.pages.flatMap(page => page.attempts).map((attempt, index) => <button className='er-button er-button--text' type='button' key={attempt.attemptId} disabled={busy || understanding.isFetching} onClick={() => setHistoryAttempt(attempt.attemptId)}>View previous attempt {index + 1} · Archived {new Date(attempt.archivedAt).toLocaleString()}</button>)}
         {history.data?.pages[0]?.attempts.length === 0 ? <p>No previous attempts.</p> : null}
         {history.hasNextPage ? <button className='er-button er-button--text' type='button' disabled={history.isFetching} onClick={() => void history.fetchNextPage()}>Load more attempts</button> : null}
       </div> : null}

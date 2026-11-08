@@ -2432,8 +2432,11 @@ describe("compact K3 producer", () => {
       const promptSchema = JSON.parse(instructions.slice(instructions.lastIndexOf(marker) + marker.length));
       expect(promptSchema.properties.candidates.maxItems).toBe(32);
       const messages = vi.mocked(experimental_streamTextLowMemory).mock.calls[1]?.[0].messages;
-      const payload = JSON.parse(String((messages?.[0] as { content: string }).content)) as { candidates: { id: string }[] };
-      expect(payload.candidates.map(candidate => candidate.id)).toEqual(Array.from({ length: 32 }, (_, index) => `C${index}`));
+      const payload = JSON.parse(String((messages?.[0] as { content: string }).content)) as {
+        evidence: { candidates: { id: string }[] }[];
+      };
+      const groupedIds = payload.evidence.flatMap(({ candidates }) => candidates.map((c) => c.id));
+      expect(groupedIds).toEqual(Array.from({ length: 32 }, (_, index) => `C${index}`));
       expect(JSON.stringify(messages)).not.toContain(metadata);
       const reviewSchema = vi.mocked(Output.object).mock.calls[0]?.[0].schema as z.ZodType;
       expect(reviewSchema.safeParse({ selected: [{ candidateId: "C32", reason: "Not offered for review." }], rejected: [], guide: [] }).success).toBe(false);
@@ -2537,14 +2540,14 @@ describe("compact K3 producer", () => {
       .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), revisionId);
     const extraction = { candidates: [
       { quoteBlock: "[S1:1]", kind: "method", statement: "The low-rank update changes projection weights." },
-      { quoteBlock: "[S1:1]", kind: "method", statement: "The update changes weights in every layer." },
       { quoteBlock: "[S1:2]", kind: "result", statement: "Accuracy on the held-out corpus is reported at 92.5%." },
+      { quoteBlock: "[S1:1]", kind: "method", statement: "The update changes weights in every layer." },
       { quoteBlock: "[S1:3]", kind: "limitation", statement: "The method assumes a stable sampled corpus." },
     ] };
     const review = { selected: [
       { candidateId: "C0", reason: "The linked block states the update mechanism." },
-      { candidateId: "C2", reason: "The linked block gives the same accuracy value and condition." },
-    ], rejected: [{ candidateId: "C1", reason: "This repeats the first candidate." }], guide: ["C0", "C1", "C3"] };
+      { candidateId: "C1", reason: "The linked block gives the same accuracy value and condition." },
+    ], rejected: [{ candidateId: "C2", reason: "This repeats the first candidate." }], guide: ["C0", "C2", "C3"] };
     const usage = { inputTokens: 101, inputTokenDetails: { cacheReadTokens: 0 }, outputTokens: 17,
       outputTokenDetails: { textTokens: 17 }, totalTokens: 118,
       raw: { prompt_tokens: 101, completion_tokens: 17, total_tokens: 118 } };
@@ -2586,14 +2589,37 @@ describe("compact K3 producer", () => {
       const secondMessages = second.messages as { role: string; content: unknown }[];
       if (typeof secondMessages[0]?.content !== "string") throw new Error("The compact review context was not JSON text.");
       const payload = JSON.parse(secondMessages[0].content) as {
-        evidence: { id: string; label: string; quote: string }[];
-        candidates: { id: string; evidenceId: string; statement: string; kind: string; quote?: string }[];
+        evidence: { id: string; label: string; quote: string;
+          candidates: { id: string; kind: string; statement: string }[] }[];
       };
       expect(payload.evidence).toHaveLength(3);
-      expect(payload.candidates[0]?.evidenceId).toBe(payload.candidates[1]?.evidenceId);
-      expect(payload.candidates.every((candidate) => candidate.quote === undefined)).toBe(true);
+      // Each unique evidence appears exactly once, with its nested candidates.
+      // Surviving flat order is C0(E0), C1(E1), C2(E0), C3(E2): interleaved
+      // same-evidence candidates (C0 and C2 share E0) and a stable E0/E1/E2 gap.
+      const quotes = payload.evidence.map(({ quote }) => quote);
+      expect(new Set(quotes).size).toBe(3);
+      expect(payload.evidence.map(({ id }) => id)).toEqual(["E0", "E1", "E2"]);
+      expect(payload.evidence[0]?.candidates.map(({ id }) => id)).toEqual(["C0", "C2"]);
+      expect(payload.evidence[1]?.candidates.map(({ id }) => id)).toEqual(["C1"]);
+      expect(payload.evidence[2]?.candidates.map(({ id }) => id)).toEqual(["C3"]);
+      // Nested candidate IDs/statements/kinds match call-one order within group,
+      // while final publication preserves original candidate order (verified below).
+      expect(payload.evidence[0]?.candidates).toEqual([
+        { id: "C0", kind: "method", statement: "The low-rank update changes projection weights." },
+        { id: "C2", kind: "method", statement: "The update changes weights in every layer." },
+      ]);
+      expect(payload.evidence[1]?.candidates).toEqual([
+        { id: "C1", kind: "result", statement: "Accuracy on the held-out corpus is reported at 92.5%." },
+      ]);
+      expect(payload.evidence[2]?.candidates).toEqual([
+        { id: "C3", kind: "limitation", statement: "The method assumes a stable sampled corpus." },
+      ]);
+      // No top-level candidates array / dangling joins, no duplicated quotes.
+      expect((payload as Record<string, unknown>).candidates).toBeUndefined();
+      expect(payload.evidence.flatMap(({ candidates }) => candidates.map(({ id }) => id)))
+        .toEqual(["C0", "C2", "C1", "C3"]);
       const sourceBytes = new TextEncoder().encode(document.text);
-      expect(payload.evidence.map(({ quote }) => quote)).toEqual(document.blocks.map((block) =>
+      expect(quotes).toEqual(document.blocks.map((block) =>
         new TextDecoder().decode(sourceBytes.slice(block.start, block.end))));
 
       const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null") as DistillReport & { state: string; producerFormat?: string };
@@ -2604,7 +2630,7 @@ describe("compact K3 producer", () => {
         { requestedTokens: 8192, appliedTokens: 8192 }, { requestedTokens: 4096, appliedTokens: 4096 },
       ]);
       expect(report.dropped).toEqual(expect.arrayContaining([
-        { index: 1, reason: "review-rejected: This repeats the first candidate." },
+        { index: 2, reason: "review-rejected: This repeats the first candidate." },
         { index: 3, reason: "review-reason-unknown" },
         { index: 4, reason: "guide-invalid-selection" },
       ]));

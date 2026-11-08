@@ -292,8 +292,10 @@ Groups of fully specified labels may normalize to separate inline references aft
 frozen-scope validation; unknown identities and shorthand remain failures.
 Inline citations use compact passage numbers; full titles remain available to assistive technology and on hover.
 Keyboard and pointer activation keep the same immutable Reader target.
-Standalone `Page N` / `Страница N` markers and empty headings are omitted from model input and citation labels;
-canonical text, block IDs and byte ranges are unchanged. GET, history, reconnect and Save are storage-only.
+Standalone non-citable `Page N` / `Страница N` blocks and empty heading blocks are omitted from input and labels.
+Embedded structural-heading bytes in a joined citable paragraph remain verbatim under that block's citation.
+Filtering standalone blocks never strips bytes inside the joined passage. Canonical text and stored block IDs and
+byte ranges are unchanged. GET, history, reconnect and Save are storage-only.
 Stop preserves partial output; a failed paid turn is never retried automatically. New Save bodies omit advisory
 missing-citation and numeric-support counter prefixes; `TurnView.warnings` remains in API/eval output.
 Save preserves recorded partial-error and history-omission notes, distinguishing interrupted generation from
@@ -380,10 +382,18 @@ not recorded; the catalogue advertises high. This single new-chat control has di
 benchmark and does not close model, K2 or owner acceptance. See the retained
 [GLM C2 capture](../eval/out/audit-compact-20261108/).
 
+A separate Kimi K2.6 C2 control with project-default scope completed in 52,865 ms, with first text at 46,777 ms.
+It reported 207,502 input, 0 cached and 2,832 output tokens, budget 8,192/8,192, eleven citations and zero invalid
+labels. Opening citation 1 showed block 36's formula and warmup 4000. The extra unrequested discussion of other
+papers has not been semantically audited. This single control has different history from the full benchmark and
+does not close model, K2 or owner acceptance; see the [Kimi evidence](../eval/out/audit-compact-20261108/).
+
 The unchanged benchmark uses the tracked [baseline summary](../eval/arxiv-10/baseline.md). Full NotebookLM answers
 remain in ignored `eval/out/notebooklm-20261026/answers.md`, absent from a fresh checkout. See
 [evidence availability](../eval/README.md#comparison-evidence) for recovery and the summary fallback.
 Comparison results do not replace acceptance. Neither K2 nor K3 is deployed; K6 stays frozen.
+A 2026-11-08 browser-only O7 check found NotebookLM overgeneralizing an object-detection BN rationale;
+NotebookLM remains a behavior comparator, not truth gold.
 
 ## K3 — Distill
 
@@ -423,7 +433,10 @@ Large selections can answer from claims. An unchanged revision is never re-disti
    partial even with a valid guide and every offered candidate selected. Invalid/truncated first-call JSON or
    `length` retains null output and known usage, with no second call or guessed repair.
    Compact nullable typed fields stay null; current `find_claims` uses text query and scope, without typed filters.
-   Call two receives unique evidence once plus candidate-to-`evidenceId` bindings. Its output boundary consumes only
+   Call-two input groups each unique evidence quote once with nested unchanged C hypotheses `{ id, kind, statement }`,
+   preserving first-evidence order and candidate order within each group. Final publication uses the existing
+   filter over the original candidate sequence. This local projection leaves stored formats and evidence bindings
+   unchanged. Its output boundary consumes only
    selections, rejections and guide, ignoring outer metadata; `Output.object`, strict decision fields, IDs and
    duplicate checks remain. Reasons stay nonempty diagnostic prose, with brevity requested rather than a 160-character
    scalar bound; existing per-call limits apply, and validated Raw2 retains reasons rather than owner facts.
@@ -507,14 +520,24 @@ K3 is not fully accepted or deployed. Retained legacy runs recorded ten baseline
 and four claim-mode overflow answers, but they do not qualify the compact producer or its current corpus.
 A1-A3, C1-C4, semantic support, full-corpus/reuse acceptance, latency and owner review remain open.
 
-On 2026-11-08, fresh Flash Low attempt `e30b364e-8f7f-404d-b3b7-c43d51074f3f` failed call-two SDK validation at
-`selected.10.candidateId` with `invalid_value`. Its two calls took 85.912 s and reported 19,651 input, 3,922 output
-and 0 cached tokens; it published zero claims and no guide or digest. The received candidate ID is UNKNOWN:
-immutable historical Raw2 contains `output: null`, and `canRecover` is false, so these artifacts cannot recover the
-attempt. The later retention rule does not retroactively enrich that null or reveal the received ID.
-The archived `88d91f54…` view matched all 16 compared fields; only the `currentAttemptId` projection changed.
-See the retained [terminal evidence](../eval/out/audit-compact-20261108/). This failed control does not qualify K3:
-A1-A3, C1-C4, scope/citation, full-corpus semantic and owner-review gates remain OPEN. K6 stays frozen.
+On 2026-11-08, grouped GLM 5.3 Low attempt `76cf607b…` reached Workflow Completed with a public partial core of
+21 claims and a digest, without a guide, on the unchanged `17be1897…` revision and stored 66-block map.
+Two calls took 29.986 s, reporting 20,136 input, 12,224 cached and 5,090 output tokens. Requested/applied budgets
+were 8,192/4,096 unchanged; provider capacity and cost remain UNKNOWN. Raw1 retained 37 candidates: positions
+32–36 were five `unreviewed-work-limit` items, and five numeric drops in the prefix left 27 candidates offered.
+Raw2 selected 21 and rejected six; its guide was an invalid-selection object, so both tail work and invalid guide
+require partial state. Own-quote review classified 19 of 21 as supported: `854a71c5…` is unsupported in block 13
+because its antecedent is in block 12; `42a39696…` is uncertain under the flattened factor `1√dk` despite the
+original's inverse scaling. The bounded A1 case `a34b54dc…` passes in its own block 7, including both scores and
+the French 3.5-day/eight-GPU condition. Grouped delivery works, but the evidence-binding gap remains. Raw1 also
+differs from the previous control, so the changed outcome cannot be attributed solely to grouping.
+Earlier Low `deb8555e…` retains its 27-claim partial core; High `87ae6801…` remains a first-call `length` failure.
+History opened the 27 predecessor cards and 21 current cards. Archived predecessor claims, report and usage match
+exactly; original/canonical hashes and all 21 quote ranges are unchanged/exact. No quality acceptance follows:
+all quality, full-corpus, claim-mode and owner-review gates remain OPEN. K6 stays frozen.
+Earlier Flash Low `e30b364e…` still failed call two at `selected.10.candidateId`; its received ID remains UNKNOWN
+because immutable historical Raw2 has `output: null` and cannot recover that attempt. It is not retroactively enriched.
+See the retained [current and historical captures](../eval/out/audit-compact-20261108/).
 
 **Remaining quality work.** Diagnose each retained failure against its exact revision: conversion loss,
 missing evidence, lost statement conditions, numeric-format rejection or unsupported prose.

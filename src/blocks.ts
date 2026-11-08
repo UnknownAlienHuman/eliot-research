@@ -107,6 +107,39 @@ function joinAdjacentTableCaptions(text: string, blocks: Block[], characterRange
   return result;
 }
 
+function joinPageBoundaryParagraphs(text: string, blocks: Block[], characterRanges: CharacterRange[]) {
+  const joinedBlocks: Block[] = [];
+  const joinedRanges: CharacterRange[] = [];
+  for (let index = 0; index < blocks.length;) {
+    const previous = blocks[index], page = blocks[index + 1], next = blocks[index + 2];
+    const previousRange = characterRanges[index], pageRange = characterRanges[index + 1], nextRange = characterRanges[index + 2];
+    const previousText = previousRange === undefined ? "" : text.slice(previousRange.start, previousRange.end);
+    const nextText = nextRange === undefined ? "" : text.slice(nextRange.start, nextRange.end);
+    const previousFirstLine = previousText.split(/\r\n|\r|\n/u, 1)[0] ?? "";
+    const nextFirstLine = nextText.split(/\r\n|\r|\n/u, 1)[0] ?? "";
+    if (previous?.type === "paragraph" && page?.type === "heading" && next?.type === "paragraph"
+      && previousRange !== undefined && pageRange !== undefined && nextRange !== undefined
+      && !isCitableBlock(page, text.slice(pageRange.start, pageRange.end))
+      && isCitableBlock(previous, previousText) && isCitableBlock(next, nextText)
+      && !tableCaptionStart.test(previousFirstLine) && !tableCaptionStart.test(nextFirstLine)
+      && onlyWhitespace(text, previousRange.end, pageRange.start)
+      && onlyWhitespace(text, pageRange.end, nextRange.start)
+      && next.end - previous.start <= MAX_BLOCK_BYTES) {
+      joinedBlocks.push({ ...previous, id: joinedBlocks.length + 1, end: next.end });
+      joinedRanges.push({ start: previousRange.start, end: nextRange.end });
+      index += 3;
+      continue;
+    }
+    const block = blocks[index], range = characterRanges[index];
+    if (block !== undefined && range !== undefined) {
+      joinedBlocks.push({ ...block, id: joinedBlocks.length + 1 });
+      joinedRanges.push(range);
+    }
+    index++;
+  }
+  return { blocks: joinedBlocks, characterRanges: joinedRanges };
+}
+
 function* lines(text: string): Generator<Line> {
   let charStart = 0, start = 0;
   while (charStart < text.length) {
@@ -209,5 +242,6 @@ export function scanBlocks(text: string): Block[] {
     current = next;
   }
   flush();
-  return joinAdjacentTableCaptions(text, result, characterRanges);
+  const pageJoined = joinPageBoundaryParagraphs(text, result, characterRanges);
+  return joinAdjacentTableCaptions(text, pageJoined.blocks, pageJoined.characterRanges);
 }

@@ -148,7 +148,7 @@ try {
     }
     await expect.poll(() => historyReads).toBe(preAcceptRead); assert(releasePreAcceptHistory);
     await region.getByRole('button', { name: 'Retry understanding', exact: true }).click(); await expect.poll(() => posts.length).toBe(1);
-    await expect(region.getByRole('button', { name: 'View previous attempt 1', exact: true })).toHaveCount(0); assert(releaseFirstPost); releaseFirstPost();
+    await expect(region.getByRole('button', { name: /^View previous attempt 1 · Archived / })).toHaveCount(0); assert(releaseFirstPost); releaseFirstPost();
     await expect(region).toContainText('Request outcome is unknown.');
     const pending = posts[0]; assert(pending.retry.attemptId && pending.retry.previousAttemptId === revision);
     await region.getByRole('button', { name: 'Reload understanding', exact: true }).click();
@@ -168,9 +168,9 @@ try {
     await region.getByRole('button', { name: 'Previous attempts', exact: true }).click();
     assert.equal(historyReads, readsBeforeReceipt + 1, 'Reopen coalesces with the already post-accept receipt refresh.');
     releaseReceiptHistory();
-    await expect(region.getByRole('button', { name: 'View previous attempt 1', exact: true })).toBeVisible();
+    await expect(region.getByRole('button', { name: /^View previous attempt 1 · Archived / })).toBeVisible();
     assert.equal(historyReads, readsBeforeReceipt + 1, 'Accepted GET receipt refreshes already open cached history exactly once.');
-    await region.getByRole('button', { name: 'View previous attempt 1', exact: true }).click();
+    await region.getByRole('button', { name: /^View previous attempt 1 · Archived / }).click();
     await expect(region).toContainText('Archived failure');
     await expect(region.getByRole('button', { name: 'Retry understanding', exact: true })).toHaveCount(0);
     await expect(region.getByRole('button', { name: 'Save available output', exact: true })).toHaveCount(0);
@@ -179,7 +179,7 @@ try {
     const readsBeforeReopen = historyReads, postsBeforeReopen = posts.length;
     await region.getByRole('button', { name: 'Previous attempts', exact: true }).click();
     await region.getByRole('button', { name: 'Previous attempts', exact: true }).click();
-    await expect(region.getByRole('button', { name: 'View previous attempt 2', exact: true })).toBeVisible();
+    await expect(region.getByRole('button', { name: /^View previous attempt 2 · Archived / })).toBeVisible();
     await expect(region).toContainText('Archived failure');
     assert.equal(historyReads, readsBeforeReopen + 1); assert.equal(posts.length, postsBeforeReopen);
     await region.getByRole('button', { name: 'Current attempt', exact: true }).click();

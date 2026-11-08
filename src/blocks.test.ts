@@ -327,6 +327,61 @@ describe("scanBlocks", () => {
     expect(isCitableBlock(emptyHeading, "### \n")).toBe(false);
     expect(isCitableBlock(pageTwo, "Page 2 appears in a sentence about the method.")).toBe(true);
   });
+  it("joins the page 6 to 7 Transformer sentence across page fragments, including an earlier paragraph chunk", () => {
+    const sentence = "In terms of\ncomputational complexity, self-attention layers are faster than recurrent layers when the sequence\n6\n\n\n\n### Page 7\nlength n is smaller than the representation dimensionality d, which is most often the case with\nsentence representations used by state-of-the-art models in machine translations, such as word-piece\n[38] and byte-pair [31] representations.";
+    expect(byteLength(sentence)).toBe(364);
+    const preceding = "A separate introductory sentence describes the setup and context. ".repeat(32);
+    const text = "### Page 6\n" + preceding + sentence + "\nAfter the comparison.\n";
+    const blocks = scanBlocks(text);
+    checkInvariants(text, blocks);
+
+    const joinedIndex = blocks.findIndex((block) => block.type === "paragraph"
+      && sliceUtf8(text, block.start, block.end).includes("In terms of\ncomputational complexity")
+      && sliceUtf8(text, block.start, block.end).includes("length n is smaller"));
+    const joined = blocks[joinedIndex];
+    const previous = blocks[joinedIndex - 1];
+    expect(joinedIndex).toBeGreaterThan(0);
+    expect(previous?.type).toBe("paragraph");
+    expect(previous?.end).toBe(joined?.start);
+    expect(joined?.heading).toBe("Page 6");
+    expect(joined && joined.end - joined.start).toBeLessThanOrEqual(MAX_BLOCK_BYTES);
+    expect(joined && sliceUtf8(text, joined.start, joined.end)).toContain(sentence);
+    expect(blocks.some((block) => block.type === "heading" && block.heading === "Page 7")).toBe(false);
+  });
+  it("joins a UTF-8 paragraph across a non-citable Russian page heading with exact byte ranges", () => {
+    const text = "# Заголовок 🌿\n\nНачало 🧪 без точки\n2\n\n### Страница 3\nпродолжение 🙂 с завершением.\n";
+    const expected = "Начало 🧪 без точки\n2\n\n### Страница 3\nпродолжение 🙂 с завершением.\n";
+    const blocks = scanBlocks(text);
+    checkInvariants(text, blocks);
+    const joined = blocks.find((block) => block.type === "paragraph" && sliceUtf8(text, block.start, block.end).includes("Страница 3"));
+    expect(joined?.heading).toBe("Заголовок 🌿");
+    expect(joined && sliceUtf8(text, joined.start, joined.end)).toBe(expected);
+    expect(joined && joined.end - joined.start).toBe(byteLength(expected));
+    expect(joined && joined.end - joined.start).toBeGreaterThan(expected.length);
+  });
+  it("keeps meaningful headings and non-paragraph blocks separate and refuses oversized page spans", () => {
+    const controls = [
+      ["meaningful heading", "### Methods\n\nAfter.", ["paragraph", "heading", "paragraph"]],
+      ["noncitable page-marker paragraph", "### Страница 3\n\nPage 4\n", ["paragraph", "heading", "paragraph"]],
+      ["table", "### Page 4\n\n| A | B |\n|---|---|\n| 1 | 2 |\n", ["paragraph", "heading", "table"]],
+      ["code", "### Page 4\n\n```text\ncode\n```\n", ["paragraph", "heading", "code"]],
+      ["list", "### Page 4\n\n- item\n", ["paragraph", "heading", "list"]],
+      ["quote", "### Page 4\n\n> quoted line\n", ["paragraph", "heading", "quote"]],
+    ] as const;
+    for (const [, following, types] of controls) {
+      const text = "Before page content continues\n\n" + following;
+      const blocks = scanBlocks(text);
+      checkInvariants(text, blocks);
+      expect(blocks.map((block) => block.type)).toEqual(types);
+    }
+
+    const oversized = "Left fragment without final punctuation\n" + "\n".repeat(MAX_BLOCK_BYTES + 1)
+      + "### Page 5\n\nRight continuation.\n";
+    const blocks = scanBlocks(oversized);
+    checkInvariants(oversized, blocks);
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "heading", "paragraph"]);
+    expect((blocks[2]?.end ?? 0) - (blocks[0]?.start ?? 0)).toBeGreaterThan(MAX_BLOCK_BYTES);
+  });
   it("keeps Cyrillic and emoji on character boundaries", () => {
     const text = "# Привет 🌍\n\nТекст с эмодзи 🙂 и кириллицей.\n";
     const blocks = scanBlocks(text);

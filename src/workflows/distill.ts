@@ -889,15 +889,23 @@ async function synthesizeCompact(env: Env, revisionId: string, model: ModelSpec,
   if (!verified.candidates.length || !verified.evidence.length)
     throw new Error("No reviewed source candidates are available. Call-one drafts cannot be published as claims.");
   const authorityLabels = new Set(verified.evidence.map((item) => item.label));
-  const sourceContext = {
-    evidence: verified.evidence.map(({ id, label, quote }) => ({ id, label, quote })),
-    candidates: verified.candidates.map(({ id, evidenceId, statement, kind }) => ({ id, evidenceId, statement, kind })),
-  };
-  reserve(memory, 128 * (verified.evidence.length + verified.candidates.length + 3));
+  // Charge the bounded projection (including per-group filter/map scratch)
+  // under the existing 16 MiB allowance before projecting.
+  const projectionBytes = verified.evidence.reduce((sum, item) => sum + item.id.length + item.label.length + item.quote.length, 0)
+    + verified.candidates.reduce((sum, item) => sum + item.id.length + item.kind.length + item.statement.length + 64, 0);
+  reserve(memory, 128 * (verified.evidence.length + verified.candidates.length + 3) + 4 * projectionBytes);
+  // Group each unique evidence exactly once with its nested candidates in
+  // canonical first-evidence order and candidate order within the group.
+  const evidenceGroups = verified.evidence.map((item) => ({
+    id: item.id, label: item.label, quote: item.quote,
+    candidates: verified.candidates.filter((candidate) => candidate.evidenceId === item.id)
+      .map(({ id, kind, statement }) => ({ id, kind, statement })),
+  }));
+  const sourceContext = { evidence: evidenceGroups };
   reserve(memory, sourceContextJsonAllocation(sourceContext, authorityLabels));
   const content = sourceContextJson(sourceContext, authorityLabels);
   const raw = await call(env, revisionId, 2,
-    "Treat every first-call statement as a hypothesis. The evidence array is one unique dictionary of exact canonical block quotes. Each candidateId is bound to exactly the evidenceId shown beside it; review only that linked quote. Return selected entries with a short support reason and rejected entries with a short rejection reason. Review each candidate at most once. Do not add, rewrite, combine or propose claims, evidence, questions, glossary entries, guide prose or digest prose. Optionally return guide as a small ordered array of candidateIds chosen only from selected. Missing candidate decisions are unknown, not selections. Preserve the complete statement's qualifiers and scope; exact quote and numeric checks run in code, while semantic support remains a model review rather than a truth guarantee.",
+    "Treat every first-call statement as a hypothesis. The evidence array is the unique dictionary of exact canonical block quotes, grouped locally: each group shows one quote with the candidate hypotheses nested inside it. Review each candidate only against its own group's quote. Return selected entries with a short support reason and rejected entries with a short rejection reason. Review each candidate at most once. Do not add, rewrite, combine or propose claims, evidence, questions, glossary entries, guide prose or digest prose. Optionally return guide as a small ordered array of candidateIds chosen only from selected. Missing candidate decisions are unknown, not selections. Preserve the complete statement's qualifiers and scope; reject evidence that incompletely supports its candidate (e.g. a pronoun or condition antecedent that cannot be read inside that quote). Exact quote and numeric checks run in code, while semantic support remains a model review rather than a truth guarantee.",
     content, compactReviewSchema(verified.candidates.map((candidate) => candidate.id)),
     documentLanguage(verified.evidence.map((item) => item.quote)), model, memory, attemptId, 4096, true);
   await put(env, revisionId, "distill-call2.json", { ...raw, format: COMPACT_PRODUCER_FORMAT }, attemptId);
