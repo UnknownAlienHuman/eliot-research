@@ -28,6 +28,7 @@ const SUPER_DIGITS = new Set(Array.from('⁰¹²³⁴⁵⁶⁷⁸⁹'));
 // Selected models are frozen once from stored settings for this run (no hardcoded policy, no allowlist, no override flag).
 let SELECTED_ANSWER_MODEL = '';
 let SELECTED_DISTILL_MODEL = '';
+let modelList;
 const origin = assertEvalOrigin(process.env.ELIOT_URL || 'http://127.0.0.1:5173', process.env.ELIOT_ORIGIN);
 const H = { Origin: origin };
 if (process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET) {
@@ -635,7 +636,7 @@ const compactOptionalFixture = { state: 'partial', report: { producerFormat: COM
 assert.deepEqual(compactArtifactProblems(compactOptionalFixture), [], 'Compact producer permits absent guide and empty questions/glossary when digest and claims are present.');
 assert(compactArtifactProblems({ ...compactOptionalFixture, digest: '', claims: [] }).length >= 2,
   'Compact producer still requires digest content and reviewed claims.');
-function assertUnderstanding(u, what) {
+function assertUnderstanding(u, what, catalog = modelList?.body?.models) {
   assert(u && typeof u === 'object', 'GET understanding must return the direct Understanding object (' + what + ').');
   assert(typeof u.sourceId === 'string' && typeof u.revisionId === 'string', 'Understanding must carry sourceId/revisionId (' + what + ').');
   assert(DISTILL_STATES.includes(u.state), 'Understanding.state must be a direct distill state (' + what + ').');
@@ -654,8 +655,50 @@ function assertUnderstanding(u, what) {
   const basis = u.progress?.tokenLimitKind ?? u.report?.usage?.tokenLimitKind ?? 'legacy';
   assert(isTokenObservation(recorded), 'Recorded capacity/reservation must be numeric or null unknown (' + what + ').');
   assert(['published', 'unknown', 'legacy'].includes(basis), 'Unknown admission basis (' + what + ').');
-  assert.equal(u.progress?.maximumTokens, basis === 'published' && recorded > 0 ? recorded : null,
-    'Only a positive declared-capacity value is a maximum; legacy reservations and released zero stay separate (' + what + ').');
+  const forecast = ['none', 'queued', 'paused'].includes(u.state) && u.progress?.attempts === 0
+    && owningCallCount(u, what) === 0 && u.recordedUsage?.calls === 0
+    && u.progress?.recordedTokenLimit === null && recorded === null
+    && u.recordedUsage?.tokenLimit === null && u.recordedUsage?.tokenLimitKind === null && basis === 'published';
+  if (forecast) {
+    const maximum = u.progress.maximumTokens, route = u.progress.model ?? u.progress.configuredModel;
+    assert(Number.isSafeInteger(maximum) && maximum > 0 && typeof route === 'string' && route.length > 0,
+      'Unstarted published forecast must have positive capacity and its selected route (' + what + ').');
+    // Full mode already reads this catalogue; limited modes do not add discovery for a preview.
+    if (catalog) {
+      const matches = catalog.filter((model) => model && model.route === route);
+      assert(matches.length === 1 && matches[0].enabled === true, 'Forecast route must be uniquely enabled in the read catalogue (' + what + ').');
+      const { contextTokens: input, maxOutputTokens: output, contextWindowTokens: window } = matches[0];
+      assert(Number.isSafeInteger(input) && input > 0 && Number.isSafeInteger(output) && output > 0
+        && Number.isSafeInteger(input + output) && (window === undefined || (Number.isSafeInteger(window) && window > 0)),
+      'Published forecast requires usable declared capacity (' + what + ').');
+      const expected = 2 * Math.min(input + output, window ?? Infinity);
+      assert(Number.isSafeInteger(expected), 'Two-call forecast must be a safe integer (' + what + ').');
+      assert.equal(maximum, expected, 'Forecast must match the selected catalogue capacity capped by its combined window (' + what + ').');
+    }
+  } else {
+    assert.equal(u.progress?.maximumTokens, basis === 'published' && recorded > 0 ? recorded : null,
+      'Only a positive declared-capacity value is a maximum; legacy reservations and released zero stay separate (' + what + ').');
+  }
+}
+const capacityFixture = { sourceId: 's1', revisionId: 'r1', state: 'none', error: null, guide: null, digest: null,
+  glossary: [], claims: [], report: null, recordedUsage: { calls: 0, tokenLimit: null, tokenLimitKind: null },
+  progress: { attempts: 0, recordedTokenLimit: null, tokenLimitKind: 'published', maximumTokens: 1024000,
+    model: null, configuredModel: 'gateway:fixture/default' } };
+const capacityCatalog = [{ route: capacityFixture.progress.configuredModel, enabled: true,
+  contextTokens: 512000, maxOutputTokens: 460800, contextWindowTokens: 512000 }];
+for (const state of ['none', 'queued', 'paused'])
+  assert.doesNotThrow(() => assertUnderstanding({ ...capacityFixture, state }, 'unstarted forecast ' + state, capacityCatalog));
+for (const changes of [{ state: 'running' }, { progress: { ...capacityFixture.progress, attempts: 1 } },
+  { recordedUsage: { ...capacityFixture.recordedUsage, calls: 1 } },
+  { recordedUsage: { ...capacityFixture.recordedUsage, tokenLimitKind: 'legacy' } },
+  { progress: { ...capacityFixture.progress, maximumTokens: 1024001 } },
+  { progress: { ...capacityFixture.progress, model: 'gateway:fixture/missing' } }])
+  assert.throws(() => assertUnderstanding({ ...capacityFixture, ...changes }, 'invalid forecast', capacityCatalog));
+for (const [kind, value, maximum] of [['published', 96000, 96000], ['published', 0, null], ['legacy', 72192, null], ['unknown', null, null]]) {
+  const observed = { ...capacityFixture, recordedUsage: { calls: 0, tokenLimit: value, tokenLimitKind: kind },
+    progress: { ...capacityFixture.progress, tokenLimitKind: kind, recordedTokenLimit: value, maximumTokens: maximum } };
+  assert.doesNotThrow(() => assertUnderstanding(observed, 'recorded capacity', capacityCatalog));
+  assert.throws(() => assertUnderstanding({ ...observed, progress: { ...observed.progress, maximumTokens: maximum === null ? 1024000 : maximum + 1 } }, 'misclassified recorded capacity', capacityCatalog));
 }
 function assertUnderstandingIdentity(u, sourceId, revisionId, what) {
   assert.equal(u.sourceId, sourceId, 'Understanding sourceId must match request (' + what + ').');
@@ -1314,7 +1357,7 @@ if (nativeOnly) {
   }
   process.exit(0);
 }
-const modelList = await apiJson('/api/models');
+modelList = await apiJson('/api/models');
 assert.equal(modelList.status, 200, 'Read current catalogue before reporting the acceptance bound.');
 const answerMeta = (modelList.body.models || []).find((model) => model && model.route === SELECTED_ANSWER_MODEL);
 assert(answerMeta && answerMeta.enabled, 'Selected answerModel must be present and enabled in the current catalogue; no substitution is made here.');
