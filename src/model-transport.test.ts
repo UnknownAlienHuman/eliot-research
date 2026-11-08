@@ -480,6 +480,69 @@ describe("mandatory minimal structured reasoning request", () => {
 });
 
 
+describe("OpenRouter bad-request parameter diagnostics", () => {
+  const provider = { id: "openrouter", type: "openai-compatible" as const, gatewaySlug: "openrouter", gatewayPath: "v1",
+    enabled: true, baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny" as const };
+  const model: ModelSpec = { route: "gateway:openrouter/fixture", id: "fixture", label: "Offline failure fixture",
+    contextTokens: 64000, maxOutputTokens: 8192, checkedOn: "2026-11-08", enabled: true,
+    routing: { provider, gatewayId: "fixture" } };
+  const secret = "PRIVATE_SECRET: arbitrary provider prose mentions reasoning, temperature and response_format";
+  const generic = "External model request failed (HTTP 400). Check the Gateway connection and provider status; no retry was started.";
+  const body = (param: unknown) => JSON.stringify({ error: { message: secret, param } });
+  const wrapped = (raw: string, param?: unknown) => JSON.stringify({ error: { message: secret, param, metadata: { raw } } });
+
+  it.each([
+    { param: "reasoning", category: "reasoning", nested: false, cause: false },
+    { param: "reasoning.effort", category: "reasoning", nested: true, cause: false },
+    { param: "reasoning_effort", category: "reasoning", nested: false, cause: true },
+    { param: "temperature", category: "temperature", nested: true, cause: true },
+    { param: "response_format", category: "structured-output format", nested: false, cause: false },
+    { param: "response_format.json_schema", category: "structured-output format", nested: true, cause: false },
+  ])("projects only the fixed category for $param", ({ param, category, nested, cause }) => {
+    const failure = { statusCode: 400, responseBody: nested ? wrapped(body(param)) : body(param) };
+    const reason = modelFailure(cause ? new Error(secret, { cause: failure }) : { ...failure, message: secret }, model);
+    expect(reason).toBe("External model request failed (HTTP 400). Provider identified the " + category + " parameter. Check the selected model's published controls; no retry was started.");
+    expect(reason).not.toContain(secret);
+  });
+
+  it("keeps absent, malformed, oversized and unknown structured parameters generic", () => {
+    for (const responseBody of [
+      undefined, body(undefined), "{", body(["reasoning"]), body("reasoning.max_tokens"),
+      JSON.stringify({ error: { param: "reasoning", message: secret + "x".repeat(4096) } }),
+      wrapped("{"), wrapped("x".repeat(4097)), wrapped(wrapped(body("reasoning"))),
+    ]) {
+      expect(modelFailure({ statusCode: 400, responseBody, message: secret }, model)).toBe(generic);
+    }
+  });
+
+  it("requires agreement across the wrapper, direct body and immediate cause", () => {
+    const direct = { statusCode: 400, responseBody: body("reasoning") };
+    expect(modelFailure(Object.assign(new Error(secret, { cause: direct }), direct), model))
+      .toContain("Provider identified the reasoning parameter.");
+    for (const responseBody of [wrapped(body("temperature"), "reasoning"), wrapped(body("reasoning"), "unknown")]) {
+      expect(modelFailure({ statusCode: 400, responseBody }, model)).toBe(generic);
+    }
+    for (const cause of [
+      { statusCode: 400, responseBody: body("temperature") },
+      { statusCode: 400, responseBody: body("unknown") },
+      { statusCode: 400, responseBody: "{" },
+      { statusCode: 401, responseBody: body("reasoning") },
+    ]) {
+      expect(modelFailure(Object.assign(new Error(secret, { cause }), direct), model)).toBe(generic);
+    }
+  });
+
+  it("preserves generic failures without the frozen official route and for other statuses", () => {
+    const failure = { statusCode: 400, responseBody: body("reasoning") };
+    const unrouted = { ...model };
+    delete unrouted.routing;
+    expect(modelFailure(failure, unrouted)).toBe(generic);
+    expect(modelFailure(failure, { ...model, routing: { provider: { ...provider, baseUrl: "https://vendor.example/api/v1" }, gatewayId: "fixture" } })).toBe(generic);
+    expect(modelFailure({ ...failure, statusCode: 401 }, model)).toBe("External model request failed (HTTP 401). Check the Gateway connection and provider status; no retry was started.");
+    expect(modelFailure(failure, { ...model, route: "workers-ai:fixture" })).toBe("Model stream failed (HTTP 400).");
+  });
+});
+
 describe("empty completion log projection", () => {
   const base = { turnId: "aaaaaaaa-aaaa-4aaa-8aaa-000000000001", model: { id: "test-model", route: "gateway:openrouter/test-model" }, finishReason: "stop", usage: undefined };
   it.each(["gen-1234567890", "gen-3bhGkxlo4XFrqiabUM7NDtwDzWwG", "chatcmpl-123"])("admits bounded opaque ID %s without claiming an exhaustive provider contract", (id) => {

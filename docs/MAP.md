@@ -424,6 +424,12 @@ Large selections can answer from claims. An unchanged revision is never re-disti
    An absent marker keeps queued legacy work on its existing format; raw output and history are never regenerated.
    Call one is requested to return at most 32 `{ quoteBlock, kind?, statement }` candidates with complete atomic
    statements, qualifiers, conditions and comparisons. It requests no scalar tuple, guide, questions or glossary.
+   Only non-native compact calls with frozen `structuredOutputs === true` request separate closed generation
+   schemas: call one requires `kind` (existing `other` when unclear), and call two requires `selected`, `rejected`
+   and a zero-to-five-ID `guide` array (`[]` means no guide). Public SDK `jsonSchema` validation delegates to the
+   existing decoders; the exact generation JSON schema also supplies any prompt schema and input estimate.
+   Local/retained `kind` stays optional, review `guide` stays optional/unknown, and invalid guide output preserves
+   the reviewed claim core as `partial`. Native/non-structured schemas, prompts and estimates remain unchanged.
    Native compact call one uses public `Output.json()` complete decoding from final `onEnd` output after a normal
    finish; review and other paths retain `Output.object`. The outgoing native text request and prompt schema stay
    unchanged. Full valid decoded Raw1 is stored unchanged and untrusted; syntactic JSON is not owner-visible facts.

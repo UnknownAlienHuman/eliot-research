@@ -2371,6 +2371,120 @@ describe("DistillWorkflow admitted model snapshot", () => {
 });
 
 describe("compact K3 producer", () => {
+  it.each(["valid", "absent", "object", "over-five", "empty", "unselected-guide", "unknown-id", "extra-decision-field", "duplicate", "missing-kind"] as const)(
+    "uses closed generation schemas and existing decoding through both real Gateway SDK calls: %s", async mode => {
+      const model: ModelSpec = Object.freeze({ route: "gateway:openrouter/stealth/crouton-alpha", id: "stealth/crouton-alpha", label: "Frozen OpenRouter fixture",
+        contextTokens: 1048576, contextWindowTokens: 1048576, maxOutputTokens: 943718, outputReserveTokens: 8192,
+        responseFormat: true, structuredOutputs: true, structuredReasoningEffort: "minimal", checkedOn: "2026-11-08", enabled: true,
+        routing: { provider: { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1",
+          baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true }, gatewayId: "offline-compact" } } satisfies ModelSpec);
+      const document = documentWithBlocks([
+        { type: "paragraph", text: "A projection update preserves the residual path.\n" },
+        { type: "paragraph", text: "The update uses 4 layers.\n" },
+        { type: "paragraph", text: "The method assumes the sampled corpus remains stable.\n" },
+      ]);
+      const extraction = { candidates: [
+        { quoteBlock: "[S1:1]", ...(mode === "missing-kind" ? {} : { kind: "method" }), statement: "A projection update preserves the residual path." },
+        { quoteBlock: "[S1:2]", kind: "method", statement: "The update uses 4 layers." },
+        { quoteBlock: "[S1:3]", kind: "limitation", statement: "The method assumes the sampled corpus remains stable." },
+      ] };
+      const review = { metadata: "UNTRUSTED_REVIEW_METADATA", selected: [
+        { candidateId: mode === "unknown-id" ? "C999" : "C0", reason: "The bound quote states this mechanism.",
+          ...(mode === "extra-decision-field" ? { extra: "UNTRUSTED_DECISION_FIELD" } : {}) },
+        { candidateId: "C2", reason: "The bound quote states this assumption." },
+      ], rejected: [{ candidateId: mode === "duplicate" ? "C0" : "C1", reason: "Not selected for this core." }],
+      ...(mode === "absent" ? {} : { guide: mode === "object" ? { candidateIds: ["C0"] }
+        : mode === "over-five" ? ["C0", "C2", "C0", "C2", "C0", "C2"] : mode === "empty" ? []
+          : mode === "unselected-guide" ? ["C1"] : ["C0", "C2"] }) };
+      const f = fixture(model.route, document);
+      f.db.prepare("UPDATE source_revision SET distill_request_json=?,distill_token_limit_kind='published',distill_token_limit=? WHERE id=?")
+        .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), 2 * 1048576, revisionId);
+      const sdk = await vi.importActual<typeof AISDK>("ai");
+      const transport = await vi.importActual<typeof ModelTransport>("../model-transport");
+      const failures: unknown[] = [];
+      vi.mocked(generateText).mockImplementation(async options => {
+        try { return await sdk.generateText(options); } catch (error) { failures.push(error); throw error; }
+      });
+      vi.mocked(resolveModelTransport).mockImplementation(transport.resolveModelTransport);
+      vi.mocked(Output.object).mockReset().mockImplementation(options => sdk.Output.object(options));
+      type SchemaNode = { type?: string; properties?: Record<string, SchemaNode>; required?: string[];
+        additionalProperties?: boolean; items?: SchemaNode; enum?: string[]; minItems?: number; maxItems?: number };
+      const bodies: { model: string; max_tokens: number; reasoning: unknown; reasoning_effort?: unknown;
+        provider: unknown; response_format: { type: string; json_schema: { strict: boolean; schema: SchemaNode } } }[] = [];
+      const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        const output = bodies.length === 1 ? extraction : review;
+        return Response.json({ id: "chatcmpl-offline-compact", object: "chat.completion", created: 0, model: model.id,
+          choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(output) }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 101, completion_tokens: 17, total_tokens: 118 } });
+      });
+      Object.assign(f.env, { AI: { fetch } });
+      const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+      try {
+        await run(f, false, model, "compact-k3-v1");
+        expect(fetch).toHaveBeenCalledTimes(2); expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+        expect(bodies.map(body => body.model)).toEqual([model.id, model.id]);
+        expect(bodies.map(body => body.max_tokens)).toEqual([8192, 4096]);
+        for (const body of bodies) {
+          expect(body.reasoning).toEqual({ effort: "minimal" }); expect(body).not.toHaveProperty("reasoning_effort");
+          expect(body.provider).toMatchObject({ allow_fallbacks: false, require_parameters: true, data_collection: "deny" });
+          expect(body.response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true } });
+          const root = body.response_format.json_schema.schema;
+          expect(root.additionalProperties).toBe(false);
+          expect(root.required).toEqual(Object.keys(root.properties ?? {}));
+        }
+        const first = bodies[0]?.response_format.json_schema.schema;
+        expect(first?.required).toEqual(["candidates"]);
+        expect(first?.properties?.candidates?.maxItems).toBe(32);
+        const candidate = first?.properties?.candidates?.items;
+        expect(candidate?.required).toEqual(["quoteBlock", "kind", "statement"]);
+        expect(candidate?.additionalProperties).toBe(false);
+        expect(candidate?.properties?.kind?.enum).toEqual(["method", "result", "limitation", "dataset", "definition", "other"]);
+        const second = bodies[1]?.response_format.json_schema.schema;
+        expect(second?.required).toEqual(["selected", "rejected", "guide"]);
+        expect(second?.properties?.guide).toMatchObject({ type: "array", minItems: 0, maxItems: 5,
+          items: { type: "string", enum: ["C0", "C1", "C2"] } });
+        for (const field of ["selected", "rejected"]) {
+          const decision = second?.properties?.[field]?.items;
+          expect(decision?.required).toEqual(["candidateId", "reason"]); expect(decision?.additionalProperties).toBe(false);
+          expect(decision?.properties?.candidateId?.enum).toEqual(["C0", "C1", "C2"]);
+        }
+        const invalidDecision = ["unknown-id", "extra-decision-field", "duplicate"].includes(mode);
+        const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+        expect(report).toMatchObject({ state: invalidDecision ? "failed" : ["valid", "missing-kind"].includes(mode) ? "done" : "partial",
+          kept: invalidDecision ? 0 : 2, usage: { calls: 2, outputBudgets: [
+            { requestedTokens: 8192, appliedTokens: 8192 }, { requestedTokens: 4096, appliedTokens: 4096 },
+          ] } });
+        if (mode === "unknown-id" || mode === "extra-decision-field") {
+          const error = failures[0];
+          if (!sdk.NoObjectGeneratedError.isInstance(error) || !sdk.TypeValidationError.isInstance(error.cause))
+            throw new Error("The actual SDK did not preserve its schema-validation cause.");
+          expect(error.cause.cause).toBeInstanceOf(z.ZodError);
+          expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null").output).toBeNull();
+        } else expect(failures).toEqual([]);
+        const rawFirst = f.bodies.get(prefix + "distill-call1.json"), rawSecond = f.bodies.get(prefix + "distill-call2.json");
+        expect(JSON.parse(rawFirst ?? "null").output).toEqual(extraction);
+        const view = await getUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId });
+        expect(view.claims).toHaveLength(invalidDecision ? 0 : 2);
+        if (!invalidDecision) {
+          expect(view.claims.map(claim => claim.statement)).toEqual([extraction.candidates[0]?.statement, extraction.candidates[2]?.statement]);
+          expect(view.digest).toContain(extraction.candidates[0]?.statement);
+          if (!["valid", "missing-kind"].includes(mode)) expect(view.guide).toBe("");
+          expect(JSON.stringify(view)).not.toContain("UNTRUSTED_REVIEW_METADATA");
+          if (mode === "missing-kind") {
+            expect(JSON.parse(rawFirst ?? "null").output.candidates[0]).not.toHaveProperty("kind");
+            expect(view.claims[0]?.kind).toBe("other");
+            await requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true });
+            expect(f.bodies.get(prefix + "distill-call1.json")).toBe(rawFirst);
+            expect(f.bodies.get(prefix + "distill-call2.json")).toBe(rawSecond);
+            expect(fetch).toHaveBeenCalledTimes(2);
+          }
+        }
+        for (const lookup of forbiddenLookups) expect(lookup).not.toHaveBeenCalled();
+        expect(network).not.toHaveBeenCalled();
+      } finally { vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
+    });
+
   it("retains all 61 native candidates, strips outer metadata and keeps prefix output partial after Recheck", async () => {
     const metadata = "OUTER_METADATA_MUST_NOT_REACH_OWNER_OUTPUT";
     const longReason = "The bound source block states this complete configuration with its original condition, and selection keeps the frozen statement unchanged. ".repeat(2).trim();

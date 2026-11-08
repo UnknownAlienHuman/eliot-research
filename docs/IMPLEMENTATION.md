@@ -577,6 +577,16 @@ comparisons and limitations, selecting a label from the frozen canonical block i
 scalar tuple, guide, suggested questions or glossary. Source JSON escapes literal square brackets inside strings
 while preserving authority labels and the decoded source text.
 
+Only non-native compact calls with frozen `structuredOutputs === true` use separate closed generation schemas.
+Extraction requires `quoteBlock`, `kind` and `statement`, using the existing `other` kind when unclear. Review
+requires `selected`, `rejected` and `guide`; decision objects stay closed with original candidate IDs, and `guide`
+is an array of zero to five original candidate IDs, with `[]` meaning no guide. The public `ai@7.0.152`
+`Output.object({ schema: jsonSchema(generationJSONSchema, { validate }) })` delegates decoding to the existing Zod
+validator and returns its actual error unchanged. That same generation JSON schema supplies any prompt schema
+and the input estimate. Native and non-structured calls retain their original schemas, prompts and estimates.
+Local/retained candidate `kind` remains optional; review decoding keeps `guide` optional/unknown, with independent
+selected-only guide checks preserving reviewed claims and digest as `partial` when the guide is missing or invalid.
+
 Raw1 retains the full syntactically valid decoded native JSON unchanged as untrusted provider output, including
 arrays longer than requested. Syntactic JSON validity does not validate candidates, evidence or owner-visible facts.
 The persisted Raw envelope remains strict. Its decoded output is projected to `candidates` only, ignoring other
@@ -1565,11 +1575,12 @@ for older admitted jobs that lack it. Later settings edits apply only to new adm
 field. Account privacy settings can impose additional restrictions and are never changed by this control. This
 contract was checked against the official provider-routing documentation on 2026-10-29; no publication date was exposed.
 
-A known structured 404 reporting no endpoints
-matching the provider's data policy is shown as a fixed, actionable failure with its HTTP status. Unknown or malformed
-error bodies retain the generic status message. Raw provider text is never copied into that reason, and the failure
-does not change the selected model or data policy or start another request. Catalogue presence does not establish
-that the account has an endpoint eligible under this policy.
+A known structured 404 data-policy rejection retains its fixed safe message, and official OpenRouter HTTP 400 errors
+expose only a fixed provider-named reasoning, temperature or structured-output format category when all available
+bounded structured parameters identify the same category; other 400 bodies remain generic, no raw text or values are exposed, and no
+selection, policy or retry changes occur.
+The category records the parameter named by the provider rather than a proven root cause, and historical Crouton
+control `3081b9fc…` retains an UNKNOWN HTTP 400 cause because its body was not retained.
 
 OpenRouter uses the installed Agents AI Gateway adapter and `@ai-sdk/openai-compatible`, with provider fallbacks
 disabled and the same one-attempt/no-wholesale/skip-cache/no-log intent. The gateway route contains the native model

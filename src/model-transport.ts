@@ -409,6 +409,7 @@ function gatewayRetryAfterSeconds(error: unknown): number | undefined {
 
 const NO_ENDPOINT_DATA_POLICY_REASON =
   "External model request failed (HTTP 404). Provider reports no endpoint matching its data policy. Review provider privacy settings or choose another model. No retry was started.";
+const PROVIDER_ERROR_BODY_CHARS = 4096;
 
 function isNoEndpointDataPolicy(error: unknown): boolean {
   const bodies = [
@@ -416,7 +417,7 @@ function isNoEndpointDataPolicy(error: unknown): boolean {
     error instanceof Error ? (error.cause as { responseBody?: unknown } | null | undefined)?.responseBody : undefined,
   ];
   for (const body of bodies) {
-    if (typeof body !== "string" || body.length === 0 || body.length > 4096) continue;
+    if (typeof body !== "string" || body.length === 0 || body.length > PROVIDER_ERROR_BODY_CHARS) continue;
     let message: unknown;
     try {
       message = (JSON.parse(body) as { error?: { message?: unknown } | null } | null)?.error?.message;
@@ -429,6 +430,42 @@ function isNoEndpointDataPolicy(error: unknown): boolean {
   return false;
 }
 
+// A structured parameter name is diagnostic only, not a proven rejection cause.
+// Inspect immediate direct/cause bodies and at most one provider-wrapper JSON;
+// every available body/parameter must agree, without reading message prose.
+function badRequestParameter(error: unknown): "reasoning" | "temperature" | "structured-output format" | undefined {
+  const cause = error instanceof Error ? error.cause as { responseBody?: unknown; statusCode?: unknown } | null | undefined : undefined;
+  const causeStatus = checkStatusCode(cause?.statusCode);
+  if (causeStatus !== undefined && causeStatus !== 400) return undefined;
+  const bodies = [(error as { responseBody?: unknown } | null | undefined)?.responseBody, cause?.responseBody];
+  let identified: ReturnType<typeof badRequestParameter>;
+  for (const body of bodies) {
+    if (body === undefined) continue;
+    if (typeof body !== "string" || body.length === 0 || body.length > PROVIDER_ERROR_BODY_CHARS) return undefined;
+    try {
+      const failure = (JSON.parse(body) as { error?: { param?: unknown; metadata?: { raw?: unknown } | null } | null } | null)?.error;
+      if (!failure || typeof failure !== "object" || Array.isArray(failure)) return undefined;
+      const parameters: unknown[] = failure.param === undefined || failure.param === null ? [] : [failure.param];
+      const raw = failure.metadata?.raw;
+      if (raw !== undefined) {
+        if (typeof raw !== "string" || raw.length === 0 || raw.length > PROVIDER_ERROR_BODY_CHARS) return undefined;
+        parameters.push((JSON.parse(raw) as { error?: { param?: unknown } | null } | null)?.error?.param);
+      }
+      if (parameters.length === 0) return undefined;
+      for (const param of parameters) {
+        const category = param === "reasoning" || param === "reasoning.effort" || param === "reasoning_effort" ? "reasoning"
+          : param === "temperature" ? "temperature"
+          : param === "response_format" || param === "response_format.json_schema" ? "structured-output format" : undefined;
+        if (category === undefined || (identified !== undefined && identified !== category)) return undefined;
+        identified = category;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  return identified;
+}
+
 export function modelFailure(error: unknown, model: ModelSpec): string {
   const status = errorStatusCode(error);
   if (model.route.startsWith("gateway:")) {
@@ -439,6 +476,12 @@ export function modelFailure(error: unknown, model: ModelSpec): string {
     }
     if (status === 404 && isNoEndpointDataPolicy(error)) {
       return NO_ENDPOINT_DATA_POLICY_REASON;
+    }
+    if (status === 400 && isNativeOpenRouterRoute(model)) {
+      const parameter = badRequestParameter(error);
+      if (parameter !== undefined) {
+        return "External model request failed (HTTP 400). Provider identified the " + parameter + " parameter. Check the selected model's published controls; no retry was started.";
+      }
     }
     if (status !== undefined) {
       return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started.";
