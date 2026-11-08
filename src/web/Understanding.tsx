@@ -10,11 +10,14 @@ import { ModelPicker, type ModelRoute } from './ModelPicker';
 import type { DistillState, Overview, Understanding, UnderstandingHistory } from '../understanding';
 import './understanding.css';
 // Wire types above come from src/understanding.ts; no local duplicates.
-type ModelOption = ModelRoute;
-interface PendingRetry { revisionId: string; model?: string; nativeReasoningEffort?: NativeReasoningEffort; retry: { attemptId: string; previousAttemptId: string } }
-function storedRetry(key: string): PendingRetry | null {
-  try { const value = JSON.parse(sessionStorage.getItem(key) ?? "null") as PendingRetry | null;
-    return value && typeof value.revisionId === 'string' && typeof value.retry?.attemptId === 'string' && typeof value.retry.previousAttemptId === 'string' ? value : null;
+type ModelOption = ModelRoute & { readonly openRouterReasoningEfforts?: readonly string[] };
+interface PendingRetry { revisionId: string; model?: string; nativeReasoningEffort?: NativeReasoningEffort; openRouterReasoningEffort?: string; retry: { attemptId: string; previousAttemptId: string } }
+interface StoredRetry { readonly input: PendingRetry; readonly body: string }
+const NATIVE_EFFORTS: readonly NativeReasoningEffort[] = ['low', 'high'];
+const NO_EFFORTS: readonly string[] = [];
+function storedRetry(key: string): StoredRetry | null {
+  try { const body = sessionStorage.getItem(key) ?? "null", value = JSON.parse(body) as PendingRetry | null;
+    return value && typeof value.revisionId === 'string' && typeof value.retry?.attemptId === 'string' && typeof value.retry.previousAttemptId === 'string' ? { input: value, body } : null;
   } catch { return null; }
 }
 export interface SuggestedQuestion { readonly sourceId: string; readonly sourceTitle: string; readonly question: string }
@@ -42,11 +45,16 @@ function Questions({ questions, onUse, showHint = true }: { readonly questions: 
     </div></li>)}</ul>
   </div>;
 }
-export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTitle, onUseQuestion }: { readonly projectId: string; readonly sourceId: string; readonly revisionId: string; readonly sourceTitle: string; readonly onUseQuestion?: ((question: string) => void) | undefined }) {
+interface SourceUnderstandingProps { readonly projectId: string; readonly sourceId: string; readonly revisionId: string; readonly sourceTitle: string; readonly onUseQuestion?: ((question: string) => void) | undefined }
+export function SourceUnderstanding(props: SourceUnderstandingProps) {
+  return <RevisionUnderstanding key={props.projectId + ':' + props.sourceId + ':' + props.revisionId} {...props} />;
+}
+function RevisionUnderstanding({ projectId, sourceId, revisionId, sourceTitle, onUseQuestion }: SourceUnderstandingProps) {
   const queryClient = useQueryClient();
   const sourcesFetching = useIsFetching({ queryKey: ['sources', projectId], exact: true });
   const pendingKey = 'understanding-retry:' + sourceId + ':' + revisionId;
-  const [pendingRetry, setPendingRetry] = useState<PendingRetry | null>(() => storedRetry(pendingKey));
+  const [pendingRequest, setPendingRequest] = useState<StoredRetry | null>(() => storedRetry(pendingKey));
+  const pendingRetry = pendingRequest?.input ?? null;
   const [historyAttempt, setHistoryAttempt] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -58,7 +66,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const sourcesSynced = useRef('');
   const [models, setModels] = useState<readonly ModelOption[]>([]);
   const [modelChoice, setModelChoice] = useState('');
-  const [nativeEffortChoice, setNativeEffortChoice] = useState<NativeReasoningEffort | ''>('');
+  const [effortChoice, setEffortChoice] = useState<{ route: string; value: string } | null>(null);
   const [catalogueLoaded, setCatalogueLoaded] = useState(false);
   const [catalogError, setCatalogError] = useState('');
   const [catalogVersion, setCatalogVersion] = useState(0);
@@ -87,10 +95,15 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const effortModel = effectiveModels.length === 1 ? effectiveModels[0] : undefined;
   const nativeEffortSupported = effortModel?.route.startsWith('workers-ai:') === true
     && (effortModel.nativeReasoningEffort === 'low' || effortModel.nativeReasoningEffort === 'high');
-  useEffect(() => { if (!nativeEffortSupported) setNativeEffortChoice(''); }, [nativeEffortSupported]);
+  const publishedEfforts = nativeEffortSupported ? NATIVE_EFFORTS
+    : effortModel?.route.startsWith('gateway:') ? effortModel.openRouterReasoningEfforts ?? NO_EFFORTS : NO_EFFORTS;
+  const selectedEffort = effortChoice?.route === effortModel?.route && publishedEfforts.includes(effortChoice?.value ?? '') ? effortChoice?.value ?? '' : '';
+  useEffect(() => {
+    setEffortChoice(current => current && current.route === effortModel?.route && !modelRoutePending && publishedEfforts.includes(current.value) ? current : null);
+  }, [effortModel?.route, publishedEfforts, modelRoutePending]);
   useEffect(() => {
     if (pendingRetry && view?.knownRequestId === pendingRetry.retry.attemptId) {
-      sessionStorage.removeItem(pendingKey); setPendingRetry(null);
+      sessionStorage.removeItem(pendingKey); setPendingRequest(null);
       if (view.requestRejection) setNote(view.requestRejection);
       else {
         const filter = { queryKey: ['understanding-history', sourceId, revisionId], exact: true };
@@ -101,7 +114,7 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   }, [view, pendingRetry, pendingKey, queryClient, sourceId, revisionId]);
   const failure = understanding.error?.message ?? '';
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(() => { setModelChoice(''); setNativeEffortChoice(''); }, [projectId, sourceId, revisionId]);
+  useEffect(() => { setModelChoice(''); setEffortChoice(null); }, [projectId, sourceId, revisionId]);
   const refetchUnderstanding = understanding.refetch;
   useEffect(() => {
     if (sourceId === '' || revisionId === '') return;
@@ -150,26 +163,30 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
       if (modelChoice === '' && !configuredUsable) { setNote('The default model is currently unavailable, so Understand cannot start yet.'); return; }
       if (modelChoice !== '' && chosen !== undefined && chosen.enabled && !usableModel(chosen)) { setNote('The selected model is currently unavailable, so Understand cannot start yet.'); return; }
     }
-    const effort = nativeEffortSupported && nativeEffortChoice !== '' ? { nativeReasoningEffort: nativeEffortChoice } : {};
-    let retryInput = pendingRetry;
-    if (retryFailed && !retryInput) {
+    const effort: Pick<PendingRetry, 'nativeReasoningEffort' | 'openRouterReasoningEffort'> = nativeEffortSupported && (selectedEffort === 'low' || selectedEffort === 'high')
+      ? { nativeReasoningEffort: selectedEffort }
+      : selectedEffort !== '' ? { openRouterReasoningEffort: selectedEffort } : {};
+    let retryRequest = pendingRequest;
+    if (retryFailed && !retryRequest) {
       if (!view || !['done', 'failed', 'partial'].includes(view.state) || !view.attemptId) return;
-      retryInput = { revisionId, ...(modelChoice ? { model: modelChoice } : {}), ...effort, retry: { attemptId: crypto.randomUUID(), previousAttemptId: view.attemptId } };
-      try { sessionStorage.setItem(pendingKey, JSON.stringify(retryInput)); }
+      const input: PendingRetry = { revisionId, ...(modelChoice ? { model: modelChoice } : {}), ...effort, retry: { attemptId: crypto.randomUUID(), previousAttemptId: view.attemptId } };
+      retryRequest = { input, body: JSON.stringify(input) };
+      try { sessionStorage.setItem(pendingKey, retryRequest.body); }
       catch { setNote('This browser cannot keep the pending request. Allow site storage before retrying.'); return; }
-      setPendingRetry(retryInput);
+      setPendingRequest(retryRequest);
     }
     setBusy(true);
     setAwaitingStatus('unknown');
     setNote('');
     try {
-      const input = retryFailed && retryInput ? retryInput : saveAvailable ? { revisionId, saveAvailable: true } : { revisionId, ...(modelChoice ? { model: modelChoice } : {}), ...effort };
-      const accepted = await apiJson<{ revisionId: string; attemptId?: string; rejected?: string }>(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
-      if (accepted?.revisionId !== revisionId || (retryFailed && accepted.attemptId !== retryInput?.retry.attemptId)) throw new Error('Could not confirm the request. Reload understanding to check its status.');
+      const body = retryFailed && retryRequest ? retryRequest.body
+        : JSON.stringify(saveAvailable ? { revisionId, saveAvailable: true } : { revisionId, ...(modelChoice ? { model: modelChoice } : {}), ...effort });
+      const accepted = await apiJson<{ revisionId: string; attemptId?: string; rejected?: string }>(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      if (accepted?.revisionId !== revisionId || (retryFailed && accepted.attemptId !== retryRequest?.input.retry.attemptId)) throw new Error('Could not confirm the request. Reload understanding to check its status.');
       void queryClient.invalidateQueries({ queryKey: ['sources', projectId], exact: true });
       if (!mounted.current) return;
       if (accepted.rejected) {
-        sessionStorage.removeItem(pendingKey); setPendingRetry(null);
+        sessionStorage.removeItem(pendingKey); setPendingRequest(null);
         await reload(); if (mounted.current) setNote(accepted.rejected); return;
       }
       setAwaitingStatus('accepted');
@@ -201,10 +218,12 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
   const canStart = !historical && !pendingRetry && !awaitingStatus && statusReady && !active && (view.state === 'none' || view.state === 'paused');
   const canSaveAvailable = !historical && !pendingRetry && !awaitingStatus && statusReady && !active && canRecover && (view.state === 'failed' || view.state === 'done' || view.state === 'partial');
   const requestOptionsLocked = busy || pendingRetry !== null || awaitingStatus !== null || !statusReady;
-  const effortOptions: readonly NativeReasoningEffort[] = pendingRetry
-    ? pendingRetry.nativeReasoningEffort ? [pendingRetry.nativeReasoningEffort] : []
-    : nativeEffortSupported ? ['low', 'high'] : [];
+  const pendingEffort = pendingRetry?.nativeReasoningEffort ?? pendingRetry?.openRouterReasoningEffort;
+  const effortOptions = pendingRetry ? pendingEffort ? [pendingEffort] : NO_EFFORTS : publishedEfforts;
+  const nativeEffortOptions = pendingRetry ? pendingRetry.nativeReasoningEffort !== undefined : nativeEffortSupported;
+  const effortDisabled = requestOptionsLocked || !catalogueLoaded || catalogError !== '' || modelRoutePending || publishedEfforts.length === 0 || effortModel?.enabled !== true;
   const recordedEffort = view.progress.nativeReasoningEffort;
+  const recordedOpenRouterEffort = view.progress.openRouterReasoningEffort;
   const references = view.citations.map((c, index) => ({
     text: '[R' + view.revisionId + ':' + c.block + ']',
     label: 'Open quote · ' + sourceTitle + ' · ' + (index + 1),
@@ -247,6 +266,8 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
       <p className='er-und__hint' role='status'>{requestStatus}</p>
       {view.progress.model?.startsWith('workers-ai:') || recordedEffort === 'low' || recordedEffort === 'high'
         ? <p className='er-und__hint' role='status'>Requested native reasoning effort: {recordedEffort === 'low' ? 'Low' : recordedEffort === 'high' ? 'High' : 'Unknown (not recorded)'}.</p> : null}
+      {view.progress.model?.startsWith('gateway:openrouter/') || recordedOpenRouterEffort !== undefined
+        ? <p className='er-und__hint' role='status'>Requested OpenRouter reasoning effort: {recordedOpenRouterEffort ?? 'Unknown (not recorded)'}.</p> : null}
       {view.authors || view.published ? <p className='er-und__meta'>{[view.authors, view.published].filter(Boolean).join(' · ')}</p> : null}
       {understandingError !== null && understandingError !== '' ? <p className='er-und__error' role='alert'>{understandingError}</p> : null}
       {failure !== '' ? <p className='er-und__error' role='alert'>{failure}</p> : null}
@@ -259,15 +280,15 @@ export function SourceUnderstanding({ projectId, sourceId, revisionId, sourceTit
           {catalogWarnings.length > 0 ? <p className='er-und__hint' role='status'>Model catalog: {catalogWarnings.join(' ')}</p> : null}
           {modelChoice === '' ? (!configuredUsable ? (<p className='er-und__error' role='alert'>The default model is currently unavailable, so Understand cannot start yet.</p>) : null) : chosen !== undefined && chosen.enabled && chosenUsable ? null : (<p className='er-und__error' role='alert'>{chosen === undefined || !chosen.enabled ? 'Selected model is unavailable' + (chosen?.unavailableReason ? ': ' + chosen.unavailableReason : '.') : 'The selected model is currently unavailable, so Understand cannot start yet.'}</p>)}
         </> : null}
-        <label className='er-field'><span>Native reasoning effort</span>
-          <select aria-label='Understanding reasoning effort' value={pendingRetry ? pendingRetry.nativeReasoningEffort ?? '' : nativeEffortChoice}
-            disabled={requestOptionsLocked || !catalogueLoaded || catalogError !== '' || modelRoutePending || !nativeEffortSupported || effortModel?.enabled !== true}
-            onChange={event => { const value = event.currentTarget.value; if (!requestOptionsLocked && nativeEffortSupported && (value === '' || value === 'low' || value === 'high')) setNativeEffortChoice(value); }}>
-            <option value=''>Model default</option>
-            {effortOptions.map(effort => <option key={effort} value={effort}>{effort === 'low' ? 'Low' : 'High'}</option>)}
+        <label className='er-field'><span>Reasoning effort</span>
+          <select aria-label='Understanding reasoning effort' value={pendingRetry ? pendingEffort ?? '' : selectedEffort}
+            disabled={effortDisabled}
+            onChange={event => { const value = event.currentTarget.value; if (!effortDisabled && effortModel && (value === '' || publishedEfforts.includes(value))) setEffortChoice(value === '' ? null : { route: effortModel.route, value }); }}>
+            <option value=''>Automatic</option>
+            {effortOptions.map(effort => <option key={effort} value={effort}>{nativeEffortOptions ? effort === 'low' ? 'Low' : 'High' : effort}</option>)}
           </select>
         </label>
-        {nativeEffortSupported && !pendingRetry ? <p className='er-und__hint'>Low and High request native reasoning levels. Model default keeps the model's existing profile.</p> : null}
+        {publishedEfforts.length > 0 && !pendingRetry ? <p className='er-und__hint'>Automatic keeps Eliot's current model policy. Choosing an effort starts no model work.</p> : null}
       </div> : null}
       {canStart || canRetry || canConfirm || failure !== '' || note !== '' || awaitingStatus || canSaveAvailable ? <div className='er-und__actions'>
         {canStart ? <button className='er-button er-button--tonal' type='button' disabled={understandDisabled} onClick={() => void request()}>Understand source</button> : null}

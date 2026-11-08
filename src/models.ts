@@ -1,5 +1,5 @@
 import { LibraryError } from "./library";
-import { discoverGatewayModels } from "./model-catalog";
+import { discoverGatewayModels, isOpenRouterReasoningEfforts } from "./model-catalog";
 import { discoverNativeModels } from "./native-model-catalog";
 import { z } from "zod";
 import { readNativeUsage, readProviderQuotas } from "./model-quota";
@@ -85,6 +85,7 @@ export interface CatalogModel {
   supportsImages?: boolean;
   optionalReasoning?: boolean;
   structuredReasoningEffort?: "minimal";
+  openRouterReasoningEfforts?: string[]; // Published choices only; not an owner selection.
   apiProtocol?: "openai-chat" | "openai-responses" | "anthropic" | "google";
   apiBaseUrl?: string;
   mayTrainOnYourPrompts?: boolean;
@@ -97,6 +98,7 @@ export interface CatalogModel {
 export interface ModelSpec extends CatalogModel {
   contextTokens: number;
   routing?: { provider: ModelProvider; gatewayId: string };
+  openRouterReasoningEffort?: string; // Explicit owner choice, validated/frozen by admission only.
 }
 export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
 // Owner-selected native default metadata is a fallback, not a provider allowlist.
@@ -234,6 +236,7 @@ function isCatalogModel(value: unknown): value is CatalogModel {
   if (value.supportsImages !== undefined && typeof value.supportsImages !== "boolean") return false;
   if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
   if (value.structuredReasoningEffort !== undefined && value.structuredReasoningEffort !== "minimal") return false;
+  if (value.openRouterReasoningEfforts !== undefined && !isOpenRouterReasoningEfforts(value.openRouterReasoningEfforts)) return false;
   if (value.optionalReasoning === true && value.structuredReasoningEffort !== undefined) return false;
   if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low" && value.nativeReasoningEffort !== "high") return false;
   if (value.apiProtocol !== undefined && !["openai-chat", "openai-responses", "anthropic", "google"].includes(String(value.apiProtocol))) return false;
@@ -286,7 +289,8 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     const fallback = MODELS.find((entry) => entry.route === model.route);
     const visible: CatalogModel = { route: model.route, id: model.id, label: model.label, contextTokens: model.contextTokens,
       maxOutputTokens: model.maxOutputTokens, checkedOn: model.checkedOn, enabled: model.enabled };
-    for (const field of ["contextWindowTokens", "outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning", "structuredReasoningEffort",
+    // Owner-selected openRouterReasoningEffort is never authoritative in a catalogue row.
+    for (const field of ["contextWindowTokens", "outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning", "structuredReasoningEffort", "openRouterReasoningEfforts",
       "nativeReasoningEffort", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
       if (model[field] !== undefined) Object.assign(visible, { [field]: model[field] });
     }
@@ -298,6 +302,7 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     const provider = providerForRoute(providers, route);
     const previous = snapshot?.providers?.find((entry) => entry.id === provider?.id);
     const changed = provider?.type === "openai-compatible" && !sameProviderRoute(provider, previous);
+    if (!isOpenRouterApiBase(provider?.baseUrl) || changed) delete model.openRouterReasoningEfforts;
     const selectable = provider?.enabled === true && model.enabled;
     const reason = !provider ? "Provider is not configured." : !provider.enabled ? "Provider is disabled."
       : route.startsWith("gateway:") && !gatewayId ? "Connect AI Gateway in Settings."

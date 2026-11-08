@@ -263,7 +263,7 @@ app.get("/api/sources/:id/understanding/history", async (c) => c.json(await getU
   sourceId: uuid.parse(c.req.param("id")), revisionId: uuid.parse(c.req.query("revisionId")), cursor: z.string().max(512).optional().parse(c.req.query("cursor")),
 })));
 app.post("/api/sources/:id/understanding", async (c) => {
-  const input = z.object({ revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional(), nativeReasoningEffort: z.enum(["low", "high"]).optional(), retry: z.object({ attemptId: uuid, previousAttemptId: uuid }).strict().optional() }).strict().parse(await c.req.json());
+  const input = z.object({ revisionId: uuid.optional(), saveAvailable: z.boolean().optional(), model: z.string().optional(), nativeReasoningEffort: z.enum(["low", "high"]).optional(), openRouterReasoningEffort: z.string().max(32).regex(/^[a-z][a-z0-9_-]*$/).optional(), retry: z.object({ attemptId: uuid, previousAttemptId: uuid }).strict().optional() }).strict().parse(await c.req.json());
   const result = await requestUnderstanding(c.env, c.get("actor"), { sourceId: uuid.parse(c.req.param("id")), ...input });
   return c.json(result, "rejected" in result ? 200 : 202);
 });

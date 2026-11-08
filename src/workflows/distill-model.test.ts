@@ -769,10 +769,15 @@ describe("DistillWorkflow admitted model snapshot", () => {
     } finally { release(); f.db.close(); }
   });
 
-  it("fences held Low lookups when the same original route is paused and resumed as High", async () => {
+  it.each(["native", "openrouter"] as const)("fences held %s Low lookups when the same original route is paused and resumed as High", async provider => {
     const f = queuedBehindRunning();
-    const native: ModelSpec = Object.freeze({ ...snapshot, route: "workers-ai:fixture/native", id: "fixture/native", nativeReasoningEffort: "high" });
-    const lowRequest = JSON.stringify({ sourceId: explicitlySelectedSourceId, revisionId: explicitlySelectedRevisionId, model: native.route, nativeReasoningEffort: "low" });
+    const field = provider === "native" ? "nativeReasoningEffort" : "openRouterReasoningEffort";
+    const native: ModelSpec = Object.freeze(provider === "native"
+      ? { ...snapshot, route: "workers-ai:fixture/native", id: "fixture/native", nativeReasoningEffort: "high" }
+      : { ...snapshot, route: "gateway:router-alias/fixture", id: "fixture", openRouterReasoningEfforts: ["low", "high"],
+        routing: { gatewayId: "fixture", provider: { id: "router-alias", type: "openai-compatible", gatewaySlug: "custom-router", gatewayPath: "",
+          baseUrl: "https://openrouter.ai/api/v1", enabled: true } } } satisfies ModelSpec);
+    const lowRequest = JSON.stringify({ sourceId: explicitlySelectedSourceId, revisionId: explicitlySelectedRevisionId, model: native.route, [field]: "low" });
     f.db.prepare("UPDATE source_revision SET distill_model=?,distill_request_json=? WHERE id=?")
       .run(native.route, lowRequest, explicitlySelectedRevisionId);
     // Exercise stale admission, scheduler error-pause and cost metadata error-pause against the same replacement intent.
@@ -798,11 +803,11 @@ describe("DistillWorkflow admitted model snapshot", () => {
       await scheduleDistillation(f.env, explicitlySelectedRevisionId);
       expect(f.db.prepare("SELECT distill_state FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId)).toEqual({ distill_state: "paused" });
       await requestUnderstanding(f.env, { type: "owner" } as Actor,
-        { sourceId: explicitlySelectedSourceId, model: native.route, nativeReasoningEffort: "high" });
+        { sourceId: explicitlySelectedSourceId, model: native.route, [field]: "high" });
       const replacement = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId);
       expect(replacement).toMatchObject({ distill_state: "queued", distill_attempt_id: null, distill_calls: 0,
         distill_token_limit: null, distill_token_limit_kind: null, distill_estimated_cost_microusd: 0,
-        distill_request_json: JSON.stringify({ sourceId: explicitlySelectedSourceId, revisionId: explicitlySelectedRevisionId, model: native.route, nativeReasoningEffort: "high" }) });
+        distill_request_json: JSON.stringify({ sourceId: explicitlySelectedSourceId, revisionId: explicitlySelectedRevisionId, model: native.route, [field]: "high" }) });
       f.db.prepare("UPDATE source_revision SET distill_state='done' WHERE id=?").run(revisionId);
       for (const lookup of held) lookup.release();
       await Promise.all(staleAdmissions);
@@ -810,8 +815,9 @@ describe("DistillWorkflow admitted model snapshot", () => {
       expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(explicitlySelectedRevisionId)).toEqual(replacement);
       await scheduleDistillation(f.env, explicitlySelectedRevisionId);
       expect(f.createWorkflow).toHaveBeenCalledExactlyOnceWith({ id: `distill-${explicitlySelectedRevisionId}`,
-        params: { revisionId: explicitlySelectedRevisionId, model: native } });
-      expect(native.nativeReasoningEffort).toBe("high");
+        params: { revisionId: explicitlySelectedRevisionId, model: { ...native, [field]: "high" } } });
+      if (provider === "native") expect(native.nativeReasoningEffort).toBe("high");
+      else expect(native).not.toHaveProperty("openRouterReasoningEffort");
       expect(generateText).not.toHaveBeenCalled(); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
     } finally {
       for (const lookup of held) lookup.release();

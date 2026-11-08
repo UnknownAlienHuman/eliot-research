@@ -20,6 +20,7 @@ export interface UnderstandingInput {
   saveAvailable?: boolean | undefined;
   model?: string | undefined;
   nativeReasoningEffort?: NativeReasoningEffort | undefined;
+  openRouterReasoningEffort?: string | undefined;
   retry?: { attemptId: string; previousAttemptId: string } | undefined;
 }
 

@@ -340,6 +340,8 @@ describe('Source claim evidence presentation', () => {
     guide: 'Done guide', digest: null, glossary: [], report: null, claims: [], citations: [] };
   const retryModel: ModelRoute = { route: 'workers-ai:reasoning-fixture', id: 'reasoning-fixture', label: 'Native fixture',
     enabled: true, contextTokens: 1024, maxOutputTokens: 128, nativeReasoningEffort: 'high', checkedOn: null };
+  const openRouterModel = { ...retryModel, route: 'gateway:openrouter/effort-fixture', id: 'effort-fixture',
+    label: 'OpenRouter fixture', openRouterReasoningEfforts: ['minimal', 'xhigh'] };
   const waitFor = async (predicate: () => boolean): Promise<void> => {
     for (let attempt = 0; attempt < 100; attempt++) {
       if (predicate()) return;
@@ -403,12 +405,16 @@ describe('Source claim evidence presentation', () => {
     }
   });
 
-  it('freezes Low across an uncertain retry reply and remount, then shows only the recorded requested profile', async () => {
+  it.each([
+    { model: retryModel, field: 'nativeReasoningEffort', effortValue: 'low', otherValue: 'high', status: 'Requested native reasoning effort', recordedLabel: 'Low' },
+    { model: openRouterModel, field: 'openRouterReasoningEffort', effortValue: 'xhigh', otherValue: 'minimal', status: 'Requested OpenRouter reasoning effort', recordedLabel: 'xhigh' },
+  ])('freezes $field across an uncertain reply and remount, then shows only its recorded literal', async ({ model, field, effortValue, otherValue, status, recordedLabel }) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     sessionStorage.clear();
     const host = document.createElement('div'); document.body.appendChild(host);
     const root = createRoot(host);
-    const failed: Understanding = { ...retryFixture, state: 'failed', error: 'Offline failed attempt.' };
+    const failed: Understanding = { ...retryFixture, state: 'failed', error: 'Offline failed attempt.',
+      progress: { ...retryFixture.progress, model: model.route, configuredModel: model.route } };
     let current = failed, profileKnown = true;
     const posts: string[] = [];
     let rejectFirst!: (reason: Error) => void;
@@ -416,15 +422,17 @@ describe('Source claim evidence presentation', () => {
       const url = new URL(String(input), 'http://localhost'), method = init?.method ?? 'GET';
       if (method === 'POST' && url.pathname === '/api/sources/s1/understanding') {
         const body = String(init?.body); posts.push(body);
-        const parsed = JSON.parse(body) as { nativeReasoningEffort?: 'low' | 'high'; retry: { attemptId: string } };
+        const parsed = JSON.parse(body) as { nativeReasoningEffort?: 'low' | 'high'; openRouterReasoningEffort?: string; retry: { attemptId: string } };
         if (posts.length === 1) return new Promise<Response>((_resolve, reject) => { rejectFirst = reject; });
         current = { ...failed, state: 'queued', attemptId: parsed.retry.attemptId, currentAttemptId: parsed.retry.attemptId,
-          knownRequestId: parsed.retry.attemptId, progress: { ...failed.progress, ...(parsed.nativeReasoningEffort ? { nativeReasoningEffort: parsed.nativeReasoningEffort } : {}) } };
+          knownRequestId: parsed.retry.attemptId, progress: { ...failed.progress,
+            ...(parsed.nativeReasoningEffort ? { nativeReasoningEffort: parsed.nativeReasoningEffort } : {}),
+            ...(parsed.openRouterReasoningEffort ? { openRouterReasoningEffort: parsed.openRouterReasoningEffort } : {}) } };
         return Response.json({ revisionId: 'r1', attemptId: parsed.retry.attemptId });
       }
       if (method !== 'GET') throw new Error('Unexpected understanding mutation.');
-      if (url.pathname === '/api/models') return Response.json({ models: [{ ...retryModel,
-        ...(profileKnown ? {} : { nativeReasoningEffort: undefined }) }], defaultModel: 'gateway:answers/other-model' });
+      if (url.pathname === '/api/models') return Response.json({ models: [profileKnown ? model
+        : { ...model, nativeReasoningEffort: undefined, openRouterReasoningEfforts: undefined }], defaultModel: 'gateway:answers/other-model' });
       if (url.pathname === '/api/sources/s1/understanding') return Response.json(current);
       throw new Error('Unexpected understanding read.');
     }));
@@ -449,14 +457,14 @@ describe('Source claim evidence presentation', () => {
         return effort instanceof HTMLSelectElement && effort.disabled === false;
       });
       expect(posts).toEqual([]);
-      expect(host.textContent).toContain('Requested native reasoning effort: Unknown (not recorded).');
-      await act(async () => { effort().value = 'low'; effort().dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(host.textContent).toContain(status + ': Unknown (not recorded).');
+      await act(async () => { effort().value = effortValue; effort().dispatchEvent(new Event('change', { bubbles: true })); });
       expect(posts).toEqual([]);
       await act(async () => button('Retry understanding').click());
       await waitFor(() => posts.length === 1);
       const frozen = posts[0];
       if (frozen === undefined) throw new Error('The Low retry was not captured.');
-      expect(JSON.parse(frozen)).toEqual({ revisionId: 'r1', nativeReasoningEffort: 'low',
+      expect(JSON.parse(frozen)).toEqual({ revisionId: 'r1', [field]: effortValue,
         retry: { attemptId: expect.any(String), previousAttemptId: 'attempt-1' } });
       expect(sessionStorage.getItem('understanding-retry:s1:r1')).toBe(frozen);
       expect(effort().disabled).toBe(true);
@@ -467,18 +475,166 @@ describe('Source claim evidence presentation', () => {
       profileKnown = false;
       await act(async () => render('reopened'));
       await waitFor(() => Array.from(host.querySelectorAll('button')).some(candidate => candidate.textContent === 'Send same request'));
-      expect(posts).toHaveLength(1); expect(effort().disabled).toBe(true); expect(effort().value).toBe('low');
-      await act(async () => { effort().value = 'high'; effort().dispatchEvent(new Event('change', { bubbles: true })); });
+      expect(posts).toHaveLength(1); expect(effort().disabled).toBe(true); expect(effort().value).toBe(effortValue);
+      await act(async () => { effort().value = otherValue; effort().dispatchEvent(new Event('change', { bubbles: true })); });
       expect(sessionStorage.getItem('understanding-retry:s1:r1')).toBe(frozen);
       expect(posts).toHaveLength(1);
       await act(async () => button('Send same request').click());
       await waitFor(() => posts.length === 2 && sessionStorage.getItem('understanding-retry:s1:r1') === null);
       expect(posts[1]).toBe(frozen);
-      expect(host.textContent).toContain('Requested native reasoning effort: Low.');
+      expect(host.textContent).toContain(status + ': ' + recordedLabel + '.');
     } finally {
       sessionStorage.removeItem('understanding-retry:s1:r1');
       await act(async () => root.unmount());
       host.remove(); client.clear();
+    }
+  });
+
+  it('uses published OpenRouter choices without inference, clears route drafts and isolates a late Understand reply', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    sessionStorage.clear();
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host);
+    const other = { ...openRouterModel, route: 'gateway:openrouter/other-fixture', id: 'other-fixture' };
+    const unknown = { ...openRouterModel, route: 'gateway:openrouter/unknown-fixture', id: 'unknown-fixture', openRouterReasoningEfforts: undefined };
+    const posts: Array<{ path: string; body: string }> = [];
+    let releaseFirst!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost'), method = init?.method ?? 'GET';
+      if (method === 'POST' && /\/api\/sources\/s[12]\/understanding$/.test(url.pathname)) {
+        const body = String(init?.body); posts.push({ path: url.pathname, body });
+        if (posts.length === 1) return new Promise<Response>(resolve => { releaseFirst = resolve; });
+        return Response.json({ revisionId: 'r2' });
+      }
+      if (method !== 'GET') throw new Error('Selection must not write settings or start another operation.');
+      if (url.pathname === '/api/models') return Response.json({ models: [openRouterModel, other, unknown, retryModel] });
+      if (/\/api\/sources\/s[12]\/understanding$/.test(url.pathname)) {
+        const second = url.pathname.includes('/s2/');
+        return Response.json({ ...retryFixture, sourceId: second ? 's2' : 's1', revisionId: second ? 'r2' : 'r1', state: 'none',
+          progress: { ...retryFixture.progress, model: null, configuredModel: openRouterModel.route } });
+      }
+      throw new Error('Unexpected understanding read.');
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const render = (sourceId = 's1', revisionId = 'r1') => root.render(<QueryClientProvider client={client}><MemoryRouter>
+      <SourceUnderstanding projectId='p1' sourceId={sourceId} revisionId={revisionId} sourceTitle='Transformer' />
+    </MemoryRouter></QueryClientProvider>);
+    const select = (label: string) => {
+      const found = host.querySelector('select[aria-label="' + label + '"]');
+      if (!(found instanceof HTMLSelectElement)) throw new Error('Missing control: ' + label);
+      return found;
+    };
+    const change = async (label: string, value: string) => {
+      await act(async () => { const control = select(label); control.value = value; control.dispatchEvent(new Event('change', { bubbles: true })); });
+    };
+    const start = () => {
+      const found = Array.from(host.querySelectorAll('button')).find(button => button.textContent === 'Understand source');
+      if (!found) throw new Error('Missing Understand source action.');
+      return found;
+    };
+    try {
+      await act(async () => render());
+      await waitFor(() => {
+        const control = host.querySelector('select[aria-label="Understanding reasoning effort"]');
+        return control instanceof HTMLSelectElement && !control.disabled;
+      });
+      expect(Array.from(select('Understanding reasoning effort').options).map(option => option.value)).toEqual(['', 'minimal', 'xhigh']);
+      expect(select('Understanding reasoning effort').options[0]?.textContent).toBe('Automatic');
+      await change('Understanding reasoning effort', 'xhigh');
+      expect(posts).toEqual([]);
+      await change('Understanding model: provider', 'workers-ai');
+      expect(select('Understanding reasoning effort').value).toBe('');
+      expect(select('Understanding reasoning effort').disabled).toBe(true);
+      await change('Understanding model', retryModel.route);
+      await change('Understanding reasoning effort', 'low');
+      await change('Understanding model: provider', 'openrouter');
+      await change('Understanding model', openRouterModel.route);
+      expect(select('Understanding reasoning effort').value).toBe('');
+      await change('Understanding reasoning effort', 'minimal');
+      await change('Understanding model', other.route);
+      expect(select('Understanding reasoning effort').value).toBe('');
+      await change('Understanding reasoning effort', 'xhigh');
+      await change('Understanding model', unknown.route);
+      expect(Array.from(select('Understanding reasoning effort').options).map(option => option.value)).toEqual(['']);
+      expect(select('Understanding reasoning effort').disabled).toBe(true);
+      expect(posts).toEqual([]);
+      await change('Understanding model', openRouterModel.route);
+      await change('Understanding reasoning effort', 'xhigh');
+      await act(async () => start().click());
+      await waitFor(() => posts.length === 1);
+      expect(JSON.parse(posts[0]?.body ?? '{}')).toEqual({ revisionId: 'r1', model: openRouterModel.route, openRouterReasoningEffort: 'xhigh' });
+      await act(async () => render('s2', 'r2'));
+      await waitFor(() => {
+        const control = host.querySelector('select[aria-label="Understanding reasoning effort"]');
+        return control instanceof HTMLSelectElement && !control.disabled;
+      });
+      expect(select('Understanding reasoning effort').value).toBe('');
+      await act(async () => releaseFirst(Response.json({ revisionId: 'r1' })));
+      expect(host.textContent).not.toContain('Request accepted.');
+      expect(start().disabled).toBe(false);
+      await act(async () => start().click());
+      await waitFor(() => posts.length === 2);
+      expect(posts[1]?.path).toBe('/api/sources/s2/understanding');
+      expect(JSON.parse(posts[1]?.body ?? '{}')).toEqual({ revisionId: 'r2' });
+    } finally {
+      await act(async () => root.unmount()); host.remove(); client.clear();
+    }
+  });
+
+  it('retains an old Automatic pending body byte-for-byte and reads historical efforts without catalogue enrichment', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    sessionStorage.clear();
+    const pendingId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const frozen = '{\n "retry": {"previousAttemptId":"attempt-1","attemptId":"' + pendingId + '"},\n "revisionId": "r1"\n}';
+    sessionStorage.setItem('understanding-retry:s1:r1', frozen);
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host);
+    let current: Understanding = { ...retryFixture, state: 'failed', progress: { ...retryFixture.progress,
+      model: openRouterModel.route, configuredModel: openRouterModel.route } };
+    const posts: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost'), method = init?.method ?? 'GET';
+      if (method === 'POST' && url.pathname === '/api/sources/s1/understanding') {
+        posts.push(String(init?.body));
+        current = { ...current, state: 'done', knownRequestId: pendingId, attemptId: pendingId, currentAttemptId: pendingId };
+        return Response.json({ revisionId: 'r1', attemptId: pendingId });
+      }
+      if (method !== 'GET') throw new Error('Unexpected mutation.');
+      if (url.pathname === '/api/models') return Response.json({ models: [openRouterModel] });
+      if (url.pathname.endsWith('/understanding/history')) return Response.json({ attempts: [{ attemptId: 'historical', archivedAt: 1 }], nextCursor: null });
+      if (url.pathname === '/api/sources/s1/understanding') return Response.json(url.searchParams.get('attemptId') === 'historical'
+        ? { ...current, attemptId: 'historical', progress: { ...current.progress, openRouterReasoningEffort: 'retired-literal' } } : current);
+      throw new Error('Unexpected understanding read.');
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const button = (label: string) => {
+      const found = Array.from(host.querySelectorAll('button')).find(item => item.textContent?.startsWith(label));
+      if (!found) throw new Error('Missing action: ' + label);
+      return found;
+    };
+    try {
+      await act(async () => root.render(<QueryClientProvider client={client}><MemoryRouter>
+        <SourceUnderstanding projectId='p1' sourceId='s1' revisionId='r1' sourceTitle='Transformer' />
+      </MemoryRouter></QueryClientProvider>));
+      await waitFor(() => Array.from(host.querySelectorAll('button')).some(item => item.textContent === 'Send same request' && !item.disabled));
+      const effort = host.querySelector('select[aria-label="Understanding reasoning effort"]');
+      if (!(effort instanceof HTMLSelectElement)) throw new Error('Missing reasoning effort control.');
+      expect(effort.disabled).toBe(true); expect(effort.value).toBe(''); expect(posts).toEqual([]);
+      expect(host.textContent).toContain('Requested OpenRouter reasoning effort: Unknown (not recorded).');
+      await act(async () => button('Send same request').click());
+      await waitFor(() => posts.length === 1 && sessionStorage.getItem('understanding-retry:s1:r1') === null);
+      expect(posts[0]).toBe(frozen);
+      expect(JSON.parse(posts[0] ?? '{}')).not.toHaveProperty('openRouterReasoningEffort');
+      expect(JSON.parse(posts[0] ?? '{}')).not.toHaveProperty('nativeReasoningEffort');
+      expect(host.textContent).toContain('Requested OpenRouter reasoning effort: Unknown (not recorded).');
+      await act(async () => button('Previous attempts').click());
+      await waitFor(() => Array.from(host.querySelectorAll('button')).some(item => item.textContent?.startsWith('View previous attempt')));
+      await act(async () => button('View previous attempt').click());
+      await waitFor(() => host.textContent?.includes('Requested OpenRouter reasoning effort: retired-literal.') === true);
+      expect(posts).toHaveLength(1);
+      expect(host.querySelector('select[aria-label="Understanding reasoning effort"]')).toBeNull();
+    } finally {
+      sessionStorage.clear(); await act(async () => root.unmount()); host.remove(); client.clear();
     }
   });
 

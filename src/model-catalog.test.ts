@@ -230,13 +230,50 @@ describe("provider model catalogue discovery", () => {
     const models = await discoverGatewayModels(defaultProviders());
     const byId = new Map(models.map((model) => [model.id, model]));
     expect(byId.get("provider/crouton-like")).toMatchObject({ structuredReasoningEffort: "minimal", structuredOutputs: true, enabled: true });
+    expect(byId.get("provider/crouton-like")?.openRouterReasoningEfforts).toEqual(["max", "xhigh", "high", "medium", "low", "minimal"]);
     expect(byId.get("provider/crouton-like")).not.toHaveProperty("optionalReasoning");
     expect(byId.get("provider/mandatory-false")).toMatchObject({ optionalReasoning: true });
+    expect(byId.get("provider/mandatory-false")?.openRouterReasoningEfforts).toEqual(["max", "minimal"]);
     expect(byId.get("provider/mandatory-false")).not.toHaveProperty("structuredReasoningEffort");
     for (const id of ["provider/missing-efforts", "provider/malformed-efforts", "provider/shorthand-only", "provider/no-minimal"]) {
       expect(byId.get(id)).not.toHaveProperty("structuredReasoningEffort");
       expect(byId.get(id)).not.toHaveProperty("optionalReasoning");
     }
+    expect(byId.get("provider/no-minimal")?.openRouterReasoningEfforts).toEqual(["max", "high"]);
+    for (const id of ["provider/missing-efforts", "provider/malformed-efforts", "provider/shorthand-only"])
+      expect(byId.get(id)).not.toHaveProperty("openRouterReasoningEfforts");
+  });
+
+  it("publishes whole bounded reasoning lists only for the official configured API root", async () => {
+    const row = { id: "provider/new-efforts", context_length: 100000, architecture: textChat,
+      supported_parameters: ["reasoning"], reasoning: { mandatory: true, supported_efforts: ["minimal", "high"] } };
+    const malformed = [
+      {}, { mandatory: "true", supported_efforts: ["high"] },
+      { mandatory: true, supported_efforts: [] }, { mandatory: true, supported_efforts: ["high", "high"] },
+      { mandatory: true, supported_efforts: ["high", 1] },
+      { mandatory: true, supported_efforts: ["high", "none"] }, { mandatory: true, supported_efforts: ["high", "off"] },
+      { mandatory: true, supported_efforts: Array.from({ length: 17 }, (_, i) => "effort_" + i) },
+      { mandatory: true, supported_efforts: ["high", "x".repeat(33)] },
+      { mandatory: true, supported_efforts: ["high", "высокий"] },
+      { mandatory: true, supported_efforts: ["high", "High"] },
+      { mandatory: true, supported_efforts: ["high", "1high"] },
+      { mandatory: true, supported_efforts: ["high", "low\n"] },
+    ];
+    const boundary = ["x".repeat(32), ...Array.from({ length: 15 }, (_, i) => "effort_" + i)];
+    catalogues([row], [row,
+      ...malformed.map((reasoning, i) => ({ ...row, id: "invalid/" + i, reasoning })),
+      { ...row, id: "provider/parse-boundary", reasoning: { mandatory: false, supported_efforts: boundary } },
+      { ...row, id: "provider/optional-off", reasoning: { mandatory: false, supported_efforts: ["none", "off", "high"] } },
+      { ...row, id: "provider/unadvertised", supported_parameters: ["reasoning_effort"] },
+      { ...row, id: "provider/no-mandatory", reasoning: { supported_efforts: ["high"] } },
+    ]);
+    const models = await discoverGatewayModels(defaultProviders());
+    expect(models.find(model => model.route === "gateway:openrouter/" + row.id)?.openRouterReasoningEfforts).toEqual(["minimal", "high"]);
+    expect(models.find(model => model.route === "gateway:command-code/" + row.id)).not.toHaveProperty("openRouterReasoningEfforts");
+    expect(models.find(model => model.id === "provider/parse-boundary")?.openRouterReasoningEfforts).toEqual(boundary);
+    expect(models.find(model => model.id === "provider/optional-off")?.openRouterReasoningEfforts).toEqual(["none", "off", "high"]);
+    for (const model of models.filter(model => model.id.startsWith("invalid/") || ["provider/unadvertised", "provider/no-mandatory"].includes(model.id)))
+      expect(model).not.toHaveProperty("openRouterReasoningEfforts");
   });
 
   it("propagates temperature and optional reasoning only from advertised metadata", async () => {
@@ -313,7 +350,8 @@ describe("provider model catalogue discovery", () => {
   it("writes explicit discovery to R2 and serves the snapshot without another network request", async () => {
     const fetcher = catalogues(
       [{ id: "snapshot-vendor/cc-model", name: "Snapshot CC", context_length: 128000, supported_endpoints: ["/chat/completions"] }],
-      [{ id: "snapshot-vendor/or-model", context_length: 96000, architecture: textChat, pricing: { prompt: "0.000001", completion: "0.000002" } }],
+      [{ id: "snapshot-vendor/or-model", context_length: 96000, architecture: textChat, pricing: { prompt: "0.000001", completion: "0.000002" },
+        supported_parameters: ["reasoning"], reasoning: { mandatory: true, supported_efforts: ["minimal", "high"] }, openRouterReasoningEffort: "high" }],
     );
     const bucket = fakeBucket();
     const env = fixtureEnv(bucket.binding);
@@ -331,11 +369,46 @@ describe("provider model catalogue discovery", () => {
     const storedProviders = stored["providers"] as unknown[];
     expect(Array.isArray(storedProviders)).toBe(true);
     expect(storedProviders.length).toBe(3);
+    const storedRouter = (storedModels as Record<string, unknown>[]).find(model => model.id === "snapshot-vendor/or-model");
+    if (!storedRouter) throw new Error("The stored OpenRouter fixture is missing.");
+    expect(storedRouter.openRouterReasoningEfforts).toEqual(["minimal", "high"]);
+    expect(storedRouter).not.toHaveProperty("openRouterReasoningEffort");
+    // Even an extra field in a saved row cannot supply an owner-selected profile.
+    storedRouter.openRouterReasoningEffort = "high";
     fetcher.mockClear();
     const read = await readModelCatalog(env);
     expect(read).toEqual(refreshed);
     expect(read.snapshot.refreshNeeded).toBe(false);
+    const admitted = await requireAvailableModel(env, "gateway:openrouter/snapshot-vendor/or-model");
+    expect(admitted.openRouterReasoningEfforts).toEqual(["minimal", "high"]);
+    expect(admitted).not.toHaveProperty("openRouterReasoningEffort");
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("validates saved choice bounds and drops choices when the configured official root changes", async () => {
+    const providers = defaultProviders();
+    const row = { route: "gateway:openrouter/stored/efforts", id: "stored/efforts", label: "Stored efforts",
+      contextTokens: 64000, maxOutputTokens: 8192, checkedOn: "2026-11-08", enabled: true };
+    const snapshot = { updatedAt: "2026-11-08T00:00:00Z", warnings: [], providers };
+    const network = vi.fn(async () => { throw new Error("Catalogue reads must not discover or infer."); });
+    vi.stubGlobal("fetch", network);
+    for (const choices of [[], ["high", "high"], ["high", "bad value"], ["x".repeat(33)], Array.from({ length: 17 }, (_, i) => "e" + i)]) {
+      const bucket = fakeBucket({ ...snapshot, models: [{ ...row, openRouterReasoningEfforts: choices }] });
+      const read = await readModelCatalog(fixtureEnv(bucket.binding));
+      expect(read.snapshot.refreshNeeded).toBe(true);
+      expect(read.models.every(model => model.openRouterReasoningEfforts === undefined)).toBe(true);
+    }
+    const bucket = fakeBucket({ ...snapshot, models: [{ ...row, openRouterReasoningEfforts: ["high"] }] });
+    const changedProviders = providers.map(provider => {
+      if (provider.id !== "openrouter") return provider;
+      const changed = { ...provider, baseUrl: "https://vendor.example/api/v1" };
+      delete changed.dataCollection;
+      return changed;
+    });
+    const read = await readModelCatalog(fixtureEnv(bucket.binding, { providers: changedProviders }));
+    expect(read.models.find(model => model.route === row.route)).toMatchObject({ enabled: false });
+    expect(read.models.find(model => model.route === row.route)).not.toHaveProperty("openRouterReasoningEfforts");
+    expect(network).not.toHaveBeenCalled();
   });
 
   it("preserves a previous provider slice when an explicit refresh partially fails", async () => {

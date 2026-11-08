@@ -903,6 +903,15 @@ Low lookup cannot claim or pause a same-route High intent, including original nu
 missing fields stay omitted without inferring High from today's catalogue. The source Material choice changes no
 settings and starts no request until Understand/Retry; unresolved/busy requests retain the exact pending body.
 Compact Low quality and delivery remain unqualified; High latency as a failure cause remains unproven.
+The same owner action may instead supply `openRouterReasoningEffort`, a lowercase identifier of at most 32
+characters, for the official OpenRouter API root and a member of the same resolved snapshot's published
+`openRouterReasoningEfforts`. Supplying both profile fields is invalid before mutation. The explicit literal
+participates in accepted/rejected retry identity, remains in existing intent JSON, and is copied into the admitted
+`ModelSpec` for both calls. An unavailable queued choice pauses with a fixed safe error and its intent intact,
+without fallback. Omission preserves old intent bytes and automatic policy; an undispatched original route change
+clears an omitted old route-specific choice. Save/recheck rejects profile selection. Current and archived
+`progress.openRouterReasoningEffort` reads only recorded intent, never today's catalogue or an inferred default.
+This does not qualify model quality or close any K2/K3 gate.
 Source bytes, gates, two calls/zero retries, 6-minute call/7-minute step/15-minute ceiling and 16 MiB
 remain unchanged. `pnpm eval k3 --retry-only` applies strict migrations and exercises pinned
 Workerd/Workflows/D1/R2 and the production browser controls in desktop and compact layouts. Both paid producer
@@ -1514,7 +1523,13 @@ instead set the optional `CatalogModel.structuredReasoningEffort: 'minimal'` pro
 `supported_efforts` containing `minimal`; missing, malformed or inconsistent metadata leaves it unset, with no
 model or provider allowlist. When frozen in the admitted spec, existing OpenRouter Gateway bodies for structured
 jobs send `reasoning: { effort: 'minimal' }` through the existing transport; the non-mandatory disabled form and
-chat/native behaviour are unchanged. The `minimal` request profile is a behaviour contract, not a quality, length
+chat/native behaviour are unchanged. The optional published `CatalogModel.openRouterReasoningEfforts` list enables
+an explicit per-attempt owner choice through the existing understanding action. Backend admission checks membership
+against that same resolved model's frozen official OpenRouter provider and list; `ModelSpec.openRouterReasoningEffort`
+then takes precedence over automatic minimal/disable behaviour for structured calls. Without an explicit choice,
+existing minimal/disable/unset policy remains; omission does not request the provider's `max` default. Missing old
+snapshot fields remain unknown and are not enriched on reads. Native `low`/`high`, chat, budgets and privacy remain
+unchanged. The `minimal` request profile is a behaviour contract, not a quality, length
 or speed guarantee. Checked 2026-11-08 against the
 [OpenRouter models catalogue](https://openrouter.ai/api/v1/models) and
 [chat API reference](https://openrouter.ai/docs/client-sdks/python/api-reference/chat); the OpenRouter publication

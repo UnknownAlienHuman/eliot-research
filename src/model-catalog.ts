@@ -201,6 +201,13 @@ async function readCatalogue(response: Response): Promise<RecordValue> {
 // date and availability only. No currency, price, rate or neuron conversion here;
 // admission and token bounds live in root models.ts (modelTokenLimit) and quota policy.
 
+// Metadata parse bounds only, unrelated to model token capacity or job budgets.
+export function isOpenRouterReasoningEfforts(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= 16 &&
+    value.every((effort) => typeof effort === "string" && effort.length <= 32 && /^[a-z][a-z0-9_-]{0,31}$/.exec(effort)?.[0] === effort) &&
+    new Set(value).size === value.length;
+}
+
 function normalize(provider: ModelProvider, value: unknown, checkedOn: string): CatalogModel | null {
   const row = record(value), id = row?.id;
   if (!row || typeof id !== "string" || !id || id !== id.trim() || id.length > MAX_ID_LENGTH
@@ -228,6 +235,10 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
   const optionalReasoning = reasoning?.mandatory === false && hasReasoningParameter;
   const structuredReasoningEffort = reasoning?.mandatory === true && hasReasoningParameter &&
     validUniqueEfforts && (supportedEfforts as string[]).includes("minimal") ? "minimal" as const : undefined;
+  const openRouterReasoningEfforts = isOpenRouterApiBase(provider.baseUrl) && hasReasoningParameter &&
+    typeof reasoning?.mandatory === "boolean" && isOpenRouterReasoningEfforts(supportedEfforts) &&
+    !(reasoning.mandatory && (supportedEfforts.includes("none") || supportedEfforts.includes("off")))
+    ? [...supportedEfforts] : undefined;
   // Chat support is explicit only: Command Code supported_endpoints when present,
   // otherwise OpenRouter architecture modalities when present. No endpoint guessing:
   // a catalogue without advertised capabilities remains selectable with unknown context.
@@ -253,6 +264,7 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
     ...(Array.isArray(architecture?.input_modalities) ? { supportsImages: architecture.input_modalities.includes("image") } : {}),
     ...(optionalReasoning ? { optionalReasoning: true } : {}),
     ...(structuredReasoningEffort !== undefined ? { structuredReasoningEffort } : {}),
+    ...(openRouterReasoningEfforts !== undefined ? { openRouterReasoningEfforts } : {}),
     checkedOn,
     enabled: unavailableReason === null, ...(unavailableReason ? { unavailableReason } : {}),
   };

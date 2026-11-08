@@ -6,6 +6,7 @@ import type { ModelSpec } from "./models";
 import type * as Models from "./models";
 import type * as AI from "ai";
 import type * as ModelTransport from "./model-transport";
+import type { DistillInput } from "./shared/api";
 
 vi.mock("cloudflare:workers", () => ({ WorkflowEntrypoint: class { constructor(_ctx: unknown, readonly env: Env) {} } }));
 vi.mock("./models", async (original) => ({ ...await original<typeof Models>(), requireAvailableModel: vi.fn() }));
@@ -24,6 +25,10 @@ const sourceId = "058fd2a9-6b6b-4a59-ab28-94792ebf05cf", revisionId = "82f80504-
 const retryId = "05a6d34f-354f-4278-b882-2475c0c70030", otherId = "0acb1c5b-0b9c-442e-b846-26cef71c718f";
 const actor: Actor = { type: "owner", id: "owner", authentication: "local" };
 const model: ModelSpec = { route: "workers-ai:fixture", id: "fixture", label: "Fixture", enabled: true, contextTokens: 262144, maxOutputTokens: 1024, checkedOn: "2026-11-04" };
+const openRouterModel: ModelSpec = { ...model, route: "gateway:router-alias/fixture", id: "fixture", maxOutputTokens: null, outputReserveTokens: 8192,
+  responseFormat: true, structuredOutputs: true, structuredReasoningEffort: "minimal", openRouterReasoningEfforts: ["minimal", "low", "high", "max"],
+  routing: { gatewayId: "fixture", provider: { id: "router-alias", type: "openai-compatible", gatewaySlug: "custom-router", gatewayPath: "",
+    baseUrl: "https://openrouter.ai/api/v1", enabled: true } } };
 const input = { sourceId, revisionId, retry: { attemptId: retryId, previousAttemptId: revisionId }, model: model.route };
 
 function fixture(calls = 1) {
@@ -37,7 +42,7 @@ function fixture(calls = 1) {
   const text = "The method retains canonical evidence.";
   const bodies = new Map([[`source/${revisionId}/distill.json`, original], [`source/${revisionId}/text.md`, text],
     [`source/${revisionId}/blocks.json`, JSON.stringify([{ id: 1, type: "paragraph", start: 0, end: text.length, heading: null }])]]);
-  const status = vi.fn(async () => ({ status: "complete" })), create = vi.fn(async () => ({}));
+  const status = vi.fn(async () => ({ status: "complete" })), create = vi.fn(async (_input: { id: string; params: DistillInput & { producerFormat?: "compact-k3-v1" } }) => ({}));
   let failPut = false, ambiguousBatch = false, failBatch = false;
   type Statement = { sql: string; args: SQLInputValue[] };
   const statement = (sql: string, args: SQLInputValue[] = []) => ({ sql, args, bind: (...values: SQLInputValue[]) => statement(sql, values),
@@ -85,26 +90,29 @@ function completedOutput(f: ReturnType<typeof fixture>) {
 
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(experimental_streamTextLowMemory).mockReset(); vi.mocked(requireAvailableModel).mockResolvedValue(model); });
 describe("explicit understanding retry", () => {
-  it("records literal Low, freezes the scheduler payload and replays before fresh model resolution", async () => {
-    const f = fixture(), high = Object.freeze({ ...model, nativeReasoningEffort: "high" as const });
-    const lowInput = { ...input, nativeReasoningEffort: "low" as const };
+  it.each(["native", "openrouter"] as const)("records literal Low, freezes the %s scheduler payload and replays before fresh model resolution", async provider => {
+    const field = provider === "native" ? "nativeReasoningEffort" : "openRouterReasoningEffort";
+    const f = fixture(), high = Object.freeze(provider === "native" ? { ...model, nativeReasoningEffort: "high" as const } : openRouterModel);
+    const lowInput = { ...input, model: high.route, [field]: "low" as const };
     vi.mocked(requireAvailableModel).mockResolvedValue(high);
     try {
       const old = await getUnderstanding(f.env, actor, { sourceId, revisionId });
       expect(old.progress).not.toHaveProperty("nativeReasoningEffort");
+      expect(old.progress).not.toHaveProperty("openRouterReasoningEffort");
       await requestUnderstanding(f.env, actor, lowInput);
       expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId)).toEqual({
-        request: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: model.route, nativeReasoningEffort: "low", producerFormat: "compact-k3-v1" }),
+        request: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: high.route, [field]: "low", producerFormat: "compact-k3-v1" }),
       });
-      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-attempt-${retryId}`, params: { revisionId, attemptId: retryId, model: { ...high, nativeReasoningEffort: "low" }, producerFormat: "compact-k3-v1" } });
-      expect(high.nativeReasoningEffort).toBe("high");
-      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress.nativeReasoningEffort).toBe("low");
+      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-attempt-${retryId}`, params: { revisionId, attemptId: retryId, model: { ...high, [field]: "low" }, producerFormat: "compact-k3-v1" } });
+      if (provider === "native") expect(high.nativeReasoningEffort).toBe("high");
+      else expect(high).not.toHaveProperty("openRouterReasoningEffort");
+      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress[field]).toBe("low");
       expect(await getUnderstanding(f.env, actor, { sourceId, revisionId, attemptId: revisionId })).toEqual({ ...old, currentAttemptId: retryId });
       const resolved = vi.mocked(requireAvailableModel).mock.calls.length;
       vi.mocked(requireAvailableModel).mockRejectedValue(new Error("Catalogue no longer available"));
       expect(await requestUnderstanding(f.env, actor, lowInput)).toEqual({ revisionId, attemptId: retryId });
-      await expect(requestUnderstanding(f.env, actor, { ...lowInput, nativeReasoningEffort: "high" })).rejects.toMatchObject({ status: 409 });
-      await expect(requestUnderstanding(f.env, actor, input)).rejects.toMatchObject({ status: 409 });
+      await expect(requestUnderstanding(f.env, actor, { ...lowInput, [field]: "high" })).rejects.toMatchObject({ status: 409 });
+      await expect(requestUnderstanding(f.env, actor, { ...input, model: high.route })).rejects.toMatchObject({ status: 409 });
       expect(requireAvailableModel).toHaveBeenCalledTimes(resolved); expect(f.create).toHaveBeenCalledTimes(1);
       expect(generateText).not.toHaveBeenCalled(); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
     } finally { f.db.close(); }
@@ -141,12 +149,124 @@ describe("explicit understanding retry", () => {
     const f = fixture();
     try {
       for (const value of [null, "", "max", "medium"]) await expect(requestUnderstanding(f.env, actor, { ...input, nativeReasoningEffort: value as never })).rejects.toThrow();
+      for (const value of [null, "", "x".repeat(33), "high/private"]) await expect(requestUnderstanding(f.env, actor, { ...input, openRouterReasoningEffort: value as never })).rejects.toThrow();
+      await expect(requestUnderstanding(f.env, actor, { ...input, nativeReasoningEffort: "low", openRouterReasoningEffort: "high" })).rejects.toThrow();
       expect(requireAvailableModel).not.toHaveBeenCalled(); expect(f.status).not.toHaveBeenCalled(); expect(f.create).not.toHaveBeenCalled();
       expect(f.db.prepare("SELECT count(*) AS n FROM distill_history").get()).toEqual({ n: 0 });
     } finally { f.db.close(); }
   });
-  it("retains a queued original Low intent on repeat and rejects a conflicting profile", async () => {
-    const f = fixture(0), high = Object.freeze({ ...model, nativeReasoningEffort: "high" as const });
+  it.each(["missing-list", "unpublished", "other-root"] as const)("rejects OpenRouter %s membership without archiving, and replays its exact rejected identity", async mode => {
+    const f = fixture(); completedOutput(f);
+    const unavailable = { ...openRouterModel };
+    if (mode === "missing-list") delete unavailable.openRouterReasoningEfforts;
+    else if (mode === "unpublished") unavailable.openRouterReasoningEfforts = ["minimal"];
+    else {
+      const routing = openRouterModel.routing;
+      if (!routing) throw new Error("The OpenRouter fixture has no frozen routing.");
+      unavailable.routing = { ...routing, provider: { ...routing.provider, baseUrl: "https://vendor.example/api/v1" } };
+    }
+    vi.mocked(requireAvailableModel).mockResolvedValue(unavailable);
+    const request = { ...input, model: unavailable.route, openRouterReasoningEffort: "high" };
+    const detail = "This model does not advertise the selected OpenRouter reasoning profile.";
+    try {
+      const before = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId), bodies = new Map(f.bodies);
+      const rejected = await requestUnderstanding(f.env, actor, request);
+      expect(rejected).toEqual({ revisionId, attemptId: retryId, rejected: detail });
+      expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId)).toEqual(before);
+      expect(f.bodies).toEqual(bodies); expect(f.create).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT request_json AS request,snapshot_key AS snapshot FROM distill_history WHERE attempt_id=?").get(retryId))
+        .toEqual({ request: JSON.stringify({ sourceId, revisionId, previousAttemptId: revisionId, model: unavailable.route,
+          openRouterReasoningEffort: "high", producerFormat: "compact-k3-v1" }), snapshot: null });
+      const lookups = vi.mocked(requireAvailableModel).mock.calls.length;
+      vi.mocked(requireAvailableModel).mockResolvedValue(openRouterModel);
+      expect(await requestUnderstanding(f.env, actor, request)).toEqual(rejected);
+      await expect(requestUnderstanding(f.env, actor, { ...request, openRouterReasoningEffort: "low" })).rejects.toMatchObject({ status: 409 });
+      await expect(requestUnderstanding(f.env, actor, { ...input, model: unavailable.route })).rejects.toMatchObject({ status: 409 });
+      expect(requireAvailableModel).toHaveBeenCalledTimes(lookups);
+    } finally { f.db.close(); }
+  });
+  it("rejects OpenRouter effort on Save/recheck before mutating retained output or receipts", async () => {
+    const f = fixture(); completedOutput(f);
+    try {
+      const before = f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId), bodies = new Map(f.bodies);
+      await expect(requestUnderstanding(f.env, actor, { sourceId, revisionId, saveAvailable: true, openRouterReasoningEffort: "high" }))
+        .rejects.toMatchObject({ status: 400 });
+      expect(f.db.prepare("SELECT * FROM source_revision WHERE id=?").get(revisionId)).toEqual(before);
+      expect(f.bodies).toEqual(bodies); expect(requireAvailableModel).not.toHaveBeenCalled();
+      expect(f.db.prepare("SELECT count(*) AS n FROM distill_history").get()).toEqual({ n: 0 });
+    } finally { f.db.close(); }
+  });
+  it("pauses an expired queued OpenRouter choice with its exact intent and resumes only the retained choice", async () => {
+    const f = fixture(0), request = JSON.stringify({ sourceId, revisionId, model: openRouterModel.route, openRouterReasoningEffort: "max" });
+    f.db.prepare("UPDATE source_revision SET distill_state='queued',distill_model=?,distill_request_json=? WHERE id=?")
+      .run(openRouterModel.route, request, revisionId);
+    vi.mocked(requireAvailableModel).mockResolvedValue({ ...openRouterModel, openRouterReasoningEfforts: ["minimal"] });
+    try {
+      await scheduleDistillation(f.env, revisionId);
+      expect(f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_request_json AS request,distill_error AS error FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ state: "paused", calls: 0, request, error: "This model does not advertise the selected OpenRouter reasoning profile." });
+      expect(f.create).not.toHaveBeenCalled();
+      vi.mocked(requireAvailableModel).mockResolvedValue(openRouterModel);
+      await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: openRouterModel.route });
+      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-${revisionId}`, params: { revisionId,
+        model: { ...openRouterModel, openRouterReasoningEffort: "max" } } });
+      expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId)).toEqual({ request });
+    } finally { f.db.close(); }
+  });
+  it("clears an omitted old OpenRouter choice only when an undispatched original changes route", async () => {
+    const f = fixture(0);
+    const request = JSON.stringify({ sourceId, revisionId, model: openRouterModel.route, openRouterReasoningEffort: "max" });
+    f.db.prepare("UPDATE source_revision SET distill_state='paused',distill_model=?,distill_request_json=? WHERE id=?")
+      .run(openRouterModel.route, request, revisionId);
+    try {
+      await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: model.route });
+      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-${revisionId}`, params: { revisionId, model } });
+      expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId))
+        .toEqual({ request: JSON.stringify({ sourceId, revisionId, model: model.route }) });
+      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress).not.toHaveProperty("openRouterReasoningEffort");
+    } finally { f.db.close(); }
+  });
+  it("reads current and archived owner literals without revalidating or enriching from today's catalogue", async () => {
+    const f = fixture(), request = JSON.stringify({ sourceId, revisionId, model: openRouterModel.route, openRouterReasoningEffort: "max" });
+    f.db.prepare("UPDATE source_revision SET distill_model=?,distill_request_json=? WHERE id=?").run(openRouterModel.route, request, revisionId);
+    vi.mocked(requireAvailableModel).mockResolvedValue({ ...openRouterModel, openRouterReasoningEfforts: ["minimal", "low"] });
+    try {
+      await requestUnderstanding(f.env, actor, { ...input, model: openRouterModel.route, openRouterReasoningEffort: "low" });
+      const lookups = vi.mocked(requireAvailableModel).mock.calls.length;
+      vi.mocked(requireAvailableModel).mockRejectedValue(new Error("No live catalogue on read"));
+      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress.openRouterReasoningEffort).toBe("low");
+      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId, attemptId: revisionId })).progress.openRouterReasoningEffort).toBe("max");
+      expect(requireAvailableModel).toHaveBeenCalledTimes(lookups);
+      const archived = JSON.parse(f.bodies.get(`source/${revisionId}/history/${retryId}.json`) ?? "null");
+      expect(archived.revision.distill_request_json).toBe(request);
+    } finally { f.db.close(); }
+  });
+  it("passes the same owner-selected OpenRouter snapshot to both compact calls without mutating the automatic profile", async () => {
+    const f = fixture(); vi.mocked(requireAvailableModel).mockResolvedValue(openRouterModel);
+    vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
+    const totalUsage = { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } };
+    vi.mocked(generateText).mockReset()
+      .mockResolvedValueOnce({ output: { candidates: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The method retains canonical evidence." }] }, totalUsage } as never)
+      .mockResolvedValueOnce({ output: { selected: [{ candidateId: "C0", reason: "The bound quote states this." }], rejected: [], guide: [] }, totalUsage } as never);
+    try {
+      await requestUnderstanding(f.env, actor, { ...input, model: openRouterModel.route, openRouterReasoningEffort: "high" });
+      const params = f.create.mock.calls[0]?.[0].params;
+      if (!params) throw new Error("The owner-selected Workflow snapshot was not created.");
+      await new DistillWorkflow({} as ExecutionContext, f.env).run({ payload: params } as never,
+        { do: async (_name: string, _options: unknown, callback: () => unknown) => callback() } as never);
+      expect(resolveModelTransport).toHaveBeenCalledTimes(2);
+      for (const [, frozen] of vi.mocked(resolveModelTransport).mock.calls) {
+        expect(frozen).toBe(params.model);
+        expect(frozen).toMatchObject({ openRouterReasoningEffort: "high", structuredReasoningEffort: "minimal" });
+      }
+      expect(openRouterModel).not.toHaveProperty("openRouterReasoningEffort");
+      expect(generateText).toHaveBeenCalledTimes(2); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
+      expect(vi.mocked(generateText).mock.calls.map(([options]) => options.maxOutputTokens)).toEqual([8192, 4096]);
+    } finally { vi.mocked(generateText).mockReset(); f.db.close(); }
+  });
+  it.each(["native", "openrouter"] as const)("retains a queued original %s Low intent on repeat and rejects a conflicting profile", async provider => {
+    const field = provider === "native" ? "nativeReasoningEffort" : "openRouterReasoningEffort";
+    const f = fixture(0), high = Object.freeze(provider === "native" ? { ...model, nativeReasoningEffort: "high" as const } : openRouterModel);
     vi.mocked(requireAvailableModel).mockResolvedValue(high);
     f.db.prepare("UPDATE source_revision SET distill_state='none' WHERE id=?").run(revisionId);
     // Fill both admission slots in the existing in-memory fixture.
@@ -154,18 +274,18 @@ describe("explicit understanding retry", () => {
       f.db.prepare("INSERT INTO source_revision(id,source_id,revision_no,created_by,created_at,distill_state,distill_started_at) VALUES(?,?,?,'owner',1,'running',?)")
         .run(id, sourceId, index + 2, Date.now());
     try {
-      await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: model.route, nativeReasoningEffort: "low" });
+      await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: high.route, [field]: "low" });
       const request = f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId);
-      expect(request).toEqual({ request: JSON.stringify({ sourceId, revisionId, model: model.route, nativeReasoningEffort: "low", producerFormat: "compact-k3-v1" }) });
-      await expect(requestUnderstanding(f.env, actor, { sourceId, revisionId, nativeReasoningEffort: "high" })).rejects.toMatchObject({ status: 409 });
+      expect(request).toEqual({ request: JSON.stringify({ sourceId, revisionId, model: high.route, [field]: "low", producerFormat: "compact-k3-v1" }) });
+      await expect(requestUnderstanding(f.env, actor, { sourceId, revisionId, [field]: "high" })).rejects.toMatchObject({ status: 409 });
       expect(f.create).not.toHaveBeenCalled();
       expect(f.db.prepare("SELECT distill_state AS state FROM source_revision WHERE id=?").get(revisionId)).toEqual({ state: "queued" });
       f.db.prepare("UPDATE source_revision SET distill_state='paused' WHERE id=?").run(revisionId);
       f.db.prepare("UPDATE source_revision SET distill_state='none' WHERE id IN (?,?)").run(otherId, retryId);
-      await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: model.route });
-      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-${revisionId}`, params: { revisionId, model: { ...high, nativeReasoningEffort: "low" }, producerFormat: "compact-k3-v1" } });
+      await requestUnderstanding(f.env, actor, { sourceId, revisionId, model: high.route });
+      expect(f.create).toHaveBeenCalledExactlyOnceWith({ id: `distill-${revisionId}`, params: { revisionId, model: { ...high, [field]: "low" }, producerFormat: "compact-k3-v1" } });
       expect(f.db.prepare("SELECT distill_request_json AS request FROM source_revision WHERE id=?").get(revisionId)).toEqual(request);
-      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress.nativeReasoningEffort).toBe("low");
+      expect((await getUnderstanding(f.env, actor, { sourceId, revisionId })).progress[field]).toBe("low");
     } finally { f.db.close(); }
   });
   it("resumes an undispatched paused original on Gateway without carrying its old native Low intent", async () => {

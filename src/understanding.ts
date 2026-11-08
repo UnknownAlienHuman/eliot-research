@@ -36,7 +36,7 @@ export interface Understanding { sourceId: string; revisionId: string; state: Di
   recordedUsage: RecordedUnderstandingUsage;
   attemptId: string; currentAttemptId: string; knownRequestId?: string | null; requestRejection?: string | null;
   authors: string; published: string | null;
-  progress: { attempts: number; limit: number; maximumTokens: number | null; recordedTokenLimit?: number | null; tokenLimitKind?: "published" | "unknown" | "legacy"; model: string | null; configuredModel: string | null; nativeReasoningEffort?: NativeReasoningEffort };
+  progress: { attempts: number; limit: number; maximumTokens: number | null; recordedTokenLimit?: number | null; tokenLimitKind?: "published" | "unknown" | "legacy"; model: string | null; configuredModel: string | null; nativeReasoningEffort?: NativeReasoningEffort; openRouterReasoningEffort?: string };
   guide: string | null; digest: string | null; glossary: GlossaryEntry[]; claims: UnderstandingClaim[];
   report: DistillReport | null; citations: { block: number; start: number; end: number }[] }
 
@@ -88,7 +88,15 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
       reportKey: r.distill_report_key, model: r.distill_model, tokenLimit: r.distill_token_limit, tokenLimitKind: r.distill_token_limit_kind, request: r.distill_request_json };
   }
   let nativeReasoningEffort: NativeReasoningEffort | undefined;
-  try { nativeReasoningEffort = z.object({ nativeReasoningEffort: z.enum(["low", "high"]).optional() }).parse(JSON.parse(row.request ?? "{}")).nativeReasoningEffort; }
+  let openRouterReasoningEffort: string | undefined;
+  try {
+    const recorded = z.object({ nativeReasoningEffort: z.enum(["low", "high"]).optional(),
+      openRouterReasoningEffort: z.string().max(32).regex(/^[a-z][a-z0-9_-]*$/).optional() })
+      .refine(value => value.nativeReasoningEffort === undefined || value.openRouterReasoningEffort === undefined)
+      .parse(JSON.parse(row.request ?? "{}"));
+    nativeReasoningEffort = recorded.nativeReasoningEffort;
+    openRouterReasoningEffort = recorded.openRouterReasoningEffort;
+  }
   catch { /* Legacy intent is not evidence of a requested profile. */ }
   const attemptId = row.attemptId ?? null;
   if (row.reportKey && row.reportKey !== understandingKey(revisionId, "distill.json", attemptId) && row.reportKey !== understandingKey(revisionId, "checked/distill.json", attemptId))
@@ -143,7 +151,8 @@ export async function getUnderstanding(env: Env, _actor: Actor, input: { sourceI
     recordedUsage: { tokenLimit: row.tokenLimit, tokenLimitKind: row.tokenLimitKind, calls: row.attempts, inputTokens: row.inputTokens, cachedTokens: row.cachedTokens, outputTokens: row.outputTokens,
       estimatedCostMicrousd: row.estimatedCostMicrousd, pricingCheckedOn: row.pricingCheckedOn, startedAt: row.startedAt, wallMs: row.wallMs },
     progress: { attempts: row.attempts, limit: 2, maximumTokens, recordedTokenLimit, tokenLimitKind,
-      model: row.model, configuredModel, ...(nativeReasoningEffort === undefined ? {} : { nativeReasoningEffort }) },
+      model: row.model, configuredModel, ...(nativeReasoningEffort === undefined ? {} : { nativeReasoningEffort }),
+      ...(openRouterReasoningEffort === undefined ? {} : { openRouterReasoningEffort }) },
     guide,
     digest,
     glossary: Array.isArray(glossary) ? glossary : [],

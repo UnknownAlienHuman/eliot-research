@@ -12,6 +12,7 @@ import { estimateModelInput } from "../model-input";
 import { joinContext, readContextBytes, readContextJson, reserve, type Materialization } from "../context";
 import type { ModelSpec } from "../models";
 import type { DistillInput, NativeReasoningEffort, UnderstandingInput } from "../shared/api";
+import { isOpenRouterApiBase } from "../shared/api";
 import { modelFailure, resolveModelTransport, safeErrorLogProjection } from "../model-transport";
 import { checkDistillContent, cleanDistillText, resolveQuoteBlock, resultStatement, sourceContextJson, splitDistillStatements, verifyClaims } from "../quotes";
 import type { CandidateClaim, VerifiedClaim } from "../quotes";
@@ -1416,8 +1417,12 @@ export class DistillWorkflow extends WorkflowEntrypoint<Env, DistillWorkflowPara
 }
 
 const nativeEffort = z.enum(["low", "high"]);
-function intentEffort(request: string | null): NativeReasoningEffort | undefined {
-  return z.object({ nativeReasoningEffort: nativeEffort.optional() }).parse(JSON.parse(request ?? "{}")).nativeReasoningEffort;
+const effortChoice = z.object({ nativeReasoningEffort: nativeEffort.optional(),
+  openRouterReasoningEffort: z.string().max(32).regex(/^[a-z][a-z0-9_-]*$/).optional() })
+  .refine(value => value.nativeReasoningEffort === undefined || value.openRouterReasoningEffort === undefined,
+    "Choose only one reasoning profile.");
+function intentEfforts(request: string | null) {
+  return effortChoice.parse(JSON.parse(request ?? "{}"));
 }
 function intentProducerFormat(request: string | null): DistillProducerFormat {
   if (request === null) return LEGACY_PRODUCER_FORMAT;
@@ -1449,6 +1454,15 @@ function withNativeEffort(model: ModelSpec, effort: NativeReasoningEffort | unde
   if (!model.route.startsWith("workers-ai:") || !nativeEffort.safeParse(model.nativeReasoningEffort).success)
     throw new LibraryError("invalid", "This model does not advertise a supported native reasoning profile.", 400);
   return { ...model, nativeReasoningEffort: effort };
+}
+function withAttemptEffort(model: ModelSpec, choice: z.infer<typeof effortChoice>): ModelSpec {
+  const { nativeReasoningEffort, openRouterReasoningEffort } = effortChoice.parse(choice);
+  if (openRouterReasoningEffort === undefined) return withNativeEffort(model, nativeReasoningEffort);
+  const provider = model.routing?.provider;
+  if (!model.route.startsWith("gateway:") || provider?.type !== "openai-compatible" || !isOpenRouterApiBase(provider.baseUrl)
+    || !Array.isArray(model.openRouterReasoningEfforts) || !model.openRouterReasoningEfforts.includes(openRouterReasoningEffort))
+    throw new LibraryError("invalid", "This model does not advertise the selected OpenRouter reasoning profile.", 400);
+  return { ...model, openRouterReasoningEffort };
 }
 
 export async function scheduleDistillation(env: Env, targetRevisionId?: string) {
@@ -1491,7 +1505,7 @@ export async function scheduleDistillation(env: Env, targetRevisionId?: string) 
     try {
       if (row.model === null) throw new LibraryError("unavailable", "The queued model is unavailable. Resume explicitly with a model.", 503);
       producerFormat = intentProducerFormat(row.request);
-      model = withNativeEffort(await requireAvailableModel(env, row.model), intentEffort(row.request));
+      model = withAttemptEffort(await requireAvailableModel(env, row.model), intentEfforts(row.request));
     }
     catch (error) {
       await env.DB.prepare("UPDATE source_revision SET distill_state='paused',distill_error=? WHERE id=? AND distill_state='queued' AND distill_calls=0 AND distill_model IS ? AND distill_attempt_id IS ? AND distill_request_json IS ?")
@@ -1510,7 +1524,7 @@ export async function scheduleDistillation(env: Env, targetRevisionId?: string) 
 }
 export async function requestUnderstanding(env: Env, actor: Actor, input: UnderstandingInput & { sourceId: string }) {
   if (actor.type !== "owner") throw new AuthError("invalid", "Only the owner may start paid source understanding.");
-  nativeEffort.optional().parse(input.nativeReasoningEffort);
+  effortChoice.parse(input);
   const { sourceId, revisionId } = input;
   const selected = await env.DB.prepare(`SELECT r.* FROM source s JOIN source_revision r ON r.source_id=s.id
     WHERE s.id=? AND r.id=COALESCE(?,s.current_revision_id) AND s.state!='deleted' AND r.deleted_at IS NULL AND r.readable_state IN ('readable','readable_with_warnings')`)
@@ -1525,6 +1539,7 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: Unders
       throw new LibraryError("invalid", "Retry requires valid attempt identities.", 400);
     const request = JSON.stringify({ sourceId, revisionId: row.id, previousAttemptId: retry.previousAttemptId, model: input.model ?? null,
       ...(input.nativeReasoningEffort === undefined ? {} : { nativeReasoningEffort: input.nativeReasoningEffort }),
+      ...(input.openRouterReasoningEffort === undefined ? {} : { openRouterReasoningEffort: input.openRouterReasoningEffort }),
       producerFormat: COMPACT_PRODUCER_FORMAT });
     // Resolve accepted identities before checking defaults, provider allowance or Workflow status.
     const replay = async () => {
@@ -1571,7 +1586,7 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: Unders
     const claims = await readUnderstandingClaims(env, row.id, { attemptId, reportKey: row.distill_report_key, state: row.distill_state, claimCount: row.claim_count });
     // Immutable snapshot contains the exact owning row, including legacy/null accounting.
     let model: ModelSpec;
-    try { model = withNativeEffort(await requireAvailableModel(env, input.model ?? (await env.DB.prepare("SELECT distill_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model ?? ""), input.nativeReasoningEffort); }
+    try { model = withAttemptEffort(await requireAvailableModel(env, input.model ?? (await env.DB.prepare("SELECT distill_model AS model FROM settings WHERE id=1").first<{ model: string }>())?.model ?? ""), input); }
     catch (error) { return reject(message(error)); }
     const snapshotName = `history/${retry.attemptId}.json`;
     const snapshotKey = understandingKey(row.id, snapshotName, attemptId);
@@ -1603,7 +1618,7 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: Unders
     return { revisionId: row.id, attemptId: retry.attemptId };
   }
   if (input.saveAvailable) {
-    if (input.model !== undefined || input.nativeReasoningEffort !== undefined) throw new LibraryError("invalid", "Saving existing output cannot select or run a model.", 400);
+    if (input.model !== undefined || input.nativeReasoningEffort !== undefined || input.openRouterReasoningEffort !== undefined) throw new LibraryError("invalid", "Saving existing output cannot select or run a model.", 400);
     const reportKey = understandingKey(row.id, "checked/distill.json", attemptId);
     if (row.distill_report_key === reportKey && ["done", "partial"].includes(row.distill_state)) return { revisionId: row.id };
     if (!["done", "partial", "failed"].includes(row.distill_state) || !await hasAvailableUnderstanding(env, row.id, attemptId))
@@ -1634,8 +1649,9 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: Unders
       return { revisionId: row.id };
     } catch (error) { throw new LibraryError("conflict", message(error), 409); }
   }
-  const recordedEffort = intentEffort(row.distill_request_json);
-  if (input.nativeReasoningEffort !== undefined && input.nativeReasoningEffort !== recordedEffort
+  const recordedEfforts = intentEfforts(row.distill_request_json);
+  if (((input.nativeReasoningEffort !== undefined && input.nativeReasoningEffort !== recordedEfforts.nativeReasoningEffort)
+    || (input.openRouterReasoningEffort !== undefined && input.openRouterReasoningEffort !== recordedEfforts.openRouterReasoningEffort))
     && (["queued", "running", "done", "partial"].includes(row.distill_state) || attemptId !== null))
     throw new LibraryError("conflict", "This attempt already has a different reasoning profile. Reload before requesting another run.", 409);
   if (["done", "partial", "running"].includes(row.distill_state)) return { revisionId: row.id };
@@ -1648,15 +1664,20 @@ export async function requestUnderstanding(env: Env, actor: Actor, input: Unders
   const settings = await env.DB.prepare("SELECT distill_model AS model FROM settings WHERE id=1").first<{ model: string }>();
   const resolved = await requireAvailableModel(env, input.model ?? settings?.model ?? "");
   const clearOriginalEffort = attemptId === null && row.distill_calls === 0 && resolved.route !== row.distill_model
-    && input.nativeReasoningEffort === undefined && recordedEffort !== undefined;
-  const effort = input.nativeReasoningEffort ?? (clearOriginalEffort ? undefined : recordedEffort);
-  const model = withNativeEffort(resolved, effort);
+    && input.nativeReasoningEffort === undefined && recordedEfforts.nativeReasoningEffort !== undefined;
+  const clearOriginalOpenRouterEffort = attemptId === null && row.distill_calls === 0 && resolved.route !== row.distill_model
+    && input.openRouterReasoningEffort === undefined && recordedEfforts.openRouterReasoningEffort !== undefined;
+  const effort = input.nativeReasoningEffort ?? (clearOriginalEffort ? undefined : recordedEfforts.nativeReasoningEffort);
+  const openRouterReasoningEffort = input.openRouterReasoningEffort ?? (clearOriginalOpenRouterEffort ? undefined : recordedEfforts.openRouterReasoningEffort);
+  const model = withAttemptEffort(resolved, { nativeReasoningEffort: effort, openRouterReasoningEffort });
   const newOriginalRequest = attemptId === null && row.distill_state === "none" && row.distill_request_json === null;
-  const updateOriginalIntent = attemptId === null && (newOriginalRequest || input.nativeReasoningEffort !== undefined || clearOriginalEffort);
+  const updateOriginalIntent = attemptId === null && (newOriginalRequest || input.nativeReasoningEffort !== undefined || clearOriginalEffort
+    || input.openRouterReasoningEffort !== undefined || clearOriginalOpenRouterEffort);
   const producerFormat = newOriginalRequest ? COMPACT_PRODUCER_FORMAT : intentProducerFormat(row.distill_request_json);
   const request = updateOriginalIntent
     ? JSON.stringify({ sourceId, revisionId: row.id, model: input.model ?? null,
       ...(effort === undefined ? {} : { nativeReasoningEffort: effort }),
+      ...(openRouterReasoningEffort === undefined ? {} : { openRouterReasoningEffort }),
       ...(producerFormat === COMPACT_PRODUCER_FORMAT ? { producerFormat } : {}) })
     : row.distill_request_json;
   const queued = await env.DB.prepare("UPDATE source_revision SET distill_state='queued',distill_error=NULL,distill_model=?,distill_request_json=? WHERE id=? AND distill_state IN ('none','paused') AND distill_calls=0 AND distill_attempt_id IS ? AND distill_request_json IS ?").bind(model.route, request, row.id, attemptId, row.distill_request_json).run();

@@ -297,7 +297,7 @@ describe("native fallback reasoning request", () => {
     const fallback = MODELS.find((entry) => entry.route === DEFAULT_MODEL);
     if (!fallback) throw new Error("The built-in native model fallback is missing.");
     expect(fallback).not.toHaveProperty("nativeReasoningEffort");
-    const model = { ...fallback, maxOutputTokens: capacity, nativeReasoningEffort: "low" as const };
+    const model = { ...fallback, maxOutputTokens: capacity, nativeReasoningEffort: "low" as const, openRouterReasoningEffort: "high" };
     expect(model).toMatchObject({
       id: "@cf/zai-org/glm-5.3-flash",
       contextTokens: 1_048_576,
@@ -479,6 +479,56 @@ describe("mandatory minimal structured reasoning request", () => {
   });
 });
 
+
+describe.each([
+  { path: "native Gateway adapter", gatewaySlug: "openrouter", apiProtocol: undefined },
+  { path: "published Chat Completions", gatewaySlug: "custom-fixture", apiProtocol: "openai-chat" },
+  { path: "legacy compatible Gateway", gatewaySlug: "custom-fixture", apiProtocol: undefined },
+] as const)("owner-selected OpenRouter reasoning via $path", ({ gatewaySlug, apiProtocol }) => {
+  it("prioritizes frozen high in both ordinal budgets, preserves optional metadata and leaves chat untouched", async () => {
+    const provider = { id: "fixture-router", type: "openai-compatible" as const, gatewaySlug, gatewayPath: "v1",
+      enabled: true, baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny" as const };
+    const base: ModelSpec = { route: "gateway:fixture-router/provider/fixture", id: "provider/fixture", label: "Offline effort fixture",
+      contextTokens: 64000, contextWindowTokens: 64000, maxOutputTokens: 16384, outputReserveTokens: 8192,
+      checkedOn: "2026-11-08", enabled: true, responseFormat: true, structuredOutputs: true,
+      structuredReasoningEffort: "minimal", openRouterReasoningEfforts: ["minimal", "high"],
+      routing: { provider, gatewayId: "fixture" },
+      ...(apiProtocol === undefined ? {} : { apiProtocol, apiBaseUrl: provider.baseUrl }) };
+    const bodies: Record<string, unknown>[] = [];
+    const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      throw new Error("Stopped after local request capture.");
+    });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network request."));
+    const env = { AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] };
+    try {
+      for (const effort of [undefined, "high"]) {
+        const spec: ModelSpec = { ...base, ...(effort === undefined ? {} : { openRouterReasoningEffort: effort }) };
+        const transport = await resolveModelTransport(env, spec, "owner-effort", { structuredOutput: true });
+        for (const budget of [8192, 4096]) {
+          await expect(generateText({ model: transport, prompt: "Capture only.", maxRetries: 0,
+            output: Output.object({ schema: z.object({ value: z.string() }) }),
+            maxOutputTokens: requestedOutputLimit(spec, 1024, budget) })).rejects.toThrow();
+          expect(bodies.at(-1)).toMatchObject({ reasoning: { effort: effort ?? "minimal" }, max_tokens: budget,
+            provider: { allow_fallbacks: false, require_parameters: true, data_collection: "deny" } });
+          expect(bodies.at(-1)).not.toHaveProperty("reasoning_effort");
+        }
+      }
+      const optional: ModelSpec = { ...base, optionalReasoning: true, openRouterReasoningEffort: "high" };
+      delete optional.structuredReasoningEffort;
+      const structured = await resolveModelTransport(env, optional, "optional-owner-effort", { structuredOutput: true });
+      await expect(generateText({ model: structured, prompt: "Capture only.", maxOutputTokens: 4096, maxRetries: 0 })).rejects.toThrow();
+      expect(bodies.at(-1)?.reasoning).toEqual({ effort: "high" });
+      expect(optional.optionalReasoning).toBe(true);
+      const chat = await resolveModelTransport(env, optional, "chat-owner-effort");
+      await expect(generateText({ model: chat, prompt: "Capture chat only.", maxOutputTokens: 8192, maxRetries: 0 })).rejects.toThrow();
+      expect(bodies.at(-1)).not.toHaveProperty("reasoning");
+      expect(bodies.at(-1)).not.toHaveProperty("reasoning_effort");
+      expect(fetch).toHaveBeenCalledTimes(6);
+      expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); }
+  });
+});
 
 describe("OpenRouter bad-request parameter diagnostics", () => {
   const provider = { id: "openrouter", type: "openai-compatible" as const, gatewaySlug: "openrouter", gatewayPath: "v1",

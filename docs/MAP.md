@@ -417,7 +417,9 @@ Large selections can answer from claims. An unchanged revision is never re-disti
    Explicit Retry uses a stable request ID and predecessor compare-and-set, archives the exact old receipt and
    claims, and requires confirmed terminal Workflow status for completed predecessors, including legacy zero calls.
    Unknown replies retain that request across remount; reads, Reload, Save and previous-attempt controls remain
-   storage only. Preserve durable accepted/rejected retry identity and the attempt-scoped native Low/High choice.
+   storage only. Preserve durable accepted/rejected retry identity and the attempt-scoped native Low/High choice
+   or explicit published OpenRouter effort. The latter is checked against the same resolved snapshot, frozen for
+   both calls and read from recorded intent in history; omission preserves existing policy and old intent bytes.
    Changing a selection starts no work. Compact Low quality and delivery remain unqualified;
    High latency as a failure cause remains unproven.
 4. Pin `producerFormat: "compact-k3-v1"` in new accepted intent and internal Workflow parameters.
