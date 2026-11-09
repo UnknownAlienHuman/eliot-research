@@ -2508,6 +2508,48 @@ describe("compact K3 producer", () => {
       } finally { timeout?.mockRestore(); prepares.mockRestore(); vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
     });
 
+  it.each([undefined, "openai-chat"] as const)("uses the frozen Kilo paired OFF profile in both actual SDK K3 calls with protocol %s", async protocol => {
+    const root = "https://ai-gateway.kilo.ai/api/v1";
+    const model: ModelSpec = Object.freeze({ route: "gateway:fixture/opaque", id: "opaque", label: "Offline Kilo fixture",
+      contextTokens: 131072, maxOutputTokens: 8192, outputReserveTokens: 8192, optionalReasoning: true, structuredReasoningEffort: "none",
+      responseFormat: true, structuredOutputs: true, checkedOn: "2026-11-09", enabled: true,
+      ...(protocol === undefined ? {} : { apiProtocol: protocol, apiBaseUrl: root }),
+      routing: { gatewayId: null, provider: { id: "fixture", type: "openai-compatible", baseUrl: root,
+        gatewaySlug: null, gatewayPath: "", authMode: "anonymous", enabled: true } } } satisfies ModelSpec);
+    const extraction = { candidates: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The update preserves the residual path." }] };
+    const review = { selected: [{ candidateId: "C0", reason: "Its own quote states the update." }], rejected: [], guide: ["C0"] };
+    const f = fixture(model.route, documentWithBlocks([{ type: "paragraph", text: "The update preserves the residual path.\n" }]));
+    f.db.prepare("UPDATE source_revision SET distill_request_json=?,distill_token_limit_kind='published',distill_token_limit=? WHERE id=?")
+      .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), 2 * (modelTokenLimit(model) ?? 0), revisionId);
+    const sdk = await vi.importActual<typeof AISDK>("ai");
+    const transport = await vi.importActual<typeof ModelTransport>("../model-transport");
+    vi.mocked(generateText).mockImplementation(sdk.generateText);
+    vi.mocked(resolveModelTransport).mockImplementation(transport.resolveModelTransport);
+    vi.mocked(Output.object).mockReset().mockImplementation(options => sdk.Output.object(options));
+    const bodies: Record<string, unknown>[] = [];
+    const network = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      expect(String(url)).toBe(root + "/chat/completions");
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ id: "offline-kilo", object: "chat.completion", created: 0, model: model.id,
+        choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(bodies.length === 1 ? extraction : review) }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 101, completion_tokens: 17, total_tokens: 118 } });
+    });
+    try {
+      await run(f, false, model, "compact-k3-v1");
+      expect(network).toHaveBeenCalledTimes(2); expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+      expect(bodies.map(body => body.max_tokens)).toEqual([8192, 4096]);
+      for (const body of bodies) {
+        expect(body.reasoning).toEqual({ enabled: false, effort: "none" }); expect(body).not.toHaveProperty("provider");
+      }
+      expect(bodies[0]?.response_format).toMatchObject({ type: "json_schema", json_schema: { schema: { properties: { candidates: { maxItems: 32 } } } } });
+      expect(JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null").output).toEqual(extraction);
+      expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null").output).toEqual(review);
+      expect(JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null")).toMatchObject({ state: "done", kept: 1, usage: { calls: 2 } });
+      expect(vi.mocked(generateText).mock.calls.every(([request]) => request.maxRetries === 0)).toBe(true);
+      for (const lookup of forbiddenLookups) expect(lookup).not.toHaveBeenCalled();
+    } finally { vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
+  });
+
   it.each([
     { name: "JSON object", responseFormat: true, structuredOutputs: false, wireFormat: "json_object" },
     { name: "unknown structured support", responseFormat: true, structuredOutputs: undefined, wireFormat: "json_object" },

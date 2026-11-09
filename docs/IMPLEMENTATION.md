@@ -693,6 +693,9 @@ conservative input estimate includes framing overhead; it is not provider tokeni
 and combined windows remain unknown. Each new raw artifact and final report records the requested and applied call
 budgets separately from declared capacity and reported usage. Missing historical budget fields remain unknown.
 Already admitted or in-flight legacy attempts retain their frozen cap policy.
+Structured Kilo calls send the published paired OFF control only when their admitted snapshot carries both
+`optionalReasoning: true` and `structuredReasoningEffort: 'none'` from explicit discovery (§11); an old optional
+flag alone does not authorize it, and call/output/time bounds remain unchanged.
 Anonymous HTTP also charges each incoming raw chunk to this same operation's remaining materialization allowance
 before SDK parsing, using the existing conservative 12× allocation charge plus chunk overhead. Prompt/schema charges
 remain; structured request schemas are charged even when carried only by `response_format`. Later stored JSON reads
@@ -1620,7 +1623,20 @@ The admitted external `ModelSpec` carries the provider configuration and nullabl
 transport uses this frozen routing instead of reading changed settings after admission.
 Published `supported_parameters` may advertise temperature support; those requests use temperature 0 for source-faithful
 generation, while missing metadata leaves the parameter unset. OpenRouter structured jobs disable reasoning only when
-the same snapshot advertises its control and explicitly marks it non-mandatory. Mandatory-reasoning metadata may
+the same snapshot advertises its control and explicitly marks it non-mandatory.
+For the official Kilo root `https://ai-gateway.kilo.ai/api/v1`, explicit Refresh recognizes only rows from the
+actual fetched `https://ai-gateway.kilo.ai/api/v1/models` endpoint with an advertised `reasoning` parameter,
+`opencode.reasoning_options` toggle and an exact published variant
+`reasoning: { enabled: false, effort: 'none' }`, without depending on variant or model names. This freezes
+`optionalReasoning: true` with the existing `structuredReasoningEffort: 'none'` marker; missing, malformed or
+contradictory evidence leaves the paired profile unset.
+Custom catalogue endpoints can supply ordinary model metadata but cannot create this profile.
+Only structured calls carrying both frozen values send that exact paired fragment through either compatible
+Chat SDK path; ordinary Chat and old snapshots missing the marker remain unchanged, without read enrichment.
+Kilo does not receive OpenRouter's provider/privacy wrapper or an inferred `minimal` profile. This wire contract
+was checked 2026-11-09 against the [official client variant merge](https://github.com/Kilo-Org/kilocode/blob/b6a49d01/packages/core/src/session/runner/model.ts#L104)
+and published metadata; it does not establish model quality or request success.
+Mandatory-reasoning metadata may
 instead set the optional `CatalogModel.structuredReasoningEffort: 'minimal'` profile, only when the published row has
 `reasoning.mandatory === true`, an advertised `reasoning` parameter, and a valid non-empty unique
 `supported_efforts` containing `minimal`; missing, malformed or inconsistent metadata leaves it unset, with no

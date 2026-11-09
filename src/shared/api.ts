@@ -12,6 +12,15 @@ export function isOpenRouterApiBase(value: string | null | undefined): boolean {
   } catch { return false; }
 }
 
+export function isKiloApiBase(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value.trim());
+    return url.origin === "https://ai-gateway.kilo.ai" && url.pathname.replace(/\/+$/, "") === "/api/v1"
+      && !url.username && !url.password && !url.search && !url.hash;
+  } catch { return false; }
+}
+
 export interface DistillInput { revisionId: string; model: ModelSpec; attemptId?: string | null }
 
 export type NativeReasoningEffort = "low" | "high";

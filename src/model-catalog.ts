@@ -1,6 +1,6 @@
 import type { CatalogModel, ModelProvider } from "./models";
 import { validateSourceUrl } from "./url-guard";
-import { isOpenRouterApiBase } from "./shared/api";
+import { isKiloApiBase, isOpenRouterApiBase } from "./shared/api";
 
 type RecordValue = Record<string, unknown>;
 // Narrow discovery mechanism from OpenCodex 2.92.0 (MIT), pin
@@ -215,7 +215,7 @@ export function isOpenRouterReasoningEfforts(value: unknown): value is string[] 
     new Set(value).size === value.length;
 }
 
-function normalize(provider: ModelProvider, value: unknown, checkedOn: string): CatalogModel | null {
+function normalize(provider: ModelProvider, value: unknown, checkedOn: string, fetchedEndpoint: URL): CatalogModel | null {
   const row = record(value), id = row?.id;
   if (!row || typeof id !== "string" || !id || id !== id.trim() || id.length > MAX_ID_LENGTH
     || [...id].some((char) => { const code = char.charCodeAt(0); return code < 32 || (code >= 127 && code <= 159) || code === 0x2028 || code === 0x2029; })) return null;
@@ -231,17 +231,27 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
   // advertised. No static model/provider IDs, no allowlist, no price handling.
   const supportsTemperature = parameters.includes("temperature");
   const supportsReasoning = record(record(row.capabilities)?.reasoning)?.supported;
-  // Reasoning profiles are advertised-only and mutually exclusive: optional
-  // needs mandatory === false; mandatory minimal needs mandatory === true,
-  // published "reasoning", and valid unique supported_efforts with "minimal".
+  // Generic optional reasoning needs mandatory === false. Kilo's paired OFF
+  // requires its published toggle and exact variant payload, regardless of name.
+  // Mandatory minimal still needs the explicit published profile below.
   const reasoning = record(row.reasoning);
   const hasReasoningParameter = parameters.includes("reasoning");
   const supportedEfforts = Array.isArray(reasoning?.supported_efforts) ? reasoning.supported_efforts : null;
   const validUniqueEfforts = supportedEfforts !== null && supportedEfforts.length > 0 &&
     supportedEfforts.every((effort) => typeof effort === "string" && effort.length > 0) &&
     new Set(supportedEfforts as string[]).size === supportedEfforts.length;
-  const optionalReasoning = reasoning?.mandatory === false && hasReasoningParameter;
-  const structuredReasoningEffort = reasoning?.mandatory === true && hasReasoningParameter &&
+  const kilo = record(row.opencode);
+  const kiloReasoningOff = isKiloApiBase(provider.baseUrl) && hasReasoningParameter
+    && fetchedEndpoint.href === "https://ai-gateway.kilo.ai/api/v1/models"
+    && Array.isArray(kilo?.reasoning_options) && kilo.reasoning_options.length > 0
+    && kilo.reasoning_options.every(option => record(option)?.type === "toggle")
+    && Object.values(record(kilo?.variants) ?? {}).some(variant => {
+      const off = record(record(variant)?.reasoning);
+      return off?.enabled === false && off.effort === "none" && Object.keys(off).length === 2;
+    })
+    && (row.reasoning === undefined || (reasoning !== null && (reasoning.mandatory === undefined || reasoning.mandatory === false)));
+  const optionalReasoning = isKiloApiBase(provider.baseUrl) ? kiloReasoningOff : reasoning?.mandatory === false && hasReasoningParameter;
+  const structuredReasoningEffort = kiloReasoningOff ? "none" as const : reasoning?.mandatory === true && hasReasoningParameter &&
     validUniqueEfforts && (supportedEfforts as string[]).includes("minimal") ? "minimal" as const : undefined;
   const openRouterReasoningEfforts = isOpenRouterApiBase(provider.baseUrl) && hasReasoningParameter &&
     typeof reasoning?.mandatory === "boolean" && isOpenRouterReasoningEfforts(supportedEfforts) &&
@@ -363,7 +373,7 @@ export async function discoverGatewayModels(
     }
     const seen = new Set<string>();
     const base = (body.data as unknown[]).flatMap((row) => {
-      const model = normalize(provider, row, checkedOn);
+      const model = normalize(provider, row, checkedOn, target);
       if (!model || seen.has(model.id)) return [];
       seen.add(model.id);
       return [model];

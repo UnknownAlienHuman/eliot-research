@@ -515,6 +515,47 @@ describe("explicit anonymous SDK transport", () => {
   });
 });
 
+describe.each([undefined, "openai-chat"] as const)("Kilo structured OFF with compatible protocol %s", protocol => {
+  it.each([
+    { name: "published paired OFF", optional: true, effort: "none", structured: true, official: true, off: true },
+    { name: "ordinary Chat", optional: true, effort: "none", structured: false, official: true, off: false },
+    { name: "old optional flag without provenance", optional: true, effort: undefined, structured: true, official: true, off: false },
+    { name: "old unknown snapshot", optional: undefined, effort: undefined, structured: true, official: true, off: false },
+    { name: "marker without optional flag", optional: undefined, effort: "none", structured: true, official: true, off: false },
+    { name: "mandatory profile", optional: false, effort: "minimal", structured: true, official: true, off: false },
+    { name: "inconsistent optional/minimal", optional: true, effort: "minimal", structured: true, official: true, off: false },
+    { name: "other provider root", optional: true, effort: "none", structured: true, official: false, off: false },
+  ] as const)("serializes only the verified control: $name", async ({ optional, effort, structured, official, off }) => {
+    const root = official ? "https://ai-gateway.kilo.ai/api/v1" : "https://api.commandcode.ai/provider/v1";
+    const model: ModelSpec = { route: "gateway:fixture/opaque", id: "opaque", label: "Offline fixture", contextTokens: 131072,
+      maxOutputTokens: 8192, outputReserveTokens: 8192, responseFormat: true, structuredOutputs: true, supportsTemperature: true,
+      checkedOn: "2026-11-09", enabled: true, ...(optional === undefined ? {} : { optionalReasoning: optional }),
+      ...(effort === undefined ? {} : { structuredReasoningEffort: effort }),
+      ...(protocol === undefined ? {} : { apiProtocol: protocol, apiBaseUrl: root }),
+      routing: { gatewayId: "offline-kilo", provider: { id: "fixture", type: "openai-compatible", baseUrl: root,
+        gatewaySlug: "custom-fixture", gatewayPath: "v1", enabled: true } } };
+    const bodies: Record<string, unknown>[] = [];
+    const fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ id: "offline", object: "chat.completion", created: 0, model: model.id,
+        choices: [{ index: 0, message: { role: "assistant", content: "Offline response." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
+    });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No external request."));
+    try {
+      const transport = await resolveModelTransport({ AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] }, model,
+        "distill-fixture", { structuredOutput: structured, freshChat: !structured });
+      delete model.structuredReasoningEffort; model.optionalReasoning = !optional;
+      await generateText({ model: transport, prompt: "Offline fixture.", maxOutputTokens: 4096, maxRetries: 0 });
+      expect(fetch).toHaveBeenCalledTimes(1); expect(network).not.toHaveBeenCalled();
+      expect(bodies[0]).toMatchObject({ max_tokens: 4096, temperature: 0 });
+      if (off) expect(bodies[0]?.reasoning).toEqual({ enabled: false, effort: "none" });
+      else expect(bodies[0]).not.toHaveProperty("reasoning");
+      expect(bodies[0]).not.toHaveProperty("provider");
+    } finally { network.mockRestore(); }
+  });
+});
+
 describe("native Responses reasoning classification", () => {
   it.each([undefined, false, true])("uses the pinned SDK classification only for frozen capability=%s", async supportsReasoning => {
     const root = "https://opencode.ai/inference/go";

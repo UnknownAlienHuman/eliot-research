@@ -96,7 +96,7 @@ export interface CatalogModel {
   supportsReasoning?: boolean; // Published capability, not a mandatory mode or selected effort.
   supportsImages?: boolean;
   optionalReasoning?: boolean;
-  structuredReasoningEffort?: "minimal";
+  structuredReasoningEffort?: "minimal" | "none"; // Kilo none freezes its explicitly published paired OFF profile.
   openRouterReasoningEfforts?: string[]; // Published choices only; not an owner selection.
   apiProtocol?: "openai-chat" | "openai-responses" | "anthropic" | "google";
   apiBaseUrl?: string;
@@ -248,9 +248,10 @@ function isCatalogModel(value: unknown): value is CatalogModel {
   if (value.supportsReasoning !== undefined && typeof value.supportsReasoning !== "boolean") return false;
   if (value.supportsImages !== undefined && typeof value.supportsImages !== "boolean") return false;
   if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
-  if (value.structuredReasoningEffort !== undefined && value.structuredReasoningEffort !== "minimal") return false;
+  if (value.structuredReasoningEffort !== undefined && value.structuredReasoningEffort !== "minimal" && value.structuredReasoningEffort !== "none") return false;
   if (value.openRouterReasoningEfforts !== undefined && !isOpenRouterReasoningEfforts(value.openRouterReasoningEfforts)) return false;
-  if (value.optionalReasoning === true && value.structuredReasoningEffort !== undefined) return false;
+  if (value.optionalReasoning === true && value.structuredReasoningEffort === "minimal") return false;
+  if (value.structuredReasoningEffort === "none" && value.optionalReasoning !== true) return false;
   if (value.nativeReasoningEffort !== undefined && value.nativeReasoningEffort !== "low" && value.nativeReasoningEffort !== "high") return false;
   if (value.apiProtocol !== undefined && !["openai-chat", "openai-responses", "anthropic", "google"].includes(String(value.apiProtocol))) return false;
   if (value.apiBaseUrl !== undefined && typeof value.apiBaseUrl !== "string") return false;

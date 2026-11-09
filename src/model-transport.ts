@@ -4,7 +4,7 @@ import type { JSONObject } from "@ai-sdk/provider";
 import { createOpenAICompatible, type OpenAICompatibleProviderSettings } from "@ai-sdk/openai-compatible";
 import { LibraryError } from "./library";
 import { isProviderApiBase, type ModelProvider, type ModelSpec } from "./models";
-import { isOpenRouterApiBase, type DataCollectionPolicy, type ProviderUsage } from "./shared/api";
+import { isKiloApiBase, isOpenRouterApiBase, type DataCollectionPolicy, type ProviderUsage } from "./shared/api";
 import { validateSourceUrl } from "./url-guard";
 
 const EXTERNAL_FAILURE =
@@ -84,22 +84,23 @@ export const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
 // passes structuredOutput:true and the catalogue publishes optionalReasoning
 // (reasoning.mandatory === false plus advertised "reasoning"), the official
 // OpenRouter body sends reasoning:{enabled:false} (documented ReasoningConfig).
-// Never for chat (structuredOutput false), natively mandatory, or unknown; never
-// on the generic compatible body (standard temperature may forward there).
+// Never for chat (structuredOutput false), natively mandatory, or unknown.
+// Kilo's separately verified paired OFF profile uses the compatible body.
 // Generic compatible body for the native gateway fetch: no provider routing hint;
 // strip response_format unless the catalog explicitly advertises it. Structured
 // output is enabled only when the catalog sets structuredOutputs; otherwise the
 // caller codec handles plain JSON locally.
-function compatibleBody(responseFormatAllowed: boolean, supportsTemperature: boolean) {
+function compatibleBody(responseFormatAllowed: boolean, supportsTemperature: boolean, kiloReasoningOff = false) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
     const out: Record<string, unknown> = { ...args };
     delete out.provider;
     if (!responseFormatAllowed) delete out.response_format;
     if (supportsTemperature) out.temperature = 0;
+    if (kiloReasoningOff) out.reasoning = { enabled: false, effort: "none" };
     return out;
   };
 }
-function openRouterBody(responseFormatAllowed: boolean, options: { supportsTemperature: boolean; optionalReasoning: boolean; structuredOutput: boolean; structuredReasoningEffort?: "minimal" | undefined; openRouterReasoningEffort?: string | undefined; freshChatMinimal: boolean }, dataCollection: DataCollectionPolicy) {
+function openRouterBody(responseFormatAllowed: boolean, options: { supportsTemperature: boolean; optionalReasoning: boolean; structuredOutput: boolean; structuredReasoningEffort?: ModelSpec["structuredReasoningEffort"]; openRouterReasoningEffort?: string | undefined; freshChatMinimal: boolean }, dataCollection: DataCollectionPolicy) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
     const provider = { ...(args.provider as Record<string, unknown> | undefined), allow_fallbacks: false, require_parameters: true, data_collection: dataCollection };
     const out: Record<string, unknown> = { ...args, provider };
@@ -324,6 +325,8 @@ export async function resolveModelTransport(
   const freshChatMinimal = options.freshChat === true && isOpenRouterApiBase(provider.baseUrl) &&
     model.structuredReasoningEffort === "minimal" && model.optionalReasoning !== true &&
     Array.isArray(model.openRouterReasoningEfforts) && model.openRouterReasoningEfforts.includes("minimal");
+  const kiloReasoningOff = options.structuredOutput === true && isKiloApiBase(provider.baseUrl)
+    && model.optionalReasoning === true && model.structuredReasoningEffort === "none";
   if (!anonymous && isNativeOpenRouterRoute(model)) {
     if (!env.AI) throw new LibraryError("unavailable", "The Gateway binding is unavailable.", 503);
     const structured = model.structuredOutputs === true;
@@ -385,7 +388,7 @@ export async function resolveModelTransport(
         transformRequestBody:
           isOpenRouterApiBase(ownerBase)
             ? openRouterBody(responseFormatAllowed, { supportsTemperature, optionalReasoning: model.optionalReasoning === true, structuredOutput: options.structuredOutput === true, structuredReasoningEffort: model.structuredReasoningEffort, openRouterReasoningEffort: model.openRouterReasoningEffort, freshChatMinimal }, provider.dataCollection ?? "deny")
-            : compatibleBody(responseFormatAllowed, supportsTemperature),
+            : compatibleBody(responseFormatAllowed, supportsTemperature, kiloReasoningOff && isKiloApiBase(ownerBase)),
         fetch: protocolFetch,
       }).languageModel(model.id);
     }
@@ -421,7 +424,7 @@ export async function resolveModelTransport(
   return createOpenAICompatible({
     name: provider.id, baseURL, ...(anonymous ? { apiKey: "" } : {}), includeUsage: true,
     supportsStructuredOutputs: structured, convertUsage: convertCompatibleUsage,
-    transformRequestBody: isOpenRouterApiBase(baseURL) ? openRouterBody(responseFormatAllowed, transportOptions, provider.dataCollection ?? "deny") : compatibleBody(responseFormatAllowed, supportsTemperature),
+    transformRequestBody: isOpenRouterApiBase(baseURL) ? openRouterBody(responseFormatAllowed, transportOptions, provider.dataCollection ?? "deny") : compatibleBody(responseFormatAllowed, supportsTemperature, kiloReasoningOff),
     fetch: anonymousFetch ?? (async (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
       if (url !== new URL(baseURL + "/chat/completions").href || init?.method !== "POST" || typeof init.body !== "string")

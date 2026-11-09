@@ -444,6 +444,8 @@ Large selections can answer from claims. An unchanged revision is never re-disti
    fallback must include the same `requestSchema` in instructions and account for that augmented prompt in the
    input estimate; `json_object` alone carries no task schema. Strict `json_schema` carries it in the body without
    a redundant prompt-schema copy.
+   API-discovered optional Kilo OFF requires frozen `optionalReasoning: true` plus `structuredReasoningEffort: 'none'`
+   for structured calls; see [IMPLEMENTATION §11](IMPLEMENTATION.md#11-models).
    Native compact call one uses public `Output.json()` complete decoding from final `onEnd` output after a normal
    finish; review and other paths retain `Output.object`. The outgoing native text request and prompt schema stay
    unchanged. Full valid decoded Raw1 is stored unchanged and untrusted; syntactic JSON is not owner-visible facts.

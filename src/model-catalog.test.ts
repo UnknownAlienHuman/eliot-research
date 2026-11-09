@@ -211,6 +211,88 @@ describe("provider model catalogue discovery", () => {
     expect(models.every((model) => model.enabled)).toBe(true);
   });
 
+  it("recognizes only explicit Kilo toggle/OFF metadata on the official API root", async () => {
+    const instant = { reasoning: { enabled: false, effort: "none" } };
+    const opencode = { variants: { instant, thinking: { reasoning: { enabled: true, effort: "high" } } }, reasoning_options: [{ type: "toggle" }] };
+    const row = { context_length: 1048576, top_provider: { max_completion_tokens: 943718 }, architecture: textChat,
+      supported_parameters: ["reasoning", "response_format", "structured_outputs"], opencode };
+    const rows = [
+      { ...row, id: "opaque-positive" },
+      { ...row, id: "params-only", opencode: undefined },
+      { ...row, id: "off-only", opencode: { variants: opencode.variants } },
+      { ...row, id: "toggle-only", opencode: { reasoning_options: opencode.reasoning_options } },
+      { ...row, id: "no-parameter", supported_parameters: [] },
+      { ...row, id: "malformed-toggle", opencode: { ...opencode, reasoning_options: ["toggle"] } },
+      { ...row, id: "mixed-toggle", opencode: { ...opencode, reasoning_options: [{ type: "toggle" }, null] } },
+      { ...row, id: "string-enabled", opencode: { ...opencode, variants: { instant: { reasoning: { enabled: "false", effort: "none" } } } } },
+      { ...row, id: "no-effort", opencode: { ...opencode, variants: { instant: { reasoning: { enabled: false } } } } },
+      { ...row, id: "other-effort", opencode: { ...opencode, variants: { instant: { reasoning: { enabled: false, effort: "minimal" } } } } },
+      { ...row, id: "extra-off-field", opencode: { ...opencode, variants: { instant: { reasoning: { enabled: false, effort: "none", max_tokens: 1 } } } } },
+      { ...row, id: "mandatory", reasoning: { mandatory: true } },
+      { ...row, id: "malformed-mandatory", reasoning: { mandatory: "false" } },
+      { ...row, id: "malformed-reasoning", reasoning: "unknown" },
+      { ...row, id: "unverified-optional", opencode: undefined, reasoning: { mandatory: false } },
+    ];
+    const provider: ModelProvider = { id: "fixture", type: "openai-compatible", baseUrl: "https://ai-gateway.kilo.ai/api/v1",
+      gatewaySlug: null, gatewayPath: "", authMode: "anonymous", enabled: true };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: rows })));
+    const models = await discoverGatewayModels([provider]);
+    expect(models).toHaveLength(rows.length);
+    expect(models[0]).toMatchObject({ optionalReasoning: true, structuredReasoningEffort: "none", contextTokens: 1048576, maxOutputTokens: 943718 });
+    for (const field of ["contextWindowTokens", "openRouterReasoningEfforts"]) expect(models[0]).not.toHaveProperty(field);
+    for (const model of models.slice(1)) expect(model).not.toHaveProperty("optionalReasoning");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [{ ...row, id: "renamed", opencode: {
+      ...opencode, variants: { anyPublishedName: instant } } }] })));
+    expect((await discoverGatewayModels([provider]))[0]).toMatchObject({ optionalReasoning: true, structuredReasoningEffort: "none" });
+    for (const baseUrl of ["https://api.commandcode.ai/provider/v1", "https://ai-gateway.kilo.ai/api/v1/other", "https://ai-gateway.kilo.ai.example.com/api/v1"]) {
+      const [model] = await discoverGatewayModels([{ ...provider, baseUrl }]);
+      expect(model).toBeDefined(); expect(model).not.toHaveProperty("optionalReasoning"); expect(model).not.toHaveProperty("structuredReasoningEffort");
+    }
+  });
+
+  it("keeps ordinary custom-catalogue metadata without authorizing Kilo OFF on an official provider base", async () => {
+    const modelsUrl = "https://catalogue.example.com/models";
+    const provider: ModelProvider = { id: "fixture", type: "openai-compatible", baseUrl: "https://ai-gateway.kilo.ai/api/v1", modelsUrl,
+      gatewaySlug: null, gatewayPath: "", authMode: "anonymous", enabled: true };
+    const network = vi.fn(async (url: RequestInfo | URL) => {
+      expect(String(url)).toBe(modelsUrl);
+      return Response.json({ data: [{ id: "opaque", context_length: 1048576, top_provider: { max_completion_tokens: 943718 },
+        supported_parameters: ["reasoning", "response_format", "structured_outputs"],
+        opencode: { variants: { instant: { reasoning: { enabled: false, effort: "none" } } }, reasoning_options: [{ type: "toggle" }] } }] });
+    });
+    vi.stubGlobal("fetch", network);
+    const [model] = await discoverGatewayModels([provider]);
+    expect(model).toMatchObject({ id: "opaque", contextTokens: 1048576, maxOutputTokens: 943718, responseFormat: true, structuredOutputs: true, enabled: true });
+    expect(model).not.toHaveProperty("optionalReasoning"); expect(model).not.toHaveProperty("structuredReasoningEffort");
+    expect(network).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, true])("discovers Kilo OFF only on refresh, preserving an old optional=%s snapshot without enrichment", async optionalReasoning => {
+    const provider: ModelProvider = { id: "fixture", type: "openai-compatible", baseUrl: "https://ai-gateway.kilo.ai/api/v1",
+      gatewaySlug: null, gatewayPath: "", authMode: "anonymous", enabled: true };
+    const model = { route: "gateway:fixture/opaque", id: "opaque", label: "Opaque", contextTokens: 1048576, maxOutputTokens: 943718,
+      outputReserveTokens: 8192, ...(optionalReasoning === undefined ? {} : { optionalReasoning }), checkedOn: "2026-11-08", enabled: true };
+    const bucket = fakeBucket({ updatedAt: "2026-11-08T00:00:00.000Z", warnings: [], providers: [provider], models: [model] });
+    const env = fixtureEnv(bucket.binding, { providers: [provider], gatewayId: null });
+    const network = vi.fn(async () => Response.json({ data: [{ id: model.id, context_length: model.contextTokens,
+      top_provider: { max_completion_tokens: model.maxOutputTokens }, supported_parameters: ["reasoning"],
+      opencode: { variants: { instant: { reasoning: { enabled: false, effort: "none" } } }, reasoning_options: [{ type: "toggle" }] } }] }));
+    vi.stubGlobal("fetch", network);
+    expect((await readModelCatalog(env)).models[0]?.optionalReasoning).toBe(optionalReasoning);
+    expect(await requireAvailableModel(env, model.route)).not.toHaveProperty("structuredReasoningEffort");
+    expect(network).not.toHaveBeenCalled();
+    await refreshModelCatalog(env);
+    expect(network).toHaveBeenCalledTimes(1);
+    const admitted = await requireAvailableModel(env, model.route);
+    expect(admitted).toMatchObject({ optionalReasoning: true, structuredReasoningEffort: "none", routing: { gatewayId: null, provider } });
+    const stored = bucket.stored() as { models: { optionalReasoning?: boolean; structuredReasoningEffort?: string }[] };
+    expect(stored.models[0]?.structuredReasoningEffort).toBe("none");
+    delete stored.models[0]?.structuredReasoningEffort;
+    expect((await readModelCatalog(env)).models[0]).not.toHaveProperty("structuredReasoningEffort");
+    expect(admitted.structuredReasoningEffort).toBe("none");
+    expect(network).toHaveBeenCalledTimes(1);
+  });
+
   it("derives mandatory minimal structured reasoning only from the exact published profile", async () => {
     catalogues([], [
       { id: "provider/crouton-like", context_length: 100000, architecture: textChat,
