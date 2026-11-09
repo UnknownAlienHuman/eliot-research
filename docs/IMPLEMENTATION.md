@@ -360,6 +360,8 @@ allocation at capacity, and never reduces a larger reserve. Unknown capacity ret
 Create and Start retain their existing validation; admitted legacy snapshots and counters are unchanged.
 Safe application failure causes are stored on the job before crossing a Workflow step boundary. Finalization keeps
 the recorded cause, including an incomplete page's finish reason, while existing R2 reports remain immutable.
+An aborted per-page timeout signal stores `OCR model call reached its time limit.`; otherwise the existing safe
+provider/HTTP reason is retained.
 Opaque provider error bodies and headers are not retained.
 
 `pnpm eval k1 --ocr` uses explicitly supplied derivative fixture identities, selected model and complete page count;

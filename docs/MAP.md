@@ -177,6 +177,7 @@ its text preview, and Apply a new readable revision while retaining the original
    immutable revision and marks dependent pages stale; ordinary ingest and source understanding remain separate.
    Use the latest live PDF revision as the OCR base, even at `needs_conversion`, and capture the current readable
    revision separately. Start/Apply require an unchanged latest base and the captured current revision.
+   Preserve an observed page-call time limit or the existing safe provider/HTTP reason before Workflow serialization.
 
 **Hard acceptance — `pnpm eval k1`**
 

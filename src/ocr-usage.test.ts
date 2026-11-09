@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
+import type * as AISDK from "ai";
 import { beforeEach, expect, it, vi } from "vitest";
 import type * as ModelTransport from "./model-transport";
 
@@ -84,6 +85,77 @@ function fixture({ pageCount = 2, state = "failed", calls = 1, completedPages = 
   return { db, env, settled, progress, prepare, objects, get, put, save, report, failReadAfterPut, readFailureCount: () => readFailureCount };
 }
 beforeEach(() => { vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation")); });
+
+it.each(["owned deadline", "HTTP 401", "HTTP 429"] as const)("persists %s through the real SDK before Workflow serialization without continuing", async mode => {
+  const f = fixture({ pageCount: 3, state: "running", calls: 1, completedPages: 1, error: null });
+  const model = { route: "gateway:openrouter/fixture/vision", id: "fixture/vision", label: "Fixture OCR", contextTokens: 4096,
+    maxOutputTokens: 4096, outputReserveTokens: 4096, supportsImages: true, enabled: true,
+    routing: { provider: { id: "openrouter", type: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1",
+      gatewaySlug: "openrouter", gatewayPath: "v1", enabled: true }, gatewayId: "offline-ocr" } };
+  const prefixPage = f.save("page-1.md", "Saved OCR page.", { finish: "stop", failure: "",
+    inputTotal: "120", cachedTotal: "5", outputTotal: "30" });
+  const image = f.save("page-2.png", "fixture image bytes");
+  f.db.prepare("UPDATE source_ocr_job SET pages_json=?,model_route=?,model_snapshot=?,token_limit=?,input_tokens=120,cached_tokens=5,output_tokens=30,deadline_at=? WHERE id='job'")
+    .run(JSON.stringify({ 2: { sha256: image.customMetadata.sha256, bytes: image.bytes.length, width: 1, height: 1 } }),
+      model.route, JSON.stringify(model), 3 * (model.contextTokens + model.outputReserveTokens), Date.now() + 240_000);
+  const sdk = await vi.importActual<typeof AISDK>("ai");
+  const transport = await vi.importActual<typeof ModelTransport>("./model-transport");
+  vi.mocked(generateText).mockImplementation(sdk.generateText);
+  vi.mocked(resolveModelTransport).mockReset().mockImplementation(transport.resolveModelTransport);
+  const deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected upstream request."));
+  const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    expect(init?.signal?.aborted).toBe(false);
+    if (mode === "owned deadline") {
+      deadline.abort(new DOMException("synthetic-secret", "TimeoutError"));
+      init?.signal?.throwIfAborted();
+      throw new Error("The SDK did not forward the abort signal.");
+    }
+    return Response.json({ error: { message: "synthetic-secret" } }, { status: mode === "HTTP 401" ? 401 : 429 });
+  });
+  Object.assign(f.env, { AI: { fetch } });
+  const expected = {
+    "owned deadline": "OCR model call reached its time limit.",
+    "HTTP 401": "External model request failed (HTTP 401). Check the Gateway connection and provider status; no retry was started.",
+    "HTTP 429": "External model request failed (HTTP 429). Limit exhausted, reset unknown. No retry was started.",
+  }[mode];
+  const atBoundary: unknown[] = [];
+  const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) => {
+    if (name === "begin OCR") return 3;
+    try { return await callback(); }
+    catch (error) {
+      expect(name).toBe("OCR page 2");
+      expect(error).toBeInstanceOf(LibraryError);
+      atBoundary.push(f.progress());
+      // eslint-disable-next-line preserve-caught-error -- Simulate Workflow serialization losing the projected error identity and message.
+      throw new Error("Workflow serialized failure");
+    }
+  });
+  try {
+    await new OcrWorkflow({} as never, f.env).run({ payload: { jobId: "job" } } as WorkflowEvent<{ jobId: string }>,
+      { do: stepDo } as unknown as WorkflowStep);
+
+    expect(atBoundary).toEqual([{ state: "running", error: expected, calls: 2, completed_pages: 1,
+      input_tokens: null, cached_tokens: null, output_tokens: null }]);
+    expect(f.progress()).toEqual({ state: "failed", error: expected, calls: 2, completed_pages: 1,
+      input_tokens: null, cached_tokens: null, output_tokens: null });
+    expect(f.report()).toMatchObject({ state: "failed", error: expected, calls: 2, completedPages: 1,
+      inputTokens: null, cachedTokens: null, outputTokens: null });
+    const ownerJob = await getOcrJob(f.env, { type: "owner" } as Actor, { projectId: "project", sourceId: "source", jobId: "job" });
+    expect(ownerJob.error).toBe(expected);
+    expect(f.objects.get(prefix + "page-1.md")).toBe(prefixPage);
+    expect(prefixPage.customMetadata).toMatchObject({ inputTotal: "120", cachedTotal: "5", outputTotal: "30" });
+    expect(f.put.mock.calls.map(([key]) => key)).toEqual([prefix + "report.json"]);
+    expect(stepDo.mock.calls.some(([name]) => name === "OCR page 3" || name === "assemble OCR preview")).toBe(false);
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(network).not.toHaveBeenCalled();
+    expect(timeout).toHaveBeenCalledWith(90_000);
+    expect(deadline.signal.aborted).toBe(mode === "owned deadline");
+    expect(JSON.stringify(f.report())).not.toContain("synthetic-secret");
+  } finally { timeout.mockRestore(); network.mockRestore(); f.db.close(); }
+});
 
 it("settles saved page usage once after terminal failure without reviving the job or dispatching its next page", async () => {
   const f = fixture();

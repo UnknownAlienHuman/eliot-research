@@ -85,14 +85,17 @@ async function runPage(env: Env, id: string, ordinal: number): Promise<number> {
   if (!dispatch.meta.changes) throw fail("OCR dispatch was stopped or already consumed. No call is repeated.");
   const remaining = job.deadline_at - Date.now();
   if (remaining <= 0) throw fail("OCR reached its admitted deadline before the model call.");
+  const deadlineSignal = AbortSignal.timeout(Math.min(OCR_LIMITS.pageTimeoutMs, remaining));
   let generated: Awaited<ReturnType<typeof generateText>>;
   try {
     // OCR snapshots retain their admitted per-page cap in outputReserveTokens.
     generated = await generateText({ model: transport, instructions: PROMPT,
       messages: [{ role: "user", content: [{ type: "image", image: bytes, mediaType: "image/png" }] }],
       maxOutputTokens: modelOutputReserve(model), maxRetries: 0,
-      abortSignal: AbortSignal.timeout(Math.min(OCR_LIMITS.pageTimeoutMs, remaining)) });
-  } catch (error) { throw fail(modelFailure(error, model)); }
+      abortSignal: deadlineSignal });
+  } catch (error) {
+    throw fail(deadlineSignal.aborted ? "OCR model call reached its time limit." : modelFailure(error, model));
+  }
   const usage = generated.totalUsage, input = count(usage.inputTokens), cached = count(usage.inputTokenDetails?.cacheReadTokens), output = count(usage.outputTokens);
   const overBound = input !== null && output !== null && input + output > tokenBound;
   const metadata = { finish: generated.finishReason, inputTotal: total(job.input_tokens, input),
