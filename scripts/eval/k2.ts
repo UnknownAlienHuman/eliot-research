@@ -439,7 +439,15 @@ function assertC3C4StaticSelftests() {
 function assertDispatchStopStaticSelftests() {
   assert.equal(dispatchUnavailable(404, { error: { code: 'not_found', message: 'External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.' } }, null), true, 'HTTP 404 response status must stop the batch.');
   assert.equal(dispatchUnavailable(200, { turn: { error: 'External model request failed (HTTP 404). Check the Gateway connection and provider status; no retry was started.' } }, null), true, 'Embedded HTTP 404 turn error must stop the batch.');
-  assert.equal(dispatchUnavailable(200, null, { error: 'Partial answer stored; 2 unsupported numeric statements remain' }), false, 'Ordinary quality partial must not stop the batch.');
+  assert.equal(dispatchUnavailable(400, { error: { message: 'Bad request.' } }, null), true, 'Any failed POST must stop the batch.');
+  assert.equal(dispatchUnavailable(200, { turn: { error: 'External model request failed (HTTP 400).' } }, null), true, 'Embedded generic provider 400 must stop the batch.');
+  assert.equal(dispatchUnavailable(200, null, { state: 'failed', error: 'Validation failed.' }), true, 'A failed turn must stop regardless of error classification.');
+  assert.equal(dispatchUnavailable(200, null, { state: 'cancelled', error: null }), true, 'A cancelled turn must stop the batch.');
+  assert.equal(dispatchUnavailable(200, { turn: { state: 'unknown', error: null } }, null), true, 'An unknown owning turn state must stop the batch.');
+  assert.equal(dispatchUnavailable(201, null, { error: null }), true, 'A missing owning turn state must stop the batch.');
+  assert.equal(dispatchUnavailable(200, null, { state: 'queued', error: null }), true, 'A nonterminal owning turn must stop the batch.');
+  assert.equal(dispatchUnavailable(200, null, { state: 'completed', error: null }), false, 'Confirmed completed reconciliation may continue to the next distinct question.');
+  assert.equal(dispatchUnavailable(200, null, { state: 'partial', error: 'Partial answer stored; 2 unsupported numeric statements remain' }), false, 'Ordinary quality partial must not stop the batch.');
 }
 function assertO8StaticSelftests() {
   const o8 = (answer) => checkAnswer('O8', answer).find((check) => check.name === 'honest abstention')?.passed;
@@ -2121,23 +2129,21 @@ async function saveTurn(qid, turn, extra) {
   await writeFile(outDir + '/k2-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
 }
 function dispatchUnavailable(status, body, turn) {
+  if ([body?.turn, turn].some((owningTurn) => owningTurn != null && owningTurn.state !== 'completed' && owningTurn.state !== 'partial')) return true;
   const error = body?.error ?? body?.turn?.error ?? turn?.error ?? null;
   const code = String(error?.code ?? body?.code ?? '').toLowerCase();
   const message = String(error?.message ?? error ?? body?.message ?? '');
-  if ([401, 402, 403, 404, 408, 429, 500, 502, 503, 504].includes(status)) return true;
+  if (status >= 400) return true;
   if (['auth', 'unauthorized', 'forbidden', 'budget', 'unavailable', 'busy', 'rate_limited'].includes(code)) return true;
   if (/credential|unauthori[sz]ed|forbidden|budget|quota|rate.?limit|disconnected|\bprovider.{0,24}(?:unavailable|error|failed)|temporarily unavailable|\bgateway.{0,24}(?:unavailable|error|failed)/i.test(message)) return true;
-  // Historical app-deadline rows stay continuable; never treat them as provider unavailability.
+  // App-deadline warnings on nonfailed turns are not provider errors.
   if (/exceeded the 90 s time bound|Time bound exceeded before dispatch/i.test(message)) return false;
   // Exact-turn timeout reconciliation stores provider failures as HTTP 200 with
   // the failure embedded in turn.error (model-transport.ts modelFailure shapes).
-  // Stop on the same codes when embedded as HTTP; an explicit non-stop HTTP
-  // code (e.g. 400 validation) keeps the prior continue behavior.
-  if (/\bHTTP\s+(401|402|403|404|408|429|500|502|503|504)\b/i.test(message)) return true;
-  if (/\bHTTP\s+\d{3}\b/i.test(message)) return false;
-  // Per-question validation stays continuable in either existing failure
-  // format: predispatch AI_Invalid* and in-band invalid_request_error.
-  // Still stops 5xx/auth/rate/budget above; historical app deadlines stay per-question.
+  // Embedded provider HTTP errors stop too, including generic HTTP 400.
+  if (/\bHTTP\s+[45]\d{2}\b/i.test(message)) return true;
+  // Validation warnings on nonfailed turns stay per-question; terminal
+  // failed/cancelled rows and provider HTTP errors were stopped above.
   if (/AI_InvalidPromptError|AI_InvalidArgumentError/i.test(message)) return false;
   if (/AI_StreamProviderError:invalid_request_error/i.test(message)) return false;
   // Validation-shaped stream failures stay per-question and do not stop the batch.
@@ -2270,7 +2276,7 @@ async function adoptReconciledTurn(qid, stored, wall, via) {
 for (const qid of order) {
   if (dispatchStopped) {
     hardFailures++;
-    markQuestionSkipped(qid, 'Dispatch stopped after provider/auth/budget unavailability: ' + (stopReason || 'unknown cause'));
+    markQuestionSkipped(qid, 'Dispatch stopped after a failed, cancelled or unresolved turn: ' + (stopReason || 'unknown cause'));
     continue;
   }
   let turn = null, src = 'new', wall = null, requestTurnId = null;
@@ -2298,10 +2304,9 @@ for (const qid of order) {
       // under requestTurnId. Reconcile that exact id with bounded storage-only
       // GET observation (each GET has a finite AbortSignal deadline): never
       // another POST, never the same question again. A matching terminal turn
-      // (completed/partial/failed/cancelled) is recorded and the explicit 12-question batch continues with
-      // the next distinct question. Only an unknown outcome or provider/auth/
-      // budget unavailability stops the rest. Partial/quality warnings never
-      // stop the batch.
+      // is recorded before deciding whether to continue. Confirmed completion
+      // or a quality-only partial may continue with the next distinct question;
+      // failed/cancelled turns, provider errors and unknown outcomes stop the rest.
       let reconciled = null;
       try { reconciled = await observeDispatchedTurn(requestTurnId, qid); }
       catch (observeError) { reconciled = null; }
@@ -2310,7 +2315,7 @@ for (const qid of order) {
         await adoptReconciledTurn(qid, turn, wall, 'reconciled-timeout-read');
         if (dispatchUnavailable(200, null, turn)) {
           dispatchStopped = true;
-          stopReason = 'Reconciled turn ' + qid + ' reports provider/auth/budget unavailability; no further questions were dispatched: ' + requestError;
+          stopReason = 'Reconciled turn ' + qid + ' failed, was cancelled or reports a provider error; no further questions were dispatched: ' + requestError;
         }
         continue;
       }
@@ -2329,13 +2334,12 @@ for (const qid of order) {
       const status = response?.status ?? 'unread';
       const errorText = String(response?.body?.error?.message ?? response?.body?.message ?? 'response did not include the owning turn');
       const reason = 'POST turn failed with status ' + status + ': ' + errorText + '; no retry.';
-      const stop = dispatchUnavailable(response?.status ?? 0, response?.body, null) || !response || !response.body || !responseTurnValid;
       compareRows.set(qid, { qid, answer: null, model: benchmarkModel, turnState: 'failed', routeStatus: 'GLOBAL_DEFAULT',
         passed: false, ownerReviewRequired: false, reason, factChecks: [{ name: 'dispatch', passed: false, hard: true, detail: reason }], hardFailures: [reason],
         citationRanges: [], citationSummary: 'skipped', timing: { firstTokenMs: null, totalMs: null, wallMs: wall },
         usage: { inputTokens: null, cachedTokens: null, outputTokens: null, tokenLimit: null } });
       hardFailures++;
-      if (stop) { dispatchStopped = true; stopReason = reason; }
+      dispatchStopped = true; stopReason = reason;
       continue;
     }
     turn = responseTurn;
@@ -2387,7 +2391,7 @@ for (const qid of order) {
     stopReason = 'The turn remained running after the synchronous wait; no additional turn was dispatched.';
   } else if (dispatchUnavailable(200, null, turn)) {
     dispatchStopped = true;
-    stopReason = 'The stored turn reports provider/auth/budget unavailability; no further questions were dispatched.';
+    stopReason = 'The stored turn failed, was cancelled or reports a provider error; no further questions were dispatched.';
   }
 }
 for (const qid of order) if (!compareRows.has(qid)) { hardFailures++; markQuestionSkipped(qid, 'No diagnostic row was produced.'); }
