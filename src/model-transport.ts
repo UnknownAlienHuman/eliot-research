@@ -85,7 +85,7 @@ export const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
 // (reasoning.mandatory === false plus advertised "reasoning"), the official
 // OpenRouter body sends reasoning:{enabled:false} (documented ReasoningConfig).
 // Never for chat (structuredOutput false), natively mandatory, or unknown.
-// Kilo's separately verified paired OFF profile uses the compatible body.
+// Kilo's separately verified paired OFF profile covers structured jobs and fresh chat.
 // Generic compatible body for the native gateway fetch: no provider routing hint;
 // strip response_format unless the catalog explicitly advertises it. Structured
 // output is enabled only when the catalog sets structuredOutputs; otherwise the
@@ -325,8 +325,8 @@ export async function resolveModelTransport(
   const freshChatMinimal = options.freshChat === true && isOpenRouterApiBase(provider.baseUrl) &&
     model.structuredReasoningEffort === "minimal" && model.optionalReasoning !== true &&
     Array.isArray(model.openRouterReasoningEfforts) && model.openRouterReasoningEfforts.includes("minimal");
-  const kiloReasoningOff = options.structuredOutput === true && isKiloApiBase(provider.baseUrl)
-    && model.optionalReasoning === true && model.structuredReasoningEffort === "none";
+  const kiloReasoningOff = (options.structuredOutput === true || options.freshChat === true)
+    && isKiloApiBase(provider.baseUrl) && model.optionalReasoning === true && model.structuredReasoningEffort === "none";
   if (!anonymous && isNativeOpenRouterRoute(model)) {
     if (!env.AI) throw new LibraryError("unavailable", "The Gateway binding is unavailable.", 503);
     const structured = model.structuredOutputs === true;

@@ -1018,6 +1018,9 @@ unmarked stability/divergence explanations as caveats; semantic gates stay OPEN.
 Fresh chat requests an experimental job budget of 8,192 output tokens. After estimating the actual instructions
 and messages, `requestedOutputLimit(model, inputEstimate, requestedTokens)` validates the positive finite budget
 and clips it to a known provider maximum and the estimated remainder of a known combined window.
+Fresh ChatAgent calls on the official Kilo root reuse the same frozen paired OFF profile as structured jobs (§11),
+requiring both `optionalReasoning: true` and `structuredReasoningEffort: 'none'`; native/OpenRouter policy and
+unknown profiles retain their existing behavior.
 Anonymous Chat responses have a separate 16 MiB streamed HTTP wire-envelope bound before SDK parsing. This new
 product safety bound is not §8's context-assembly allowance, provider capacity, token budget or measured heap usage.
 Anonymous OCR uses the same wire bound per page, retaining its existing page, job and 25 MiB preview bounds.
@@ -1641,8 +1644,9 @@ actual fetched `https://ai-gateway.kilo.ai/api/v1/models` endpoint with an adver
 `optionalReasoning: true` with the existing `structuredReasoningEffort: 'none'` marker; missing, malformed or
 contradictory evidence leaves the paired profile unset.
 Custom catalogue endpoints can supply ordinary model metadata but cannot create this profile.
-Only structured calls carrying both frozen values send that exact paired fragment through either compatible
-Chat SDK path; ordinary Chat and old snapshots missing the marker remain unchanged, without read enrichment.
+Calls on that root with `structuredOutput: true` or `freshChat: true` send that exact paired fragment through either
+compatible Chat SDK path only when both markers are frozen; old callsites with neither opt-in and old snapshots
+missing the marker retain their existing behavior, without read enrichment.
 Kilo does not receive OpenRouter's provider/privacy wrapper or an inferred `minimal` profile. This wire contract
 was checked 2026-11-09 against the [official client variant merge](https://github.com/Kilo-Org/kilocode/blob/b6a49d01/packages/core/src/session/runner/model.ts#L104)
 and published metadata; it does not establish model quality or request success.
@@ -1666,7 +1670,7 @@ date was not exposed. The policy is implemented; real Crouton K3 control `3081b9
 
 Fresh ChatAgent turns opt in via `freshChat: true` (omission is false). Only non-structured chat on the official
 OpenRouter root reuses frozen `structuredReasoningEffort: "minimal"` with a published list containing `minimal`
-and `optionalReasoning !== true`. Old callsites, native/optional/unknown chat and K3 explicit profiles retain their
+and `optionalReasoning !== true`. Native chat, OpenRouter optional/unknown chat, old callsites and K3 explicit profiles retain their
 existing behavior; chat stays at the same 8,192-token job bound. Missing profiles authorize no invented effort or
 `reasoning.max_tokens`; this request policy establishes no model qualification.
 

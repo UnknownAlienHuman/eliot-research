@@ -515,17 +515,21 @@ describe("explicit anonymous SDK transport", () => {
   });
 });
 
-describe.each([undefined, "openai-chat"] as const)("Kilo structured OFF with compatible protocol %s", protocol => {
+describe.each([undefined, "openai-chat"] as const)("Kilo paired OFF with compatible protocol %s", protocol => {
   it.each([
-    { name: "published paired OFF", optional: true, effort: "none", structured: true, official: true, off: true },
-    { name: "ordinary Chat", optional: true, effort: "none", structured: false, official: true, off: false },
-    { name: "old optional flag without provenance", optional: true, effort: undefined, structured: true, official: true, off: false },
-    { name: "old unknown snapshot", optional: undefined, effort: undefined, structured: true, official: true, off: false },
-    { name: "marker without optional flag", optional: undefined, effort: "none", structured: true, official: true, off: false },
-    { name: "mandatory profile", optional: false, effort: "minimal", structured: true, official: true, off: false },
-    { name: "inconsistent optional/minimal", optional: true, effort: "minimal", structured: true, official: true, off: false },
-    { name: "other provider root", optional: true, effort: "none", structured: true, official: false, off: false },
-  ] as const)("serializes only the verified control: $name", async ({ optional, effort, structured, official, off }) => {
+    { name: "published paired OFF", optional: true, effort: "none", structured: true, freshChat: false, official: true, off: true },
+    { name: "ordinary fresh Chat", optional: true, effort: "none", structured: false, freshChat: true, official: true, off: true },
+    { name: "caller without fresh Chat flag", optional: true, effort: "none", structured: false, freshChat: undefined, official: true, off: false },
+    { name: "caller declining fresh Chat policy", optional: true, effort: "none", structured: false, freshChat: false, official: true, off: false },
+    { name: "fresh Chat with unknown snapshot", optional: undefined, effort: undefined, structured: false, freshChat: true, official: true, off: false },
+    { name: "fresh Chat without paired provenance", optional: true, effort: undefined, structured: false, freshChat: true, official: true, off: false },
+    { name: "old optional flag without provenance", optional: true, effort: undefined, structured: true, freshChat: false, official: true, off: false },
+    { name: "old unknown snapshot", optional: undefined, effort: undefined, structured: true, freshChat: false, official: true, off: false },
+    { name: "marker without optional flag", optional: undefined, effort: "none", structured: true, freshChat: false, official: true, off: false },
+    { name: "mandatory profile", optional: false, effort: "minimal", structured: true, freshChat: false, official: true, off: false },
+    { name: "inconsistent optional/minimal", optional: true, effort: "minimal", structured: true, freshChat: false, official: true, off: false },
+    { name: "other provider root", optional: true, effort: "none", structured: true, freshChat: false, official: false, off: false },
+  ] as const)("serializes only the verified control: $name", async ({ optional, effort, structured, freshChat, official, off }) => {
     const root = official ? "https://ai-gateway.kilo.ai/api/v1" : "https://api.commandcode.ai/provider/v1";
     const model: ModelSpec = { route: "gateway:fixture/opaque", id: "opaque", label: "Offline fixture", contextTokens: 131072,
       maxOutputTokens: 8192, outputReserveTokens: 8192, responseFormat: true, structuredOutputs: true, supportsTemperature: true,
@@ -544,7 +548,7 @@ describe.each([undefined, "openai-chat"] as const)("Kilo structured OFF with com
     const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No external request."));
     try {
       const transport = await resolveModelTransport({ AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] }, model,
-        "distill-fixture", { structuredOutput: structured, freshChat: !structured });
+        "distill-fixture", { structuredOutput: structured, ...(freshChat === undefined ? {} : { freshChat }) });
       delete model.structuredReasoningEffort; model.optionalReasoning = !optional;
       await generateText({ model: transport, prompt: "Offline fixture.", maxOutputTokens: 4096, maxRetries: 0 });
       expect(fetch).toHaveBeenCalledTimes(1); expect(network).not.toHaveBeenCalled();

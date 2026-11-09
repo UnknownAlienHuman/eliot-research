@@ -285,8 +285,9 @@ Whole overflow without usable saved understanding rejects before inference: choo
 request source understanding, without implying it is already running.
 Fresh native rows request `high` only when one `reasoning_effort` property uniquely advertises it in `supported_efforts`;
 otherwise the SDK option is omitted, while stored `low` remains literal. This is a request policy, not semantic acceptance.
-Fresh chat opts in via default-off transport flag `freshChat` to the frozen published mandatory minimal profile
-under IMPLEMENTATION §11; the same 8,192-token bound, other callsites and K3 explicit profiles remain unchanged.
+Fresh chat opts in via default-off transport flag `freshChat` to official OpenRouter's frozen mandatory minimal profile
+or official Kilo's frozen paired OFF profile; see [IMPLEMENTATION §11](IMPLEMENTATION.md#11-models).
+The same 8,192-token bound, other callsites and K3 explicit profiles remain unchanged.
 Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
 across corpora, with no fixed-paper coaching or JSON sentence/label enum. Each whole or compact evidence block is one
 JSON `{label,text}` record with literal brackets escaped, and its label applies only to that block's text. The label
