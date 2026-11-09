@@ -1,9 +1,32 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readNativeUsage } from "./model-quota.js";
+import { readNativeUsage, readProviderQuotas } from "./model-quota.js";
+import type { ModelProvider } from "./models";
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it.each([undefined, "named-fixture"])("keeps quota alias=%s on Gateway without a conversation or retry", async keyAlias => {
+  const provider: ModelProvider = { id: "router", type: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1",
+    gatewaySlug: "openrouter", gatewayPath: "v1", enabled: true, ...(keyAlias === undefined ? {} : { keyAlias }) };
+  const network = vi.fn().mockRejectedValue(new Error("No external quota request"));
+  vi.stubGlobal("fetch", network);
+  for (const status of [200, 401, 403]) {
+    const fetch = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => status === 200
+      ? Response.json({ data: { usage: 2, limit: 10 } }) : new Response(null, { status }));
+    const result = await readProviderQuotas({ AI: { fetch } as unknown as Env["AI"] }, [provider], { gatewayId: "fixture" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const call = fetch.mock.calls[0];
+    if (!call) throw new Error("Gateway quota request missing.");
+    expect(String(call[0])).toBe("https://workers-binding.ai/ai-gateway/gateways/fixture/openrouter/v1/key");
+    expect(call[1]?.redirect).toBe("manual");
+    const headers = new Headers(call[1]?.headers);
+    expect(headers.get("cf-aig-byok-alias")).toBe(keyAlias ?? null);
+    expect(headers.has("x-opencode-session")).toBe(false); expect(headers.has("authorization")).toBe(false);
+    expect(result[0]).toMatchObject(status === 200 ? { usage: 2, limit: 10, error: null } : { usage: null, limit: null, error: "quota-unavailable" });
+  }
+  expect(network).not.toHaveBeenCalled();
 });
 
 describe("readNativeUsage", () => {

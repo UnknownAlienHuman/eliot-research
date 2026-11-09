@@ -1450,6 +1450,23 @@ the Cloudflare slug/path supplies routing, including the required `custom-` pref
 contain no credentials. Owner-only PUT `/api/models/providers` saves configuration; GET reads it. Neither discovers
 models or starts inference. The seeded providers preserve the existing Workers AI, OpenRouter and Command Code routes.
 
+Optional nonsecret `keyAlias` selects an existing Gateway BYOK key. The advanced provider connection dialog and
+owner PUT roundtrip it in the existing D1 JSON. Empty, control-containing and header-unsafe aliases are rejected;
+Workers AI rejects the field. Cloudflare publishes a string without a maximum length or alias-pattern constraint.
+Changing the alias invalidates that provider's retained route and quota metadata until explicit Refresh succeeds.
+R2 stores the refreshed provider configuration; each admitted `ModelSpec` freezes its own alias.
+Only Gateway requests carry `cf-aig-byok-alias`; absence omits the header and retains default selection. Provider
+authorization headers remain stripped. Ordinary catalogues use public-first discovery independently of alias presence.
+Only public 401/403 permits one bounded Gateway retry under the existing origin/path guard, carrying the selected
+alias; any retry failure stops. Public 400 does not trigger a retry. Official OpenRouter `/models/user` remains
+authenticated-first. Public catalogue and metadata requests receive no alias; public success does not verify a key.
+Gateway inference identifies `EliotResearch/0.1.0`. Only the official `https://opencode.ai/inference/go` root and
+its path-segment descendants receive `x-opencode-session`, using the existing caller affinity: chat ID,
+distillation Workflow ID or OCR job ID. Other providers, discovery and quota reads receive no Go session header.
+Alias configuration establishes neither key validity nor vendor subscription entitlement. Checked 2026-11-09:
+[Cloudflare BYOK](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/) documents
+direct-passthrough alias selection and confirms that `secret_id` is not the runtime selector.
+
 Migration `0008_model_providers.sql` seeds Kilo, Nous Portal and OpenCode Go alongside the existing providers.
 The new provider rows start disabled. It adds settings and token bounds without rewriting existing models,
 usage or credentials; the earlier unmerged provider migrations are consolidated into this file.
@@ -1629,7 +1646,8 @@ Migration `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; nu
 GET `/api/models/connection` and PUT read/save the exact existing named Gateway ID. Enabling requires
 `confirmCredentialAccess: true`; default is rejected because it may create a Gateway implicitly. Saving records owner
 consent/configuration only and does not prove Gateway or provider usability. No credential input, secret, direct
-provider Authorization header or dummy key is stored in Eliot; credentials remain in Cloudflare's default BYOK alias.
+provider Authorization header or dummy key is stored in Eliot; credentials remain in Cloudflare BYOK, using the
+default alias unless the provider explicitly selects `keyAlias`.
 
 Compatible providers use the installed `@ai-sdk/openai-compatible` provider through the pinned Agents provider-native
 `AI.fetch` adapter, with one attempt, no-wholesale, skip-cache and no-log controls. Source forwarding of those controls

@@ -25,6 +25,7 @@ export interface Draft {
   enabled: boolean;
   modelsUrl: string;
   metadataUrl: string;
+  keyAlias: string;
   dataCollection: DataCollectionPolicy;
 }
 
@@ -45,7 +46,7 @@ function providerName(id: string): string {
 }
 
 export function toDraft(p: ModelProvider): Draft {
-  return { isNew: false, id: p.id, type: p.type, baseUrl: p.baseUrl ?? '', gatewaySlug: p.gatewaySlug ?? '', gatewayPath: p.gatewayPath, enabled: p.enabled, modelsUrl: p.modelsUrl ?? '', metadataUrl: p.metadataUrl ?? '', dataCollection: p.dataCollection ?? 'deny' };
+  return { isNew: false, id: p.id, type: p.type, baseUrl: p.baseUrl ?? '', gatewaySlug: p.gatewaySlug ?? '', gatewayPath: p.gatewayPath, enabled: p.enabled, modelsUrl: p.modelsUrl ?? '', metadataUrl: p.metadataUrl ?? '', keyAlias: p.keyAlias ?? '', dataCollection: p.dataCollection ?? 'deny' };
 }
 
 export function validateDrafts(drafts: Draft[]): { providers: ModelProvider[] | null; errors: Record<number, string> } {
@@ -59,6 +60,7 @@ export function validateDrafts(drafts: Draft[]): { providers: ModelProvider[] | 
     seen.add(id);
     if (d.type === 'workers-ai') {
       if (id !== 'workers-ai') errors[i] = 'The native provider ID is workers-ai.';
+      if (d.keyAlias !== '') errors[i] = 'Workers AI does not use a BYOK alias.';
       out.push({ id: 'workers-ai', type: 'workers-ai', baseUrl: null, gatewaySlug: null, gatewayPath: '', enabled: d.enabled });
       return;
     }
@@ -73,6 +75,12 @@ export function validateDrafts(drafts: Draft[]): { providers: ModelProvider[] | 
     }
     if (!PATH_RE.test(gatewayPath)) errors[i] = 'Use an optional path prefix such as v1, or leave blank.';
     const base: ModelProvider = { id, type: 'openai-compatible', baseUrl: baseUrl === '' ? null : baseUrl, gatewaySlug: gatewaySlug === '' ? null : gatewaySlug, gatewayPath, enabled: d.enabled };
+    if (d.keyAlias !== '') {
+      try {
+        if (d.keyAlias.trim() !== d.keyAlias || /\p{Cc}/u.test(d.keyAlias)) throw new Error('Invalid header value');
+        new Headers({ 'cf-aig-byok-alias': d.keyAlias }); base.keyAlias = d.keyAlias;
+      } catch { errors[i] = 'Use a nonempty, header-safe BYOK alias.'; }
+    }
     const modelsUrl = d.modelsUrl.trim();
     if (modelsUrl !== '') base.modelsUrl = modelsUrl;
     const metadataUrl = d.metadataUrl.trim();
@@ -104,14 +112,14 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
     onChange(drafts.map((d, i) => {
       if (i !== index) return d;
       const next: Draft = { ...d, ...patch };
-      if (patch.type === 'workers-ai') { next.id = 'workers-ai'; next.baseUrl = ''; next.gatewaySlug = ''; next.gatewayPath = ''; next.modelsUrl = ''; next.metadataUrl = ''; next.dataCollection = 'deny'; }
+      if (patch.type === 'workers-ai') { next.id = 'workers-ai'; next.baseUrl = ''; next.gatewaySlug = ''; next.gatewayPath = ''; next.modelsUrl = ''; next.metadataUrl = ''; next.keyAlias = ''; next.dataCollection = 'deny'; }
       return next;
     }));
   }
   function addProvider(): void {
     if (drafts === null || disabled) return;
     const newIndex = drafts.length;
-    onChange([...drafts, { isNew: true, id: 'new-provider', type: 'openai-compatible', baseUrl: '', gatewaySlug: '', gatewayPath: 'v1', enabled: false, modelsUrl: '', metadataUrl: '', dataCollection: 'deny' }]);
+    onChange([...drafts, { isNew: true, id: 'new-provider', type: 'openai-compatible', baseUrl: '', gatewaySlug: '', gatewayPath: 'v1', enabled: false, modelsUrl: '', metadataUrl: '', keyAlias: '', dataCollection: 'deny' }]);
     setEditingIndex(newIndex);
   }
   function removeProvider(index: number): void {
@@ -191,6 +199,10 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
                     <label className="er-field er-providers__row">
                       <span className="er-providers__label">Path prefix</span>
                       <input value={selectedDraft.gatewayPath} onChange={(e) => update(editingIndex, { gatewayPath: e.currentTarget.value })} placeholder="v1" autoComplete="off" disabled={disabled} aria-invalid={selectedFieldError !== undefined} />
+                    </label>
+                    <label className="er-field er-providers__row">
+                      <span className="er-providers__label">BYOK key alias (optional)</span>
+                      <input value={selectedDraft.keyAlias} onChange={(e) => update(editingIndex, { keyAlias: e.currentTarget.value })} autoComplete="off" disabled={disabled} aria-invalid={selectedFieldError !== undefined} />
                     </label>
                     {isOpenRouterApiBase(selectedDraft.baseUrl) ? (
                       <label className="er-field er-providers__row">

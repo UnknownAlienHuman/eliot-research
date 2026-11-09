@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { discoverGatewayModels } from "./model-catalog";
-import { DEFAULT_MODEL, MODELS, getModelProviders, modelOutputLimit, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, requireCatalogModel, saveModelDefaults, saveModelProviders } from "./models";
+import { DEFAULT_MODEL, MODELS, getModelProviders, modelProviderSchema, modelOutputLimit, providerForRoute, readModelCatalog, refreshModelCatalog, requireAvailableModel, requireCatalogModel, saveModelDefaults, saveModelProviders } from "./models";
 import type { ModelProvider } from "./models";
 import { nativeModel } from "./native-model-catalog";
 import { resolveModelTransport } from "./model-transport";
@@ -778,11 +778,13 @@ describe("frozen gateway protocol transports", () => {
     { protocol: "anthropic", ownerBase: "https://opencode.ai/inference/go/anthropic/v1", suffix: "/anthropic/v1/messages" },
     { protocol: "google", ownerBase: "https://opencode.ai/inference/go/google/v1beta", suffix: "/google/v1beta/models/" },
   ] as const;
-  it.each(cases)("routes $protocol onto the frozen custom Gateway path without credentials", async ({ protocol, ownerBase, suffix }) => {
+  it.each(cases.flatMap(entry => [undefined, "named-fixture"].map(keyAlias => ({ ...entry, keyAlias }))))("routes $protocol onto the frozen custom Gateway path without credentials; alias=$keyAlias", async ({ protocol, ownerBase, suffix, keyAlias }) => {
     const { fetch: fetchStub, binding } = stubGateway();
     const { DB, prepared } = testDb();
     const nativeId = "probe-" + protocol;
-    const languageModel = await resolveModelTransport({ AI: binding, DB }, goModel(nativeId, protocol, ownerBase), "sess-" + protocol);
+    const model = goModel(nativeId, protocol, ownerBase);
+    if (keyAlias !== undefined && model.routing) model.routing.provider.keyAlias = keyAlias;
+    const languageModel = await resolveModelTransport({ AI: binding, DB }, model, "sess-" + protocol);
     const controller = new AbortController();
     if (protocol === "google") {
       try { await (await streamText({ model: languageModel, prompt: "hi", maxRetries: 0, abortSignal: controller.signal })).text; } catch { /* stubbed 400 surfaces here */ }
@@ -799,6 +801,10 @@ describe("frozen gateway protocol transports", () => {
     expect(init.method).toBe("POST");
     expect(init.signal).toBe(controller.signal);
     expect(init.headers).toMatchObject({ "Content-Type": "application/json", "x-session-affinity": "sess-" + protocol, "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" });
+    const headers = new Headers(init.headers);
+    expect(headers.get("cf-aig-byok-alias")).toBe(keyAlias ?? null);
+    expect(headers.get("user-agent")).toBe("EliotResearch/0.1.0");
+    expect(headers.get("x-opencode-session")).toBe("sess-" + protocol);
     expect(JSON.stringify({ url, headers: init.headers }).toLowerCase()).not.toMatch(/authorization|bearer|x-api-key|x-goog-api-key|sk-/);
     expect(url).not.toMatch(/[?&](key|apikey|api_key|x-goog-api-key)=/i);
     const sent = JSON.parse(String(init.body)) as { model?: unknown; store?: unknown; previous_response_id?: unknown };
@@ -808,7 +814,66 @@ describe("frozen gateway protocol transports", () => {
     if (protocol === "anthropic") { expect(init.headers?.["anthropic-version"]).toBe("2023-06-01"); }
     if (protocol === "google") { expect(url).toContain(":streamGenerateContent"); expect(url).toContain("alt=sse"); }
     expect(prepared).toEqual([]);
+    for (const session of ["sess-" + protocol, "another-caller"]) {
+      const next = await resolveModelTransport({ AI: binding, DB }, model, session);
+      if (protocol === "google") {
+        await expect(streamText({ model: next, prompt: "offline", maxRetries: 0 }).text).rejects.toThrow();
+      } else await expect(generateText({ model: next, prompt: "offline", maxRetries: 0 })).rejects.toThrow();
+    }
+    expect(fetchStub.mock.calls.map(([, init]) => new Headers(init?.headers).get("x-opencode-session")))
+      .toEqual(["sess-" + protocol, "sess-" + protocol, "another-caller"]);
   });
+
+  it.each(["native", "compatible", "protocol-chat"] as const)("keeps caller affinity without a Go header and stops credential rejection on %s", async path => {
+    const network = vi.fn().mockRejectedValue(new Error("Unexpected provider network request"));
+    vi.stubGlobal("fetch", network);
+    const provider: ModelProvider = { id: "router", type: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1",
+      gatewaySlug: path === "native" ? "openrouter" : "custom-router", gatewayPath: "v1", enabled: true, keyAlias: "named-fixture" };
+    const model: ModelSpec = { ...MODELS[0], route: "gateway:router/offline", id: "offline", label: "Offline", contextTokens: 64000,
+      maxOutputTokens: 8192, checkedOn: "2026-11-09", enabled: true, routing: { provider, gatewayId: "fixture" },
+      ...(path === "protocol-chat" ? { apiProtocol: "openai-chat", apiBaseUrl: provider.baseUrl ?? "" } : {}) };
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 401 }));
+    const env = { AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] };
+    for (const [index, session] of ["chat-fixture", "chat-fixture", "ocr-job-fixture"].entries()) {
+      const transport = await resolveModelTransport(env, model, session);
+      await expect(generateText({ model: transport, prompt: "offline", maxOutputTokens: 8, maxRetries: 0 })).rejects.toThrow();
+      expect(fetch).toHaveBeenCalledTimes(index + 1);
+      const request = fetch.mock.calls[index];
+      if (!request) throw new Error("The Gateway request is missing.");
+      expect(String(request[0])).toMatch(/^https:\/\/workers-binding\.ai\/ai-gateway\/gateways\//);
+      const headers = new Headers(request[1]?.headers);
+      expect(headers.get("cf-aig-byok-alias")).toBe("named-fixture");
+      expect(headers.get("user-agent")).toBe("EliotResearch/0.1.0");
+      expect(headers.has("x-opencode-session")).toBe(false);
+      expect(headers.get("x-session-affinity")).toBe(session);
+      expect(headers.has("authorization")).toBe(false);
+    }
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { baseUrl: "https://opencode.ai/inference/go", go: true },
+    { baseUrl: "https://opencode.ai/inference/go/vendor", go: true },
+    { baseUrl: "https://opencode.ai/inference", go: false },
+    { baseUrl: "https://opencode.ai/inference/goo", go: false },
+    { baseUrl: "https://opencode.ai/goto/goo", go: false },
+    { baseUrl: "https://opencode.ai.evil.example/inference/go", go: false },
+    { baseUrl: "https://opencode.ai:8443/inference/go", go: false },
+  ].flatMap(entry => [false, true].map(protocol => ({ ...entry, protocol }))))(
+    "scopes Go headers by root, independently of provider/model names: $baseUrl protocol=$protocol", async ({ baseUrl, go, protocol }) => {
+      const { fetch, binding } = stubGateway();
+      const provider: ModelProvider = { ...GO_PROVIDER, id: go ? "unrelated-name" : "opencode-go", type: "openai-compatible", baseUrl };
+      const model: ModelSpec = { ...MODELS[0], route: `gateway:${provider.id}/opencode-go-model`, id: "opencode-go-model",
+        label: "Offline root boundary", contextTokens: 64000, maxOutputTokens: 8192, checkedOn: "2026-11-09", enabled: true,
+        routing: { provider, gatewayId: "fixture" }, ...(protocol ? { apiProtocol: "openai-chat", apiBaseUrl: baseUrl } : {}) };
+      const transport = await resolveModelTransport({ AI: binding, DB: {} as Env["DB"] }, model, "chat-existing-id");
+      await expect(generateText({ model: transport, prompt: "offline", maxRetries: 0 })).rejects.toThrow();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      const headers = new Headers(fetch.mock.calls[0]?.[1]?.headers);
+      expect(headers.get("x-opencode-session")).toBe(go ? "chat-existing-id" : null);
+      expect(headers.get("x-session-affinity")).toBe("chat-existing-id");
+      expect(headers.get("user-agent")).toBe("EliotResearch/0.1.0");
+    });
 
   it("sends deny, allow and legacy default-deny through every OpenRouter Chat transport", async () => {
     const network = vi.fn(async () => { throw new Error("Only the fake AI binding may receive requests"); });
@@ -830,6 +895,7 @@ describe("frozen gateway protocol transports", () => {
           expect(fetchStub, baseUrl + " " + path + " " + String(policy)).toHaveBeenCalledTimes(1);
           const request = fetchStub.mock.calls[0];
           if (!request) throw new Error("Expected the fake Gateway request");
+          expect(new Headers(request[1]?.headers).has("cf-aig-byok-alias")).toBe(false);
           const sent = JSON.parse(String(request[1]?.body)) as Record<string, unknown>;
           expect(sent.provider, baseUrl + " " + path + " " + String(policy)).toMatchObject({
             data_collection: policy ?? "deny", allow_fallbacks: false, require_parameters: true,
@@ -937,8 +1003,9 @@ describe("authenticated OpenRouter catalogue discovery", () => {
     baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true };
   const row = { id: "provider/filtered", context_length: 64000, architecture: textChat };
 
-  it.each([undefined, userUrl, userUrl + "?limit=16&output_modalities=text"])("uses receiver-bound Gateway GET first for modelsUrl=%s despite public anonymous 200", async modelsUrl => {
-    const selected = { ...provider, ...(modelsUrl === undefined ? {} : { modelsUrl }) };
+  it.each([undefined, userUrl, userUrl + "?limit=16&output_modalities=text"].flatMap(modelsUrl =>
+    [undefined, "named-fixture"].map(keyAlias => ({ modelsUrl, keyAlias }))))("uses receiver-bound Gateway GET first for modelsUrl=$modelsUrl alias=$keyAlias despite public anonymous 200", async ({ modelsUrl, keyAlias }) => {
+    const selected = { ...provider, ...(modelsUrl === undefined ? {} : { modelsUrl }), ...(keyAlias === undefined ? {} : { keyAlias }) };
     const publicFetch = vi.fn(async () => Response.json({ data: [{ ...row, id: "anonymous/unfiltered" }] }));
     vi.stubGlobal("fetch", publicFetch);
     const timeout = vi.spyOn(AbortSignal, "timeout");
@@ -948,6 +1015,7 @@ describe("authenticated OpenRouter catalogue discovery", () => {
       expect(init).toMatchObject({ method: "GET", redirect: "manual", headers: { accept: "application/json",
         "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" } });
       expect(new Headers(init?.headers).has("authorization")).toBe(false);
+      expect(new Headers(init?.headers).get("cf-aig-byok-alias")).toBe(keyAlias ?? null);
       expect(init?.body).toBeUndefined();
       return Response.json({ data: [row] });
     }) } };
@@ -1185,5 +1253,134 @@ describe("stored catalogue with provider snapshot", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     const cc = refreshed.models.filter((m) => m.route.indexOf("gateway:command-code/") === 0);
     expect(cc.some((m) => m.enabled)).toBe(true);
+  });
+});
+
+describe("Gateway BYOK alias configuration", () => {
+  it("roundtrips nonsecret aliases and rejects unusable headers and native aliases", async () => {
+    const providers = defaultProviders(), env = fixtureEnv(fakeBucket().binding);
+    const provider = providers.find(p => p.id === "openrouter");
+    const native = providers.find(p => p.type === "workers-ai");
+    if (!provider || !native) throw new Error("Provider fixture missing.");
+    const network = vi.fn().mockRejectedValue(new Error("Saving must not discover or infer"));
+    vi.stubGlobal("fetch", network);
+    for (const keyAlias of ["named.fixture:1", "a".repeat(300)]) {
+      await saveModelProviders(env, [{ ...provider, keyAlias }]);
+      expect(await getModelProviders(env)).toEqual([{ ...provider, keyAlias }]);
+    }
+    for (const keyAlias of ["", " alias", "alias ", "a\rb", "a\nb", "a\tb", "\u0000", "\u007f", "\u0085", "🧪"])
+      expect(modelProviderSchema.safeParse({ ...provider, keyAlias }).success).toBe(false);
+    expect(modelProviderSchema.safeParse({ ...native, keyAlias: "named" }).success).toBe(false);
+    await saveModelProviders(env, [provider]);
+    expect((await getModelProviders(env))[0]).not.toHaveProperty("keyAlias");
+    await expect(resolveModelTransport({ AI: {} as Env["AI"], DB: env.DB },
+      { ...MODELS[0], routing: { provider: { ...native, keyAlias: "named" }, gatewayId: "fixture" } } as ModelSpec, "native"))
+      .rejects.toMatchObject({ code: "invalid", status: 400 });
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("invalidates only the changed route and quota until Refresh, while admitted aliases stay frozen", async () => {
+    const providers = defaultProviders().filter(p => p.type !== "workers-ai").map(p => p.id === "openrouter" ? { ...p, keyAlias: "before" } : p);
+    const route = "gateway:openrouter/cached", other = "gateway:command-code/cached";
+    const bucket = fakeBucket({ updatedAt: "2026-11-09T00:00:00Z", warnings: [], providers, quotaGatewayId: "fixture-gateway",
+      quotas: providers.map(p => ({ providerId: p.id, usage: 1, limit: 10, error: null })),
+      models: [route, other].map(route => ({ route, id: "cached", label: "Cached", contextTokens: 64000,
+        maxOutputTokens: 8192, checkedOn: "2026-11-09", enabled: true })) });
+    const env = fixtureEnv(bucket.binding, { providers });
+    const admitted = await requireAvailableModel(env, route);
+    const network = vi.fn(async () => Response.json({ data: [{ id: "cached", context_length: 64000 }] }));
+    vi.stubGlobal("fetch", network);
+    const snapshot = JSON.stringify(bucket.stored());
+    await saveModelProviders(env, providers.map(p => p.id === "openrouter" ? { ...p, keyAlias: "after" } : p));
+    const changed = await readModelCatalog(env);
+    expect(changed.models.find(m => m.route === route)).toMatchObject({ enabled: false, unavailableReason: expect.stringContaining("Refresh") });
+    expect(changed.models.find(m => m.route === other)?.enabled).toBe(true);
+    expect(changed.quotas.find(q => q.providerId === "openrouter")).toMatchObject({ usage: null, limit: null });
+    expect(changed.quotas.find(q => q.providerId === "command-code")).toMatchObject({ usage: 1, limit: 10 });
+    await expect(requireAvailableModel(env, route)).rejects.toMatchObject({ status: 503 });
+    expect(JSON.stringify(bucket.stored())).toBe(snapshot); expect(network).not.toHaveBeenCalled();
+    const gateway = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("cf-aig-byok-alias")).toBe("after");
+      return Response.json(String(url).endsWith("/key") ? { data: { usage: 2, limit: 10 } }
+        : { data: [{ id: "cached", context_length: 64000, architecture: textChat }] });
+    });
+    Object.assign(env.AI, { fetch: gateway });
+    await refreshModelCatalog(env);
+    const refreshed = await requireAvailableModel(env, route);
+    expect(refreshed.routing?.provider.keyAlias).toBe("after");
+    expect(admitted.routing?.provider.keyAlias).toBe("before");
+    expect((bucket.stored() as { providers: ModelProvider[] }).providers.find(p => p.id === "openrouter")?.keyAlias).toBe("after");
+    const sent = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 403 }));
+    const dispatchEnv = { AI: { fetch: sent } as unknown as Env["AI"], DB: env.DB };
+    for (const model of [admitted, refreshed]) {
+      const transport = await resolveModelTransport(dispatchEnv, model, "distill-attempt-fixture");
+      await expect(generateText({ model: transport, prompt: "offline", maxRetries: 0 })).rejects.toThrow();
+    }
+    expect(sent).toHaveBeenCalledTimes(2);
+    expect(sent.mock.calls.map(([, init]) => new Headers(init?.headers).get("cf-aig-byok-alias"))).toEqual(["before", "after"]);
+  });
+
+  it.each([401, 403].flatMap(publicStatus => [200, 400, 401, 403].map(gatewayStatus => ({ publicStatus, gatewayStatus }))))(
+    "retries public $publicStatus once through the selected alias; Gateway $gatewayStatus", async ({ publicStatus, gatewayStatus }) => {
+    const provider: ModelProvider = { id: "go", type: "openai-compatible", baseUrl: "https://opencode.ai/inference/go",
+      modelsUrl: "https://opencode.ai/inference/go/v1/models", gatewaySlug: "custom-opencode-go", gatewayPath: "", enabled: true, keyAlias: "named" };
+    const network = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: publicStatus }));
+    vi.stubGlobal("fetch", network);
+    const fetch = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => gatewayStatus === 200
+      ? Response.json({ data: [{ id: "cached", context_length: 64000 }] }) : new Response(null, { status: gatewayStatus }));
+    const errors: string[] = [];
+    const models = await discoverGatewayModels([provider], (_id, reason) => errors.push(reason), { id: "fixture", ai: { fetch } });
+    expect(models).toHaveLength(gatewayStatus === 200 ? 1 : 0);
+    expect(fetch).toHaveBeenCalledTimes(1); expect(network).toHaveBeenCalledTimes(1);
+    expect(String(network.mock.calls[0]?.[0])).toBe(provider.modelsUrl);
+    const publicHeaders = new Headers(network.mock.calls[0]?.[1]?.headers);
+    expect(publicHeaders.has("cf-aig-byok-alias")).toBe(false); expect(publicHeaders.has("x-opencode-session")).toBe(false);
+    const request = fetch.mock.calls[0];
+    if (!request) throw new Error("Gateway catalogue request missing.");
+    expect(String(request[0])).toBe("https://workers-binding.ai/ai-gateway/gateways/fixture/custom-opencode-go/v1/models");
+    const headers = new Headers(request[1]?.headers);
+    expect(headers.get("cf-aig-byok-alias")).toBe("named");
+    expect(headers.has("x-opencode-session")).toBe(false); expect(headers.has("authorization")).toBe(false);
+    expect(errors).toEqual(gatewayStatus === 200 ? [] : [expect.stringContaining("HTTP " + gatewayStatus)]);
+  });
+
+  it.each([200, 400])("keeps ordinary public HTTP %s off Gateway despite an alias", async status => {
+    const provider: ModelProvider = { id: "go", type: "openai-compatible", baseUrl: "https://opencode.ai/inference/go",
+      modelsUrl: "https://opencode.ai/inference/go/v1/models", gatewaySlug: "custom-opencode-go", gatewayPath: "", enabled: true, keyAlias: "named" };
+    const network = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => status === 200
+      ? Response.json({ data: [{ id: "cached", context_length: 64000 }] }) : new Response(null, { status }));
+    vi.stubGlobal("fetch", network);
+    const fetch = vi.fn().mockRejectedValue(new Error("No Gateway call on public success or HTTP 400"));
+    expect(await discoverGatewayModels([provider], undefined, { id: "fixture", ai: { fetch } })).toHaveLength(status === 200 ? 1 : 0);
+    expect(network).toHaveBeenCalledTimes(1); expect(fetch).not.toHaveBeenCalled();
+    const headers = new Headers(network.mock.calls[0]?.[1]?.headers);
+    expect(headers.has("cf-aig-byok-alias")).toBe(false); expect(headers.has("authorization")).toBe(false);
+  });
+
+  it.each(["https://catalogue.example.com/models", "https://opencode.ai/other/models"])("does not retry authentication outside the existing origin/path guard: %s", async modelsUrl => {
+    const provider: ModelProvider = { id: "go", type: "openai-compatible", baseUrl: "https://opencode.ai/inference/go", modelsUrl,
+      gatewaySlug: "custom-opencode-go", gatewayPath: "", enabled: true, keyAlias: "named" };
+    const network = vi.fn(async () => new Response(null, { status: 403 })); vi.stubGlobal("fetch", network);
+    const fetch = vi.fn().mockRejectedValue(new Error("Gateway boundary must remain narrow"));
+    expect(await discoverGatewayModels([provider], undefined, { id: "fixture", ai: { fetch } })).toEqual([]);
+    expect(network).toHaveBeenCalledTimes(1); expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps aliases and conversation IDs off public catalogues and external metadata", async () => {
+    const provider: ModelProvider = { id: "go", type: "openai-compatible", baseUrl: "https://opencode.ai/inference/go",
+      gatewaySlug: "custom-opencode-go", gatewayPath: "", enabled: true, keyAlias: "named" };
+    const publicFetch = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => Response.json(String(url) === "https://models.dev/api.json"
+      ? { go: { models: {} } } : { data: [{ id: "cached", context_length: 64000 }] }));
+    vi.stubGlobal("fetch", publicFetch);
+    const fetch = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => Response.json({ data: [{ id: "cached", context_length: 64000 }] }));
+    const gateway = { id: "fixture", ai: { fetch } };
+    expect(await discoverGatewayModels([{ ...provider, modelsUrl: "https://catalogue.example.com/models" }], undefined, gateway)).toHaveLength(1);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await discoverGatewayModels([{ ...provider, metadataUrl: "https://models.dev/api.json" }], undefined, gateway)).toHaveLength(1);
+    expect(fetch).not.toHaveBeenCalled(); expect(publicFetch).toHaveBeenCalledTimes(3);
+    for (const [, init] of publicFetch.mock.calls) {
+      const headers = new Headers(init?.headers);
+      expect(headers.has("cf-aig-byok-alias")).toBe(false); expect(headers.has("x-opencode-session")).toBe(false);
+    }
   });
 });

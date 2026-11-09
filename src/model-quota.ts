@@ -152,13 +152,16 @@ function pickQuota(data: unknown): Pick<ProviderQuota, "usage" | "limit"> {
   return { usage, limit };
 }
 
-async function readOpenRouterQuota(gatewayId: string, ai: Pick<Fetcher, "fetch">): Promise<Omit<ProviderQuota, "providerId">> {
+async function readOpenRouterQuota(gatewayId: string, ai: Pick<Fetcher, "fetch">, keyAlias?: string): Promise<Omit<ProviderQuota, "providerId">> {
   const target = "https://workers-binding.ai/ai-gateway/gateways/" + encodeURIComponent(gatewayId) + "/openrouter/v1/key";
   try {
     const resp = await ai.fetch(target, {
       method: "GET",
+      redirect: "manual",
       headers: {
         accept: "application/json",
+        "user-agent": "EliotResearch/0.1.0",
+        ...(keyAlias === undefined ? {} : { "cf-aig-byok-alias": keyAlias }),
         "cf-aig-no-wholesale": "true",
         "cf-aig-max-attempts": "1",
         "cf-aig-skip-cache": "true",
@@ -213,7 +216,7 @@ export async function readProviderQuotas(
       out.push({ providerId: p.id, ...UNAVAILABLE });
       continue;
     }
-    const q = await readOpenRouterQuota(connection.gatewayId, binding as unknown as Pick<Fetcher, "fetch">);
+    const q = await readOpenRouterQuota(connection.gatewayId, binding as unknown as Pick<Fetcher, "fetch">, p.keyAlias);
     out.push({ providerId: p.id, ...q });
   }
   return out;

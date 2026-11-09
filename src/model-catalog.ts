@@ -289,6 +289,7 @@ function readGatewayCatalogue(provider: ModelProvider, target: URL, gateway: Cat
     "/" + provider.gatewaySlug + path + target.pathname.slice(prefix.length) + target.search, {
     method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs),
     headers: { accept: "application/json", "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1",
+      "user-agent": "EliotResearch/0.1.0", ...(provider.keyAlias === undefined ? {} : { "cf-aig-byok-alias": provider.keyAlias }),
       "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" },
   });
 }

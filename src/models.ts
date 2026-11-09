@@ -15,10 +15,14 @@ export const modelProviderSchema = z.object({
   modelsUrl: z.string().trim().url().optional(),
   metadataUrl: z.string().trim().url().optional(),
   dataCollection: z.enum(["deny", "allow"]).optional(),
+  keyAlias: z.string().min(1).refine((value) => {
+    if (value.trim() !== value || /\p{Cc}/u.test(value)) return false;
+    try { new Headers({ "cf-aig-byok-alias": value }); return true; } catch { return false; }
+  }, "Use a nonempty, header-safe BYOK alias.").optional(),
   enabled: z.boolean(),
 }).strict().superRefine((provider, ctx) => {
   if (provider.type === "workers-ai") {
-    if (provider.id !== "workers-ai" || provider.baseUrl !== null || provider.gatewaySlug !== null || provider.gatewayPath !== "" || provider.modelsUrl !== undefined || provider.metadataUrl !== undefined || provider.dataCollection !== undefined)
+    if (provider.id !== "workers-ai" || provider.baseUrl !== null || provider.gatewaySlug !== null || provider.gatewayPath !== "" || provider.modelsUrl !== undefined || provider.metadataUrl !== undefined || provider.dataCollection !== undefined || provider.keyAlias !== undefined)
       ctx.addIssue({ code: "custom", message: "Workers AI uses its native binding and no base URL." });
   } else {
     let url: URL | null = null;
@@ -269,7 +273,7 @@ function sameProviderRoute(provider: ModelProvider, previous: ModelProvider | un
   // Data-use choice is frozen on admission; it does not change catalogue identity.
   return previous !== undefined && previous.type === provider.type && previous.baseUrl === provider.baseUrl &&
     previous.gatewaySlug === provider.gatewaySlug && previous.gatewayPath === provider.gatewayPath &&
-    previous.modelsUrl === provider.modelsUrl && previous.metadataUrl === provider.metadataUrl;
+    previous.modelsUrl === provider.modelsUrl && previous.metadataUrl === provider.metadataUrl && previous.keyAlias === provider.keyAlias;
 }
 function isProviderQuota(value: unknown): value is ProviderQuota {
   return isRecord(value) && typeof value.providerId === "string" &&

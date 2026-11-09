@@ -119,6 +119,7 @@ type GatewayProtocolFetchOptions = {
   ownerBase: string;
   gatewayBase: string;
   sessionAffinity: string;
+  keyAlias?: string | undefined;
   preserveAnthropicHeaders: boolean;
 };
 
@@ -126,6 +127,10 @@ const STRIPPED_QUERY_NAMES = new Set(["key", "apikey", "api_key", "x-goog-api-ke
 
 function normalizedBase(value: string): string {
   return value.replace(/\/+$/, "");
+}
+function isOpenCodeGoRoot(url: URL): boolean {
+  return url.origin === "https://opencode.ai" &&
+    (url.pathname === "/inference/go" || url.pathname.startsWith("/inference/go/"));
 }
 
 // Frozen Gateway custom route without the vendor protocol path. The per-request
@@ -140,7 +145,7 @@ function gatewayBaseFor(provider: Pick<ModelProvider, "gatewaySlug" | "gatewayPa
 // builds the vendor URL, method, raw body and signal; this wrapper only moves
 // the vendor-relative path onto the frozen Gateway custom route, keeps
 // protocol-safe headers (Anthropic version/beta, Google alt=sse query) and
-// drops vendor credentials before the Gateway. Gateway default BYOK supplies
+// drops vendor credentials before the Gateway. Gateway-selected BYOK supplies
 // credentials; the wrapper starts no retry and keeps raw native IDs untouched.
 function createProtocolFetch(env: Pick<Env, "AI">, opts: GatewayProtocolFetchOptions) {
   const root = new URL(normalizedBase(opts.rootBase));
@@ -186,6 +191,9 @@ function createProtocolFetch(env: Pick<Env, "AI">, opts: GatewayProtocolFetchOpt
     const headers: Record<string, string> = {
       "Content-Type": incoming.get("content-type") ?? "application/json",
       "x-session-affinity": opts.sessionAffinity,
+      "user-agent": "EliotResearch/0.1.0",
+      ...(isOpenCodeGoRoot(root) ? { "x-opencode-session": opts.sessionAffinity } : {}),
+      ...(opts.keyAlias === undefined ? {} : { "cf-aig-byok-alias": opts.keyAlias }),
       "cf-aig-no-wholesale": "true",
       "cf-aig-max-attempts": "1",
       "cf-aig-skip-cache": "true",
@@ -201,6 +209,7 @@ function createProtocolFetch(env: Pick<Env, "AI">, opts: GatewayProtocolFetchOpt
     // Ai.fetch is not declared in the pinned types; preserve its receiver with this narrow cast.
     return (env.AI as unknown as Pick<Fetcher, "fetch">).fetch(gatewayUrl, {
       method: "POST",
+      redirect: "manual",
       body: init.body,
       headers,
       ...(init.signal ? { signal: init.signal } : {}),
@@ -232,6 +241,7 @@ export async function resolveModelTransport(
   options: { structuredOutput?: boolean; freshChat?: boolean } = {},
 ): Promise<LanguageModel> {
   if (model.route.startsWith("workers-ai:")) {
+    if (model.routing?.provider.keyAlias !== undefined) throw new LibraryError("invalid", "Workers AI does not use a BYOK alias.", 400);
     const native = createAI({ binding: env.AI }).languageModel(model.id, { ...(model.nativeReasoningEffort ? { reasoningEffort: model.nativeReasoningEffort } : {}), sessionAffinity });
     return options.structuredOutput === true ? wrapLanguageModel({ model: native, middleware: {
       transformParams: async ({ params, type }) => type === "stream" ? { ...params, responseFormat: { type: "text" } } : params,
@@ -284,6 +294,8 @@ export async function resolveModelTransport(
     return createAI({ binding: env.AI }).languageModel(vendor, {
       sessionAffinity,
       headers: {
+        "user-agent": "EliotResearch/0.1.0",
+        ...(provider.keyAlias === undefined ? {} : { "cf-aig-byok-alias": provider.keyAlias }),
         "cf-aig-no-wholesale": "true",
         "cf-aig-max-attempts": "1",
         "cf-aig-skip-cache": "true",
@@ -316,20 +328,20 @@ export async function resolveModelTransport(
           isOpenRouterApiBase(ownerBase)
             ? openRouterBody(responseFormatAllowed, { supportsTemperature, optionalReasoning: model.optionalReasoning === true, structuredOutput: options.structuredOutput === true, structuredReasoningEffort: model.structuredReasoningEffort, openRouterReasoningEffort: model.openRouterReasoningEffort, freshChatMinimal }, provider.dataCollection ?? "deny")
             : compatibleBody(responseFormatAllowed, supportsTemperature),
-        fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: false }),
+        fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, keyAlias: provider.keyAlias, preserveAnthropicHeaders: false }),
       }).languageModel(model.id);
     }
     if (apiProtocol === "openai-responses") {
       const { createOpenAI } = await import("@ai-sdk/openai");
-      const inner = createOpenAI({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: false }), name: provider.id }).responses(model.id);
+      const inner = createOpenAI({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, keyAlias: provider.keyAlias, preserveAnthropicHeaders: false }), name: provider.id }).responses(model.id);
       return wrapLanguageModel({ model: inner, middleware: responsesStatelessMiddleware });
     }
     if (apiProtocol === "anthropic") {
       const { createAnthropic } = await import("@ai-sdk/anthropic");
-      return createAnthropic({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: true }), name: provider.id }).languageModel(model.id);
+      return createAnthropic({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, keyAlias: provider.keyAlias, preserveAnthropicHeaders: true }), name: provider.id }).languageModel(model.id);
     }
     const { createGoogle } = await import("@ai-sdk/google");
-    return createGoogle({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: false }), name: provider.id }).languageModel(model.id);
+    return createGoogle({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, keyAlias: provider.keyAlias, preserveAnthropicHeaders: false }), name: provider.id }).languageModel(model.id);
   }
   const baseURL = provider.baseUrl.replace(/\/+$/, "");
   const gatewayPath = provider.gatewayPath ? `/${provider.gatewayPath}` : "";
@@ -356,12 +368,15 @@ export async function resolveModelTransport(
         throw new LibraryError("unavailable", "This provider endpoint is not supported.", 503);
       init.signal?.throwIfAborted();
       const headers = { "Content-Type": "application/json", "x-session-affinity": sessionAffinity,
+        "user-agent": "EliotResearch/0.1.0",
+        ...(isOpenCodeGoRoot(new URL(baseURL)) ? { "x-opencode-session": sessionAffinity } : {}),
+        ...(provider.keyAlias === undefined ? {} : { "cf-aig-byok-alias": provider.keyAlias }),
         "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" };
       // Native binding mechanism: Agents 0.30.1, packages/agents/src/models/core/transport.ts.
       // Ai.fetch is not declared in the pinned types; preserve its receiver with this narrow cast.
       return (env.AI as unknown as Pick<Fetcher, "fetch">).fetch(
         gatewayUrl,
-        { method: "POST", body: init.body, headers, ...(init.signal ? { signal: init.signal } : {}) });
+        { method: "POST", redirect: "manual", body: init.body, headers, ...(init.signal ? { signal: init.signal } : {}) });
     },
   }).languageModel(model.id);
 }

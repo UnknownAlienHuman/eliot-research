@@ -10,6 +10,7 @@ import type { Understanding } from '../understanding';
 import { SourceUnderstanding } from './Understanding';
 import { ModelPicker, type ModelRoute } from './ModelPicker';
 import { ModelSettings } from './ModelSettings';
+import type { ModelProvider } from '../models';
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -31,6 +32,56 @@ function SourcesRead({ projectId }: { projectId: string }) {
 }
 
 describe('Source claim evidence presentation', () => {
+  it.each(['named-fixture', ''])('roundtrips advanced BYOK alias %s through only the provider PUT', async keyAlias => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host), native = 'workers-ai:flash';
+    let providers: ModelProvider[] = [{ id: 'openrouter', type: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1',
+      gatewaySlug: 'openrouter', gatewayPath: 'v1', enabled: true, keyAlias: 'previous-fixture' }];
+    const writes: Array<{ path: string; body: { providers: ModelProvider[] } }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input), method = init?.method ?? 'GET';
+      if (method !== 'GET') {
+        if (method !== 'PUT' || path !== '/api/models/providers') throw new Error('Unexpected refresh, connection, default or model write.');
+        const body = JSON.parse(String(init?.body)) as { providers: ModelProvider[] };
+        writes.push({ path, body }); providers = body.providers; return Response.json({ providers });
+      }
+      if (path === '/api/models/providers') return Response.json({ providers });
+      if (path === '/api/settings') return Response.json({ settings: { answerModel: native, distillModel: native, updatedAt: 0 } });
+      if (path === '/api/models/connection') return Response.json({ connection: { gatewayId: 'fixture', provider: 'ai-gateway', alias: 'default' } });
+      if (path === '/api/models') return Response.json({ models: [{ route: native, id: 'flash', label: 'Flash', enabled: true,
+        selectable: true, contextTokens: 64000, maxOutputTokens: 8192, checkedOn: null }], warnings: [], defaultModel: native });
+      throw new Error('Unexpected read.');
+    }));
+    const openAlias = async () => {
+      const dialog = host.querySelector<HTMLDialogElement>('.er-providers__dialog');
+      const connection = host.querySelector<HTMLButtonElement>('button[aria-label="Connection details for OpenRouter"]');
+      if (!dialog || !connection) throw new Error('Provider connection dialog missing.');
+      Object.defineProperty(dialog, 'showModal', { value: () => { dialog.open = true; } });
+      await act(async () => connection.click());
+      const label = Array.from(dialog.querySelectorAll('label')).find(label => label.textContent?.includes('BYOK key alias'));
+      const input = label?.querySelector('input');
+      if (!input) throw new Error('Advanced alias input missing.');
+      return input;
+    };
+    try {
+      await act(async () => root.render(<ModelSettings key="initial" />));
+      const input = await openAlias(); expect(input.value).toBe('previous-fixture');
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      if (!set) throw new Error('Native input setter missing.');
+      await act(async () => { set.call(input, keyAlias); input.dispatchEvent(new Event('input', { bubbles: true })); });
+      const save = Array.from(host.querySelectorAll('button')).find(button => button.textContent === 'Save');
+      if (!save) throw new Error('Settings Save missing.');
+      await act(async () => save.click());
+      expect(writes).toHaveLength(1); expect(writes[0]?.path).toBe('/api/models/providers');
+      if (keyAlias === '') expect(writes[0]?.body.providers[0]).not.toHaveProperty('keyAlias');
+      else expect(writes[0]?.body.providers[0]?.keyAlias).toBe(keyAlias);
+      await act(async () => root.render(<ModelSettings key="reloaded" />));
+      expect((await openAlias()).value).toBe(keyAlias);
+      expect(writes).toHaveLength(1);
+    } finally { await act(async () => root.unmount()); host.remove(); }
+  });
+
   it('disambiguates provider origins and keeps an outside-filter selection separate without changing it', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const host = document.createElement('div'); document.body.appendChild(host);
