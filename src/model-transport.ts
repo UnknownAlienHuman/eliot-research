@@ -98,7 +98,7 @@ function compatibleBody(responseFormatAllowed: boolean, supportsTemperature: boo
     return out;
   };
 }
-function openRouterBody(responseFormatAllowed: boolean, options: { supportsTemperature: boolean; optionalReasoning: boolean; structuredOutput: boolean; structuredReasoningEffort?: "minimal" | undefined; openRouterReasoningEffort?: string | undefined }, dataCollection: DataCollectionPolicy) {
+function openRouterBody(responseFormatAllowed: boolean, options: { supportsTemperature: boolean; optionalReasoning: boolean; structuredOutput: boolean; structuredReasoningEffort?: "minimal" | undefined; openRouterReasoningEffort?: string | undefined; freshChatMinimal: boolean }, dataCollection: DataCollectionPolicy) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
     const provider = { ...(args.provider as Record<string, unknown> | undefined), allow_fallbacks: false, require_parameters: true, data_collection: dataCollection };
     const out: Record<string, unknown> = { ...args, provider };
@@ -109,6 +109,7 @@ function openRouterBody(responseFormatAllowed: boolean, options: { supportsTempe
     if (options.structuredOutput && options.openRouterReasoningEffort !== undefined) out.reasoning = { effort: options.openRouterReasoningEffort };
     else if (options.structuredOutput && options.structuredReasoningEffort === "minimal" && !options.optionalReasoning) out.reasoning = { effort: "minimal" };
     else if (options.structuredOutput && options.optionalReasoning && options.structuredReasoningEffort === undefined) out.reasoning = { enabled: false };
+    else if (!options.structuredOutput && options.freshChatMinimal) out.reasoning = { effort: "minimal" };
     return out;
   };
 }
@@ -228,7 +229,7 @@ export async function resolveModelTransport(
   env: Pick<Env, "AI" | "DB">,
   model: ModelSpec,
   sessionAffinity: string,
-  options: { structuredOutput?: boolean } = {},
+  options: { structuredOutput?: boolean; freshChat?: boolean } = {},
 ): Promise<LanguageModel> {
   if (model.route.startsWith("workers-ai:")) {
     const native = createAI({ binding: env.AI }).languageModel(model.id, { ...(model.nativeReasoningEffort ? { reasoningEffort: model.nativeReasoningEffort } : {}), sessionAffinity });
@@ -256,6 +257,10 @@ export async function resolveModelTransport(
   if (!provider.baseUrl || !provider.gatewaySlug) {
     throw new LibraryError("unavailable", "This model route is not supported.", 503);
   }
+  // The marker carries explicit mandatory discovery evidence; absence of optional reasoning alone is insufficient.
+  const freshChatMinimal = options.freshChat === true && isOpenRouterApiBase(provider.baseUrl) &&
+    model.structuredReasoningEffort === "minimal" && model.optionalReasoning !== true &&
+    Array.isArray(model.openRouterReasoningEfforts) && model.openRouterReasoningEfforts.includes("minimal");
   if (isNativeOpenRouterRoute(model)) {
     const structured = model.structuredOutputs === true;
     const responseFormatAllowed = model.responseFormat === true;
@@ -265,6 +270,7 @@ export async function resolveModelTransport(
       structuredOutput: options.structuredOutput === true,
       structuredReasoningEffort: model.structuredReasoningEffort,
       openRouterReasoningEffort: model.openRouterReasoningEffort,
+      freshChatMinimal,
     };
     const openrouter = createOpenAICompatible<string, string, string, string>({
       name: "openrouter",
@@ -308,7 +314,7 @@ export async function resolveModelTransport(
         convertUsage: convertCompatibleUsage,
         transformRequestBody:
           isOpenRouterApiBase(ownerBase)
-            ? openRouterBody(responseFormatAllowed, { supportsTemperature, optionalReasoning: model.optionalReasoning === true, structuredOutput: options.structuredOutput === true, structuredReasoningEffort: model.structuredReasoningEffort, openRouterReasoningEffort: model.openRouterReasoningEffort }, provider.dataCollection ?? "deny")
+            ? openRouterBody(responseFormatAllowed, { supportsTemperature, optionalReasoning: model.optionalReasoning === true, structuredOutput: options.structuredOutput === true, structuredReasoningEffort: model.structuredReasoningEffort, openRouterReasoningEffort: model.openRouterReasoningEffort, freshChatMinimal }, provider.dataCollection ?? "deny")
             : compatibleBody(responseFormatAllowed, supportsTemperature),
         fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, preserveAnthropicHeaders: false }),
       }).languageModel(model.id);
@@ -338,6 +344,7 @@ export async function resolveModelTransport(
     structuredOutput: options.structuredOutput === true,
     structuredReasoningEffort: model.structuredReasoningEffort,
     openRouterReasoningEffort: model.openRouterReasoningEffort,
+    freshChatMinimal,
   };
   return createOpenAICompatible({
     name: provider.id, baseURL, includeUsage: true,

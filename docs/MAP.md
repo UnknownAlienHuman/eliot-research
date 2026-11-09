@@ -279,8 +279,12 @@ Optional `TurnView.outputBudget` stores `requestedTokens` and `appliedTokens` in
 old missing fields remain omitted. A `length` finish preserves text and known usage as partial/failed, without
 automatic continuation.
 Admission has its own claim; a missing numeric capacity never permits another call for the same turn.
+Whole overflow without usable saved understanding rejects before inference: choose fewer sources or explicitly
+request source understanding, without implying it is already running.
 Fresh native rows request `high` only when one `reasoning_effort` property uniquely advertises it in `supported_efforts`;
 otherwise the SDK option is omitted, while stored `low` remains literal. This is a request policy, not semantic acceptance.
+Fresh chat opts in via default-off transport flag `freshChat` to the frozen published mandatory minimal profile
+under IMPLEMENTATION §11; the same 8,192-token bound, other callsites and K3 explicit profiles remain unchanged.
 Chat always returns ordinary Markdown with inline compact source labels; one generic `SYSTEM_PROMPT` applies
 across corpora, with no fixed-paper coaching or JSON sentence/label enum. Each whole or compact evidence block is one
 JSON `{label,text}` record with literal brackets escaped, and its label applies only to that block's text. The label

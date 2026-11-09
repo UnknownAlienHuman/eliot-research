@@ -1088,7 +1088,7 @@ describe("buildContext K3 claims fallback", () => {
     }
     expect(err).toBeInstanceOf(LibraryError);
     expect((err as LibraryError).code).toBe("invalid");
-    expect((err as LibraryError).message).toMatch(/understood/);
+    expect((err as LibraryError).message).toMatch(/exceeds whole-reading capacity/);
   });
 
   it("distilled scope without usable claims reports understanding-needed", async () => {
@@ -1110,7 +1110,7 @@ describe("buildContext K3 claims fallback", () => {
     }
     expect(err).toBeInstanceOf(LibraryError);
     expect((err as LibraryError).code).toBe("invalid");
-    expect((err as LibraryError).message).toMatch(/understood/);
+    expect((err as LibraryError).message).toMatch(/exceeds whole-reading capacity/);
     expect(reads()).toBe(2); // The same immutable block map is reused by whole/compact attempts.
     expect(requested.filter((key) => key === "source/r1/text.md")).toHaveLength(1);
   });

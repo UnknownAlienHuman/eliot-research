@@ -297,7 +297,8 @@ describe("native fallback reasoning request", () => {
     const fallback = MODELS.find((entry) => entry.route === DEFAULT_MODEL);
     if (!fallback) throw new Error("The built-in native model fallback is missing.");
     expect(fallback).not.toHaveProperty("nativeReasoningEffort");
-    const model = { ...fallback, maxOutputTokens: capacity, nativeReasoningEffort: "low" as const, openRouterReasoningEffort: "high" };
+    const model = { ...fallback, maxOutputTokens: capacity, nativeReasoningEffort: "low" as const, openRouterReasoningEffort: "high",
+      structuredReasoningEffort: "minimal" as const, openRouterReasoningEfforts: ["minimal"] };
     expect(model).toMatchObject({
       id: "@cf/zai-org/glm-5.3-flash",
       contextTokens: 1_048_576,
@@ -320,7 +321,7 @@ describe("native fallback reasoning request", () => {
       );
     });
     const AI = { run } as unknown as Env["AI"];
-    const transport = await resolveModelTransport({ AI, DB: {} as Env["DB"] }, model, "native-reasoning-test");
+    const transport = await resolveModelTransport({ AI, DB: {} as Env["DB"] }, model, "native-reasoning-test", { freshChat: true });
     const maxOutputTokens = modelOutputLimit(model, 1024);
     const result = await streamText({ model: transport, prompt: "Capture the native request only.",
       ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), maxRetries: 0 }).text;
@@ -337,6 +338,7 @@ describe("native fallback reasoning request", () => {
     else expect(captured?.inputs.max_tokens).toBe(capacity);
     expect(captured?.inputs).not.toHaveProperty("max_completion_tokens");
     expect(captured?.inputs.reasoning_effort).not.toBe("max");
+    expect(captured?.inputs).not.toHaveProperty("reasoning");
     expect((captured?.inputs.chat_template_kwargs as Record<string, unknown> | undefined)?.enable_thinking).not.toBe(false);
     expect(captured?.options.returnRawResponse).toBe(true);
   });
@@ -485,6 +487,35 @@ describe.each([
   { path: "published Chat Completions", gatewaySlug: "custom-fixture", apiProtocol: "openai-chat" },
   { path: "legacy compatible Gateway", gatewaySlug: "custom-fixture", apiProtocol: undefined },
 ] as const)("owner-selected OpenRouter reasoning via $path", ({ gatewaySlug, apiProtocol }) => {
+  it("uses published mandatory minimal only when the fresh-chat caller opts in", async () => {
+    const provider = { id: "fixture-router", type: "openai-compatible" as const, gatewaySlug, gatewayPath: "v1",
+      enabled: true, baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny" as const };
+    const model = Object.freeze({ route: "gateway:fixture-router/provider/chat-fixture", id: "provider/chat-fixture", label: "Frozen chat fixture",
+      contextTokens: 64000, maxOutputTokens: 8192, outputReserveTokens: 8192, checkedOn: "2026-11-09", enabled: true,
+      structuredReasoningEffort: "minimal", openRouterReasoningEfforts: ["high", "minimal"],
+      routing: { provider, gatewayId: "fixture" },
+      ...(apiProtocol === undefined ? {} : { apiProtocol, apiBaseUrl: provider.baseUrl }) } satisfies ModelSpec);
+    const bodies: Record<string, unknown>[] = [];
+    const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      throw new Error("Stopped after local request capture.");
+    });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network request."));
+    try {
+      for (const freshChat of [undefined, false, true]) {
+        const transport = await resolveModelTransport({ AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] }, model,
+          "fresh-chat-minimal", freshChat === undefined ? {} : { freshChat });
+        await expect(streamText({ model: transport, prompt: "Capture only.", maxOutputTokens: 8192, maxRetries: 0 }).text).rejects.toThrow();
+        const body = bodies.at(-1);
+        if (freshChat === true) expect(body?.reasoning).toEqual({ effort: "minimal" });
+        else expect(body).not.toHaveProperty("reasoning");
+        expect(body).toMatchObject({ max_tokens: 8192, provider: { allow_fallbacks: false, require_parameters: true, data_collection: "deny" } });
+        expect(body).not.toHaveProperty("reasoning_effort");
+      }
+      expect(fetch).toHaveBeenCalledTimes(3); expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); }
+  });
+
   it("prioritizes frozen high in both ordinal budgets, preserves optional metadata and leaves chat untouched", async () => {
     const provider = { id: "fixture-router", type: "openai-compatible" as const, gatewaySlug, gatewayPath: "v1",
       enabled: true, baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny" as const };
@@ -526,6 +557,39 @@ describe.each([
       expect(bodies.at(-1)).not.toHaveProperty("reasoning_effort");
       expect(fetch).toHaveBeenCalledTimes(6);
       expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); }
+  });
+});
+
+describe("fresh chat unsupported reasoning metadata", () => {
+  it.each([
+    { name: "missing marker", marker: false, profiles: ["minimal"], optional: false },
+    { name: "missing published choices", marker: true, profiles: undefined, optional: false },
+    { name: "minimal not published", marker: true, profiles: ["high"], optional: false },
+    { name: "contradictory optional marker", marker: true, profiles: ["minimal"], optional: true },
+    { name: "optional reasoning", marker: false, profiles: ["minimal"], optional: true },
+    { name: "Flint unknown choices", marker: false, profiles: undefined, optional: false },
+    { name: "non-OpenRouter root", marker: true, profiles: ["minimal"], optional: false },
+  ])("leaves reasoning unset for $name", async ({ name, marker, profiles, optional }) => {
+    const provider = { id: name === "Flint unknown choices" ? "openrouter" : "fixture-router", type: "openai-compatible" as const, gatewaySlug: "openrouter", gatewayPath: "v1",
+      enabled: true, baseUrl: name === "non-OpenRouter root" ? "https://vendor.example.com/api/v1" : "https://openrouter.ai/api/v1" };
+    const id = name === "Flint unknown choices" ? "recursive/flint-v1.0:free" : "provider/chat-fixture";
+    const model: ModelSpec = { route: "gateway:" + provider.id + "/" + id, id, label: "Unsupported chat fixture",
+      contextTokens: 64000, maxOutputTokens: 8192, checkedOn: "2026-11-09", enabled: true,
+      ...(marker ? { structuredReasoningEffort: "minimal" } : {}),
+      ...(profiles === undefined ? {} : { openRouterReasoningEfforts: profiles }), ...(optional ? { optionalReasoning: true } : {}),
+      routing: { provider, gatewayId: "fixture" } };
+    let body: Record<string, unknown> | undefined;
+    const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      throw new Error("Stopped after local request capture.");
+    });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network request."));
+    try {
+      const transport = await resolveModelTransport({ AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] }, model, "unsupported-chat", { freshChat: true });
+      await expect(streamText({ model: transport, prompt: "Capture only.", maxOutputTokens: 8192, maxRetries: 0 }).text).rejects.toThrow();
+      expect(fetch).toHaveBeenCalledTimes(1); expect(body).not.toHaveProperty("reasoning");
+      expect(body).not.toHaveProperty("reasoning_effort"); expect(network).not.toHaveBeenCalled();
     } finally { network.mockRestore(); }
   });
 });

@@ -139,7 +139,7 @@ const UNAVAILABLE = "Readable text is temporarily missing. Try again.";
 const NONE_SCOPE_POLICY =
   "No Library sources selected. Do not claim Library grounding or emit source labels; distinguish any general knowledge.";
 const NARROW_SCOPE = "Narrow the source selection so the answer fits.";
-const NEEDS_UNDERSTANDING = "Narrow the selection: some sources are still being understood.";
+const NEEDS_UNDERSTANDING = "The selection exceeds whole-reading capacity. Choose fewer sources or explicitly request source understanding when saved understanding is unavailable.";
 const CLAIMS_ORIENTATION_HEADER = "Derived claim orientation only; these statements and conditions are not source evidence. Verify facts against the labelled original excerpts above, including their actual experiment conditions.\n\n";
 const GUIDE_MISSING = "A selected source is still being understood. Narrow the selection or wait for understanding to finish.";
 const PARTIAL_HISTORY_NOTICE = "An earlier assistant answer was partial. Its unfinished text and omissions are not conclusions; ground this answer in the current frozen evidence.";

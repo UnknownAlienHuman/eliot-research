@@ -232,6 +232,32 @@ beforeEach(() => {
 });
 
 describe("ChatAgent stream checkpoints", () => {
+  it("requests frozen published minimal on a fresh Send and never redispatches on history reads", async () => {
+    const h = makeHarness();
+    const model = Object.freeze({ route: "gateway:openrouter/stealth/crouton-alpha", id: "stealth/crouton-alpha", label: "Frozen minimal fixture",
+      contextTokens: 1048576, contextWindowTokens: 1048576, maxOutputTokens: 943718, outputReserveTokens: 8192,
+      structuredReasoningEffort: "minimal", openRouterReasoningEfforts: ["max", "minimal"], checkedOn: "2026-11-09", enabled: true,
+      routing: { provider: { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1",
+        baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true }, gatewayId: "test-gw" } } satisfies ModelsModule.ModelSpec);
+    const input: RunTurnInput = { projectId, chatId, turnId: "fresh-minimal", question: "Use the selected evidence.",
+      scopeMode: "empty", model: model.route };
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+    try {
+      await h.agent.onStart();
+      vi.mocked(requireAvailableModel).mockResolvedValueOnce(model);
+      nextSSE = sse([chunk({ content: "Grounded answer [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 })]);
+      const turn = requireTurn(await h.agent.submitTurn(input, true));
+      expect(turn).toMatchObject({ state: "completed", outputBudget: { requestedTokens: 8192, appliedTokens: 8192 } });
+      expect(sentBodies[0]).toMatchObject({ reasoning: { effort: "minimal" }, max_tokens: 8192,
+        provider: { allow_fallbacks: false, require_parameters: true, data_collection: "deny" } });
+      expect(sentBodies[0]).not.toHaveProperty("reasoning_effort");
+      const before = await h.agent.getSnapshot(projectId);
+      expect(await h.agent.getTurnPage(projectId)).toMatchObject({ turns: before.turns });
+      expect(requireTurn(await h.agent.submitTurn(input, true))).toMatchObject({ turnId: turn.turnId, state: turn.state, answer: turn.answer });
+      expect(fetchCalls).toBe(1); expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); h.db.close(); h.d1.close(); }
+  });
+
   it("retains exact citation targets when a real streamed checkpoint survives restart", async () => {
     vi.useFakeTimers();
     const h = makeHarness();

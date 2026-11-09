@@ -966,6 +966,8 @@ compressing eligible sources with the greatest savings first. Readable sources w
 whole when they fit; no source is dropped or reordered. Mixed requests retain `claims` mode whenever any source
 is compressed. Recompute history against the final label inventory and reject before inference if nothing fits.
 This process starts no source understanding or search.
+Whole overflow without usable saved understanding rejects before inference with guidance to choose fewer sources
+or explicitly request source understanding; it does not imply that understanding is currently running.
 The free Dots C2 control (25.327 s, 229,627 input / 1,807 output, 3 exactly-opened cited ranges) keeps its
 unmarked stability/divergence explanations as caveats; semantic gates stay OPEN.
 
@@ -1545,17 +1547,23 @@ instead set the optional `CatalogModel.structuredReasoningEffort: 'minimal'` pro
 `supported_efforts` containing `minimal`; missing, malformed or inconsistent metadata leaves it unset, with no
 model or provider allowlist. When frozen in the admitted spec, existing OpenRouter Gateway bodies for structured
 jobs send `reasoning: { effort: 'minimal' }` through the existing transport; the non-mandatory disabled form and
-chat/native behaviour are unchanged. The optional published `CatalogModel.openRouterReasoningEfforts` list enables
+native behaviour are unchanged. The optional published `CatalogModel.openRouterReasoningEfforts` list enables
 an explicit per-attempt owner choice through the existing understanding action. Backend admission checks membership
 against that same resolved model's frozen official OpenRouter provider and list; `ModelSpec.openRouterReasoningEffort`
 then takes precedence over automatic minimal/disable behaviour for structured calls. Without an explicit choice,
 existing minimal/disable/unset policy remains; omission does not request the provider's `max` default. Missing old
-snapshot fields remain unknown and are not enriched on reads. Native `low`/`high`, chat, budgets and privacy remain
+snapshot fields remain unknown and are not enriched on reads. Native `low`/`high`, budgets and privacy remain
 unchanged. The `minimal` request profile is a behaviour contract, not a quality, length
 or speed guarantee. Checked 2026-11-08 against the
 [OpenRouter models catalogue](https://openrouter.ai/api/v1/models) and
 [chat API reference](https://openrouter.ai/docs/client-sdks/python/api-reference/chat); the OpenRouter publication
 date was not exposed. The policy is implemented; real Crouton K3 control `3081b9fc…` failed on call one with HTTP 400 after 1,815 ms, with `minimal` confirmed in the snapshot and frozen Workflow spec, upstream wire effort unverified and the exact 400 cause UNKNOWN, leaving the control unqualified and K2/K3 gates OPEN.
+
+Fresh ChatAgent turns opt in via `freshChat: true` (omission is false). Only non-structured chat on the official
+OpenRouter root reuses frozen `structuredReasoningEffort: "minimal"` with a published list containing `minimal`
+and `optionalReasoning !== true`. Old callsites, native/optional/unknown chat and K3 explicit profiles retain their
+existing behavior; chat stays at the same 8,192-token job bound. Missing profiles authorize no invented effort or
+`reasoning.max_tokens`; this request policy establishes no model qualification.
 
 Cloudflare documents R2 object consistency in the [Workers API reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 (dateModified: 2026-07-31), supporting the single-object snapshot timestamp contract.

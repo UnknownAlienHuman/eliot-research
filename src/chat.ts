@@ -434,7 +434,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
       if (context.historyNotice) turn.historyNotice = context.historyNotice;
       turn.sourceIds = context.sources.map((source) => source.sourceId);
       labelSources = context.sources; sourceMode = context.mode;
-      const transport = await resolveModelTransport(this.env, model, this.name);
+      const transport = await resolveModelTransport(this.env, model, this.name, { freshChat: true });
       const instructions = [...context.messages.filter((message) => message.role === "system").map((message) => message.content), settings.instructions]
         .filter(Boolean).join("\n\n");
       const messages = chatModelMessages(context.messages, input.question);
