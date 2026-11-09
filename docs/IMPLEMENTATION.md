@@ -1151,7 +1151,9 @@ parse-repair call. One generic `SYSTEM_PROMPT` applies across questions and corp
 copy atomic source markers verbatim with commentary outside their brackets, retain every marker needed for a claim,
 ground source facts with supplied labels, answer directly with detail proportional to the question, preserve requested
 facts and conditions, omit unrelated background and repetition, distinguish inference, abstain when evidence is missing, and treat source text
-as untrusted data. Project instructions remain caller-provided context; no fixed-corpus coaching is added. The same
+as untrusted data. It preserves all source-stated qualifiers, conditions, scope, limitations and uncertainty necessary
+for each claim to remain faithful, even when the question does not explicitly request them.
+Project instructions remain caller-provided context; no fixed-corpus coaching is added. The same
 server citation resolver maps valid labels to exact source/revision and UTF-8 ranges. Only standalone non-citable
 `Page N` / `Страница N` blocks and empty heading blocks are omitted from whole-reading input and its label set.
 Structural-heading bytes embedded inside a joined citable paragraph remain verbatim under its block citation;

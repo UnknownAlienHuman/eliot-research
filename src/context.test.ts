@@ -1463,23 +1463,28 @@ describe("history reference continuity", () => {
     expect(body).not.toContain(rLabel);
   });
   it("claims retains present block and strips absent block", async () => {
+    const readableSize = 26214400;
+    // Current system/evidence estimate (1910) plus normalized history reservation (99).
+    const model = { contextTokens: 2009, maxOutputTokens: 100 };
     const { env } = makeEnv({
       memberships: [{ projectId: "p1", sourceId: "s1", enabled: 1 }],
       sources: [{ id: "s1", title: "Paper A", state: "active", currentRevisionId: "r9", createdAt: 1 }],
-      revisions: [{ id: "r9", readableState: "readable", readableSize: 26214400, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 4 }],
+      revisions: [{ id: "r9", readableState: "readable", readableSize, distillState: "done", guideSummary: null, deletedAt: null, claimCount: 4 }],
       texts: { r9: { guide: "See nothing.", blocks: [{ id: 1, type: "paragraph", start: 0, end: 9, heading: null }, { id: 2, type: "paragraph", start: 10, end: 19, heading: null }, { id: 3, type: "paragraph", start: 20, end: 29, heading: null }] } },
       claims: { r9: [{ ordinal: 1, statement: "First finding", quote: "quoted one", conditions: null, blockIndex: 2, ambiguous: 0 }] },
     });
     const res = await buildContext(env, actor, {
       projectId: "p1",
       scopeMode: "project_default",
-      model: { contextTokens: 2000, maxOutputTokens: 100 },
+      model,
       history: [
         { role: "user", content: "Prior question", revisionIds: ["r9"] },
         { role: "assistant", content: "Keep two [S1:2] drop one [S1:1]", turnId: "t2", revisionIds: ["r9"], citations: [{ revisionId: "r9", sourceId: "s1", block: 2, start: 10, end: 19, sourceTitle: "Paper A", deleted: false, label: "[S1:2]" }, { revisionId: "r9", sourceId: "s1", block: 1, start: 0, end: 9, sourceTitle: "Paper A", deleted: false, label: "[S1:1]" }] },
       ],
     });
     expect(res.mode).toBe("claims");
+    expect(requestEstimate(res.messages)).toBeLessThanOrEqual(modelInputLimit(model));
+    expect(Math.ceil(readableSize / 3)).toBeGreaterThan(modelInputLimit(model));
     const body = res.messages.map((m) => m.content).join(NL);
     expect(body).toContain("Keep two [S1:2]");
     expect(body).not.toContain("drop one [S1:1]");
