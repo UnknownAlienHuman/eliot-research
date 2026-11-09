@@ -8,7 +8,7 @@ import { scanBlocks, type Block } from "../blocks";
 import type { Actor } from "../auth";
 import { LibraryError } from "../library";
 import { estimateModelInput } from "../model-input";
-import { modelInputLimit } from "../models";
+import { modelInputLimit, requestedOutputLimit } from "../models";
 import type { ModelSpec } from "../models";
 import type * as Models from "../models";
 import type * as ModelTransport from "../model-transport";
@@ -203,7 +203,7 @@ beforeEach(() => {
   for (const lookup of forbiddenLookups) vi.mocked(lookup).mockReset().mockRejectedValue(new Error("Unexpected catalogue lookup"));
 });
 
-async function run(f: ReturnType<typeof fixture>, serializeErrors = false, model = snapshot, producerFormat?: "compact-k3-v1" | "legacy-v4", failBeforeFinish = false) {
+async function run(f: ReturnType<typeof fixture>, serializeErrors = false, model = snapshot, producerFormat?: "compact-k3-v1" | "legacy-v4", failBeforeFinish = false, compactOutputTokens?: readonly [16384, 8192]) {
   const stepDo = vi.fn(async (_name: string, _options: unknown, callback: () => Promise<unknown>) => {
     try {
       if (failBeforeFinish && _name === "finish understanding")
@@ -216,7 +216,7 @@ async function run(f: ReturnType<typeof fixture>, serializeErrors = false, model
     }
   });
   await new DistillWorkflow({} as ExecutionContext, f.env).run(
-    { payload: { revisionId, model, ...(producerFormat === undefined ? {} : { producerFormat }) } } as WorkflowEvent<DistillInput>,
+    { payload: { revisionId, model, ...(producerFormat === undefined ? {} : { producerFormat }), ...(compactOutputTokens === undefined ? {} : { compactOutputTokens }) } } as WorkflowEvent<DistillInput>,
     { do: stepDo } as unknown as WorkflowStep);
   return stepDo;
 }
@@ -2562,17 +2562,23 @@ describe("compact K3 producer", () => {
     } finally { vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
   });
 
-  it.each(["valid", "absent", "object", "over-five", "empty", "unselected-guide", "unknown-id", "extra-decision-field", "duplicate", "missing-kind", "owner-high", "owner-low", "unpublished-high"] as const)(
+  it.each(["valid", "absent", "object", "over-five", "empty", "unselected-guide", "unknown-id", "extra-decision-field", "duplicate", "missing-kind", "owner-high", "owner-low", "unpublished-high", "owner-none", "owner-medium", "old-medium", "medium-max-clip", "medium-window-clip", "unpublished-medium", "unofficial-medium"] as const)(
     "uses closed generation schemas and existing decoding through both real Gateway SDK calls: %s", async mode => {
-      const ownerEffort = mode === "owner-high" || mode === "unpublished-high" ? "high" : mode === "owner-low" ? "low" : undefined;
-      const reviewBudget = mode === "owner-high" ? 8192 : 4096;
+      const ownerEffort = mode.includes("medium") ? "medium" : mode === "owner-none" ? "none"
+        : mode === "owner-high" || mode === "unpublished-high" ? "high" : mode === "owner-low" ? "low" : undefined;
+      const mediumBudget = ["owner-medium", "medium-max-clip", "medium-window-clip"].includes(mode);
+      const extractionBudget = mediumBudget ? 16384 : 8192;
+      const reviewBudget = mode === "owner-high" || mediumBudget ? 8192 : 4096;
       const model: ModelSpec = Object.freeze({ route: "gateway:openrouter/stealth/crouton-alpha", id: "stealth/crouton-alpha", label: "Frozen OpenRouter fixture",
-        contextTokens: 1048576, contextWindowTokens: 1048576, maxOutputTokens: 943718, outputReserveTokens: 8192,
+        contextTokens: 1048576, contextWindowTokens: mode === "medium-window-clip" ? 9000 : 1048576,
+        maxOutputTokens: mode === "medium-max-clip" ? 6000 : mode.includes("medium") ? 65536 : 943718,
+        outputReserveTokens: mode === "medium-window-clip" ? 1 : 8192,
         responseFormat: true, structuredOutputs: true, structuredReasoningEffort: "minimal", checkedOn: "2026-11-08", enabled: true,
         ...(ownerEffort === undefined ? {} : { openRouterReasoningEffort: ownerEffort,
-          openRouterReasoningEfforts: mode === "unpublished-high" ? ["low"] : [ownerEffort] }),
+          openRouterReasoningEfforts: mode === "unpublished-high" || mode === "unpublished-medium" ? ["low"] : [ownerEffort] }),
         routing: { provider: { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1",
-          baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true }, gatewayId: "offline-compact" } } satisfies ModelSpec);
+          baseUrl: mode === "unofficial-medium" ? "https://provider.invalid/api/v1" : "https://openrouter.ai/api/v1",
+          dataCollection: "deny", enabled: true }, gatewayId: "offline-compact" } } satisfies ModelSpec);
       const document = documentWithBlocks([
         { type: "paragraph", text: "A projection update preserves the residual path.\n" },
         { type: "paragraph", text: "The update uses 4 layers.\n" },
@@ -2616,13 +2622,24 @@ describe("compact K3 producer", () => {
       Object.assign(f.env, { AI: { fetch } });
       const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
       try {
-        await run(f, false, model, "compact-k3-v1");
+        await run(f, false, model, "compact-k3-v1", false, mediumBudget ? [16384, 8192] : undefined);
         expect(fetch).toHaveBeenCalledTimes(2); expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
         expect(bodies.map(body => body.model)).toEqual([model.id, model.id]);
-        expect(bodies.map(body => body.max_tokens)).toEqual([8192, reviewBudget]);
+        const requested = [extractionBudget, reviewBudget];
+        const applied = await Promise.all(vi.mocked(generateText).mock.calls.map(async ([request], index) => {
+          const schema = await (vi.mocked(Output.object).mock.calls[index]?.[0].schema as { jsonSchema: unknown }).jsonSchema;
+          if (typeof request.instructions !== "string") throw new Error("The bounded request instructions are missing.");
+          const input = estimateModelInput({ instructions: request.instructions, messages: request.messages as { role: string; content: string }[], schema });
+          return requestedOutputLimit(model, input, index === 0 ? extractionBudget : reviewBudget);
+        }));
+        expect(bodies.map(body => body.max_tokens)).toEqual(applied);
+        if (mode === "medium-max-clip") expect(applied).toEqual([6000, 6000]);
+        else if (mode === "medium-window-clip") applied.forEach((tokens, index) => expect(tokens).toBeLessThan(index === 0 ? extractionBudget : reviewBudget));
+        else expect(applied).toEqual(requested);
         for (const body of bodies) {
-          expect(body.reasoning).toEqual({ effort: ownerEffort ?? "minimal" }); expect(body).not.toHaveProperty("reasoning_effort");
-          expect(body.provider).toMatchObject({ allow_fallbacks: false, require_parameters: true, data_collection: "deny" });
+          expect(body.reasoning).toEqual(mode === "unofficial-medium" ? undefined : { effort: ownerEffort ?? "minimal" }); expect(body).not.toHaveProperty("reasoning_effort");
+          if (mode === "unofficial-medium") expect(body).not.toHaveProperty("provider");
+          else expect(body.provider).toMatchObject({ allow_fallbacks: false, require_parameters: true, data_collection: "deny" });
           expect(body.response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true } });
           const root = body.response_format.json_schema.schema;
           expect(root.additionalProperties).toBe(false);
@@ -2649,7 +2666,7 @@ describe("compact K3 producer", () => {
         const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
         expect(report).toMatchObject({ state: invalidDecision ? "failed" : guideAvailable ? "done" : "partial",
           kept: invalidDecision ? 0 : 2, usage: { calls: 2, outputBudgets: [
-            { requestedTokens: 8192, appliedTokens: 8192 }, { requestedTokens: reviewBudget, appliedTokens: reviewBudget },
+            { requestedTokens: extractionBudget, appliedTokens: applied[0] }, { requestedTokens: reviewBudget, appliedTokens: applied[1] },
           ] } });
         if (mode === "unknown-id" || mode === "extra-decision-field") {
           const error = failures[0];
@@ -2661,6 +2678,7 @@ describe("compact K3 producer", () => {
         const rawFirst = f.bodies.get(prefix + "distill-call1.json"), rawSecond = f.bodies.get(prefix + "distill-call2.json");
         expect(JSON.parse(rawFirst ?? "null").output).toEqual(extraction);
         const view = await getUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId });
+        expect(view.report?.usage.outputBudgets).toEqual(report.usage.outputBudgets);
         expect(view.claims).toHaveLength(invalidDecision ? 0 : 2);
         if (!invalidDecision) {
           expect(view.claims.map(claim => claim.statement)).toEqual([extraction.candidates[0]?.statement, extraction.candidates[2]?.statement]);
@@ -2784,7 +2802,7 @@ describe("compact K3 producer", () => {
     } finally { vi.mocked(Output.json).mockReset(); vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
   });
 
-  it("retains >32 non-native compact candidates as untrusted Raw1 and partials without rescuing invalid prefix items", async () => {
+  it.each([false, true])("retains >32 non-native compact candidates as untrusted Raw1 without rescuing invalid prefix items; Medium budget=%s", async mediumBudget => {
     // Non-native prompt-schema fallback: responseFormat/structuredOutputs false.
     // Complete JSON with 36 candidates must be retained as Raw1; verifier keeps
     // original positions 0-31 with existing guards; overflow is unreviewed-work-limit.
@@ -2793,6 +2811,7 @@ describe("compact K3 producer", () => {
     const model: ModelSpec = Object.freeze({ ...snapshot, route: "gateway:openrouter/fixture/overflow-decoding", id: "fixture/overflow-decoding", label: "Overflow decoding fixture",
       contextTokens: 1048576, contextWindowTokens: 1048576, maxOutputTokens: 943718, outputReserveTokens: 8192,
       responseFormat: false, structuredOutputs: false, checkedOn: "2026-11-08", enabled: true,
+      ...(mediumBudget ? { openRouterReasoningEffort: "medium", openRouterReasoningEfforts: ["high", "medium", "none"] } : {}),
       routing: { provider: { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1",
         baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true }, gatewayId: "offline-overflow" } } satisfies ModelSpec);
     // Prefix item at original position 0 is numerically invalid; tail contains plausible-looking valid items.
@@ -2823,10 +2842,11 @@ describe("compact K3 producer", () => {
     Object.assign(f.env, { AI: { fetch } });
     const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
     try {
-      await run(f, false, model, "compact-k3-v1");
+      await run(f, false, model, "compact-k3-v1", false, mediumBudget ? [16384, 8192] : undefined);
       expect(fetch).toHaveBeenCalledTimes(2); expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
-      // Request still specifies max 32 and 8192.
-      expect(bodies.map(body => body.max_tokens)).toEqual([8192, 4096]);
+      // Generation keeps max 32 independently of the frozen per-call budgets.
+      const budgets = mediumBudget ? [16384, 8192] : [8192, 4096];
+      expect(bodies.map(body => body.max_tokens)).toEqual(budgets);
       const marker = "\nReturn one JSON object conforming to this schema: ";
       const firstRequest = vi.mocked(generateText).mock.calls[0]?.[0];
       const instructions = String(firstRequest?.instructions);
@@ -2858,7 +2878,7 @@ describe("compact K3 producer", () => {
       ]));
       const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
       expect(report).toMatchObject({ state: "partial", kept: 31, usage: { calls: 2, outputBudgets: [
-        { requestedTokens: 8192, appliedTokens: 8192 }, { requestedTokens: 4096, appliedTokens: 4096 } ] } });
+        { requestedTokens: budgets[0], appliedTokens: budgets[0] }, { requestedTokens: budgets[1], appliedTokens: budgets[1] } ] } });
       expect(report.dropped).toEqual(expect.arrayContaining([
         { index: 0, reason: expect.stringContaining("unsupported-statement-numbers") },
         { index: 32, reason: "unreviewed-work-limit" },

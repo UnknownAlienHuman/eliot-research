@@ -680,10 +680,15 @@ bounds and the existing 16 MiB cumulative materialization allowance remain uncha
 one additional minute for storage/reconciliation, without extending paid execution.
 
 Fresh compact extraction requests 8,192 output tokens and review requests 4,096 by default. As an experimental
-qualification policy, compact review requests 8,192 only when the admitted frozen explicit owner effort is
+qualification policy, compact review requests 8,192 when the admitted frozen explicit owner effort is
 `high`, `xhigh` or `max`, the provider is the official OpenRouter API root, and that effort belongs to the same
 snapshot's published list. Native compact, Automatic and Low review remain at 4,096; legacy formats retain their
-existing/frozen caps. After estimating the actual instructions, messages and schema,
+existing/frozen caps. New compact admissions with explicit `openRouterReasoningEffort: "medium"` on the official
+OpenRouter API root and `medium` in the admitted snapshot's published list freeze the extraction/review pair
+`compactOutputTokens: [16384, 8192]` in the existing Workflow input. Both calls consume that pair; absent metadata
+keeps already admitted attempts on their prior policy. This single allowance is pending measured qualification,
+not an established minimum or semantic fix. No model-name rule, retry, longer deadline or assembly reserve is used.
+After estimating the actual instructions, messages and schema,
 `requestedOutputLimit(model, inputEstimate, requestedTokens)` clips each job
 budget to a known provider maximum and the estimated remainder of a known combined window. The existing
 conservative input estimate includes framing overhead; it is not provider tokenization. Unknown provider maxima
@@ -1950,7 +1955,8 @@ Checked against official Cloudflare documentation on 2026-10-24. Recheck before 
 
 | Fact | Status |
 |---|---|
-| Workers Paid minimum $5/account/month; isolate memory 128 MiB; Free/Pro request body 100 MB | verified; Eliot caps files at 25 MiB |
+| Workers Paid minimum $5/account/month; Free/Pro request body 100 MB | verified; Eliot caps files at 25 MiB |
+| Worker memory per isolate 128 MB; global-scope startup 1 second; bundle 64 MiB uncompressed on all plans since 2026-09-04, with no gzip limit | verified 2026-11-09: [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [2026-09-04 changelog](https://developers.cloudflare.com/changelog/post/2026-09-04-increased-worker-size-limit/) |
 | Worker-level Access rejects WebSocket upgrades | verified; use hostname Access |
 | Workflows Paid: 500k steps + 1 GB-month included; then $0.80/100k steps and $0.20/GB-month; retries not steps | verified |
 | Workers AI: 10k free neurons/day; Paid excess $0.011/1k neurons | verified |
