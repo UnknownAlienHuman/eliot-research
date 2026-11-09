@@ -57,12 +57,13 @@ try {
       await expect(page).toHaveURL(origin + path); await settle();
       if (chats.some(id => path === chatPath(id))) await expect(page.locator('.er-chat__history-link[href="' + path + '"]')).toHaveAttribute('aria-current', 'page');
     };
-    const observe = async (scenario, arrival, trigger) => {
+    const observe = async (scenario, arrival, trigger, diagnose?: (scenario: string) => Promise<void>) => {
       const [arrived, action] = await Promise.allSettled([arrival, Promise.resolve().then(trigger)]);
       if (action.status === 'rejected' || arrived.status === 'rejected') {
         const errors = [];
         if (action.status === 'rejected') errors.push(action.reason);
         if (arrived.status === 'rejected') errors.push(arrived.reason);
+        try { await diagnose?.(scenario); } catch (error) { errors.push(error); }
         throw new AggregateError(errors, scenario + ' [' + viewport.width + 'x' + viewport.height + ']');
       }
       return arrived.value;
@@ -78,7 +79,7 @@ try {
       void waiting.catch(() => {});
       const handler = async incoming => { if (incoming.request().method() !== method) return incoming.continue(); if (route) return incoming.fallback(); route = incoming; resolve(); };
       await page.route(url, handler);
-      return { during: trigger => observe(scenario, waiting, trigger), body: () => route.request().postDataJSON(), request: () => route.request(),
+      return { during: (trigger, diagnose?: (scenario: string) => Promise<void>) => observe(scenario, waiting, trigger, diagnose), body: () => route.request().postDataJSON(), request: () => route.request(),
         release: async (body?, status = 200) => {
           const reply = body ?? (method === 'POST' && url.endsWith('/turns') ? { turnId: route.request().postDataJSON().turnId }
             : method === 'POST' && url.endsWith('/sources/file') ? await replacementReceipt(route.request()) : {});
@@ -388,78 +389,102 @@ try {
     const uploadUrl = origin + '/api/projects/' + project + '/sources/file';
     const input = page.getByLabel('Replace source file', { exact: true });
     const upload = page.getByRole('button', { name: 'Upload new revision', exact: true });
-    await navigate(sourcePath(0)); await input.setInputFiles({ name: 'a.md', mimeType: 'text/markdown', buffer: Buffer.from('A replacement') });
-    pending = await hold('replace A initial', uploadUrl); await pending.during(() => upload.click()); interceptedUploads++;
+    const selectReplacement = async (file, expectedPath, sourceIndex) => {
+      const selectedInput = await input.elementHandle();
+      await input.setInputFiles(file);
+      const snapshot = () => page.evaluate(({ selectedInput }) => {
+        const currentInput = document.querySelector<HTMLInputElement>('#er-lib-replace');
+        const inspect = (node: HTMLInputElement | null) => {
+          if (!node) return null;
+          const reader = node.closest('.er-lib'), button = node.form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+          return { isConnected: node.isConnected, disabled: node.disabled, fileCount: node.files?.length ?? 0,
+            fileNames: Array.from(node.files ?? [], file => file.name), readerTitle: reader?.querySelector('.er-lib__title')?.textContent ?? null,
+            originalHref: reader?.querySelector('a[href$="/original"]')?.getAttribute('href') ?? null,
+            button: button ? { text: button.textContent, disabled: button.disabled } : null };
+        };
+        return { path: location.pathname + location.search, routeProjectId: location.pathname.split('/')[2], routeSourceId: location.pathname.split('/')[4],
+          currentIsSameNode: selectedInput?.isSameNode(currentInput) ?? false,
+          selectedInput: inspect(selectedInput as HTMLInputElement | null), currentInput: inspect(currentInput) };
+      }, { selectedInput }).catch(error => ({ snapshotError: String(error) }));
+      const afterSetInputFiles = await snapshot();
+      const expected = { path: expectedPath, projectId: expectedPath.split('/')[2], sourceId: sources[sourceIndex].source.id,
+        title: sources[sourceIndex].source.title, revisionId: sources[sourceIndex].source.currentRevisionId };
+      return async scenario => { console.error(JSON.stringify({ scope: 'K1_K2_REPLACEMENT_STATE', scenario, viewport, expected,
+        afterSetInputFiles, observeFailure: await snapshot() })); };
+    };
+    let replacementDiagnostic;
+    await navigate(sourcePath(0)); replacementDiagnostic = await selectReplacement({ name: 'a.md', mimeType: 'text/markdown', buffer: Buffer.from('A replacement') }, sourcePath(0), 0);
+    pending = await hold('replace A initial', uploadUrl); await pending.during(() => upload.click(), replacementDiagnostic); interceptedUploads++;
     assert(pending.request().postData().includes(sources[0].source.id));
     await navigate(sourcePath(1)); await expect(input).toBeEnabled(); assert.equal(await input.evaluate(input => input.files.length), 0); await expect(upload).toBeDisabled();
-    await input.setInputFiles({ name: 'b.md', mimeType: 'text/markdown', buffer: Buffer.from('# Source B\n\nImmutable native text B replacement ' + viewport.width + ' ' + project) });
-    const independentB = await hold('replace B while A pending', uploadUrl); await independentB.during(() => upload.click()); interceptedUploads++;
+    replacementDiagnostic = await selectReplacement({ name: 'b.md', mimeType: 'text/markdown', buffer: Buffer.from('# Source B\n\nImmutable native text B replacement ' + viewport.width + ' ' + project) }, sourcePath(1), 1);
+    const independentB = await hold('replace B while A pending', uploadUrl); await independentB.during(() => upload.click(), replacementDiagnostic); interceptedUploads++;
     assert(independentB.request().postData().includes(sources[1].source.id));
     await navigate(sourcePath(0)); await expect(input).toBeDisabled();
     // Force a file/change and form submission even through disabled controls: the synchronous source
     // lock must reject the second POST as well as making it unavailable through ordinary UI actions.
-    await input.setInputFiles({ name: 'returned-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Returned A') });
+    replacementDiagnostic = await selectReplacement({ name: 'returned-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Returned A') }, sourcePath(0), 0);
     let beforeAttempt = uploadRequests;
     await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
     await pending.release(await replacementReceipt(pending.request())); await expect(input).toBeEnabled();
     await expect(page).toHaveURL(origin + sourcePath(0)); assert.equal(await input.evaluate(input => input.files[0].name), 'returned-a.md');
-    const afterSuccess = await hold('replace A after success', uploadUrl); await afterSuccess.during(() => upload.click()); interceptedUploads++;
+    const afterSuccess = await hold('replace A after success', uploadUrl); await afterSuccess.during(() => upload.click(), replacementDiagnostic); interceptedUploads++;
     assert.equal(uploadRequests, beforeAttempt + 1); await afterSuccess.release();
     await navigate(sourcePath(1)); await expect(input).toBeDisabled(); // A's settlement cannot release B.
     await independentB.release({ error: { message: 'Departed B failure' } }, 503); await expect(input).toBeEnabled();
     await expect(page.getByText('Departed B failure')).toHaveCount(0);
-    await navigate(sourcePath(0)); await input.setInputFiles({ name: 'old-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Old A') });
-    pending = await hold('replace A before remount', uploadUrl); await pending.during(() => upload.click()); interceptedUploads++;
+    await navigate(sourcePath(0)); replacementDiagnostic = await selectReplacement({ name: 'old-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Old A') }, sourcePath(0), 0);
+    pending = await hold('replace A before remount', uploadUrl); await pending.during(() => upload.click(), replacementDiagnostic); interceptedUploads++;
     await navigate(sourcePath(1)); await navigate(sourcePath(0)); await expect(input).toBeDisabled();
     await navigate(chatPath(chats[0])); await navigate(sourcePath(0)); await expect(input).toBeDisabled();
-    await input.setInputFiles({ name: 'new-a.md', mimeType: 'text/markdown', buffer: Buffer.from('New A') });
+    replacementDiagnostic = await selectReplacement({ name: 'new-a.md', mimeType: 'text/markdown', buffer: Buffer.from('New A') }, sourcePath(0), 0);
     beforeAttempt = uploadRequests;
     await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
     await pending.release({ error: { message: 'Departed replacement failure' } }, 503);
     await expect(input).toBeEnabled(); await expect(page.getByText('Departed replacement failure')).toHaveCount(0); assert.equal(await input.evaluate(input => input.files[0].name), 'new-a.md');
-    const afterError = await hold('replace A after error', uploadUrl); await afterError.during(() => upload.click()); interceptedUploads++;
+    const afterError = await hold('replace A after error', uploadUrl); await afterError.during(() => upload.click(), replacementDiagnostic); interceptedUploads++;
     assert.equal(uploadRequests, beforeAttempt + 1); await afterError.release();
     // ProjectWorkspace itself is keyed/unmounted on project and Settings navigation. App must retain
     // only the pending project/source key, permit another project/source, and clean up while away.
     const otherSourcePath = '/p/' + other + '/source/' + sources[0].source.id;
     const otherUploadUrl = origin + '/api/projects/' + other + '/sources/file';
     for (const status of [200, 503]) {
-      await navigate(sourcePath(0)); await input.setInputFiles({ name: 'away-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Away A') });
-      const awayA = await hold('replace A across Settings/project: ' + status, uploadUrl); await awayA.during(() => upload.click()); interceptedUploads++;
+      await navigate(sourcePath(0)); replacementDiagnostic = await selectReplacement({ name: 'away-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Away A') }, sourcePath(0), 0);
+      const awayA = await hold('replace A across Settings/project: ' + status, uploadUrl); await awayA.during(() => upload.click(), replacementDiagnostic); interceptedUploads++;
       await navigate('/settings'); await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
       await navigate(sourcePath(0)); await expect(input).toBeDisabled();
-      await input.setInputFiles({ name: 'duplicate-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Duplicate A') });
+      replacementDiagnostic = await selectReplacement({ name: 'duplicate-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Duplicate A') }, sourcePath(0), 0);
       beforeAttempt = uploadRequests; await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
       await navigate(otherSourcePath); await expect(input).toBeEnabled();
-      await input.setInputFiles({ name: 'other-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Other project A') });
-      const otherA = await hold('replace other-project A while original pending: ' + status, otherUploadUrl); await otherA.during(() => upload.click()); interceptedUploads++;
+      replacementDiagnostic = await selectReplacement({ name: 'other-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Other project A') }, otherSourcePath, 0);
+      const otherA = await hold('replace other-project A while original pending: ' + status, otherUploadUrl); await otherA.during(() => upload.click(), replacementDiagnostic); interceptedUploads++;
       assert(otherA.request().postData().includes(sources[0].source.id));
       await navigate(sourcePath(1)); await expect(input).toBeEnabled(); // Independent source in original project.
       await navigate(sourcePath(0)); await expect(input).toBeDisabled(); // Project switch did not release original A.
-      await input.setInputFiles({ name: 'duplicate-again.md', mimeType: 'text/markdown', buffer: Buffer.from('Duplicate again') });
+      replacementDiagnostic = await selectReplacement({ name: 'duplicate-again.md', mimeType: 'text/markdown', buffer: Buffer.from('Duplicate again') }, sourcePath(0), 0);
       beforeAttempt = uploadRequests; await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
       await navigate('/settings');
       await awayA.release(status === 200 ? await replacementReceipt(awayA.request()) : { error: { message: 'Away replacement error' } }, status);
       await navigate(sourcePath(0)); await expect(input).toBeEnabled(); await expect(page.getByText('Away replacement error')).toHaveCount(0);
-      await input.setInputFiles({ name: 'after-away.md', mimeType: 'text/markdown', buffer: Buffer.from('After away') });
-      const retryA = await hold('replace A after away settlement: ' + status, uploadUrl); await retryA.during(() => upload.click()); interceptedUploads++;
+      replacementDiagnostic = await selectReplacement({ name: 'after-away.md', mimeType: 'text/markdown', buffer: Buffer.from('After away') }, sourcePath(0), 0);
+      const retryA = await hold('replace A after away settlement: ' + status, uploadUrl); await retryA.during(() => upload.click(), replacementDiagnostic); interceptedUploads++;
       assert.equal(uploadRequests, beforeAttempt + 1); await retryA.release();
       await navigate(otherSourcePath); await expect(input).toBeDisabled(); // Original project's cleanup cannot release this pair.
       await navigate('/settings'); await otherA.release({ error: { message: 'Other project upload error' } }, 503);
       await navigate(otherSourcePath); await expect(input).toBeEnabled(); await expect(page.getByText('Other project upload error')).toHaveCount(0);
-      await input.setInputFiles({ name: 'other-after.md', mimeType: 'text/markdown', buffer: Buffer.from('Other after') });
-      const retryOther = await hold('replace other-project A after away error: ' + status, otherUploadUrl); await retryOther.during(() => upload.click()); interceptedUploads++; await retryOther.release();
+      replacementDiagnostic = await selectReplacement({ name: 'other-after.md', mimeType: 'text/markdown', buffer: Buffer.from('Other after') }, otherSourcePath, 0);
+      const retryOther = await hold('replace other-project A after away error: ' + status, otherUploadUrl); await retryOther.during(() => upload.click(), replacementDiagnostic); interceptedUploads++; await retryOther.release();
       await navigate('/'); await navigate(otherSourcePath); await expect(input).toBeEnabled();
       await navigate(sourcePath(0)); await expect(input).toBeEnabled();
     }
-    await navigate(sourcePath(1)); await input.setInputFiles({ name: 'b.md', mimeType: 'text/markdown', buffer: Buffer.from('# Source B\n\nImmutable native text B replacement ' + viewport.width + ' ' + project) });
+    await navigate(sourcePath(1)); replacementDiagnostic = await selectReplacement({ name: 'b.md', mimeType: 'text/markdown', buffer: Buffer.from('# Source B\n\nImmutable native text B replacement ' + viewport.width + ' ' + project) }, sourcePath(1), 1);
     // Changing only the revision URL must not release the source's pending write lock.
-    pending = await hold('replace B before revision navigation', uploadUrl); await pending.during(() => upload.click()); interceptedUploads++;
+    pending = await hold('replace B before revision navigation', uploadUrl); await pending.during(() => upload.click(), replacementDiagnostic); interceptedUploads++;
     await navigate(sourcePath(1) + '?revisionId=' + sources[1].source.currentRevisionId); await expect(input).toBeDisabled(); await expect(page.getByRole('button', { name: /Uploading new revision/ })).toBeDisabled();
     await pending.release({ error: { message: 'Old replacement failure' } }, 503); await expect(input).toBeEnabled(); await expect(page.getByText('Old replacement failure')).toHaveCount(0); assert.equal(await input.evaluate(input => input.files[0].name), 'b.md');
     // In-view native Markdown replacement keeps intentional navigation and renders its real stored revision.
     allowNativeUpload = true;
-    const response = await observe('native replacement B', page.waitForResponse(response => response.url() === uploadUrl && response.request().method() === 'POST'), () => upload.click());
+    const response = await observe('native replacement B', page.waitForResponse(response => response.url() === uploadUrl && response.request().method() === 'POST'), () => upload.click(), replacementDiagnostic);
     assert.equal(response.status(), 202); const body = await response.json(); nativeUploads++;
     await expect(page).toHaveURL(origin + sourcePath(1) + '?revisionId=' + body.revisionId);
     await expect(page.locator('.er-lib__text')).toContainText('B replacement'); await expect(upload).toBeDisabled();
