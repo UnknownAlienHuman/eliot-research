@@ -435,8 +435,9 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
     const parsed = await schema.safeParseAsync(value);
     return parsed.success ? { success: true, value: parsed.data } : { success: false, error: parsed.error };
   } });
-  if (native) reserve(memory, sourceContextJsonAllocation(requestSchema, new Set()) + 2 * (fidelityInstructions.length + 64));
-  const modelInstructions = native || model.responseFormat === false ? fidelityInstructions + "\nReturn one JSON object conforming to this schema: " + JSON.stringify(requestSchema) : fidelityInstructions;
+  const promptSchema = native || model.responseFormat !== true || model.structuredOutputs !== true;
+  if (promptSchema) reserve(memory, sourceContextJsonAllocation(requestSchema, new Set()) + 2 * (fidelityInstructions.length + 64));
+  const modelInstructions = promptSchema ? fidelityInstructions + "\nReturn one JSON object conforming to this schema: " + JSON.stringify(requestSchema) : fidelityInstructions;
   const messages = [{ role: "user" as const, content }, { role: "user" as const, content: compactMode
     ? `Return only the compact structured output requested above. Write prose fields in ${language}, while preserving source technical terms and numeric spellings.`
     : `Perform the source-understanding task above. Write the guide, questions, claim statements and digest in ${language}. Keep exact quotes, task/metric/dataset names and valueText in their original source language. The glossary must pair English terms with Russian terms and definitions in Russian. Return only the requested structured output.` }];

@@ -2377,6 +2377,85 @@ describe("DistillWorkflow admitted model snapshot", () => {
 });
 
 describe("compact K3 producer", () => {
+  it.each([
+    { name: "JSON object", responseFormat: true, structuredOutputs: false, wireFormat: "json_object" },
+    { name: "unknown structured support", responseFormat: true, structuredOutputs: undefined, wireFormat: "json_object" },
+    { name: "unknown response format", responseFormat: undefined, structuredOutputs: true, wireFormat: undefined },
+    { name: "unknown response without structured support", responseFormat: undefined, structuredOutputs: false, wireFormat: undefined },
+    { name: "both unknown", responseFormat: undefined, structuredOutputs: undefined, wireFormat: undefined },
+    { name: "text with structured support", responseFormat: false, structuredOutputs: true, wireFormat: undefined },
+    { name: "text without structured support", responseFormat: false, structuredOutputs: false, wireFormat: undefined },
+    { name: "text with unknown structured support", responseFormat: false, structuredOutputs: undefined, wireFormat: undefined },
+    { name: "strict schema positive control", responseFormat: true, structuredOutputs: true, wireFormat: "json_schema" },
+  ])("delivers the exact request schema and budgets through both installed Gateway calls: $name", async ({ responseFormat, structuredOutputs, wireFormat }) => {
+    const model: ModelSpec = Object.freeze({ route: "gateway:openrouter/fixture/schema-delivery", id: "fixture/schema-delivery", label: "Bounded schema fixture",
+      contextTokens: 9000, contextWindowTokens: 9000, maxOutputTokens: 8192, outputReserveTokens: 1,
+      ...(responseFormat === undefined ? {} : { responseFormat }), ...(structuredOutputs === undefined ? {} : { structuredOutputs }),
+      openRouterReasoningEffort: "xhigh", openRouterReasoningEfforts: ["xhigh"], checkedOn: "2026-11-08", enabled: true,
+      routing: { provider: { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1",
+        baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true }, gatewayId: "offline-schema" } } satisfies ModelSpec);
+    const extraction = { candidates: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The update preserves the residual path." }] };
+    const review = { selected: [{ candidateId: "C0", reason: "Its own quote states the update." }], rejected: [], guide: ["C0"] };
+    const f = fixture(model.route, documentWithBlocks([{ type: "paragraph", text: "The update preserves the residual path.\n" }]));
+    f.db.prepare("UPDATE source_revision SET distill_request_json=?,distill_token_limit_kind='published',distill_token_limit=? WHERE id=?")
+      .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), 18000, revisionId);
+    const sdk = await vi.importActual<typeof AISDK>("ai");
+    const transport = await vi.importActual<typeof ModelTransport>("../model-transport");
+    vi.mocked(generateText).mockImplementation(sdk.generateText);
+    vi.mocked(resolveModelTransport).mockImplementation(transport.resolveModelTransport);
+    const schemas: unknown[] = [];
+    vi.mocked(Output.object).mockReset().mockImplementation(options => {
+      schemas.push(options.schema);
+      return sdk.Output.object(options);
+    });
+    const bodies: { messages: { role: string; content: string }[]; response_format?: { type: string; json_schema?: { schema: unknown; strict: boolean } };
+      max_tokens: number; reasoning: unknown }[] = [];
+    const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ id: "chatcmpl-offline-schema", object: "chat.completion", created: 0, model: model.id,
+        choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(bodies.length === 1 ? extraction : review) }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 101, completion_tokens: 17, total_tokens: 118 } });
+    });
+    Object.assign(f.env, { AI: { fetch } });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+    try {
+      await run(f, false, model, "compact-k3-v1");
+      expect(fetch).toHaveBeenCalledTimes(2); expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+      expect(schemas).toHaveLength(2);
+      const marker = "\nReturn one JSON object conforming to this schema: ";
+      for (let index = 0; index < 2; index++) {
+        const request = vi.mocked(generateText).mock.calls[index]?.[0], body = bodies[index];
+        if (!request || !body || typeof request.instructions !== "string") throw new Error("The actual Gateway request was not captured.");
+        const schema = structuredOutputs === true ? await (schemas[index] as { jsonSchema: unknown }).jsonSchema : z.toJSONSchema(schemas[index] as z.ZodType);
+        expect(schema).toBeDefined();
+        const instructions = request.instructions, messages = request.messages as { role: string; content: string }[];
+        const input = estimateModelInput({ instructions, messages, schema });
+        expect(body.max_tokens).toBe(9000 - input);
+        expect(body.reasoning).toEqual({ effort: "xhigh" });
+        expect(request.maxRetries).toBe(0);
+        expect(body.messages).toContainEqual({ role: "system", content: instructions });
+        if (wireFormat === "json_schema") {
+          expect(body.response_format).toMatchObject({ type: "json_schema", json_schema: { schema, strict: true } });
+          expect(instructions).not.toContain(marker);
+        } else {
+          if (wireFormat === undefined) expect(body).not.toHaveProperty("response_format");
+          else expect(body.response_format).toEqual({ type: "json_object" });
+          const at = instructions.lastIndexOf(marker);
+          expect(at).toBeGreaterThan(0);
+          expect(instructions.slice(at + marker.length)).toBe(JSON.stringify(schema));
+          const withoutSchema = estimateModelInput({ instructions: instructions.slice(0, at), messages, schema });
+          expect(input).toBeGreaterThan(withoutSchema);
+          expect(body.max_tokens).toBeLessThan(9000 - withoutSchema);
+        }
+      }
+      expect(JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null").output).toEqual(extraction);
+      expect(JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null").output).toEqual(review);
+      expect(JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null")).toMatchObject({ state: "done", kept: 1, usage: { calls: 2 } });
+      for (const lookup of forbiddenLookups) expect(lookup).not.toHaveBeenCalled();
+      expect(network).not.toHaveBeenCalled();
+    } finally { vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
+  });
+
   it.each(["valid", "absent", "object", "over-five", "empty", "unselected-guide", "unknown-id", "extra-decision-field", "duplicate", "missing-kind", "owner-high", "owner-low", "unpublished-high"] as const)(
     "uses closed generation schemas and existing decoding through both real Gateway SDK calls: %s", async mode => {
       const ownerEffort = mode === "owner-high" || mode === "unpublished-high" ? "high" : mode === "owner-low" ? "low" : undefined;

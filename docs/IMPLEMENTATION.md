@@ -583,7 +583,12 @@ requires `selected`, `rejected` and `guide`; decision objects stay closed with o
 is an array of zero to five original candidate IDs, with `[]` meaning no guide. The public `ai@7.0.152`
 `Output.object({ schema: jsonSchema(generationJSONSchema, { validate }) })` delegates decoding to the existing Zod
 validator and returns its actual error unchanged. That same generation JSON schema supplies any prompt schema
-and the input estimate. Native and non-structured calls retain their original schemas, prompts and estimates.
+and the input estimate. Native calls retain their original schemas, prompts and estimates; non-structured calls
+retain their original schemas and validators. For both compatible extraction and review, `responseFormat === true`
+with `structuredOutputs !== true` sends `json_object`, which carries no task schema. This JSON-mode path and the
+plain-text fallback with `response_format` omitted must include the same serialized `requestSchema` in instructions;
+the augmented prompt and that schema are included in the input estimate before existing budget clipping. With both
+capabilities true, the strict `json_schema` body carries the request schema without a redundant prompt-schema copy.
 Local/retained candidate `kind` remains optional; review decoding keeps `guide` optional/unknown, with independent
 selected-only guide checks preserving reviewed claims and digest as `partial` when the guide is missing or invalid.
 

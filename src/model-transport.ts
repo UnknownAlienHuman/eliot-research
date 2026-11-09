@@ -71,10 +71,10 @@ export const convertCompatibleUsage: ProviderConvertUsage = (usage) => {
 
 // Narrow OpenRouter body transform (pinned provider contract): disable upstream
 // paid fallback and require declared parameters. responseFormatAllowed means the
-// catalog entry explicitly allows a response_format field (json_object for
-// non-schema models); otherwise the vendor-emitted field is stripped because the
-// provider contract forbids it. The caller adds the explicit schema instruction
-// when model.responseFormat is false; Output.object parses locally either way
+// catalog entry explicitly allows response_format; full schema also requires
+// structuredOutputs === true. Otherwise the caller adds the exact schema in
+// instructions, including when either capability is unknown. Output.object
+// parses locally in both schema and JSON-object/text fallback modes,
 // and failures stay local with no repair calls.
 // Temperature 0 is app strategy for determinism within the published 0-2 range
 // (official OpenRouter ChatRequest), sent only when the catalogue advertises
