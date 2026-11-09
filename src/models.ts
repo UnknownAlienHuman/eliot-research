@@ -86,6 +86,7 @@ export interface CatalogModel {
   responseFormat?: boolean;
   structuredOutputs?: boolean;
   supportsTemperature?: boolean;
+  supportsReasoning?: boolean; // Published capability, not a mandatory mode or selected effort.
   supportsImages?: boolean;
   optionalReasoning?: boolean;
   structuredReasoningEffort?: "minimal";
@@ -237,6 +238,7 @@ function isCatalogModel(value: unknown): value is CatalogModel {
   if (value.responseFormat !== undefined && typeof value.responseFormat !== "boolean") return false;
   if (value.structuredOutputs !== undefined && typeof value.structuredOutputs !== "boolean") return false;
   if (value.supportsTemperature !== undefined && typeof value.supportsTemperature !== "boolean") return false;
+  if (value.supportsReasoning !== undefined && typeof value.supportsReasoning !== "boolean") return false;
   if (value.supportsImages !== undefined && typeof value.supportsImages !== "boolean") return false;
   if (value.optionalReasoning !== undefined && typeof value.optionalReasoning !== "boolean") return false;
   if (value.structuredReasoningEffort !== undefined && value.structuredReasoningEffort !== "minimal") return false;
@@ -294,7 +296,7 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     const visible: CatalogModel = { route: model.route, id: model.id, label: model.label, contextTokens: model.contextTokens,
       maxOutputTokens: model.maxOutputTokens, checkedOn: model.checkedOn, enabled: model.enabled };
     // Owner-selected openRouterReasoningEffort is never authoritative in a catalogue row.
-    for (const field of ["contextWindowTokens", "outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsImages", "optionalReasoning", "structuredReasoningEffort", "openRouterReasoningEfforts",
+    for (const field of ["contextWindowTokens", "outputReserveTokens", "responseFormat", "structuredOutputs", "supportsTemperature", "supportsReasoning", "supportsImages", "optionalReasoning", "structuredReasoningEffort", "openRouterReasoningEfforts",
       "nativeReasoningEffort", "apiProtocol", "apiBaseUrl", "mayTrainOnYourPrompts", "unavailableReason"] as const) {
       if (model[field] !== undefined) Object.assign(visible, { [field]: model[field] });
     }

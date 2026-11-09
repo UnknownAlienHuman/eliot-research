@@ -219,20 +219,21 @@ function createProtocolFetch(env: Pick<Env, "AI">, opts: GatewayProtocolFetchOpt
 
 // Responses entries never persist server state through this transport: every
 // call stores nothing and carries no prior response or conversation binding.
-const responsesStatelessMiddleware: LanguageModelMiddleware = {
+const responsesStatelessMiddleware = (supportsReasoning: boolean | undefined): LanguageModelMiddleware => ({
   transformParams: async ({ params }) => ({
     ...params,
     providerOptions: {
       ...params.providerOptions,
       openai: {
         ...params.providerOptions?.openai,
+        ...(supportsReasoning === true ? { forceReasoning: true } : {}),
         store: false,
         previousResponseId: undefined,
         conversation: undefined,
       },
     },
   }),
-};
+});
 
 export async function resolveModelTransport(
   env: Pick<Env, "AI" | "DB">,
@@ -334,7 +335,7 @@ export async function resolveModelTransport(
     if (apiProtocol === "openai-responses") {
       const { createOpenAI } = await import("@ai-sdk/openai");
       const inner = createOpenAI({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, keyAlias: provider.keyAlias, preserveAnthropicHeaders: false }), name: provider.id }).responses(model.id);
-      return wrapLanguageModel({ model: inner, middleware: responsesStatelessMiddleware });
+      return wrapLanguageModel({ model: inner, middleware: responsesStatelessMiddleware(model.supportsReasoning) });
     }
     if (apiProtocol === "anthropic") {
       const { createAnthropic } = await import("@ai-sdk/anthropic");

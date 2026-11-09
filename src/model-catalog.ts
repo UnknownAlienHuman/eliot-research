@@ -18,7 +18,7 @@ const positiveInteger = (value: unknown): number | null =>
 // Feed shape: top-level provider blocks with block npm/api defaults
 // (for example the opencode-go Chat default and inference base),
 // per-model provider.npm/api overrides, limit.context/input/output,
-// modalities.input/output, temperature and structured_output booleans.
+// modalities.input/output, temperature, reasoning and structured_output booleans.
 // No credentials are sent; the 8 MiB bound covers the full feed while the
 // ordinary 4 MiB catalogue bound stays unchanged.
 const MAX_METADATA_BYTES = 8 * 1024 * 1024;
@@ -45,6 +45,7 @@ interface ProviderMetadataEntry {
   inImage?: boolean;
   outText?: boolean;
   temperature?: boolean;
+  reasoning?: boolean;
   structured?: boolean;
 }
 interface ProviderMetadata {
@@ -70,6 +71,7 @@ function parseMetadataEntry(value: unknown): ProviderMetadataEntry | null {
       (!Array.isArray(value) || value.some((item) => typeof item !== "string"))) return null;
   }
   if (row.temperature !== undefined && row.temperature !== null && typeof row.temperature !== "boolean") return null;
+  if (row.reasoning !== undefined && row.reasoning !== null && typeof row.reasoning !== "boolean") return null;
   if (row.structured_output !== undefined && row.structured_output !== null && typeof row.structured_output !== "boolean") return null;
   if ((vendor.npm !== undefined && vendor.npm !== null && typeof vendor.npm !== "string") ||
     (vendor.api !== undefined && vendor.api !== null && typeof vendor.api !== "string")) return null;
@@ -88,6 +90,7 @@ function parseMetadataEntry(value: unknown): ProviderMetadataEntry | null {
   if (row.temperature === true) entry.temperature = true;
   else if (row.temperature === false) entry.temperature = false;
   if (row.structured_output === true) entry.structured = true;
+  if (typeof row.reasoning === "boolean") entry.reasoning = row.reasoning;
   return entry;
 }
 
@@ -142,6 +145,10 @@ function joinMetadata(model: CatalogModel, entry: ProviderMetadataEntry | undefi
   if (entry.output !== null) out.maxOutputTokens = entry.output;
   if (entry.inImage !== undefined) out.supportsImages = entry.inImage;
   if (entry.temperature === true) out.supportsTemperature = true;
+  if (entry.reasoning !== undefined) {
+    if (out.supportsReasoning !== undefined && out.supportsReasoning !== entry.reasoning) delete out.supportsReasoning;
+    else out.supportsReasoning = entry.reasoning;
+  }
   if (entry.structured === true) {
     out.responseFormat = true;
     out.structuredOutputs = true;
@@ -223,6 +230,7 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
   // "temperature" in supported_parameters; otherwise omitted as unknown/not
   // advertised. No static model/provider IDs, no allowlist, no price handling.
   const supportsTemperature = parameters.includes("temperature");
+  const supportsReasoning = record(record(row.capabilities)?.reasoning)?.supported;
   // Reasoning profiles are advertised-only and mutually exclusive: optional
   // needs mandatory === false; mandatory minimal needs mandatory === true,
   // published "reasoning", and valid unique supported_efforts with "minimal".
@@ -261,6 +269,7 @@ function normalize(provider: ModelProvider, value: unknown, checkedOn: string): 
     responseFormat: parameters.includes("response_format"),
     structuredOutputs: parameters.includes("response_format") && parameters.includes("structured_outputs"),
     ...(supportsTemperature ? { supportsTemperature: true } : {}),
+    ...(typeof supportsReasoning === "boolean" ? { supportsReasoning } : {}),
     ...(Array.isArray(architecture?.input_modalities) ? { supportsImages: architecture.input_modalities.includes("image") } : {}),
     ...(optionalReasoning ? { optionalReasoning: true } : {}),
     ...(structuredReasoningEffort !== undefined ? { structuredReasoningEffort } : {}),

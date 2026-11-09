@@ -425,6 +425,50 @@ describe.each([
   });
 });
 
+describe("native Responses reasoning classification", () => {
+  it.each([undefined, false, true])("uses the pinned SDK classification only for frozen capability=%s", async supportsReasoning => {
+    const root = "https://opencode.ai/inference/go";
+    const model: ModelSpec = { route: "gateway:fixture/opaque-alias", id: "opaque-alias", label: "Offline alias",
+      contextTokens: 1048576, contextWindowTokens: 1048576, maxOutputTokens: 65536, outputReserveTokens: 8192,
+      supportsTemperature: true, checkedOn: "2026-11-09", enabled: true, apiProtocol: "openai-responses", apiBaseUrl: root + "/openai/v1",
+      ...(supportsReasoning === undefined ? {} : { supportsReasoning }),
+      routing: { gatewayId: "fixture", provider: { id: "fixture", type: "openai-compatible", baseUrl: root,
+        gatewaySlug: "custom-opencode-go", gatewayPath: "", keyAlias: "named-fixture", enabled: true } } };
+    const fetch = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 400 }));
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No external inference in this fixture."));
+    try {
+      const transport = await resolveModelTransport({ AI: { fetch } as unknown as Env["AI"], DB: {} as Env["DB"] }, model, "chat-fixture");
+      model.supportsReasoning = supportsReasoning !== true; // Later metadata cannot alter the captured classification.
+      await expect(generateText({ model: transport, instructions: "System fixture.", prompt: "Offline fixture.",
+        temperature: 0, topP: 0.8, maxOutputTokens: 8192, maxRetries: 0,
+        providerOptions: { openai: { metadata: { fixture: "preserved" }, textVerbosity: "low", include: ["message.output_text.logprobs"],
+          store: true, conversation: "must-be-removed", previousResponseId: "must-be-removed" } } })).rejects.toThrow();
+      expect(fetch).toHaveBeenCalledTimes(1); expect(network).not.toHaveBeenCalled();
+      const request = fetch.mock.calls[0];
+      if (!request) throw new Error("The pinned SDK did not serialize a request.");
+      expect(String(request[0])).toBe("https://workers-binding.ai/ai-gateway/gateways/fixture/custom-opencode-go/openai/v1/responses");
+      const body = JSON.parse(String(request[1]?.body));
+      expect(body).toMatchObject({ model: "opaque-alias", max_output_tokens: 8192, store: false,
+        metadata: { fixture: "preserved" }, text: { verbosity: "low" } });
+      expect(body.input[0].role).toBe(supportsReasoning === true ? "developer" : "system");
+      if (supportsReasoning === true) {
+        expect(body).not.toHaveProperty("temperature"); expect(body).not.toHaveProperty("top_p");
+        expect(body.include).toContain("reasoning.encrypted_content");
+      } else {
+        expect(body).toMatchObject({ temperature: 0, top_p: 0.8 });
+        expect(body.include).not.toContain("reasoning.encrypted_content");
+      }
+      expect(body.include).toContain("message.output_text.logprobs");
+      for (const field of ["reasoning", "forceReasoning", "conversation", "previous_response_id"]) expect(body).not.toHaveProperty(field);
+      const headers = new Headers(request[1]?.headers);
+      expect(headers.get("cf-aig-byok-alias")).toBe("named-fixture");
+      expect(headers.get("x-opencode-session")).toBe("chat-fixture");
+      expect(headers.get("x-session-affinity")).toBe("chat-fixture");
+      expect(headers.get("user-agent")).toBe("EliotResearch/0.1.0"); expect(headers.has("authorization")).toBe(false);
+    } finally { network.mockRestore(); }
+  });
+});
+
 describe("mandatory minimal structured reasoning request", () => {
   it("sends reasoning:{effort:'minimal'} only for structured OpenRouter jobs and leaves chat untouched", async () => {
     const provider = { id: "openrouter", type: "openai-compatible" as const,

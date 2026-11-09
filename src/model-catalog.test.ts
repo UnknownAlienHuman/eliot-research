@@ -617,6 +617,72 @@ describe("go provider metadata catalogue", () => {
     });
   }
 
+  it("joins only literal reasoning booleans and leaves conflicting evidence unknown", async () => {
+    const cases: Array<{ id: string; live?: unknown; metadata?: boolean; expected?: boolean }> = [
+      { id: "dual-positive", live: true, metadata: true, expected: true },
+      { id: "dual-negative", live: false, metadata: false, expected: false },
+      { id: "live-only", live: true, expected: true },
+      { id: "metadata-only", metadata: true, expected: true },
+      { id: "live-negative", live: false, expected: false },
+      { id: "metadata-negative", metadata: false, expected: false },
+      { id: "conflict-positive", live: true, metadata: false },
+      { id: "conflict-negative", live: false, metadata: true },
+      { id: "malformed-string", live: "true" }, { id: "malformed-number", live: 1 },
+      { id: "gpt-5" }, { id: "effort-only" },
+    ];
+    const rows = cases.map(entry => ({ id: entry.id, reasoningSupported: true,
+      capabilities: { reasoning: { supported: entry.live, supportedEfforts: ["minimal", "max"] } } }));
+    const models = Object.fromEntries(cases.map(entry => [entry.id, { limit: { context: 64000, output: 8192 },
+      ...(entry.metadata === undefined ? {} : { reasoning: entry.metadata }) }]));
+    vi.stubGlobal("fetch", stubFeed(rows, { "opencode-go": { npm: "@ai-sdk/openai", api: GO_BASE + "/openai/v1", models } }));
+    const discovered = await discoverGatewayModels(goProviders());
+    expect(discovered).toHaveLength(cases.length);
+    for (const entry of cases) {
+      const model = discovered.find(model => model.id === entry.id);
+      if (entry.expected === undefined) expect(model).not.toHaveProperty("supportsReasoning");
+      else expect(model?.supportsReasoning).toBe(entry.expected);
+      expect(model).not.toHaveProperty("structuredReasoningEffort");
+    }
+  });
+
+  it.each([undefined, false, true])("preserves admitted reasoning=%s across a Refresh without enriching stored reads", async supportsReasoning => {
+    const providers = goProviders(), route = "gateway:opencode-go/opaque-fixture";
+    const storedModel = { route, id: "opaque-fixture", label: "Opaque", contextTokens: 64000, maxOutputTokens: 8192,
+      outputReserveTokens: 8192, checkedOn: "2026-11-09", enabled: true, apiProtocol: "openai-responses", apiBaseUrl: GO_BASE + "/openai/v1",
+      ...(supportsReasoning === undefined ? {} : { supportsReasoning }) };
+    const bucket = fakeBucket({ updatedAt: "2026-11-09T00:00:00Z", warnings: [], providers, models: [storedModel] });
+    const env = fixtureEnv(bucket.binding, { providers });
+    const refreshedFlag = supportsReasoning !== true;
+    const network = vi.fn(stubFeed([{ id: "opaque-fixture", capabilities: { reasoning: { supported: refreshedFlag } } }], {
+      "opencode-go": { npm: "@ai-sdk/openai", api: GO_BASE + "/openai/v1",
+        models: { "opaque-fixture": { limit: { context: 64000, output: 8192 }, reasoning: refreshedFlag } } },
+    }));
+    vi.stubGlobal("fetch", network);
+    const admitted = await requireAvailableModel(env, route);
+    const before = JSON.stringify(admitted);
+    const read = await readModelCatalog(env);
+    expect(read.models.find(model => model.route === route)?.supportsReasoning).toBe(supportsReasoning);
+    if (supportsReasoning === undefined) expect(admitted).not.toHaveProperty("supportsReasoning");
+    expect(network).not.toHaveBeenCalled(); expect(bucket.put).not.toHaveBeenCalled();
+    await refreshModelCatalog(env);
+    const next = await requireAvailableModel(env, route);
+    expect(next.supportsReasoning).toBe(refreshedFlag);
+    expect(JSON.stringify(admitted)).toBe(before);
+    expect(network).toHaveBeenCalledTimes(2); expect(bucket.put).toHaveBeenCalledTimes(1);
+    const invalid = fakeBucket({ updatedAt: "2026-11-09T00:00:00Z", warnings: [], providers,
+      models: [{ ...storedModel, supportsReasoning: "true" }] });
+    expect((await readModelCatalog(fixtureEnv(invalid.binding, { providers }))).models.some(model => model.route === route)).toBe(false);
+    expect(network).toHaveBeenCalledTimes(2); expect(invalid.put).not.toHaveBeenCalled();
+  });
+
+  it.each(["true", 1, {}, []])("rejects malformed metadata reasoning without coercion: %j", async reasoning => {
+    vi.stubGlobal("fetch", stubFeed([{ id: "opaque-fixture" }], { "opencode-go": { npm: "@ai-sdk/openai", api: GO_BASE + "/openai/v1",
+      models: { "opaque-fixture": { limit: { context: 64000, output: 8192 }, reasoning } } } }));
+    const warnings: string[] = [];
+    expect(await discoverGatewayModels(goProviders(), (_id, warning) => warnings.push(warning))).toEqual([]);
+    expect(warnings).toEqual(["opencode-go model metadata is unavailable or malformed."]);
+  });
+
   it("enriches image support without turning missing modalities into false", async () => {
     const limits = { limit: { context: 64000, output: 1024 } };
     vi.stubGlobal("fetch", stubFeed([

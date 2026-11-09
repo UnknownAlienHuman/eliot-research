@@ -1502,6 +1502,14 @@ stripping vendor credentials while keeping required protocol headers and streami
 `store:false` without previous-response or conversation state. Calls retain their existing token, time, attempt and
 usage bounds. Editing either discovery URL invalidates old routing metadata until explicit Refresh succeeds.
 
+Explicit Refresh preserves literal live `capabilities.reasoning.supported` and models.dev `reasoning` booleans as
+optional `supportsReasoning`; conflicting booleans leave it unknown. Stored reads never enrich a missing old field,
+and admission freezes the capability. Only native Responses maps a known-positive value to the pinned
+`@ai-sdk/openai@4.0.104` public `openai.forceReasoning:true` classification override for opaque reasoning aliases.
+The SDK owns sampling compatibility, developer-role mapping and encrypted-content inclusion with `store:false`;
+the adapter selects no effort or mode. False/missing values keep SDK defaults. This capability is not a mandatory
+reasoning assertion or a diagnosis of the observed HTTP 400; other protocols and existing job bounds are unchanged.
+
 Provider references: [Command Code API](https://commandcode.ai/docs/provider),
 [Kilo Gateway API](https://kilo.ai/docs/gateway/api-reference), [Nous Portal](https://portal.nousresearch.com),
 [OpenCode Go](https://opencode.ai/v2/docs/console/go/) and its
