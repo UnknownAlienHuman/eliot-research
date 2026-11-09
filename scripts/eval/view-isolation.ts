@@ -57,16 +57,28 @@ try {
       await expect(page).toHaveURL(origin + path); await settle();
       if (chats.some(id => path === chatPath(id))) await expect(page.locator('.er-chat__history-link[href="' + path + '"]')).toHaveAttribute('aria-current', 'page');
     };
+    const observe = async (scenario, arrival, trigger) => {
+      const [arrived, action] = await Promise.allSettled([arrival, Promise.resolve().then(trigger)]);
+      if (action.status === 'rejected' || arrived.status === 'rejected') {
+        const errors = [];
+        if (action.status === 'rejected') errors.push(action.reason);
+        if (arrived.status === 'rejected') errors.push(arrived.reason);
+        throw new AggregateError(errors, scenario + ' [' + viewport.width + 'x' + viewport.height + ']');
+      }
+      return arrived.value;
+    };
     // Hold a single response; the request has happened, but its continuation has not.
-    const hold = async (url, method = 'POST') => {
+    const hold = async (scenario, url, method = 'POST') => {
       let resolve, route;
       const waiting = new Promise<void>((done, reject) => {
-        const timer = setTimeout(() => reject(new Error('Request did not arrive: ' + method + ' ' + url)), 10000);
+        const timer = setTimeout(() => reject(new Error('Request did not arrive [' + viewport.width + 'x' + viewport.height + ' ' + scenario + ']: ' + method + ' ' + url)), 10000);
         resolve = () => { clearTimeout(timer); done(); };
       });
+      // Handle setup gaps without replacing the rejected waiter consumed by observe.
+      void waiting.catch(() => {});
       const handler = async incoming => { if (incoming.request().method() !== method) return incoming.continue(); if (route) return incoming.fallback(); route = incoming; resolve(); };
       await page.route(url, handler);
-      return { waiting, body: () => route.request().postDataJSON(), request: () => route.request(),
+      return { during: trigger => observe(scenario, waiting, trigger), body: () => route.request().postDataJSON(), request: () => route.request(),
         release: async (body?, status = 200) => {
           const reply = body ?? (method === 'POST' && url.endsWith('/turns') ? { turnId: route.request().postDataJSON().turnId }
             : method === 'POST' && url.endsWith('/sources/file') ? await replacementReceipt(route.request()) : {});
@@ -135,7 +147,7 @@ try {
       for (const socket of scopeSockets) socket.send(scopeSnapshot);
       await expect(page.getByText('Scoped saved answer', { exact: true })).toBeVisible();
       await question.fill('Follow up before HTTP');
-      const scopedSend = await hold(turnsUrl(scopeChat)); await send.click(); await scopedSend.waiting; interceptedTurns++;
+      const scopedSend = await hold('socket scope Send: ' + journey, turnsUrl(scopeChat)); await scopedSend.during(() => send.click()); interceptedTurns++;
       assert.equal(scopedSend.body().scopeMode, scopeMode);
       assert.deepEqual(scopedSend.body().sourceIds, scopeMode === 'explicit' ? sourceIds : undefined);
       await scopedSend.release();
@@ -147,11 +159,10 @@ try {
     // navigated away from the blank route. Native creation stays storage-only.
     const createUrl = origin + '/api/projects/' + project + '/chats';
     await page.goto(origin + chatPath()); await question.fill('Unconfirmed first question');
-    const failedCreation = await hold(createUrl);
-    await send.click(); await failedCreation.waiting;
-    const failedTurn = await hold(turnsUrl(failedCreation.body().id));
-    await failedCreation.release(await api('/api/projects/' + project + '/chats', failedCreation.body()));
-    await failedTurn.waiting; interceptedTurns++;
+    const failedCreation = await hold('first Send creation', createUrl);
+    await failedCreation.during(() => send.click());
+    const failedTurn = await hold('first Send turn after creation', turnsUrl(failedCreation.body().id));
+    await failedTurn.during(async () => failedCreation.release(await api('/api/projects/' + project + '/chats', failedCreation.body()))); interceptedTurns++;
     await failedTurn.release({ error: { message: 'First question reply unavailable' } }, 503);
     await expect(page.getByRole('alert')).toContainText('First question reply unavailable');
     await page.getByText('History', { exact: true }).click();
@@ -164,8 +175,8 @@ try {
     await page.getByText('History', { exact: true }).click();
     await expect(page.locator('.er-chat__history')).toHaveJSProperty('open', false);
     await expect(send).toBeEnabled();
-    const safeReplay = await hold(turnsUrl(failedCreation.body().id));
-    await send.click(); await safeReplay.waiting; interceptedTurns++;
+    const safeReplay = await hold('first Send explicit replay', turnsUrl(failedCreation.body().id));
+    await safeReplay.during(() => send.click()); interceptedTurns++;
     assert.deepEqual(safeReplay.body(), failedTurn.body());
     await safeReplay.release({ error: { message: 'First question reply unavailable' } }, 503);
     await expect(page.getByRole('alert')).toContainText('First question reply unavailable');
@@ -175,32 +186,30 @@ try {
     await expect(question).toHaveValue('');
     await expect(page.getByText('First question reply unavailable', { exact: true })).toHaveCount(0);
     await question.fill('Fresh conversation');
-    const freshCreation = await hold(createUrl);
-    await send.click(); await freshCreation.waiting;
+    const freshCreation = await hold('fresh conversation creation', createUrl);
+    await freshCreation.during(() => send.click());
     assert.notEqual(freshCreation.body().id, failedCreation.body().id);
-    const freshTurn = await hold(turnsUrl(freshCreation.body().id));
-    await freshCreation.release(await api('/api/projects/' + project + '/chats', freshCreation.body()));
-    await freshTurn.waiting; interceptedTurns++;
+    const freshTurn = await hold('fresh conversation turn after creation', turnsUrl(freshCreation.body().id));
+    await freshTurn.during(async () => freshCreation.release(await api('/api/projects/' + project + '/chats', freshCreation.body()))); interceptedTurns++;
     assert.notEqual(freshTurn.body().turnId, failedTurn.body().turnId);
     await freshTurn.release(); await expect(page).toHaveURL(origin + chatPath(freshCreation.body().id));
     // A late creation response cannot dispatch its abandoned question or release
     // a newer Send that is still waiting for its own receipt.
     await page.goto(origin + chatPath()); await question.fill('Pending abandoned creation');
-    const abandonedCreation = await hold(createUrl);
-    await send.click(); await abandonedCreation.waiting;
+    const abandonedCreation = await hold('abandoned creation', createUrl);
+    await abandonedCreation.during(() => send.click());
     await page.getByText('History', { exact: true }).click();
     page.once('dialog', dialog => dialog.accept());
     await page.getByRole('button', { name: 'New chat', exact: true }).click();
     await expect(question).toHaveValue(''); await question.fill('New pending conversation');
-    const nextCreation = await hold(createUrl);
-    await send.click(); await nextCreation.waiting;
+    const nextCreation = await hold('new creation while old pending', createUrl);
+    await nextCreation.during(() => send.click());
     assert.notEqual(nextCreation.body().id, abandonedCreation.body().id);
     await abandonedCreation.release(await api('/api/projects/' + project + '/chats', abandonedCreation.body()));
     await expect(page).toHaveURL(origin + chatPath()); await expect(question).toHaveValue('New pending conversation');
     await expect(page.getByRole('button', { name: 'Sending…', exact: true })).toBeDisabled();
-    const nextTurn = await hold(turnsUrl(nextCreation.body().id));
-    await nextCreation.release(await api('/api/projects/' + project + '/chats', nextCreation.body()));
-    await nextTurn.waiting; interceptedTurns++; await nextTurn.release();
+    const nextTurn = await hold('new turn after pending creation', turnsUrl(nextCreation.body().id));
+    await nextTurn.during(async () => nextCreation.release(await api('/api/projects/' + project + '/chats', nextCreation.body()))); interceptedTurns++; await nextTurn.release();
     await expect(page).toHaveURL(origin + chatPath(nextCreation.body().id));
     // A first-page read started before chat creation must not erase the new row.
     const oldHead = await api('/api/projects/' + historyProject + '/chats');
@@ -208,8 +217,8 @@ try {
     const captureHead = route => { if (route.request().method() === 'GET') heads.push(route); else return route.continue(); };
     await page.route(historyUrl, captureHead);
     await page.goto(origin + '/p/' + historyProject + '/chat'); await expect.poll(() => heads.length).toBeGreaterThan(0);
-    const createdTurn = await hold(historyUrl + '/*/turns');
-    await question.fill('New chat during initial history'); await send.click(); await createdTurn.waiting; interceptedTurns++;
+    const createdTurn = await hold('new turn during initial history', historyUrl + '/*/turns');
+    await createdTurn.during(async () => { await question.fill('New chat during initial history'); await send.click(); }); interceptedTurns++;
     const createdId = new URL(createdTurn.request().url()).pathname.split('/').at(-2);
     await Promise.all(heads.map(route => route.fulfill({ json: oldHead }).catch(() => {})));
     await page.unroute(historyUrl, captureHead); await settle();
@@ -220,13 +229,13 @@ try {
     await expect(page).toHaveURL(origin + '/p/' + historyProject + '/chat/' + createdId);
     const olderUrl = historyUrl + '?cursor=' + encodeURIComponent(oldHead.nextCursor);
     const older = await api('/api/projects/' + historyProject + '/chats?cursor=' + encodeURIComponent(oldHead.nextCursor));
-    let olderRead = await hold(olderUrl, 'GET');
-    await page.getByRole('button', { name: 'Load more chats', exact: true }).click(); await olderRead.waiting;
+    let olderRead = await hold('history older-page failure', olderUrl, 'GET');
+    await olderRead.during(() => page.getByRole('button', { name: 'Load more chats', exact: true }).click());
     await olderRead.release({ error: { message: 'History page unavailable' } }, 503);
     await expect(historyLinks).toHaveCount(51);
     await expect(page.getByRole('alert')).toContainText('History page unavailable');
-    olderRead = await hold(olderUrl, 'GET');
-    await page.getByRole('button', { name: 'Load more chats', exact: true }).click(); await olderRead.waiting; await olderRead.release(older);
+    olderRead = await hold('history older-page retry', olderUrl, 'GET');
+    await olderRead.during(() => page.getByRole('button', { name: 'Load more chats', exact: true }).click()); await olderRead.release(older);
     const allIds = await historyLinks.evaluateAll(links => links.map(link => link.getAttribute('href')));
     assert.deepEqual(allIds, [createdId, ...oldHead.chats.map(chat => chat.id), ...older.chats.map(chat => chat.id)]
       .map(id => '/p/' + historyProject + '/chat/' + id));
@@ -240,8 +249,8 @@ try {
     await expect(historyLinks).toHaveCount(50);
     // An abandoned older read cannot affect a remounted project workspace.
     const freshHead = await api('/api/projects/' + historyProject + '/chats');
-    olderRead = await hold(historyUrl + '?cursor=' + encodeURIComponent(freshHead.nextCursor), 'GET');
-    await page.getByRole('button', { name: 'Load more chats', exact: true }).click(); await olderRead.waiting;
+    olderRead = await hold('history older-page abandoned workspace', historyUrl + '?cursor=' + encodeURIComponent(freshHead.nextCursor), 'GET');
+    await olderRead.during(() => page.getByRole('button', { name: 'Load more chats', exact: true }).click());
     await navigate('/settings'); await navigate('/p/' + historyProject + '/chat/' + createdId);
     await olderRead.release({ error: { message: 'Abandoned history page' } }, 503);
     await expect(historyLinks).toHaveCount(50); await expect(page.getByText('Abandoned history page')).toHaveCount(0);
@@ -257,37 +266,37 @@ try {
     await expect(controls).toBeFocused();
     await expect(question).toHaveValue('Draft before collapsing controls');
     await question.fill('A original'); await expect(send).toBeEnabled();
-    let pending = await hold(turnsUrl(chats[0])); await send.click(); await pending.waiting; interceptedTurns++;
+    let pending = await hold('A Send before B', turnsUrl(chats[0])); await pending.during(() => send.click()); interceptedTurns++;
     assert.equal(pending.body().question, 'A original');
     await navigate(chatPath(chats[1])); await question.fill('B new draft'); await expect(send).toBeEnabled();
-    const b = await hold(turnsUrl(chats[1])); await send.click(); await b.waiting; interceptedTurns++;
+    const b = await hold('B Send while A pending', turnsUrl(chats[1])); await b.during(() => send.click()); interceptedTurns++;
     await pending.release(); await expect(question).toHaveValue('B new draft'); await expect(page.getByRole('button', { name: /Sending/ })).toBeDisabled();
     await b.release({ error: { message: 'B own failure' } }, 503); await expect(page.getByRole('alert')).toContainText('B own failure'); await expect(send).toBeEnabled();
     // A -> B -> A must not grant the old A response ownership again, including errors.
     await navigate(chatPath(chats[0])); await question.fill('A departure');
-    pending = await hold(turnsUrl(chats[0])); await send.click(); await pending.waiting; interceptedTurns++;
+    pending = await hold('A Send before A-B-A', turnsUrl(chats[0])); await pending.during(() => send.click()); interceptedTurns++;
     await navigate(chatPath(chats[1])); await navigate(chatPath(chats[0])); await question.fill('A returned draft');
     await pending.release({ error: { message: 'Old A failure' } }, 503); await expect(question).toHaveValue('A returned draft'); await expect(page.getByText('Old A failure')).toHaveCount(0);
     // Same-view editing survives acknowledgement. A hidden mounted chat cannot redirect from Sources.
-    pending = await hold(turnsUrl(chats[0])); await send.click(); await pending.waiting; interceptedTurns++;
+    pending = await hold('A Send with same-view draft edit', turnsUrl(chats[0])); await pending.during(() => send.click()); interceptedTurns++;
     await question.fill('Edited during Send'); await pending.release(); await expect(question).toHaveValue('Edited during Send');
-    pending = await hold(turnsUrl(chats[0])); await send.click(); await pending.waiting; interceptedTurns++;
+    pending = await hold('A Send before Source B navigation', turnsUrl(chats[0])); await pending.during(() => send.click()); interceptedTurns++;
     await navigate(sourcePath(1)); await expect(page.getByRole('heading', { name: 'Source B', exact: true })).toBeVisible();
     await pending.release(); await expect(page).toHaveURL(origin + sourcePath(1)); await navigate(chatPath(chats[0])); await expect(question).toHaveValue('Edited during Send');
     // Creation response after departure cannot admit a new question. Successful first Send may navigate,
     // but retains draft and source selection edited while its turn acknowledgement was pending.
     await page.goto(origin + chatPath()); await question.fill('Create then leave');
     const creates = origin + '/api/projects/' + project + '/chats';
-    pending = await hold(creates); await send.click(); await pending.waiting;
+    pending = await hold('creation before departure', creates); await pending.during(() => send.click());
     await navigate(sourcePath(1)); await pending.release(await api('/api/projects/' + project + '/chats', pending.body())); await expect(page).toHaveURL(origin + sourcePath(1));
     await page.goto(origin + chatPath()); await question.fill('Created Send then leave');
-    const departedCreate = await hold(creates); await send.click(); await departedCreate.waiting;
-    pending = await hold(turnsUrl(departedCreate.body().id)); await departedCreate.release(await api('/api/projects/' + project + '/chats', departedCreate.body())); await pending.waiting; interceptedTurns++;
+    const departedCreate = await hold('creation before submitted departure', creates); await departedCreate.during(() => send.click());
+    pending = await hold('turn before submitted departure', turnsUrl(departedCreate.body().id)); await pending.during(async () => departedCreate.release(await api('/api/projects/' + project + '/chats', departedCreate.body()))); interceptedTurns++;
     await navigate(sourcePath(1)); await pending.release(); await expect(page).toHaveURL(origin + sourcePath(1));
     await page.goto(origin + chatPath()); await question.fill('First question');
-    const create = await hold(creates); await send.click(); await create.waiting;
+    const create = await hold('first Send preserving next draft creation', creates); await create.during(() => send.click());
     const acknowledgedChatId = create.body().id;
-    pending = await hold(turnsUrl(acknowledgedChatId)); await create.release(await api('/api/projects/' + project + '/chats', create.body())); await pending.waiting; interceptedTurns++;
+    pending = await hold('first Send preserving next draft turn', turnsUrl(acknowledgedChatId)); await pending.during(async () => create.release(await api('/api/projects/' + project + '/chats', create.body()))); interceptedTurns++;
     await question.fill('Next draft');
     const includeA = page.getByRole('checkbox', { name: 'Include Source A in the current source selection', exact: true });
     if (viewport.width > 1000) await includeA.uncheck();
@@ -304,32 +313,32 @@ try {
     await page.unroute(chatUrl);
     // Explicit retry after an unreadable/lost response keeps the existing page mutation identity.
     const saveUrl = origin + '/api/projects/' + project + '/pages/from-turn';
-    const lostSave = await hold(saveUrl);
-    await page.getByRole('button', { name: 'Save as page', exact: true }).click(); await lostSave.waiting;
+    const lostSave = await hold('Save reply lost', saveUrl);
+    await lostSave.during(() => page.getByRole('button', { name: 'Save as page', exact: true }).click());
     await lostSave.release({ error: { message: 'Save reply lost' } }, 503);
     await expect(page.getByText('Save reply lost', { exact: true })).toBeVisible();
-    const retriedSave = await hold(saveUrl);
-    await page.getByRole('button', { name: 'Save as page', exact: true }).click(); await retriedSave.waiting;
+    const retriedSave = await hold('Save explicit replay', saveUrl);
+    await retriedSave.during(() => page.getByRole('button', { name: 'Save as page', exact: true }).click());
     assert.deepEqual(retriedSave.body(), lostSave.body()); await retriedSave.release();
     await expect(page.getByText('Saved.', { exact: true })).toBeVisible();
     // Save has a project-wide inventory effect, but its local notice belongs only to its original view.
     let pageReads = 0;
     const pagesUrl = origin + '/api/projects/' + project + '/pages';
     await page.route(pagesUrl, route => { pageReads++; return route.continue(); });
-    const saved = await hold(saveUrl);
-    await page.getByRole('button', { name: 'Save as page', exact: true }).click(); await saved.waiting;
+    const saved = await hold('Save before chat switch', saveUrl);
+    await saved.during(() => page.getByRole('button', { name: 'Save as page', exact: true }).click());
     assert.notEqual(saved.body().mutationId, lostSave.body().mutationId, 'A Save after confirmation remains a new copy.');
     await navigate(chatPath(chats[1])); const readsBefore = pageReads; await saved.release();
     await expect.poll(() => pageReads).toBeGreaterThan(readsBefore); await expect(page.getByText('Saved.', { exact: true })).toHaveCount(0); await page.unroute(pagesUrl);
     await navigate(chatPath(chats[0])); await question.fill('Before unmount');
     // Project change/unmount: no navigation or error may reach the new workspace.
-    pending = await hold(turnsUrl(chats[0])); await send.click(); await pending.waiting; interceptedTurns++;
+    pending = await hold('Send before project unmount', turnsUrl(chats[0])); await pending.during(() => send.click()); interceptedTurns++;
     await navigate('/p/' + other + '/chat'); await question.fill('Other project draft');
     await pending.release({ error: { message: 'Unmounted failure' } }, 503); await expect(question).toHaveValue('Other project draft'); await expect(page.getByText('Unmounted failure')).toHaveCount(0);
 
     const metaUrl = origin + '/api/sources/' + sources[0].source.id;
     // Metadata from A cannot overwrite B, nor A after A -> B -> A.
-    pending = await hold(metaUrl, 'GET'); await navigate(sourcePath(0)); await pending.waiting;
+    pending = await hold('Source A metadata before A-B-A', metaUrl, 'GET'); await pending.during(() => navigate(sourcePath(0)));
     await navigate(sourcePath(1)); await expect(page.locator('.er-lib__text')).toContainText('Immutable native text');
     await navigate(sourcePath(0));
     await expect(page.getByRole('heading', { name: 'Source A', exact: true })).toBeVisible();
@@ -373,18 +382,18 @@ try {
     await expect(page.getByText('Late poll metadata', { exact: true })).toHaveCount(0);
     // Text and outline reads also belong to their immutable revision, not the new source.
     const textUrl = origin + '/api/revisions/' + sources[0].source.currentRevisionId + '/text';
-    pending = await hold(textUrl, 'GET'); await navigate(sourcePath(1)); await navigate(sourcePath(0)); await pending.waiting;
+    pending = await hold('Source A text before source switch', textUrl, 'GET'); await pending.during(async () => { await navigate(sourcePath(1)); await navigate(sourcePath(0)); });
     await navigate(sourcePath(1)); await expect(page.locator('.er-lib__text')).toContainText('Source B'); await pending.release(); await expect(page.locator('.er-lib__text')).toContainText('Source B');
     // Replacement remains bound to A. Switching source clears the React File and native file input.
     const uploadUrl = origin + '/api/projects/' + project + '/sources/file';
     const input = page.getByLabel('Replace source file', { exact: true });
     const upload = page.getByRole('button', { name: 'Upload new revision', exact: true });
     await navigate(sourcePath(0)); await input.setInputFiles({ name: 'a.md', mimeType: 'text/markdown', buffer: Buffer.from('A replacement') });
-    pending = await hold(uploadUrl); await upload.click(); await pending.waiting; interceptedUploads++;
+    pending = await hold('replace A initial', uploadUrl); await pending.during(() => upload.click()); interceptedUploads++;
     assert(pending.request().postData().includes(sources[0].source.id));
     await navigate(sourcePath(1)); await expect(input).toBeEnabled(); assert.equal(await input.evaluate(input => input.files.length), 0); await expect(upload).toBeDisabled();
     await input.setInputFiles({ name: 'b.md', mimeType: 'text/markdown', buffer: Buffer.from('# Source B\n\nImmutable native text B replacement ' + viewport.width + ' ' + project) });
-    const independentB = await hold(uploadUrl); await upload.click(); await independentB.waiting; interceptedUploads++;
+    const independentB = await hold('replace B while A pending', uploadUrl); await independentB.during(() => upload.click()); interceptedUploads++;
     assert(independentB.request().postData().includes(sources[1].source.id));
     await navigate(sourcePath(0)); await expect(input).toBeDisabled();
     // Force a file/change and form submission even through disabled controls: the synchronous source
@@ -394,13 +403,13 @@ try {
     await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
     await pending.release(await replacementReceipt(pending.request())); await expect(input).toBeEnabled();
     await expect(page).toHaveURL(origin + sourcePath(0)); assert.equal(await input.evaluate(input => input.files[0].name), 'returned-a.md');
-    const afterSuccess = await hold(uploadUrl); await upload.click(); await afterSuccess.waiting; interceptedUploads++;
+    const afterSuccess = await hold('replace A after success', uploadUrl); await afterSuccess.during(() => upload.click()); interceptedUploads++;
     assert.equal(uploadRequests, beforeAttempt + 1); await afterSuccess.release();
     await navigate(sourcePath(1)); await expect(input).toBeDisabled(); // A's settlement cannot release B.
     await independentB.release({ error: { message: 'Departed B failure' } }, 503); await expect(input).toBeEnabled();
     await expect(page.getByText('Departed B failure')).toHaveCount(0);
     await navigate(sourcePath(0)); await input.setInputFiles({ name: 'old-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Old A') });
-    pending = await hold(uploadUrl); await upload.click(); await pending.waiting; interceptedUploads++;
+    pending = await hold('replace A before remount', uploadUrl); await pending.during(() => upload.click()); interceptedUploads++;
     await navigate(sourcePath(1)); await navigate(sourcePath(0)); await expect(input).toBeDisabled();
     await navigate(chatPath(chats[0])); await navigate(sourcePath(0)); await expect(input).toBeDisabled();
     await input.setInputFiles({ name: 'new-a.md', mimeType: 'text/markdown', buffer: Buffer.from('New A') });
@@ -408,7 +417,7 @@ try {
     await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
     await pending.release({ error: { message: 'Departed replacement failure' } }, 503);
     await expect(input).toBeEnabled(); await expect(page.getByText('Departed replacement failure')).toHaveCount(0); assert.equal(await input.evaluate(input => input.files[0].name), 'new-a.md');
-    const afterError = await hold(uploadUrl); await upload.click(); await afterError.waiting; interceptedUploads++;
+    const afterError = await hold('replace A after error', uploadUrl); await afterError.during(() => upload.click()); interceptedUploads++;
     assert.equal(uploadRequests, beforeAttempt + 1); await afterError.release();
     // ProjectWorkspace itself is keyed/unmounted on project and Settings navigation. App must retain
     // only the pending project/source key, permit another project/source, and clean up while away.
@@ -416,14 +425,14 @@ try {
     const otherUploadUrl = origin + '/api/projects/' + other + '/sources/file';
     for (const status of [200, 503]) {
       await navigate(sourcePath(0)); await input.setInputFiles({ name: 'away-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Away A') });
-      const awayA = await hold(uploadUrl); await upload.click(); await awayA.waiting; interceptedUploads++;
+      const awayA = await hold('replace A across Settings/project: ' + status, uploadUrl); await awayA.during(() => upload.click()); interceptedUploads++;
       await navigate('/settings'); await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
       await navigate(sourcePath(0)); await expect(input).toBeDisabled();
       await input.setInputFiles({ name: 'duplicate-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Duplicate A') });
       beforeAttempt = uploadRequests; await input.locator('..').evaluate(form => form.requestSubmit()); await settle(); assert.equal(uploadRequests, beforeAttempt);
       await navigate(otherSourcePath); await expect(input).toBeEnabled();
       await input.setInputFiles({ name: 'other-a.md', mimeType: 'text/markdown', buffer: Buffer.from('Other project A') });
-      const otherA = await hold(otherUploadUrl); await upload.click(); await otherA.waiting; interceptedUploads++;
+      const otherA = await hold('replace other-project A while original pending: ' + status, otherUploadUrl); await otherA.during(() => upload.click()); interceptedUploads++;
       assert(otherA.request().postData().includes(sources[0].source.id));
       await navigate(sourcePath(1)); await expect(input).toBeEnabled(); // Independent source in original project.
       await navigate(sourcePath(0)); await expect(input).toBeDisabled(); // Project switch did not release original A.
@@ -433,25 +442,25 @@ try {
       await awayA.release(status === 200 ? await replacementReceipt(awayA.request()) : { error: { message: 'Away replacement error' } }, status);
       await navigate(sourcePath(0)); await expect(input).toBeEnabled(); await expect(page.getByText('Away replacement error')).toHaveCount(0);
       await input.setInputFiles({ name: 'after-away.md', mimeType: 'text/markdown', buffer: Buffer.from('After away') });
-      const retryA = await hold(uploadUrl); await upload.click(); await retryA.waiting; interceptedUploads++;
+      const retryA = await hold('replace A after away settlement: ' + status, uploadUrl); await retryA.during(() => upload.click()); interceptedUploads++;
       assert.equal(uploadRequests, beforeAttempt + 1); await retryA.release();
       await navigate(otherSourcePath); await expect(input).toBeDisabled(); // Original project's cleanup cannot release this pair.
       await navigate('/settings'); await otherA.release({ error: { message: 'Other project upload error' } }, 503);
       await navigate(otherSourcePath); await expect(input).toBeEnabled(); await expect(page.getByText('Other project upload error')).toHaveCount(0);
       await input.setInputFiles({ name: 'other-after.md', mimeType: 'text/markdown', buffer: Buffer.from('Other after') });
-      const retryOther = await hold(otherUploadUrl); await upload.click(); await retryOther.waiting; interceptedUploads++; await retryOther.release();
+      const retryOther = await hold('replace other-project A after away error: ' + status, otherUploadUrl); await retryOther.during(() => upload.click()); interceptedUploads++; await retryOther.release();
       await navigate('/'); await navigate(otherSourcePath); await expect(input).toBeEnabled();
       await navigate(sourcePath(0)); await expect(input).toBeEnabled();
     }
     await navigate(sourcePath(1)); await input.setInputFiles({ name: 'b.md', mimeType: 'text/markdown', buffer: Buffer.from('# Source B\n\nImmutable native text B replacement ' + viewport.width + ' ' + project) });
     // Changing only the revision URL must not release the source's pending write lock.
-    pending = await hold(uploadUrl); await upload.click(); await pending.waiting; interceptedUploads++;
+    pending = await hold('replace B before revision navigation', uploadUrl); await pending.during(() => upload.click()); interceptedUploads++;
     await navigate(sourcePath(1) + '?revisionId=' + sources[1].source.currentRevisionId); await expect(input).toBeDisabled(); await expect(page.getByRole('button', { name: /Uploading new revision/ })).toBeDisabled();
     await pending.release({ error: { message: 'Old replacement failure' } }, 503); await expect(input).toBeEnabled(); await expect(page.getByText('Old replacement failure')).toHaveCount(0); assert.equal(await input.evaluate(input => input.files[0].name), 'b.md');
     // In-view native Markdown replacement keeps intentional navigation and renders its real stored revision.
     allowNativeUpload = true;
-    const uploaded = page.waitForResponse(response => response.url() === uploadUrl && response.request().method() === 'POST');
-    await upload.click(); const response = await uploaded; assert.equal(response.status(), 202); const body = await response.json(); nativeUploads++;
+    const response = await observe('native replacement B', page.waitForResponse(response => response.url() === uploadUrl && response.request().method() === 'POST'), () => upload.click());
+    assert.equal(response.status(), 202); const body = await response.json(); nativeUploads++;
     await expect(page).toHaveURL(origin + sourcePath(1) + '?revisionId=' + body.revisionId);
     await expect(page.locator('.er-lib__text')).toContainText('B replacement'); await expect(upload).toBeDisabled();
     const stored = await api('/api/sources/' + sources[1].source.id); assert.equal(stored.source.conversionCalls, 0);
@@ -488,8 +497,8 @@ try {
       // deliberately creates another revision with a new ID.
       if (outcome === 'malformed') {
         await input.setInputFiles({ name: 'replay.md', mimeType: 'text/markdown', buffer: Buffer.from(text) });
-        const accepted = page.waitForResponse(response => response.url() === uploadUrl && response.request().method() === 'POST');
-        await upload.click(); const next = await accepted, receipt = await next.json(); nativeUploads++;
+        const next = await observe('confirmed replacement after replay: ' + outcome, page.waitForResponse(response => response.url() === uploadUrl && response.request().method() === 'POST'), () => upload.click());
+        const receipt = await next.json(); nativeUploads++;
         assert.notEqual(receipt.revisionId, receipts[0].revisionId);
         await expect(page.locator('.er-lib__text')).toContainText(text.split('\n\n')[1]); await expect(upload).toBeDisabled();
       }
