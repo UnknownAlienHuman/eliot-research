@@ -244,6 +244,7 @@ function normMath(s) {
   }
   let n = chars.join('').normalize('NFKC')
     .replace(/\\_/g, '_')
+    .replace(/\\text\s*\{([^{}]*)\}/giu, '$1')
     .replace(/\\(?:cdot|times)\b/gi, ' ')
     .replace(/×/g, ' ')
     .replace(/\[(?:S\d+|R[0-9a-f-]{36}):\d+\]/gi, ' ')
@@ -311,6 +312,31 @@ function checkAnswer(qid, ans) {
 }
 function assertC2StaticSelftests() {
   const c2 = (answer) => checkAnswer('C2', answer).find((check) => check.name === 'learning-rate formula and warmup=4000')?.passed;
+  // Exact retained answer from eval/out/k2-crouton-minimal-20261108-210027/k2-C2.json.
+  const croutonAnswer = String.raw`Расписание скорости обучения (learning rate) Transformer:
+
+$$lrate = d_{\text{model}}^{-0.5} \cdot \min(step\_num^{-0.5}, step\_num \cdot warmup\_steps^{-1.5})$$[S9:103]
+
+Это соответствует линейному увеличению скорости обучения в течение первых $warmup\_steps$ шагов обучения и последующему уменьшению пропорционально обратному квадратному корню из номера шага[S9:104].
+
+Использовано $warmup\_steps = 4000$[S9:104].
+
+Оптимизатор — Adam с $\beta_1 = 0.9$, $\beta_2 = 0.98$ и $\epsilon = 10^{-9}$[S9:102].`;
+  assert.equal(c2(croutonAnswer), true, 'The exact retained C2 answer with a TeX text subscript must pass.');
+  for (const [before, after, reason] of [
+    [String.raw`d_{\text{model}}^{-0.5}`, String.raw`2 \cdot d_{\text{model}}^{-0.5}`, 'non-unit prefactor'],
+    [String.raw`d_{\text{model}}^{-0.5}`, String.raw`d_{\text{model}}^{-0.6}`, 'wrong model exponent'],
+    [String.raw`step\_num^{-0.5}`, String.raw`step\_num^{-0.6}`, 'wrong step exponent'],
+    [String.raw`warmup\_steps^{-1.5}`, String.raw`warmup\_steps^{-1.4}`, 'wrong warmup exponent'],
+    [String.raw`\min(`, String.raw`\max(`, 'wrong min operator'],
+    ['= 4000', '= 2000', 'wrong warmup value'],
+    [String.raw`Использовано $warmup\_steps = 4000$[S9:104].`, '', 'missing warmup value'],
+    [String.raw`, step\_num \cdot warmup\_steps^{-1.5}`, '', 'missing second formula term'],
+  ]) {
+    const nearMiss = croutonAnswer.replace(before, after);
+    assert.notEqual(nearMiss, croutonAnswer, 'The actual-answer mutation must apply: ' + reason);
+    assert.equal(c2(nearMiss), false, 'The actual-answer near miss must fail: ' + reason);
+  }
   const latexFormula = 'lrate = d_{model}^{-0.5} \\cdot \\min(step\\_num^{-0.5},\\ step\\_num \\cdot warmup\\_steps^{-1.5}), warmup\\_steps = 4000';
   assert.equal(c2(latexFormula), true, 'Escaped LaTeX underscores and multiplication must preserve the exact original-paper formula.');
   assert.equal(c2(latexFormula.replace('d_{model}', '2 \\cdot d_{model}')), false, 'A non-unit coefficient on d_model must fail.');
