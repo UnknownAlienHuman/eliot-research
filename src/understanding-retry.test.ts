@@ -246,8 +246,8 @@ describe("explicit understanding retry", () => {
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
     const totalUsage = { inputTokens: 17, outputTokens: 8, inputTokenDetails: { cacheReadTokens: 0 } };
     vi.mocked(generateText).mockReset()
-      .mockResolvedValueOnce({ output: { candidates: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The method retains canonical evidence." }] }, totalUsage } as never)
-      .mockResolvedValueOnce({ output: { selected: [{ candidateId: "C0", reason: "The bound quote states this." }], rejected: [], guide: [] }, totalUsage } as never);
+      .mockResolvedValueOnce({ output: { candidates: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The method retains canonical evidence." }] }, totalUsage, finishReason: "stop" } as never)
+      .mockResolvedValueOnce({ output: { selected: [{ candidateId: "C0", reason: "The bound quote states this." }], rejected: [], guide: [] }, totalUsage, finishReason: "stop" } as never);
     try {
       await requestUnderstanding(f.env, actor, { ...input, model: openRouterModel.route, openRouterReasoningEffort: "high" });
       const params = f.create.mock.calls[0]?.[0].params;
