@@ -680,15 +680,10 @@ bounds and the existing 16 MiB cumulative materialization allowance remain uncha
 one additional minute for storage/reconciliation, without extending paid execution.
 
 Fresh compact extraction requests 8,192 output tokens and review requests 4,096 by default. As an experimental
-qualification policy, compact review requests 8,192 when the admitted frozen explicit owner effort is
+qualification policy, compact review requests 8,192 only when the admitted frozen explicit owner effort is
 `high`, `xhigh` or `max`, the provider is the official OpenRouter API root, and that effort belongs to the same
 snapshot's published list. Native compact, Automatic and Low review remain at 4,096; legacy formats retain their
-existing/frozen caps. New compact admissions with explicit `openRouterReasoningEffort: "medium"` on the official
-OpenRouter API root and `medium` in the admitted snapshot's published list freeze the extraction/review pair
-`compactOutputTokens: [16384, 8192]` in the existing Workflow input. Both calls consume that pair; absent metadata
-keeps already admitted attempts on their prior policy. This single allowance is pending measured qualification,
-not an established minimum or semantic fix. No model-name rule, retry, longer deadline or assembly reserve is used.
-After estimating the actual instructions, messages and schema,
+existing/frozen caps. After estimating the actual instructions, messages and schema,
 `requestedOutputLimit(model, inputEstimate, requestedTokens)` clips each job
 budget to a known provider maximum and the estimated remainder of a known combined window. The existing
 conservative input estimate includes framing overhead; it is not provider tokenization. Unknown provider maxima
