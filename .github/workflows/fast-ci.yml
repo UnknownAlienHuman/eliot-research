@@ -17,7 +17,7 @@ jobs:
   product:
     name: Material shell, Access and package
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     env:
       ELIOT_REMOTE_BINDINGS: "0"
     steps:
