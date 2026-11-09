@@ -649,6 +649,53 @@ describe.each(["openrouter", "opencode-go"])("Gateway bad-request parameter diag
   const generic = "External model request failed (HTTP 400). Check the Gateway connection and provider status; no retry was started.";
   const body = (param: unknown) => JSON.stringify({ error: { message: secret, param } });
   const wrapped = (raw: string, param?: unknown) => JSON.stringify({ error: { message: secret, param, metadata: { raw } } });
+  const coded = (...codes: unknown[]) => JSON.stringify({ errors: codes.map(code => ({ code, message: secret })), message: secret });
+
+  it.each([2005, 2044, 7003].flatMap(code => [false, true].map(cause => ({ code, cause }))))(
+    "projects only agreed numeric code $code from direct/immediate cause=$cause", ({ code, cause }) => {
+      const failure = { statusCode: 400, responseBody: coded(code, code) };
+      const reason = modelFailure(cause ? new Error(secret, { cause: failure }) : { ...failure, message: secret }, model);
+      expect(reason).toBe(`External model request failed (HTTP 400). Error response reported code ${code}. No retry was started.`);
+      expect(reason).not.toContain(secret);
+    });
+
+  it("keeps absent, malformed, unknown, string, fractional, mixed and oversized codes generic", () => {
+    const valid = coded(2044), boundary = valid + " ".repeat(4096 - valid.length);
+    expect(modelFailure({ statusCode: 400, responseBody: boundary }, model))
+      .toBe("External model request failed (HTTP 400). Error response reported code 2044. No retry was started.");
+    for (const responseBody of [undefined, null, "", 2044, "{", "null", "[]", coded(), coded(9999), coded("2044"), coded(2044.5),
+      coded(2044, 2005), coded(2044, 9999), JSON.stringify({ errors: [null] }), JSON.stringify({ errors: [{ code: null }] }),
+      JSON.stringify({ errors: { code: 2044 } }), JSON.stringify({ error: { errors: [{ code: 2044 }] } }),
+      wrapped(coded(2044)), boundary + " "]) {
+      expect(modelFailure({ statusCode: 400, responseBody, message: secret }, model)).toBe(generic);
+    }
+  });
+
+  it("requires code agreement in every available direct and immediate cause body without deeper traversal", () => {
+    const direct = { statusCode: 400, responseBody: coded(2044) };
+    expect(modelFailure(Object.assign(new Error(secret, { cause: direct }), direct), model))
+      .toBe("External model request failed (HTTP 400). Error response reported code 2044. No retry was started.");
+    for (const responseBody of [coded(2005), coded("2044"), coded(9999), coded(), "{", null, coded(2044) + " ".repeat(4097)]) {
+      expect(modelFailure(Object.assign(new Error(secret, { cause: { responseBody } }), direct), model)).toBe(generic);
+      expect(modelFailure(Object.assign(new Error(secret, { cause: direct }), { statusCode: 400, responseBody }), model)).toBe(generic);
+    }
+    const deeper = Object.assign(new Error(secret, { cause: new Error(secret, { cause: direct }) }), { statusCode: 400 });
+    expect(modelFailure(deeper, model)).toBe(generic);
+    expect(modelFailure({ statusCode: 400, cause: direct }, model)).toBe(generic);
+  });
+
+  it("keeps all three parameter categories ahead of codes and leaves other statuses/native failures unchanged", () => {
+    for (const [param, category] of [["reasoning", "reasoning"], ["temperature", "temperature"], ["response_format", "structured-output format"]]) {
+      const responseBody = JSON.stringify({ error: { param, message: secret }, errors: [{ code: 2044, message: secret }] });
+      expect(modelFailure({ statusCode: 400, responseBody }, model))
+        .toBe(`External model request failed (HTTP 400). Error response identified the ${category} parameter. Check the selected model's published controls; no retry was started.`);
+    }
+    for (const statusCode of [401, 403, 404, 429]) {
+      expect(modelFailure({ statusCode, responseBody: coded(2044) }, model)).toBe(modelFailure({ statusCode }, model));
+    }
+    expect(modelFailure({ statusCode: 400, responseBody: coded(2044) }, { ...model, route: "workers-ai:fixture" }))
+      .toBe("Model stream failed (HTTP 400).");
+  });
 
   it.each([
     { param: "reasoning", category: "reasoning", nested: false, cause: false },

@@ -492,6 +492,27 @@ function badRequestParameter(error: unknown): "reasoning" | "temperature" | "str
   return identified;
 }
 
+function badRequestCode(error: unknown): number | undefined {
+  const cause = error instanceof Error ? error.cause as { responseBody?: unknown } | null | undefined : undefined;
+  const bodies = [(error as { responseBody?: unknown } | null | undefined)?.responseBody, cause?.responseBody];
+  let identified: number | undefined;
+  for (const body of bodies) {
+    if (body === undefined) continue;
+    if (typeof body !== "string" || body.length === 0 || body.length > PROVIDER_ERROR_BODY_CHARS) return undefined;
+    try {
+      const errors = (JSON.parse(body) as { errors?: unknown } | null)?.errors;
+      if (!Array.isArray(errors) || errors.length === 0) return undefined;
+      for (const entry of errors) {
+        const code = (entry as { code?: unknown } | null)?.code;
+        if (typeof code !== "number" || !Number.isSafeInteger(code) || ![2005, 2044, 7003].includes(code)
+          || (identified !== undefined && identified !== code)) return undefined;
+        identified = code;
+      }
+    } catch { return undefined; }
+  }
+  return identified;
+}
+
 export function modelFailure(error: unknown, model: ModelSpec): string {
   const status = errorStatusCode(error);
   if (model.route.startsWith("gateway:")) {
@@ -508,6 +529,8 @@ export function modelFailure(error: unknown, model: ModelSpec): string {
       if (parameter !== undefined) {
         return "External model request failed (HTTP 400). Error response identified the " + parameter + " parameter. Check the selected model's published controls; no retry was started.";
       }
+      const code = badRequestCode(error);
+      if (code !== undefined) return "External model request failed (HTTP 400). Error response reported code " + code + ". No retry was started.";
     }
     if (status !== undefined) {
       return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started.";

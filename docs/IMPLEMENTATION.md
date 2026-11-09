@@ -1675,9 +1675,12 @@ contract was checked against the official provider-routing documentation on 2026
 
 A known structured 404 data-policy rejection retains its fixed safe message, and Gateway HTTP 400 errors
 expose only a fixed reasoning, temperature or structured-output format category when all available
-bounded structured parameters identify the same category; other 400 bodies remain generic, no raw text or values are exposed, and no
+bounded structured parameters identify the same category. Otherwise, each available direct or immediate `Error.cause`
+response body must contain a nonempty JSON `errors` array agreeing on one safe-integer code from `2005`, `2044`, `7003`.
+The existing 4,096-character body limit applies; unknown, malformed, oversized, string or conflicting codes remain
+generic. Only the agreed code may appear in the existing error string, without prose or nested-payload extraction; no
 selection, policy or retry changes occur.
-The error response identified that parameter; this establishes neither upstream origin nor a root cause. Historical Crouton
+The reported parameter or code establishes neither origin, credential/subscription validity nor a root cause. Historical Crouton
 control `3081b9fc…` retains an UNKNOWN HTTP 400 cause because its body was not retained.
 
 OpenRouter uses the installed Agents AI Gateway adapter and `@ai-sdk/openai-compatible`, with provider fallbacks
