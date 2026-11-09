@@ -173,35 +173,56 @@ const C4_MODEL_PATTERNS = [
 ];
 const C4_ENCODING_PATTERNS = [
   { name: 'sinusoidal', pattern: /(?<![\p{L}\p{N}_])(?:sinusoid(?:al)?|sine(?:-wave)?|синусоид[а-яё]*|синус[а-яё]*)(?![\p{L}\p{N}_])/giu },
-  { name: 'learned', pattern: /(?<![\p{L}\p{N}_])(?:learned|learnable|trainable|обучаем[а-яё]*|изучаем[а-яё]*)(?![\p{L}\p{N}_])/giu },
+  { name: 'learned', pattern: /(?<![\p{L}\p{N}_])(?:learned|learnable|trainable|обучаем[а-яё]*|изучаем[а-яё]*|выуч[а-яё]*)(?![\p{L}\p{N}_])/giu },
 ];
-const C4_POSITION = /(?<![\p{L}\p{N}_])(?:position(?:al)?|positions|позицион[а-яё]*)(?![\p{L}\p{N}_])/iu;
+const C4_POSITIONAL_SUBJECT = /(?<![\p{L}\p{N}_])(?:position(?:al)?|позицион[а-яё]*)[\s-]+(?:encodings?|embeddings?|representations?|кодировк[а-яё]*|эмбеддинг[а-яё]*|представлени[а-яё]*)(?![\p{L}\p{N}_])/giu;
+const C4_PREDICATE_BRIDGE = /^(?:\s+(?:is|are|was|were|be|been|being|has|have|had|can|could|may|might|must|should|would|not|no|never|also|all|является|являются|был|была|было|были|быть|будет|будут|может|могут|должны|не|ни|также|все))*\s*$/iu;
+const C4_FUNCTION_PREFIX = /^(?:(?:not|never|не)\s+)?(?:uses?|used|using|использ[а-яё]*)\s+(?:(?:the|a|an|functions?|функци[а-яё]*|of)\s+)*$/iu;
+const C4_USE_PREDICATE = /^(?:\s+(?:is|are|was|were|be|been|not|never|не|была|были|был))*\s+(?:used|chosen|selected|adopted|выбра[а-яё]*|использ[а-яё]*)(?![\p{L}\p{N}_])/iu;
 const C4_NEGATION = /(?:\b(?:not|no|never|without|doesn.t|isn.t|wasn.t|aren.t|cannot)\b|(?<![\p{L}\p{N}_])(?:не|ни|без|вместо)(?![\p{L}\p{N}_])|\brather\s+than\b|\binstead\s+of\b|!=|<>|≠)/iu;
 const C4_ALTERNATIVE = /(?<![\p{L}\p{N}_])(?:experiment\w*|test\w*|tr(?:y|ied|ying)|consider\w*|explor\w*|alternative\w*|эксперимент[а-яё]*|провер[а-яё]*|проб[а-яё]*|вариант[а-яё]*|сравнива[а-яё]*)(?![\p{L}\p{N}_])/giu;
 const C4_SELECTION = /(?<![\p{L}\p{N}_])(?:select\w*|choos\w*|chose|chosen|adopt\w*|use|uses|used|using|is|are|was|were|выбра[а-яё]*|использ[а-яё]*|предпочита[а-яё]*)(?![\p{L}\p{N}_])/giu;
 function positionalEncodingBindings(answer) {
-  const text = normRoleBindings(answer);
-  if (!C4_POSITION.test(text)) return [];
   const modelLead = '(?:the\\s+)?(?:transformers?|bert|трансформер[а-яё]*|берт[а-яё]*)';
-  const clauses = text.split(new RegExp('(?:[.!?;\\n]+|(?<![\\p{L}\\p{N}_])(?:whereas|while|but|however|но)(?![\\p{L}\\p{N}_])\\s+(?=' + modelLead + ')|(?<![\\p{L}\\p{N}_])(?:тогда\\s+как|в\\s+отличие\\s+от)(?![\\p{L}\\p{N}_])\\s+(?=' + modelLead + ')|,\\s*(?=а\\s))', 'giu'));
+  const boundary = new RegExp('(?:[.!?;\\n]+|(?<![\\p{L}\\p{N}_])(?:whereas|while|but|however|но)(?![\\p{L}\\p{N}_])\\s+(?=' + modelLead + ')|(?<![\\p{L}\\p{N}_])(?:тогда\\s+как|в\\s+отличие\\s+от)(?![\\p{L}\\p{N}_])\\s+(?=' + modelLead + ')|,\\s*(?=а\\s))', 'giu');
   const bindings = [];
-  for (const clause of clauses) {
-    const models = C4_MODEL_PATTERNS.flatMap((model) => [...clause.matchAll(new RegExp(model.pattern.source, model.pattern.flags))]
-      .map((match) => ({ name: model.name, start: match.index, end: match.index + match[0].length })));
-    const encodings = C4_ENCODING_PATTERNS.flatMap((encoding) => [...clause.matchAll(new RegExp(encoding.pattern.source, encoding.pattern.flags))]
-      .map((match) => ({ name: encoding.name, start: match.index, end: match.index + match[0].length })));
-    for (const encoding of encodings) {
-      const nearestModel = models.map((model) => ({ model,
-        distance: Math.max(0, Math.max(model.start, encoding.start) - Math.min(model.end, encoding.end)) }))
-        .filter((candidate) => candidate.distance <= 96).sort((a, b) => a.distance - b.distance)[0];
-      if (!nearestModel) continue;
-      const model = nearestModel.model;
-      const between = model.end <= encoding.start ? clause.slice(model.end, encoding.start) : clause.slice(encoding.end, model.start);
-      const relationPrefix = clause.slice(Math.max(0, Math.min(model.start, encoding.start) - 16), Math.min(model.start, encoding.start));
-      const alternatives = [...between.matchAll(new RegExp(C4_ALTERNATIVE.source, C4_ALTERNATIVE.flags))];
-      const selections = [...between.matchAll(new RegExp(C4_SELECTION.source, C4_SELECTION.flags))];
-      const alternative = alternatives.length > 0 && (!selections.length || alternatives[alternatives.length - 1].index > selections[selections.length - 1].index);
-      bindings.push({ model: model.name, encoding: encoding.name, negated: C4_NEGATION.test(between + relationPrefix), alternative });
+  // Split layout before normalization; a leading model owns the section, and its heading remains an assertion.
+  for (const section of String(answer).replace(/\r\n?/gu, '\n').split(/(?=^ {0,3}#{1,6}\s+)/mu)) {
+    const heading = /^ {0,3}#{1,6}\s+([^\n]*)\n?/u.exec(section);
+    const scoped = heading && C4_MODEL_PATTERNS.find((model) => new RegExp('^(?:the\\s+)?' + model.pattern.source, 'iu').test(normRoleBindings(heading[1])));
+    const body = heading ? heading[1] + '\n' + section.slice(heading[0].length) : section;
+    let positionalOwner = null;
+    for (const rawClause of body.split(boundary)) {
+      const clause = normRoleBindings(rawClause.replace(/^\s*(?:[-*+•]|\d+[.)])\s+/u, ''));
+      if (!clause) continue;
+      const inheritedOwner = positionalOwner; positionalOwner = null;
+      const models = C4_MODEL_PATTERNS.flatMap((model) => [...clause.matchAll(model.pattern)]
+        .map((match) => ({ name: model.name, start: match.index, end: match.index + match[0].length })));
+      const subjects = [...clause.matchAll(C4_POSITIONAL_SUBJECT)].map((match) => ({ start: match.index, end: match.index + match[0].length }));
+      if (scoped && !models.length && subjects.some((subject) => /^(?:(?:the|a|an)\s+)?$/iu.test(clause.slice(0, subject.start)))) positionalOwner = scoped.name;
+      const encodings = C4_ENCODING_PATTERNS.flatMap((encoding) => [...clause.matchAll(encoding.pattern)]
+        .map((match) => ({ name: encoding.name, start: match.index, end: match.index + match[0].length })));
+      for (const encoding of encodings) {
+        // The term must modify the positional noun phrase directly, or predicate it through copulas only.
+        const subject = subjects.find((candidate) => encoding.end <= candidate.start && /^\s*$/u.test(clause.slice(encoding.end, candidate.start)))
+          ?? subjects.find((candidate) => candidate.end <= encoding.start && C4_PREDICATE_BRIDGE.test(clause.slice(candidate.end, encoding.start)));
+        const inherited = encoding.name === 'sinusoidal' && scoped && inheritedOwner === scoped.name && !models.length
+          && C4_FUNCTION_PREFIX.test(clause.slice(0, encoding.start))
+          && /(?<![\p{L}\p{N}_])(?:functions?|функци[а-яё]*)(?![\p{L}\p{N}_])/iu.test(clause)
+          && /(?<![\p{L}\p{N}_])(?:cosine|косинус[а-яё]*)(?![\p{L}\p{N}_])/iu.test(clause);
+        if (!subject && !inherited) continue;
+        const nearestModel = models.map((model) => ({ model,
+          distance: Math.max(0, Math.max(model.start, encoding.start) - Math.min(model.end, encoding.end)) }))
+          .filter((candidate) => candidate.distance <= 96).sort((a, b) => a.distance - b.distance)[0];
+        const model = nearestModel?.model ?? (!models.length && scoped ? { name: scoped.name, start: 0, end: 0 } : null);
+        if (!model) continue;
+        const between = model.end <= encoding.start ? clause.slice(model.end, encoding.start) : clause.slice(encoding.end, model.start);
+        const relationPrefix = clause.slice(Math.max(0, Math.min(model.start, encoding.start) - 16), Math.min(model.start, encoding.start));
+        const suffix = subject && encoding.end <= subject.start ? C4_USE_PREDICATE.exec(clause.slice(subject.end))?.[0] ?? '' : '';
+        const alternatives = [...between.matchAll(C4_ALTERNATIVE)], selections = [...between.matchAll(C4_SELECTION)];
+        const alternative = alternatives.length > 0 && (!selections.length || alternatives.at(-1).index > selections.at(-1).index);
+        bindings.push({ model: model.name, encoding: encoding.name, negated: C4_NEGATION.test(between + relationPrefix + suffix), alternative });
+      }
     }
   }
   return bindings;

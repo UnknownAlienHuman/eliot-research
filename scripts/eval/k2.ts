@@ -426,6 +426,36 @@ function assertC3C4StaticSelftests() {
   assert.equal(c4('Transformer uses learned positional embeddings, while BERT uses sinusoidal positional encodings.'), false, 'Reversed model/encoding roles must fail.');
   assert.equal(c4('Transformer does not use sinusoidal positional encodings; BERT uses learned positional embeddings.'), false, 'A negated core model/encoding binding must fail.');
   assert.equal(c4('Transformer and BERT use positional encodings; sinusoidal and learned are both mentioned.'), false, 'Unbound encoding presence must fail.');
+  assert.equal(c4('### Transformer does not use sinusoidal positional encodings\nUses sinusoidal positional encodings.\n### BERT\nUses learned positional embeddings.'), false, 'A negated heading assertion must survive positive body assertions.');
+  assert.equal(c4('### Transformer\nUses sinusoidal positional encodings.\n### BERT\nPositional encodings are discussed.\nToken embeddings are learned.'), false, 'A positional mention cannot transfer learned from token embeddings in another sentence.');
+  assert.equal(c4('### Transformer\nUses sinusoidal positional encodings.\n### BERT\nPositional encodings are discussed and token embeddings are learned.'), false, 'Separate subjects in one clause cannot transfer learned to positional encodings.');
+  assert.equal(c4('### Transformer\nUses sinusoidal positional encodings.\n### BERT\nPositional encodings are discussed and weights are learned.'), false, 'A new predicate subject cannot borrow a previous positional noun phrase.');
+  assert.equal(c4('### Transformer uses sinusoidal positional encodings\n### BERT uses learned positional embeddings'), true, 'Positive heading assertions must retain both model ownership and positional subjects.');
+  assert.equal(c4('### Transformer\nUses sinusoidal positional encodings.\n### BERT\nTrainable weights accompany positional encodings.'), false, 'A modifier of an unrelated noun cannot bind to a later positional object.');
+  assert.equal(c4('### Transformer\nUses sinusoidal positional encodings.\n### BERT\nPositional encodings accompany trainable weights.'), false, 'An unrelated object cannot become a positional predicate.');
+  assert.equal(c4('### Transformer\nPositional encodings are added to input embeddings.\nUses sine and cosine functions.\n### BERT\nPositional embeddings are learned.'), true, 'An adjacent functional description and a direct learned predicate must bind.');
+  assert.equal(c4('### Transformer\nPositional encodings preserve order.\nToken embeddings are discussed.\nUses sine and cosine functions.\n### BERT\nUses learned positional embeddings.'), false, 'A new subject ends functional positional inheritance.');
+  assert.equal(c4('### Transformer\nPositional encodings preserve order.\n### Other model\nUses sine and cosine functions.\n### BERT\nUses learned positional embeddings.'), false, 'A new heading ends functional positional inheritance.');
+  assert.equal(c4('### Transformer sinusoidal positional encodings are not used\nUses sinusoidal positional encodings.\n### BERT\nUses learned positional embeddings.'), false, 'A negated use predicate in the heading must remain a contradiction.');
+
+  // Public Research C4 d76c83f0: retain the heading gap, math and qualified learned alternative inline.
+  const actualC4 = [
+    '### Transformer — *Attention Is All You Need* [S9:3]',
+    '- Позиционные кодировки добавляются к входным эмбеддингам в нижней части стеков энкодера и декодера, имеют ту же размерность $d_{\\text{model}}$, что и эмбеддинги, и суммируются с ними [S9:81].',
+    '- Используются функции синуса и косинуса разных частот [S9:82]:',
+    '$$PE_{(pos,2i)} = sin(pos/10000^{2i/d_{\\text{model}}})$$ [S9:83]',
+    '$$PE_{(pos,2i+1)} = cos(pos/10000^{2i/d_{\\text{model}}})$$ [S9:84]',
+    '- Также экспериментировали с выученными позиционными эмбеддингами вместо синусоид и получили почти идентичные результаты [S9:86]. Синусоидальная версия выбрана потому, что она может позволить модели экстраполировать на длины последовательностей, превышающие встреченные при обучении [S9:86].',
+    '### BERT — *BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding* [S10:6]',
+    '- Входное представление токена конструируется суммированием соответствующих токенных, сегментных и позиционных эмбеддингов [S10:29][S10:35].',
+    '- Позиционные эмбеддинги выучиваются: модель предобучается с длиной последовательности 128 для 90% шагов, затем оставшиеся 10% шагов — с последовательностью 512, чтобы выучить позиционные эмбеддинги [S10:94].',
+  ].join(EOL);
+  assert.equal(c4(actualC4), true, 'Actual public Research C4 must retain heading ownership and learned inflection.');
+  assert.equal(c4(actualC4.replace('Используются функции синуса', 'Не используются функции синуса')), false, 'Negated Transformer sinusoidal binding must fail even with another positive mention.');
+  assert.equal(c4(actualC4.replace('эмбеддинги выучиваются:', 'эмбеддинги не выучиваются:')), false, 'Negated BERT learned binding must fail.');
+  assert.equal(c4(actualC4.replace('### Transformer', '### Swap').replace('### BERT', '### Transformer').replace('### Swap', '### BERT')), false, 'Reversed heading ownership must fail.');
+  assert.equal(c4(actualC4 + EOL + 'BERT uses sinusoidal positional embeddings.'), false, 'An explicit contradiction appended to the actual answer must fail.');
+  assert.equal(c4(actualC4.replace('- Позиционные эмбеддинги выучиваются:', '### Other model\n- Позиционные эмбеддинги выучиваются:')), false, 'A new unrelated heading must not inherit BERT ownership.');
 
   for (const qid of OWNER_REVIEW_QIDS) {
     const semantic = checkAnswer(qid, 'Mechanical checks do not assess this answer.').find((check) => check.name === 'semantic quality');
