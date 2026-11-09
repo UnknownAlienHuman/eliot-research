@@ -40,6 +40,9 @@ quotas.
 - Context assembly, final chat framing and source understanding use the provider input ceiling plus output headroom only inside an explicitly known combined window; the separate 16 MiB materialization allowance still applies.
 - Whole-reading overlaps at most the current source's block-map/text GETs while consuming bodies serially; missing maps and budget failures cancel unused text without opening later sources. The storage-only K2 context eval covers this bound; production latency and K2 semantic acceptance remain separate.
 - K2 has a local Markdown chat path with frozen source scope, server-resolved citations, Stop/reconnect and storage-only Save, plus the R2 model snapshot with the owner-only refresh route. K2 and K3 are not fully accepted; their remaining quality and claim-mode gates stay open in their contour sections below.
+- 2026-11-09: [serial controls at `aa26ee01`](../eval/out/dots-serial-O3-O8-K3-20261109T221627Z/result.json) used four calls and zero retries; Node CLI CI is GREEN.
+  K2/K3 remain unaccepted; these single controls are not a full benchmark. Sources, originals, history and defaults
+  stayed intact; no tail backfill.
 - The native model catalogue maps a unique published `vision` `true`/`false` value to `supportsImages` on explicit Refresh; unavailable vision metadata remains unknown at the discovery boundary.
 - Numeric source checks preserve the ViT compute range across `2 − 4` / `2–4` formatting, without rewriting answers or canonical ranges. This deterministic correction does not establish semantic answer quality.
 - K4 is implemented in main. Its signed-agent read, proposal and owner-decision path is verified locally with test
@@ -368,6 +371,11 @@ Promote tighter thresholds after three comparable runs rather than making one pr
 
 **Not now.** Claim mode, AI Search, web, chat tools, automatic regenerate, external-key UI.
 
+2026-11-09 [serial O3/O8 controls](../eval/out/dots-serial-O3-O8-K3-20261109T221627Z/result.json) at `aa26ee01`:
+both completed in 17.696/17.236 s, with zero reasoning tokens and 8,192-token budgets. O3 and O8 semantic reviews: FAIL.
+O3 remained LoRA-only with three unsupported strengthenings; O8 denied discussion/proposals and misattached CoT
+citations to blocks 60/93; the future-verifier passage is block 173.
+
 K2 remains unaccepted and not deployed. On 2026-11-08, one full twelve-question invocation at `a0ad9afd` in chat
 `38162177-86be-4647-bbba-430ef07aaa0d` terminated with exit 1. All twelve turns were terminal: eleven completed and
 O6 partial. O2 took 97,506 ms, exceeding the unchanged 90-second hard gate. C3's initial false was a parenthetical/
@@ -555,6 +563,13 @@ All gates below remain OPEN for `compact-k3-v1`; implementation or storage-only 
 K3 is not fully accepted or deployed. Retained legacy runs recorded ten baseline papers as `done`, unchanged reuse
 and four claim-mode overflow answers, but they do not qualify the compact producer or its current corpus.
 A1-A3, C1-C4, semantic support, full-corpus/reuse acceptance, latency and owner review remain open.
+
+2026-11-09 [serial K3 control](../eval/out/dots-serial-O3-O8-K3-20261109T221627Z/result.json) at `aa26ee01`: `done`,
+two calls in 29.214 s, 21,234 input / 2,930 output tokens, zero reasoning, budgets 8,192/4,096. Of 31 candidates,
+two numeric drops left 29 reviewed: five kept, 24 rejected, zero tail. Published atomicity PASS; factual support 4/5.
+The remaining priority claim omitted its knowledge qualifier; guide/digest repeat this defect. Learning-rate formula,
+warmup and masking-plus-offset coverage were absent. Independent review of 26 exclusions: six justified, 14 false, six uncertain;
+review invented formula/result disqualifications and unnecessary premises.
 
 On 2026-11-08, grouped GLM 5.3 Low attempt `76cf607b…` reached Workflow Completed with a public partial core of
 21 claims and a digest, without a guide, on the unchanged `17be1897…` revision and stored 66-block map.
