@@ -983,6 +983,10 @@ Each original block in whole or compact evidence is one JSON `{label,text}` reco
 source brackets, and each label applies only to its record's text. The inventory and derived claim statements remain
 separate orientation, not evidence; aliases, resolution and canonical byte ranges are unchanged.
 
+The system prompt distinguishes proposals, hypotheses and future work from demonstrated results; absence of a
+demonstrated solution does not establish absence of proposals. Proportional answers omit unrequested long
+quotations, unrelated background and repetition.
+
 Freeze readable revision IDs at turn start. Context modes are whole labelled text, stored K3 guides/claims when whole
 text does not fit, K5 search with at most six shared-tool steps, or explicit empty scope. The input estimate must fit
 the published input ceiling. When combined `contextWindowTokens` is known, assembly uses the smaller of that input
