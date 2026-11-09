@@ -643,6 +643,9 @@ The call-two output boundary consumes only selections, rejections and guide, ign
 immutable. Review selects or rejects candidate IDs with nonempty diagnostic reasons. Brief wording is prompt
 guidance, not a 160-character scalar bound; existing per-call output and materialization limits bound this prose.
 Validated Raw2 preserves the full decoded reason, which supplies no claim, guide or digest facts.
+The review prompt asks each `selected.reason` to briefly compare supporting premises or necessary conditions from
+the candidate's own quote with those retained in the candidate, rejecting a stronger conclusion that omits a
+necessary premise while allowing mathematical inference entailed by that quote.
 A missing decision remains unknown and cannot implicitly select or reject that candidate. Review introduces no new
 facts, additional claims or rewritten statements. Review rejects whole candidates with unsupported clauses or bundles of
 independent outcomes, different metrics or different task results, while retaining integral definitions/procedures
