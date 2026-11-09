@@ -601,8 +601,14 @@ capabilities true, the strict `json_schema` body carries the request schema with
 Local/retained candidate `kind` remains optional; review decoding keeps `guide` optional/unknown, with independent
 selected-only guide checks preserving reviewed claims and digest as `partial` when the guide is missing or invalid.
 
-Raw1 retains the full syntactically valid decoded native JSON unchanged as untrusted provider output, including
-arrays longer than requested. Syntactic JSON validity does not validate candidates, evidence or owner-visible facts.
+Capped generation is separate from decoding: call one requests at most 32 and fresh extraction 8,192; the
+decoding envelope requires an array `candidates` without a 32 bound, and the verifier enforces the 32-position
+working set. Complete non-truncated JSON is retained as untrusted Raw1, including arrays longer than requested;
+it is not truncated, rewritten or tail-rescued. The prompt `requestSchema` keeps `maxItems: 32`. Legacy, rich and
+native budget/error-priority paths keep their contracts.
+
+Raw1 retains the full syntactically valid decoded JSON unchanged as untrusted provider output, including arrays
+longer than requested. Syntactic JSON validity does not validate candidates, evidence or owner-visible facts.
 The persisted Raw envelope remains strict. Its decoded output is projected to `candidates` only, ignoring other
 outer metadata without a metadata-key whitelist or rewriting Raw1. Code requires that field to be an array, then
 strictly validates each existing unit at original positions 0 through 31. Candidate fields remain strict.

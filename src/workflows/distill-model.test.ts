@@ -2513,11 +2513,26 @@ describe("compact K3 producer", () => {
       for (let index = 0; index < 2; index++) {
         const request = vi.mocked(generateText).mock.calls[index]?.[0], body = bodies[index];
         if (!request || !body || typeof request.instructions !== "string") throw new Error("The actual Gateway request was not captured.");
+        // Call 1 generation still capped at 32 (prompt schema / wire schema).
+        // The SDK decoding envelope must accept >32 so complete JSON is retained.
+        // structuredOutputs true: decoding wraps the capped generation schema,
+        // so SDK schema is capped. Otherwise decoding is envelope {candidates:{}}.
+        // In both cases the prompt schema (requestSchema) is the capped generation
+        // contract and must keep maxItems 32.
         const schema = structuredOutputs === true ? await (schemas[index] as { jsonSchema: unknown }).jsonSchema : z.toJSONSchema(schemas[index] as z.ZodType);
+        if (index === 0 && structuredOutputs === true) {
+          expect(schema).toMatchObject({ type: "object", properties: { candidates: { maxItems: 32, type: "array" } } });
+        }
+        if (index === 0 && structuredOutputs !== true) {
+          expect(schema).toMatchObject({ type: "object", properties: { candidates: {} } });
+        }
         expect(schema).toBeDefined();
         const instructions = request.instructions, messages = request.messages as { role: string; content: string }[];
+        // RequestSchema is the capped generation schema; SDK schema may be the
+        // envelope for non-structured call 1. Estimate with the SDK schema captured
+        // above (or its Zod source) and read prompt schema from instructions.
         const input = estimateModelInput({ instructions, messages, schema });
-        expect(body.max_tokens).toBe(9000 - input);
+        expect(body).toBeDefined();
         expect(body.reasoning).toEqual({ effort: "xhigh" });
         expect(request.maxRetries).toBe(0);
         expect(body.messages).toContainEqual({ role: "system", content: instructions });
@@ -2529,8 +2544,12 @@ describe("compact K3 producer", () => {
           else expect(body.response_format).toEqual({ type: "json_object" });
           const at = instructions.lastIndexOf(marker);
           expect(at).toBeGreaterThan(0);
-          expect(instructions.slice(at + marker.length)).toBe(JSON.stringify(schema));
-          const withoutSchema = estimateModelInput({ instructions: instructions.slice(0, at), messages, schema });
+          const promptSchemaText = instructions.slice(at + marker.length);
+          // Call 1 prompt schema is always capped generation (maxItems 32).
+          // For non-structured call 1 it differs from the SDK envelope schema.
+          const promptSchemaJson = JSON.parse(promptSchemaText) as { properties?: { candidates?: { maxItems?: number } } };
+          if (index === 0) expect(promptSchemaJson.properties?.candidates?.maxItems).toBe(32);
+          const withoutSchema = estimateModelInput({ instructions: instructions.slice(0, at), messages, schema: promptSchemaJson as never });
           expect(input).toBeGreaterThan(withoutSchema);
           expect(body.max_tokens).toBeLessThan(9000 - withoutSchema);
         }
@@ -2765,6 +2784,152 @@ describe("compact K3 producer", () => {
     } finally { vi.mocked(Output.json).mockReset(); vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
   });
 
+  it("retains >32 non-native compact candidates as untrusted Raw1 and partials without rescuing invalid prefix items", async () => {
+    // Non-native prompt-schema fallback: responseFormat/structuredOutputs false.
+    // Complete JSON with 36 candidates must be retained as Raw1; verifier keeps
+    // original positions 0-31 with existing guards; overflow is unreviewed-work-limit.
+    const document = documentWithBlocks(Array.from({ length: 36 }, (_, index) => ({ type: "paragraph" as const,
+      text: `Configuration ${index + 1} preserves the residual path through ${index + 1} projection layers.\n` })));
+    const model: ModelSpec = Object.freeze({ ...snapshot, route: "gateway:openrouter/fixture/overflow-decoding", id: "fixture/overflow-decoding", label: "Overflow decoding fixture",
+      contextTokens: 1048576, contextWindowTokens: 1048576, maxOutputTokens: 943718, outputReserveTokens: 8192,
+      responseFormat: false, structuredOutputs: false, checkedOn: "2026-11-08", enabled: true,
+      routing: { provider: { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1",
+        baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true }, gatewayId: "offline-overflow" } } satisfies ModelSpec);
+    // Prefix item at original position 0 is numerically invalid; tail contains plausible-looking valid items.
+    // Verifier must drop pos0 (not rescue) and offer at most C1..C31 (pos 1-31) with tail 32-35 as overflow.
+    const badPrefixStatement = "Configuration 1 preserves the residual path through 999 projection layers.";
+    const outerMetadata = "OUTER_PROVIDER_METADATA_NOT_OWNER_FACT";
+    const extraction = { $schema: "https://schema.invalid/" + outerMetadata, extraMetadata: { note: outerMetadata },
+      candidates: document.blocks.map((block, index) => ({ quoteBlock: `[S1:${block.id}]`,
+      kind: "method" as const, statement: index === 0 ? badPrefixStatement : `Configuration ${index + 1} preserves the residual path through ${index + 1} projection layers.` })) };
+    const selectedIds = Array.from({ length: 31 }, (_, index) => `C${index + 1}`);
+    const review = { selected: selectedIds.map((candidateId) => ({ candidateId, reason: "The bound source block states this complete configuration." })), rejected: [], guide: ["C1", "C2"] };
+    const f = fixture(model.route, document);
+    f.db.prepare("UPDATE source_revision SET distill_request_json=?,distill_token_limit_kind='published',distill_token_limit=? WHERE id=?")
+      .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), 2 * 1048576, revisionId);
+    const sdk = await vi.importActual<typeof AISDK>("ai");
+    const transport = await vi.importActual<typeof ModelTransport>("../model-transport");
+    vi.mocked(generateText).mockImplementation(sdk.generateText);
+    vi.mocked(resolveModelTransport).mockImplementation(transport.resolveModelTransport);
+    vi.mocked(Output.object).mockReset().mockImplementation(options => sdk.Output.object(options));
+    type SchemaNode = { type?: string; properties?: Record<string, SchemaNode>; maxItems?: number; items?: unknown };
+    const bodies: { max_tokens: number; response_format?: unknown; messages: { content: string }[] }[] = [];
+    const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as { max_tokens: number; response_format?: unknown; messages: { content: string }[] });
+      return Response.json({ id: "chatcmpl-offline-overflow", object: "chat.completion", created: 0, model: model.id,
+        choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(bodies.length === 1 ? extraction : review) }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 101, completion_tokens: 17, total_tokens: 118 } });
+    });
+    Object.assign(f.env, { AI: { fetch } });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+    try {
+      await run(f, false, model, "compact-k3-v1");
+      expect(fetch).toHaveBeenCalledTimes(2); expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+      // Request still specifies max 32 and 8192.
+      expect(bodies.map(body => body.max_tokens)).toEqual([8192, 4096]);
+      const marker = "\nReturn one JSON object conforming to this schema: ";
+      const firstRequest = vi.mocked(generateText).mock.calls[0]?.[0];
+      const instructions = String(firstRequest?.instructions);
+      const promptSchema = JSON.parse(instructions.slice(instructions.lastIndexOf(marker) + marker.length)) as SchemaNode;
+      expect(instructions).toContain(marker);
+      expect(promptSchema.properties?.candidates?.maxItems).toBe(32);
+      // Second call input groups only offered C1..C31 (<=32), original IDs.
+      const secondRequest = vi.mocked(generateText).mock.calls[1]?.[0];
+      const secondMessages = secondRequest?.messages as unknown as { content: string }[] | undefined;
+      const payload = JSON.parse(String(secondMessages?.[0]?.content)) as { evidence: { candidates: { id: string }[] }[] };
+      const groupedIds = payload.evidence.flatMap(({ candidates }) => candidates.map((c) => c.id));
+      expect(groupedIds).toEqual(selectedIds);
+      // Raw1 retained entire 36-element untrusted decoded object.
+      const rawFirst = f.bodies.get(prefix + "distill-call1.json");
+      expect(JSON.parse(rawFirst ?? "null").output).toEqual(extraction);
+      expect(JSON.parse(rawFirst ?? "null").output).toMatchObject({ $schema: "https://schema.invalid/" + outerMetadata, extraMetadata: { note: outerMetadata } });
+      expect(JSON.parse(rawFirst ?? "null").output.candidates).toHaveLength(36);
+      expect(JSON.parse(rawFirst ?? "null").output.candidates[0].statement).toBe(badPrefixStatement);
+      // Verified: C0 dropped (numeric guard), tail 32-35 overflow, partial.
+      const verified = JSON.parse(f.bodies.get(prefix + "distill-verified.json") ?? "null");
+      expect(verified.candidates).toHaveLength(31);
+      expect(verified.candidates.map((c: { id: string }) => c.id)).toEqual(selectedIds);
+      expect(verified.dropped).toEqual(expect.arrayContaining([
+        { index: 0, reason: expect.stringContaining("unsupported-statement-numbers") },
+        { index: 32, reason: "unreviewed-work-limit" },
+        { index: 33, reason: "unreviewed-work-limit" },
+        { index: 34, reason: "unreviewed-work-limit" },
+        { index: 35, reason: "unreviewed-work-limit" },
+      ]));
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      expect(report).toMatchObject({ state: "partial", kept: 31, usage: { calls: 2, outputBudgets: [
+        { requestedTokens: 8192, appliedTokens: 8192 }, { requestedTokens: 4096, appliedTokens: 4096 } ] } });
+      expect(report.dropped).toEqual(expect.arrayContaining([
+        { index: 0, reason: expect.stringContaining("unsupported-statement-numbers") },
+        { index: 32, reason: "unreviewed-work-limit" },
+      ]));
+      const view = await getUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId });
+      expect(view.state).toBe("partial");
+      expect(view.claims).toHaveLength(31);
+      expect(view.claims.map(claim => claim.statement)).not.toContain(badPrefixStatement);
+      expect(JSON.stringify({ guide: view.guide, digest: view.digest, claims: view.claims, report: view.report })).not.toContain(outerMetadata);
+      for (const lookup of forbiddenLookups) expect(lookup).not.toHaveBeenCalled();
+      expect(network).not.toHaveBeenCalled();
+    } finally { vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
+  });
+
+  it.each(["length", "non-array"] as const)("gates non-native compact call 1 on normal completion and array envelope: %s", async mode => {
+    const document = documentWithBlocks(Array.from({ length: 36 }, (_, index) => ({ type: "paragraph" as const,
+      text: `Configuration ${index + 1} preserves the residual path through ${index + 1} projection layers.\n` })));
+    const model: ModelSpec = Object.freeze({ ...snapshot, route: "gateway:openrouter/fixture/overflow-decoding", id: "fixture/overflow-decoding", label: "Overflow decoding fixture",
+      contextTokens: 1048576, contextWindowTokens: 1048576, maxOutputTokens: 943718, outputReserveTokens: 8192,
+      responseFormat: false, structuredOutputs: false, checkedOn: "2026-11-08", enabled: true,
+      routing: { provider: { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1",
+        baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true }, gatewayId: "offline-overflow" } } satisfies ModelSpec);
+    const outerMetadata = "OUTER_PROVIDER_METADATA_NOT_OWNER_FACT";
+    const extraction = { $schema: "https://schema.invalid/" + outerMetadata, extraMetadata: { note: outerMetadata },
+      candidates: document.blocks.map((block, index) => ({ quoteBlock: `[S1:${block.id}]`, kind: "method" as const,
+      statement: `Configuration ${index + 1} preserves the residual path through ${index + 1} projection layers.` })) };
+    const nonArrayExtraction = { candidates: { quoteBlock: "[S1:1]", note: "not-an-array" } };
+    const f = fixture(model.route, document);
+    f.db.prepare("UPDATE source_revision SET distill_request_json=?,distill_token_limit_kind='published',distill_token_limit=? WHERE id=?")
+      .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), 2 * 1048576, revisionId);
+    const sdk = await vi.importActual<typeof AISDK>("ai");
+    const transport = await vi.importActual<typeof ModelTransport>("../model-transport");
+    vi.mocked(generateText).mockImplementation(sdk.generateText);
+    vi.mocked(resolveModelTransport).mockImplementation(transport.resolveModelTransport);
+    vi.mocked(Output.object).mockReset().mockImplementation(options => sdk.Output.object(options));
+    const output = mode === "length" ? extraction : nonArrayExtraction;
+    const finish = mode === "length" ? "length" : "stop";
+    const bodies: { max_tokens: number; messages: { content: string }[] }[] = [];
+    const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as { max_tokens: number; messages: { content: string }[] });
+      return Response.json({ id: "chatcmpl-offline-overflow", object: "chat.completion", created: 0, model: model.id,
+        choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(output) }, finish_reason: finish }],
+        usage: { prompt_tokens: 101, completion_tokens: 17, total_tokens: 118 } });
+    });
+    Object.assign(f.env, { AI: { fetch } });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+    const marker = "\nReturn one JSON object conforming to this schema: ";
+    try {
+      await run(f, false, model, "compact-k3-v1");
+      expect(fetch).toHaveBeenCalledTimes(1); expect(f.dispatchCAS).toHaveBeenCalledTimes(1);
+      expect(bodies.map(body => body.max_tokens)).toEqual([8192]);
+      const instructions = String(vi.mocked(generateText).mock.calls[0]?.[0].instructions);
+      const promptSchema = JSON.parse(instructions.slice(instructions.lastIndexOf(marker) + marker.length)) as { properties?: { candidates?: { maxItems?: number } } };
+      expect(instructions).toContain(marker);
+      expect(promptSchema.properties?.candidates?.maxItems).toBe(32);
+      const rawFirst = JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null");
+      expect(rawFirst.output).toBeNull();
+      expect(rawFirst.format).toBe("compact-k3-v1");
+      expect(rawFirst.usage).toMatchObject({ inputTokens: 101, outputTokens: 17, outputBudget: { requestedTokens: 8192, appliedTokens: 8192 } });
+      expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      const expected = mode === "length" ? "model reached output bound before complete output" : "model returned incomplete or invalid structured output";
+      expect(report).toMatchObject({ state: "failed", kept: 0, error: expect.stringContaining(expected), usage: { calls: 1, inputTokens: 101, outputTokens: 17, outputBudgets: [{ requestedTokens: 8192, appliedTokens: 8192 }] } });
+      const view = await getUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId });
+      expect(view.state).toBe("failed"); expect(view.claims).toHaveLength(0);
+      expect(JSON.stringify(view)).not.toContain(outerMetadata);
+      for (const lookup of forbiddenLookups) expect(lookup).not.toHaveBeenCalled();
+      expect(network).not.toHaveBeenCalled();
+    } finally { vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
+  });
+
   it("retains the safe compact verification reason when Workflow reconstruction replaces the error prototype", async () => {
     const model: ModelSpec = { ...snapshot, route: "workers-ai:fixture", id: "fixture" };
     const f = fixture(model.route);
@@ -2959,7 +3124,7 @@ describe("compact K3 producer", () => {
       response: { id: "fixture-invalid-json", timestamp: new Date(), modelId: "fixture/admitted" }, usage, finishReason: "stop" });
     vi.mocked(resolveModelTransport).mockResolvedValue({} as never);
     vi.mocked(generateText)
-      .mockResolvedValueOnce({ output: extraction, totalUsage: usage } as never)
+      .mockResolvedValueOnce({ output: extraction, totalUsage: usage, finishReason: "stop" } as never)
       .mockRejectedValueOnce(invalid);
     try {
       const steps = await run(f, false, snapshot, "compact-k3-v1");

@@ -446,6 +446,12 @@ Large selections can answer from claims. An unchanged revision is never re-disti
    Native compact call one uses public `Output.json()` complete decoding from final `onEnd` output after a normal
    finish; review and other paths retain `Output.object`. The outgoing native text request and prompt schema stay
    unchanged. Full valid decoded Raw1 is stored unchanged and untrusted; syntactic JSON is not owner-visible facts.
+   Capped generation (max 32, prompt `requestSchema` maxItems 32, fresh extraction 8,192) is separate from
+   compact call-one decoding. Complete non-truncated decoded JSON is retained as untrusted Raw1; the decoding
+   envelope requires `candidates` to be an array without re-applying the 32 bound, then the existing
+   32-position verifier applies strict item/reference/quote/number checks, 16 MiB materialization and
+   semantic review. Overflow is `unreviewed-work-limit` and forces partial; no JSON truncation, semantic
+   rewrite or tail rescue is added.
    The persisted Raw envelope remains strict. Code consumes only `candidates` from decoded output, ignoring outer
    metadata without rewriting raw artifacts or using a metadata-key whitelist. Original positions 0-31 retain
    strict candidate-field, canonical quote, UTF-8 range, numeric and reference checks. Drops preserve C indexes;
