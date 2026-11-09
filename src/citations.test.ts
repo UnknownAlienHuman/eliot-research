@@ -31,6 +31,70 @@ function makeSources(): LabelSource[] {
 }
 
 describe("resolveCitations", () => {
+  it("preserves a leading BOM and resolves a padded atom immediately before an external link", () => {
+    const out = resolveCitations("\uFEFF[ S1:1][read](https://example.test)", makeSources());
+    expect(out.text).toBe("\uFEFF[S1:1][read](https://example.test)");
+    expect(out.invalidLabels).toBe(0); expect(out.citations).toHaveLength(1);
+    expect(out.citations[0]).toMatchObject({ label: "[S1:1]", sourceId: SRC_A, revisionId: REV_A, block: 1, start: 0, end: 10 });
+  });
+
+  it("resolves the five retained padded S9 atoms with canonical metadata, byte ranges and mixed-notation deduplication", () => {
+    const sources: LabelSource[] = [{ sourceId: GROUP_SRC, revisionId: GROUP_REV, title: "Paper 9", alias: "S9", blocks: makeBlocks(104) }];
+    const atoms = ["[ S9:104]", "[ S9:100]", "[ S9:100]", "[ S9:100]", "[ S9:100]"];
+    const out = resolveCitations("😀 " + atoms.join(" ") + ` [\tR${GROUP_REV}:100\t] [S9:104 \t]`, sources);
+    expect(out.text).toBe("😀 [S9:104] [S9:100] [S9:100] [S9:100] [S9:100] [S9:100] [S9:104]");
+    expect(out.invalidLabels).toBe(0);
+    expect(out.citations).toEqual([
+      { revisionId: GROUP_REV, sourceId: GROUP_SRC, block: 104, start: 1030, end: 1040, sourceTitle: "Paper 9", deleted: false, label: "[S9:104]" },
+      { revisionId: GROUP_REV, sourceId: GROUP_SRC, block: 100, start: 990, end: 1000, sourceTitle: "Paper 9", deleted: false, label: "[S9:100]" },
+    ]);
+    expect(resolveCitations("\\\\[ S1:1]", makeSources()).text).toBe("\\\\[S1:1]");
+  });
+
+  it("rejects complete padded unknown, unavailable and ambiguous atoms once without changing their identity", () => {
+    const bad = ["[ S99:1]", "[ S1:99]", "[ R00000000-0000-0000-0000-000000000000:1]", `[ R${REV_A.toUpperCase()}:1]`];
+    const out = resolveCitations(bad.join(" ") + " [ S1:1]", makeSources());
+    expect(out.text).toBe("    [S1:1]"); expect(out.invalidLabels).toBe(4);
+    expect(out.invalidLabelExamples).toEqual(bad); expect(out.citations).toHaveLength(1);
+    const first = makeSources()[0];
+    if (!first) throw new Error("The frozen fixture source is unavailable.");
+    for (const [token, scope] of [
+      ["[ S1:1]", [first, { ...first, sourceId: SRC_B, revisionId: REV_B }]],
+      [`[ R${REV_A}:1]`, [first, { ...first, sourceId: SRC_B, alias: "S3" }]],
+      ["[ S1:1]", [{ ...first, blocks: [] }]],
+    ] satisfies Array<[string, LabelSource[]]>) {
+      const rejected = resolveCitations(token, [...scope]);
+      expect(rejected).toEqual({ text: "", citations: [], invalidLabels: 1, invalidLabelExamples: [token] });
+    }
+  });
+
+  it("does not broaden padded recognition to groups, ranges, shorthand or changed inner bytes", () => {
+    const text = ["[ S1:1, S1:2]", "[ S1:1–S1:2]", "[ S1:1–2]", "[ S1: 1]", "[ S 1:1]",
+      "[\nS1:1]", "[ S1:1\n]", "[\rS1:1]", "[\u00a0S1:1]", "[ s1:1]", "[ Rabc:1]"].join(" | ");
+    expect(resolveCitations(text, makeSources())).toEqual({ text, citations: [], invalidLabels: 0 });
+  });
+
+  it("preserves padded Markdown literals and link boundaries while resolving adjacent prose", () => {
+    const literals = ["`[ S1:2] [ S99:9]`", "~~~\n[ S1:2]\n~~~", "    [S1:2 ] [ S99:9]\n",
+      "\\[ S1:2]", "\\[S1:2 ]", "[ S1:2](https://example.test/external)", "[S1:2 ](https://example.test/external)",
+      "[ S1:2][ordinary]\n\n[ordinary]: https://example.test/external", "[ S1:2]: https://example.test/external",
+      "[ordinary](<https://example.test/[ S1:2]>)", "![ S1:2](https://example.test/image)", "![ S1:2]",
+      "![ S1:2][ordinary]\n\n[ordinary]: https://example.test/image", "<div>\n[ S1:2]\n</div>",
+      '<span title="[ S1:2]">literal</span>', "<!-- [ S1:2] -->"];
+    for (const literal of literals) {
+      const out = resolveCitations(literal + "\n\nFact [ S1:1].", makeSources());
+      expect(out.text, literal).toBe(literal + "\n\nFact [S1:1].");
+      expect(out.invalidLabels, literal).toBe(0); expect(out.citations.map(citation => citation.block), literal).toEqual([1]);
+    }
+  });
+
+  it("leaves a padded shortcut reference and its canonical external definition unchanged", () => {
+    const text = "[ S1:1]\n\n[S1:1]: https://example.test/external";
+    const out = resolveCitations(text, makeSources());
+    expect(out.text).toBe(text); expect(out.invalidLabels).toBe(0);
+    expect(out.citations).toEqual(resolveCitations("[S1:1]: https://example.test/external", makeSources()).citations);
+  });
+
   it("bounds rejected marker samples without changing text, counts or resolved ranges", () => {
     const rejected = Array.from({ length: 12 }, (_, index) => `[S${index + 10}:1]`);
     const answer = `😀 ${rejected.join(" ")} [S10:1] [S1:1]`;
@@ -88,6 +152,7 @@ describe("resolveCitations", () => {
       [`${persistent} text ${compact}`, `${persistent} text ${persistent}`, persistent],
       [`[S1:1, R${MIXED_REV}:1]`, compact + compact, compact],
       [`${compact} text ${persistent}`, `${compact} text ${compact}`, compact],
+      [`[ R${MIXED_REV}:1\t] text [ S1:1]`, `${persistent} text ${persistent}`, persistent],
     ] as const) {
       const turn = resolveCitations(input, sources);
       expect(turn).toEqual({ text, citations: [{ ...citation, label }], invalidLabels: 0 });

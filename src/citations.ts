@@ -1,4 +1,7 @@
 import { fencedRanges, inlineCodeRanges } from "./code-ranges.ts";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmFromMarkdown } from "mdast-util-gfm";
+import { gfm } from "micromark-extension-gfm";
 import type { Block } from "./blocks.js";
 import { numbersSupported } from "./numbers.ts";
 import type { AnswerWarning } from "./shared/api.js";
@@ -9,6 +12,8 @@ import type { AnswerWarning } from "./shared/api.js";
  * and persistent `[R<full-revision-uuid>:<block>]` labels outside fenced and inline
  * code resolve against the frozen source scope. Unknown, out-of-scope,
  * malformed, ambiguous, out-of-range and bare [S<N>] labels are removed and counted.
+ * Local resolution also accepts ASCII space/tab padding around one complete atom
+ * in Markdown prose, preserving its exact inner identity and literal boundaries.
  * Comma-separated groups retain their full-atom frozen-scope validation. A
  * dash-separated pair canonicalizes only when two full compact labels resolve
  * to ascending consecutive blocks of the same source; either invalid atom rejects the pair.
@@ -139,6 +144,39 @@ export function resolveCitations(answer: string, sources: LabelSource[]): Resolv
     const range = code[codeIndex];
     return range !== undefined && at >= range.start;
   };
+  // Only the new padded-atom branch needs full Markdown literal protection.
+  // Keep the existing exact/group/pair scanner and persisted-reader grammar intact.
+  const paddedAtom = /\[[ \t]*((?:S\d+|R[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}):\d+)[ \t]*\]/;
+  const tokens = new RegExp(`${paddedAtom.source}|${LABEL_RE.source}`, "g");
+  type SourceNode = { type: string; children?: SourceNode[] | undefined; position?: ReturnType<typeof fromMarkdown>["position"] };
+  let literalRanges: Array<{ start: number; end: number }> | undefined;
+  let literalIndex = 0;
+  const escaped = (at: number): boolean => {
+    let before = at;
+    while (before > 0 && answer[before - 1] === "\\") before--;
+    return (at - before) % 2 === 1;
+  };
+  const paddedLiteral = (at: number, length: number): boolean => {
+    if (escaped(at) || (answer[at - 1] === "!" && !escaped(at - 1))) return true;
+    if (literalRanges === undefined) {
+      const ranges: Array<{ start: number; end: number }> = [];
+      // Micromark omits exactly one initial BOM from its source offsets.
+      const sourceOffset = answer.charCodeAt(0) === 0xfeff ? 1 : 0;
+      const protect = (node: SourceNode): void => {
+        if (["code", "inlineCode", "link", "linkReference", "definition", "image", "imageReference", "html"].includes(node.type)) {
+          const start = node.position?.start.offset, end = node.position?.end.offset;
+          if (start !== undefined && end !== undefined) ranges.push({ start: start + sourceOffset, end: end + sourceOffset });
+          return;
+        }
+        node.children?.forEach(protect);
+      };
+      protect(fromMarkdown(answer, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] }));
+      literalRanges = ranges.sort((a, b) => a.start - b.start);
+    }
+    while ((literalRanges[literalIndex]?.end ?? Infinity) <= at) literalIndex++;
+    const range = literalRanges[literalIndex];
+    return range !== undefined && range.start < at + length;
+  };
   const seen = new Map<string, string>();
   const citations: Citation[] = [];
   const parts: string[] = [];
@@ -146,10 +184,12 @@ export function resolveCitations(answer: string, sources: LabelSource[]): Resolv
   let invalidLabels = 0;
   const invalidExamples: string[] = [];
   const seenInvalid = new Set<string>();
-  for (const match of answer.matchAll(LABEL_RE)) {
+  for (const match of answer.matchAll(tokens)) {
     const at = match.index ?? -1;
     if (at < 0 || inside(at)) continue;
-    const token = match[0];
+    const rawToken = match[0];
+    const token = match[1] === undefined ? rawToken : `[${match[1]}]`;
+    if (rawToken !== token && paddedLiteral(at, rawToken.length)) continue;
     const commaAtoms = splitGroupToken(token);
     const adjacentPairAtoms = commaAtoms === undefined ? splitAdjacentPairToken(token) : undefined;
     const atoms = commaAtoms ?? adjacentPairAtoms ?? [token];
@@ -166,14 +206,14 @@ export function resolveCitations(answer: string, sources: LabelSource[]): Resolv
     if (resolved.length !== atoms.length || invalidAdjacentPair) {
       invalidLabels += 1;
       if (invalidExamples.length < 8) {
-        const sample = Array.from(token).slice(0, 160).join("");
+        const sample = Array.from(rawToken).slice(0, 160).join("");
         if (!seenInvalid.has(sample)) {
           seenInvalid.add(sample);
           invalidExamples.push(sample);
         }
       }
       parts.push(answer.slice(last, at));
-      last = at + token.length;
+      last = at + rawToken.length;
       continue;
     }
     parts.push(answer.slice(last, at));
@@ -195,7 +235,7 @@ export function resolveCitations(answer: string, sources: LabelSource[]): Resolv
       }
       parts.push(outToken);
     }
-    last = at + token.length;
+    last = at + rawToken.length;
   }
   parts.push(answer.slice(last));
   return {

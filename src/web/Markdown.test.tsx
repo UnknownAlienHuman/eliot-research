@@ -15,6 +15,63 @@ function render(text: string, refs: readonly MarkdownReference[] = references) {
   return renderToStaticMarkup(createElement(MemoryRouter, null, createElement(Markdown, { text, references: refs })));
 }
 
+describe('locally resolved padded citation atoms', () => {
+  const revisionId = '11111111-1111-4111-8111-111111111111';
+  it.each(['chat', 'saved'])('preserves the external href adjacent to a BOM-prefixed padded atom in %s', kind => {
+    const resolved = resolveCitations('\uFEFF[ S1:1][read](https://example.test)', [{
+      sourceId: 's1', revisionId, title: 'Paper A', alias: 'S1', blocks: [
+        { id: 1, type: 'paragraph', start: 42, end: 87, heading: null },
+      ],
+    }]);
+    expect(resolved.text).toBe('\uFEFF[S1:1][read](https://example.test)');
+    const answer = kind === 'saved' ? persistentResolvedAnswer(resolved.text, resolved.citations) : resolved;
+    expect(answer.text.startsWith('\uFEFF')).toBe(true);
+    const refs = answer.citations.map(citation => ({ text: citation.label, href: citationHref('p1', citation) }));
+    const html = render(answer.text, refs);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(1);
+    expect(html).toContain('start=42&amp;end=87');
+    expect(html).toContain('<a href="https://example.test">read</a>');
+  });
+  const sources = [{ sourceId: 's9', revisionId, title: 'Paper 9', alias: 'S9', blocks: [
+    { id: 104, type: 'paragraph' as const, start: 1030, end: 1040, heading: null },
+    { id: 100, type: 'paragraph' as const, start: 990, end: 1000, heading: null },
+  ] }];
+  it.each(['chat', 'saved'])('renders all five retained padded atoms as exact %s passage links', kind => {
+    const resolved = resolveCitations('😀 Claim [ S9:104]. [ S9:100] [ S9:100] [ S9:100] [ S9:100]', sources);
+    const answer = kind === 'saved' ? persistentResolvedAnswer(resolved.text, resolved.citations) : resolved;
+    const refs = answer.citations.map(citation => ({ text: citation.label, href: citationHref('p1', citation), label: citationLabel(citation) }));
+    const html = render(answer.text, refs);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(5);
+    expect(html.match(/start=1030&amp;end=1040/g)).toHaveLength(1);
+    expect(html.match(/start=990&amp;end=1000/g)).toHaveLength(4);
+    expect(html).not.toContain('[ S9:');
+    expect(html.match(/>2<\/a>/g)).toHaveLength(4);
+  });
+  it('preserves the padded external shortcut reference instead of promoting it to citation authority', () => {
+    const text = '[ S9:104]\n\n[S9:104]: https://example.test/external';
+    const resolved = resolveCitations(text, sources);
+    const refs = resolved.citations.map(citation => ({ text: citation.label, href: citationHref('p1', citation) }));
+    expect(resolved.text).toBe(text);
+    const html = render(resolved.text, refs);
+    expect(html).toBe(render(text, []));
+    expect(html).toContain('href="https://example.test/external"');
+    expect(html).not.toContain('er-citation');
+  });
+  it.each(['chat', 'saved'])('keeps padded code, escaped prose, explicit links, images and HTML literal in %s', kind => {
+    const text = 'Claim [ S9:104].\n\n`[ S9:100]`\n\n    [ S9:100]\n\n\\[ S9:100]\n\n'
+      + '[S9:100 ](https://example.test/external)\n\n![ S9:100](https://example.test/image)\n\n<div>\n[ S9:100]\n</div>';
+    const resolved = resolveCitations(text, sources);
+    expect(resolved.citations).toHaveLength(1); expect(resolved.invalidLabels).toBe(0);
+    const answer = kind === 'saved' ? persistentResolvedAnswer(resolved.text, resolved.citations) : resolved;
+    const refs = answer.citations.map(citation => ({ text: citation.label, href: citationHref('p1', citation) }));
+    const html = render(answer.text, refs);
+    expect(html.match(/class="er-citation er-citation--inline"/g)).toHaveLength(1);
+    expect(html).toContain('<code>[ S9:100]</code>');
+    expect(html).toContain('<pre><code>[ S9:100]\n</code></pre>');
+    expect(html).toContain('href="https://example.test/external"'); expect(html).not.toContain('<img');
+  });
+});
+
 describe('Markdown citation rendering', () => {
   it.each(['chat', 'saved'])('keeps %s citations visible after escaped literal backticks', (kind) => {
     const revisionId = '11111111-1111-4111-8111-111111111111';

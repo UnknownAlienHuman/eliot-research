@@ -441,6 +441,13 @@ Turn/job labels are compact (`[S1:14]`) and frozen per operation. Persistent lab
 block, byte range, source title and deleted flag. Server resolves labels, removes unknown/out-of-scope labels and counts
 them. Saving an answer rewrites compact aliases to persistent labels.
 
+Local answer resolution also recognizes ASCII space/tab padding inside brackets around one complete compact or
+full-UUID persistent atom, preserving every inner byte and validating it against the same frozen scope. Only the
+wrapper is canonicalized; unknown/ambiguous/unavailable atoms reject once, with canonical output labels and original
+ranges. The installed Markdown parser protects code (including indented code), links/references/definitions,
+images/destinations and HTML nodes; escaped literals stay literal. A padded external reference is not promoted to
+citation authority. Group/pair grammar, persisted/history readers and retained answers are unchanged.
+
 A comma-separated bracket group of fully specified labels, such as `[S1:14, S2:8]`, is normalized to separate labels
 only when every member resolves in the same frozen set of supplied citable blocks with original byte ranges. A bad member rejects the
 whole group. A dash-separated pair such as `[S1:14–S1:15]` normalizes only when both fully specified compact labels resolve to
