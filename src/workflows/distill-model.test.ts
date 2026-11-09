@@ -2377,6 +2377,93 @@ describe("DistillWorkflow admitted model snapshot", () => {
 });
 
 describe("compact K3 producer", () => {
+  it.each(["invalid-value", "unknown-key", "array-bound", "length", "deadline", "json-parse"] as const)(
+    "persists external typed schema diagnostics before Workflow serialization without retaining output: %s", async mode => {
+      const model = Object.freeze({ ...snapshot, route: "gateway:openrouter/fixture/diagnostic", id: "fixture/diagnostic",
+        responseFormat: true, structuredOutputs: true, structuredReasoningEffort: "minimal",
+        routing: { provider: { id: "openrouter", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1",
+          baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true }, gatewayId: "offline-diagnostic" } } satisfies ModelSpec);
+      const f = fixture(model.route, documentWithBlocks([{ type: "paragraph", text: "The update preserves the residual path.\n" }]));
+      f.db.prepare("UPDATE source_revision SET distill_request_json=? WHERE id=?")
+        .run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), revisionId);
+      const privateValue = "PRIVATE_MODEL_VALUE", privateKey = "PRIVATE_UNKNOWN_FIELD";
+      const extraction = { candidates: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The update preserves the residual path." }] };
+      const decision = { candidateId: mode === "unknown-key" || mode === "array-bound" ? "C0" : privateValue, reason: privateValue,
+        ...(mode === "unknown-key" ? { [privateKey]: privateValue } : {}) };
+      const review = { selected: mode === "array-bound" ? [decision, decision] : [decision], rejected: [], guide: [] };
+      const sdk = await vi.importActual<typeof AISDK>("ai");
+      const transport = await vi.importActual<typeof ModelTransport>("../model-transport");
+      const failures: unknown[] = [];
+      const deadline = new AbortController();
+      const timeout = mode === "deadline" ? vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal) : undefined;
+      vi.mocked(generateText).mockImplementation(async options => {
+        try { return await sdk.generateText(options); } catch (error) {
+          failures.push(error);
+          if (mode === "deadline") deadline.abort();
+          throw error;
+        }
+      });
+      vi.mocked(resolveModelTransport).mockImplementation(transport.resolveModelTransport);
+      vi.mocked(Output.object).mockReset().mockImplementation(options => sdk.Output.object(options));
+      let responses = 0;
+      const fetch = vi.fn(async () => {
+        const second = ++responses === 2;
+        return Response.json({ id: "chatcmpl-offline-diagnostic", object: "chat.completion", created: 0, model: model.id,
+          choices: [{ index: 0, message: { role: "assistant", content: second && mode === "json-parse" ? '{"selected":' + privateValue : JSON.stringify(second ? review : extraction) },
+            finish_reason: mode === "length" && second ? "length" : "stop" }],
+          usage: { prompt_tokens: 101, completion_tokens: 17, total_tokens: 118 } });
+      });
+      Object.assign(f.env, { AI: { fetch } });
+      const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request."));
+      const prepares = vi.spyOn(f.env.DB, "prepare");
+      const issue = mode === "unknown-key" ? "path=selected.0; code=unrecognized_keys"
+        : mode === "array-bound" ? "path=selected; code=too_big" : "path=selected.0.candidateId; code=invalid_value";
+      const expected = mode === "length" ? "model reached output bound before complete output"
+        : mode === "deadline" ? "Local model-call deadline expiry observed. model returned incomplete or invalid structured output. No retry was started."
+        : mode === "json-parse" ? "model returned incomplete or invalid structured output"
+        : "model returned incomplete or invalid structured output Schema issue: " + issue + ".";
+      const beforeSerialization: unknown[] = [];
+      const stepDo = vi.fn(async (name: string, _options: unknown, callback: () => Promise<unknown>) => {
+        try { return await callback(); } catch {
+          expect(name).toBe("review and synthesize");
+          const row = f.db.prepare("SELECT distill_state AS state,distill_calls AS calls,distill_error AS error FROM source_revision WHERE id=?").get(revisionId);
+          beforeSerialization.push(row);
+          expect(row).toEqual({ state: "running", calls: 2, error: expected });
+          // Simulate a Workflow boundary discarding both the prototype and its transient message.
+          throw new Error("Workflow serialized failure");
+        }
+      });
+      try {
+        await new DistillWorkflow({} as ExecutionContext, f.env).run(
+          { payload: { revisionId, model, producerFormat: "compact-k3-v1" } } as Parameters<DistillWorkflow["run"]>[0],
+          { do: stepDo } as unknown as WorkflowStep);
+        expect(beforeSerialization).toHaveLength(1); expect(failures).toHaveLength(1);
+        const error = failures[0];
+        if (!sdk.NoObjectGeneratedError.isInstance(error)) throw new Error("The actual SDK structured-output failure is missing.");
+        if (mode === "json-parse") expect(sdk.JSONParseError.isInstance(error.cause)).toBe(true);
+        else {
+          if (!sdk.TypeValidationError.isInstance(error.cause)) throw new Error("The actual external schema-validation cause is missing.");
+          expect(error.cause.cause).toBeInstanceOf(z.ZodError);
+        }
+        expect(prepares).toHaveBeenCalledWith("UPDATE source_revision SET distill_error=? WHERE id=? AND distill_state='running' AND distill_calls=? AND distill_attempt_id IS ?");
+        expect(expected.length).toBeLessThan(512);
+        const raw2 = JSON.parse(f.bodies.get(prefix + "distill-call2.json") ?? "null");
+        expect(raw2.output).toBeNull();
+        const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+        expect(report).toMatchObject({ state: "failed", kept: 0, error: expected, usage: { calls: 2, inputTokens: 202, outputTokens: 34 } });
+        expect(report.error).not.toMatch(/expected=|type=|maximum=|minimum=/u);
+        const view = await getUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId });
+        expect(view.canRecover).toBe(false); expect(view.claims).toHaveLength(0);
+        await expect(requestUnderstanding(f.env, { type: "owner" } as Actor, { sourceId, revisionId, saveAvailable: true }))
+          .rejects.toMatchObject({ status: 409 });
+        expect(fetch).toHaveBeenCalledTimes(2); expect(generateText).toHaveBeenCalledTimes(2); expect(f.dispatchCAS).toHaveBeenCalledTimes(2);
+        expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
+        for (const body of f.bodies.values()) { expect(body).not.toContain(privateValue); expect(body).not.toContain(privateKey); }
+        for (const lookup of forbiddenLookups) expect(lookup).not.toHaveBeenCalled();
+        expect(network).not.toHaveBeenCalled();
+      } finally { timeout?.mockRestore(); prepares.mockRestore(); vi.mocked(Output.object).mockReset(); network.mockRestore(); f.db.close(); }
+    });
+
   it.each([
     { name: "JSON object", responseFormat: true, structuredOutputs: false, wireFormat: "json_object" },
     { name: "unknown structured support", responseFormat: true, structuredOutputs: undefined, wireFormat: "json_object" },

@@ -731,6 +731,11 @@ actual ZodError cause, `safeSchemaIssueDetail` may retain an issue code, a path 
 keys/indices, and schema origin and numeric bound where applicable. These details contain no payload values.
 Unknown SDK errors remain unclassified. No model text, reasoning, arbitrary response values, unbounded paths,
 provider error bodies, headers or credentials enter the safe reader error.
+External `NoObjectGeneratedError → TypeValidationError → actual ZodError` failures use the same helper's path/code-only
+mode before the existing revision/attempt/running/call-fenced D1 write and Workflow serialization; unknown path keys,
+issue messages/values/unknown-key lists and schema bounds are excluded, while native rich diagnostics stay unchanged.
+Length, owned-deadline and materialization failures retain priority; external failed Raw2 remains null, without recovery
+or another call, and historical North failure causes remain UNKNOWN rather than being retroactively enriched.
 
 Full valid decoded native Raw1 stays unchanged even when later candidate validation rejects units.
 In native compact call one, invalid/truncated JSON, a `length` finish, stream failure or missing normal finish

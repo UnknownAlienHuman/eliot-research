@@ -320,17 +320,21 @@ function toStoredUsage(usage: GeneratedUsage | null | undefined, tokenLimit: num
     providerUsage: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as JSONObject) : null,
     ...(outputBudget ? { outputBudget } : {}) };
 }
-function safeSchemaIssueDetail(error: z.ZodError): string | null {
+function safeSchemaIssueDetail(error: z.ZodError, pathCodeOnly = false): string | null {
   const issue = error.issues[0];
   if (!issue || typeof issue.code !== "string" || !/^[a-z_]{1,32}$/u.test(issue.code)) return null;
   const parts = [`code=${issue.code}`];
+  const schemaKeys = pathCodeOnly ? new Set(["candidates", "claims", "guide", "questions", "glossary", "labels", "qualifiers", "scope", "assertion", "text",
+    "quoteBlock", "kind", "task", "metric", "dataset", "valueText", "unit", "conditions", "statement", "en", "ru", "definition",
+    "selected", "rejected", "candidateId", "reason", "supportedClaims", "additionalClaims", "supportedGlossary", "supportedGuide", "digestPlan", "methods", "findings", "limits"]) : null;
   const path = issue.path.slice(0, 8).map((part) => {
     if (typeof part === "number" && Number.isSafeInteger(part) && part >= 0 && part <= 9999) return String(part);
-    if (typeof part === "string" && /^[A-Za-z][A-Za-z0-9_]{0,47}$/u.test(part)) return part;
+    if (typeof part === "string" && /^[A-Za-z][A-Za-z0-9_]{0,47}$/u.test(part) && (!schemaKeys || schemaKeys.has(part))) return part;
     return null;
   });
   if (path.length && path.every((part) => part !== null))
     parts.unshift(`path=${path.join(".")}${issue.path.length > path.length ? ".…" : ""}`);
+  if (pathCodeOnly) return parts.join("; ");
   const allowedTypes = new Set(["array", "string", "number", "int", "boolean", "object", "null", "undefined"]);
   if ((issue.code === "too_big" || issue.code === "too_small") && "origin" in issue
     && typeof issue.origin === "string" && allowedTypes.has(issue.origin)) parts.push(`type=${issue.origin}`);
@@ -550,6 +554,11 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
     } else if (detail) {
       failure = nativeValidationCause ?? (detail.finishReason === "length" ? "model reached output bound before complete output"
         : "model returned incomplete or invalid structured output");
+      if (!native && !localDeadlineObserved && detail.finishReason !== "length" && NoObjectGeneratedError.isInstance(error)
+        && TypeValidationError.isInstance(error.cause) && error.cause.cause instanceof z.ZodError) {
+        const issue = safeSchemaIssueDetail(error.cause.cause, true);
+        if (issue) failure += ` Schema issue: ${issue}.`;
+      }
     } else {
       // Provider errors can contain credentials; retain only the fixed safe projection.
       failure = localDeadlineObserved ? "Local model-call deadline expiry observed. No retry was started." : modelFailure(error, model);
