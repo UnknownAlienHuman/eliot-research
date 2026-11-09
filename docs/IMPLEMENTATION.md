@@ -585,6 +585,12 @@ positions. Each statement must be one complete atomic assertion with its source 
 comparisons and limitations, selecting a label from the frozen canonical block inventory. This call requests no
 scalar tuple, guide, suggested questions or glossary. Source JSON escapes literal square brackets inside strings
 while preserving authority labels and the decoded source text.
+Extraction selects the supporting block before drafting and requires its own text to support the complete statement.
+Independent outcomes and method/result mixtures are split; cross-block material yields only self-contained statements
+independently supported by their respective blocks. One coherent definition, procedure, configuration or comparison
+stays together when its own block supports every necessary part. Central operational formulas and their conditions
+take priority over roadmap prose. Scientific method definitions, formulas and extractive source wording are valid
+claims; novelty or paraphrasing is not required.
 
 Only non-native compact calls with frozen `structuredOutputs === true` use separate closed generation schemas.
 Extraction requires `quoteBlock`, `kind` and `statement`, using the existing `other` kind when unclear. Review
@@ -637,7 +643,8 @@ candidate hypotheses `{ id, kind, statement }`. Each frozen C hypothesis is copi
 group; first-evidence order and candidate order within each group are preserved, and each quote is supplied once.
 Final publication filters the original frozen candidate sequence, preserving its order independently of group traversal.
 This local input projection leaves persisted formats and `evidenceId` bindings unchanged. Statements remain
-hypotheses: review must use each group's own quote, without borrowing an antecedent or predicate from another group.
+hypotheses only in the sense of untrusted statements: review must use each group's own quote, without borrowing an
+antecedent or predicate from another group. Verbatim wording and lack of novelty are not grounds for rejection.
 The call-two output boundary consumes only selections, rejections and guide, ignoring outer metadata while retaining
 `Output.object`. Decision items, candidate IDs and duplicate checks remain strict; retained raw artifacts stay
 immutable. Review selects or rejects candidate IDs with nonempty diagnostic reasons. Brief wording is prompt
@@ -648,14 +655,17 @@ the candidate's own quote with those retained in the candidate, rejecting a stro
 necessary premise while allowing mathematical inference entailed by that quote.
 A missing decision remains unknown and cannot implicitly select or reject that candidate. Review introduces no new
 facts, additional claims or rewritten statements. Review rejects whole candidates with unsupported clauses or bundles of
-independent outcomes, different metrics or different task results, while retaining integral definitions/procedures
-and a single comparison with its own setting, baseline and conditions. It rejects a whole candidate when any
+independent outcomes, method/result mixtures, different metrics or different task results, while retaining integral
+definitions, procedures and configurations, and a single comparison with its own setting, baseline and conditions.
+It rejects a whole candidate when any
 necessary source-stated qualifier, condition, scope, comparison, limitation or uncertainty is missing or wrong,
 even when every remaining clause is supported. Necessary referents must be established by the candidate's own
 quote, without borrowing from another group's quote, nearby headings or another candidate. Matching quote bytes
 or numeric literals alone does not establish semantic support.
 
-The optional guide is an ordered subset of at most five selected candidate IDs. Review is instructed to use only
+Review selects every supported atomic candidate, deduplicating repeated facts only among candidates and including
+those outside the guide. Guide curation does not restrict claim selection. The optional guide is an ordered subset
+of at most five selected candidate IDs. Review is instructed to use only
 IDs actually in its returned `selected` entries, preserve original candidate order and return `[]` when unavailable.
 Code renders each complete frozen statement with its original citation binding, without generating guide prose,
 trimming statements or adding facts. The
