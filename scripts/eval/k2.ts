@@ -1974,6 +1974,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
     turnId: typeof turn?.turnId === 'string' ? turn.turnId : null,
     answer: typeof turn?.answer === 'string' ? turn.answer : null,
     outputBudget: turn?.outputBudget ?? null,
+    ...(turn?.providerUsage === undefined ? {} : { providerUsage: turn.providerUsage }),
     model: typeof turn?.model === 'string' ? turn.model : null,
     turnState: typeof turn?.state === 'string' ? turn.state : 'unknown',
     routeStatus: turn?.model === defaultModel ? 'GLOBAL_DEFAULT' : 'NON_DEFAULT_DIAGNOSTIC',
@@ -2090,7 +2091,7 @@ async function inspectTurn(qid, turn, source, wall, defaultModel, storedDiagnost
   await checkRange(s0.currentRevisionId, 0, end);
 }
 async function saveTurn(qid, turn, extra) {
-  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, invalidLabelExamples: Array.isArray(turn.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [], inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, outputBudget: turn.outputBudget ?? null, tokenLimit: turn.tokenLimit ?? null, tokenLimitKind: turn.tokenLimitKind ?? null, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
+  const doc = { chatId, qid, turnId: turn.turnId, reused: !!extra.reused, src: extra.src, question: extra.question || null, model: turn.model ?? null, answer: turn.answer ?? null, state: turn.state, error: turn.error ?? null, citations: turn.citations ?? null, invalidLabels: turn.invalidLabels ?? null, invalidLabelExamples: Array.isArray(turn.invalidLabelExamples) ? turn.invalidLabelExamples.slice(0, 8) : [], inputTokens: turn.inputTokens ?? null, cachedTokens: turn.cachedTokens ?? null, outputTokens: turn.outputTokens ?? null, outputBudget: turn.outputBudget ?? null, ...(turn.providerUsage === undefined ? {} : { providerUsage: turn.providerUsage }), tokenLimit: turn.tokenLimit ?? null, tokenLimitKind: turn.tokenLimitKind ?? null, firstTokenMs: turn.firstTokenMs ?? null, totalMs: turn.totalMs ?? null, wallMs: extra.wall ?? null };
   await writeFile(outDir + '/k2-' + qid + '-' + String(turn.turnId).slice(0, 8) + '.json', JSON.stringify(doc, null, 2));
 }
 function dispatchUnavailable(status, body, turn) {
