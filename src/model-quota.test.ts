@@ -7,6 +7,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("does not request authenticated quota for an anonymous provider even with a connected Gateway", async () => {
+  const fetch = vi.fn().mockRejectedValue(new Error("No anonymous account quota"));
+  const provider: ModelProvider = { id: "router", type: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1",
+    gatewaySlug: "openrouter", gatewayPath: "v1", enabled: true, authMode: "anonymous" };
+  expect(await readProviderQuotas({ AI: { fetch } as unknown as Env["AI"] }, [provider], { gatewayId: "fixture" }))
+    .toEqual([{ providerId: "router", usage: null, limit: null, error: "quota-unknown" }]);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it.each([undefined, "named-fixture"])("keeps quota alias=%s on Gateway without a conversation or retry", async keyAlias => {
   const provider: ModelProvider = { id: "router", type: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1",
     gatewaySlug: "openrouter", gatewayPath: "v1", enabled: true, ...(keyAlias === undefined ? {} : { keyAlias }) };

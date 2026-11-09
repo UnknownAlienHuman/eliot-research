@@ -5,6 +5,7 @@ import { z } from "zod";
 import { readNativeUsage, readProviderQuotas } from "./model-quota";
 import type { NativeUsage, NativeUsageEnvironment, ProviderQuota } from "./model-quota";
 import { isOpenRouterApiBase } from "./shared/api";
+import { validateSourceUrl } from "./url-guard";
 
 export const modelProviderSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
@@ -15,6 +16,7 @@ export const modelProviderSchema = z.object({
   modelsUrl: z.string().trim().url().optional(),
   metadataUrl: z.string().trim().url().optional(),
   dataCollection: z.enum(["deny", "allow"]).optional(),
+  authMode: z.enum(["gateway", "anonymous"]).optional(),
   keyAlias: z.string().min(1).refine((value) => {
     if (value.trim() !== value || /\p{Cc}/u.test(value)) return false;
     try { new Headers({ "cf-aig-byok-alias": value }); return true; } catch { return false; }
@@ -22,13 +24,18 @@ export const modelProviderSchema = z.object({
   enabled: z.boolean(),
 }).strict().superRefine((provider, ctx) => {
   if (provider.type === "workers-ai") {
-    if (provider.id !== "workers-ai" || provider.baseUrl !== null || provider.gatewaySlug !== null || provider.gatewayPath !== "" || provider.modelsUrl !== undefined || provider.metadataUrl !== undefined || provider.dataCollection !== undefined || provider.keyAlias !== undefined)
+    if (provider.id !== "workers-ai" || provider.baseUrl !== null || provider.gatewaySlug !== null || provider.gatewayPath !== "" || provider.modelsUrl !== undefined || provider.metadataUrl !== undefined || provider.dataCollection !== undefined || provider.keyAlias !== undefined || provider.authMode !== undefined)
       ctx.addIssue({ code: "custom", message: "Workers AI uses its native binding and no base URL." });
   } else {
     let url: URL | null = null;
     try { url = provider.baseUrl ? new URL(provider.baseUrl) : null; } catch { /* Input validation reports malformed URLs below. */ }
-    if (!url || url.protocol !== "https:" || url.username || url.password || url.search || url.hash || provider.id === "workers-ai" || !provider.gatewaySlug)
+    if (!url || url.protocol !== "https:" || url.username || url.password || url.search || url.hash || provider.id === "workers-ai" || (provider.authMode !== "anonymous" && !provider.gatewaySlug))
       ctx.addIssue({ code: "custom", message: "Use a provider HTTPS base URL without credentials, query or fragment." });
+    if (provider.authMode === "anonymous") {
+      if (provider.keyAlias !== undefined) ctx.addIssue({ code: "custom", message: "Anonymous providers cannot select a BYOK key alias." });
+      try { validateSourceUrl(provider.baseUrl ?? ""); }
+      catch { ctx.addIssue({ code: "custom", message: "Anonymous providers require a public HTTPS API root." }); }
+    }
     for (const endpoint of [provider.modelsUrl, provider.metadataUrl]) {
       if (endpoint === undefined) continue;
       let parsed: URL | null = null;
@@ -102,7 +109,7 @@ export interface CatalogModel {
 }
 export interface ModelSpec extends CatalogModel {
   contextTokens: number;
-  routing?: { provider: ModelProvider; gatewayId: string };
+  routing?: { provider: ModelProvider; gatewayId: string | null };
   openRouterReasoningEffort?: string; // Explicit owner choice, validated/frozen by admission only.
 }
 export const DEFAULT_MODEL = "workers-ai:@cf/zai-org/glm-5.3-flash";
@@ -275,7 +282,8 @@ function sameProviderRoute(provider: ModelProvider, previous: ModelProvider | un
   // Data-use choice is frozen on admission; it does not change catalogue identity.
   return previous !== undefined && previous.type === provider.type && previous.baseUrl === provider.baseUrl &&
     previous.gatewaySlug === provider.gatewaySlug && previous.gatewayPath === provider.gatewayPath &&
-    previous.modelsUrl === provider.modelsUrl && previous.metadataUrl === provider.metadataUrl && previous.keyAlias === provider.keyAlias;
+    previous.modelsUrl === provider.modelsUrl && previous.metadataUrl === provider.metadataUrl && previous.keyAlias === provider.keyAlias &&
+    (previous.authMode ?? "gateway") === (provider.authMode ?? "gateway");
 }
 function isProviderQuota(value: unknown): value is ProviderQuota {
   return isRecord(value) && typeof value.providerId === "string" &&
@@ -311,7 +319,7 @@ function snapshotModels(snapshot: StoredModelCatalog | null, gatewayId: string |
     if (!isOpenRouterApiBase(provider?.baseUrl) || changed) delete model.openRouterReasoningEfforts;
     const selectable = provider?.enabled === true && model.enabled;
     const reason = !provider ? "Provider is not configured." : !provider.enabled ? "Provider is disabled."
-      : route.startsWith("gateway:") && !gatewayId ? "Connect AI Gateway in Settings."
+      : route.startsWith("gateway:") && provider.authMode !== "anonymous" && !gatewayId ? "Connect AI Gateway in Settings."
         : changed ? "Refresh models after editing provider settings." : null;
     models.set(route, { ...model, selectable, ...(reason ? { enabled: false, unavailableReason: reason } : {}) });
   }
@@ -328,7 +336,7 @@ export async function readModelCatalog(env: ModelEnvironment): Promise<ModelCata
   const quotas = providers.map<ProviderQuota>((provider) => {
     const prior = snapshot?.providers?.find((entry) => entry.id === provider.id);
     const quota = storedQuotas.find((entry) => entry.providerId === provider.id);
-    return provider.enabled && snapshot?.quotaGatewayId === connection.gatewayId && sameProviderRoute(provider, prior) && quota
+    return provider.authMode !== "anonymous" && provider.enabled && snapshot?.quotaGatewayId === connection.gatewayId && sameProviderRoute(provider, prior) && quota
       ? { providerId: quota.providerId, usage: quota.usage, limit: quota.limit, error: quota.error }
       : { providerId: provider.id, usage: null, limit: null, error: "quota-unknown" };
   });
@@ -426,9 +434,9 @@ export async function requireAvailableModel(env: ModelEnvironment, route: string
   const model = resolved(catalogModel(catalog.models, route), route);
   if (!route.startsWith("gateway:")) return model;
   const provider = providerForRoute(catalog.providers, route);
-  if (!provider || !provider.enabled || !catalog.gatewayId) throw new LibraryError("unavailable", "The provider connection is unavailable.", 503);
+  if (!provider || !provider.enabled || (provider.authMode !== "anonymous" && !catalog.gatewayId)) throw new LibraryError("unavailable", "The provider connection is unavailable.", 503);
   if ((provider.metadataUrl && (!model.apiProtocol || !model.apiBaseUrl)) ||
     (model.apiBaseUrl !== undefined && !isProviderApiBase(provider, model.apiBaseUrl)))
     throw new LibraryError("unavailable", "Refresh the provider's published model API metadata before starting a request.", 503);
-  return { ...model, routing: { provider: { ...provider }, gatewayId: catalog.gatewayId } };
+  return { ...model, routing: { provider: { ...provider }, gatewayId: provider.authMode === "anonymous" ? null : catalog.gatewayId } };
 }

@@ -230,7 +230,7 @@ stop/reconnect, reopen chat and save an answer as a page.
 
 1. Apply `migrations/0002_ask.sql`; add one `ChatAgent` Durable Object per chat and `/agents/*` routing.
 2. Read provider catalogues from the R2 snapshot. The owner edits the provider configuration in Settings,
-   including an optional existing Gateway key alias; owner-only
+   including an optional existing Gateway key alias or explicit anonymous provider access; owner-only
    `POST /api/models/refresh` discovers JSON models and available provider quota data; a partial provider failure preserves that provider's prior slice and
    returns a warning. If no snapshot exists, use the native Flash fallback. Paid admission remains separate and
    requires usable input metadata and assembly headroom, without per-model price prerequisites.

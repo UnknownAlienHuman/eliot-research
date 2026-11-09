@@ -232,6 +232,32 @@ beforeEach(() => {
 });
 
 describe("ChatAgent stream checkpoints", () => {
+  it.each([false, true])("uses anonymous HTTP without AI and retains caller lifecycle; wire overflow=%s", async overflow => {
+    const h = makeHarness();
+    const model: ModelsModule.ModelSpec = { route: "gateway:fixture/opaque", id: "opaque", label: "Anonymous", contextTokens: 1048576,
+      maxOutputTokens: 8192, outputReserveTokens: 8192, enabled: true, checkedOn: "2026-11-09",
+      routing: { provider: { id: "fixture", type: "openai-compatible", baseUrl: "https://api.example.com/v1", gatewaySlug: null,
+        gatewayPath: "", enabled: true, authMode: "anonymous" }, gatewayId: null } };
+    const cancel = vi.fn();
+    const network = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      expect(init?.signal).toBeDefined(); expect(init?.credentials).toBe("omit");
+      return overflow ? new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array(16 * 1024 * 1024 + 1)); }, cancel }))
+        : new Response(sse([chunk({ content: "Grounded answer [S1:1]." }, "stop", { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 })]), { headers: { "content-type": "text/event-stream" } });
+    });
+    try {
+      await h.agent.onStart(); Reflect.deleteProperty(h.env, "AI");
+      vi.mocked(requireAvailableModel).mockResolvedValueOnce(model);
+      const input: RunTurnInput = { projectId, chatId, turnId: "anonymous-wire", question: "Offline", scopeMode: "empty", model: model.route };
+      const turn = requireTurn(await h.agent.submitTurn(input, true));
+      expect(turn).toMatchObject({ state: overflow ? "failed" : "completed", outputBudget: { requestedTokens: 8192, appliedTokens: 8192 } });
+      if (overflow) { expect(turn.answer).toBe(""); expect(cancel).toHaveBeenCalledTimes(1); }
+      else expect(turn).toMatchObject({ inputTokens: 8, outputTokens: 4 });
+      await h.agent.getSnapshot(projectId); await h.agent.getTurnPage(projectId);
+      expect(requireTurn(await h.agent.submitTurn(input, true)).state).toBe(turn.state);
+      expect(network).toHaveBeenCalledTimes(1); expect(fetchCalls).toBe(0);
+    } finally { network.mockRestore(); h.db.close(); h.d1.close(); }
+  });
+
   it("requests frozen published minimal on a fresh Send and never redispatches on history reads", async () => {
     const h = makeHarness();
     const model = Object.freeze({ route: "gateway:openrouter/stealth/crouton-alpha", id: "stealth/crouton-alpha", label: "Frozen minimal fixture",

@@ -441,7 +441,13 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   if (row.distill_model !== model.route) throw new LibraryError("conflict", "The admitted model snapshot no longer matches the stored model route.", 409);
   const remaining = row.distill_started_at + DISTILL_DEADLINE_MS - Date.now();
   if (remaining <= 0) throw new Error("Source understanding reached its recovery deadline. No paid step will be repeated.");
-  const transport = await resolveModelTransport(env, model, understandingWorkflowId(revisionId, attemptId), { structuredOutput: true });
+  let responseBudgetExceeded = false;
+  const transport = await resolveModelTransport(env, model, understandingWorkflowId(revisionId, attemptId), { structuredOutput: true,
+    ...(model.routing?.provider.authMode === "anonymous" ? { onResponseBytes: (bytes: number) => {
+      try { reserve(memory, 12 * (bytes + 64)); }
+      catch (error) { responseBudgetExceeded = true; throw error; }
+    } } : {}),
+  });
   const fidelityInstructions = instructions + " Preserve source technical literals verbatim. In JSON prose strings encode literal square brackets as \\u005b and \\u005d; keep authority-label strings exactly as supplied by the closed label set. Only those authority labels are citations; all other source literals remain content."
     + (compactMode ? "" : " Keep every table value with its exact row or method, metric, and column or data-split identity. A blank or dash cell is unreported, never a measurement; omit a fact if these associations are ambiguous.");
   const native = model.route.startsWith("workers-ai:"), requestSchema = generationSchema ?? z.toJSONSchema(schema);
@@ -453,6 +459,8 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   } });
   const promptSchema = native || model.responseFormat !== true || model.structuredOutputs !== true;
   if (promptSchema) reserve(memory, sourceContextJsonAllocation(requestSchema, new Set()) + 2 * (fidelityInstructions.length + 64));
+  if (!promptSchema && model.routing?.provider.authMode === "anonymous")
+    reserve(memory, sourceContextJsonAllocation(requestSchema, new Set()));
   const modelInstructions = promptSchema ? fidelityInstructions + "\nReturn one JSON object conforming to this schema: " + JSON.stringify(requestSchema) : fidelityInstructions;
   const messages = [{ role: "user" as const, content }, { role: "user" as const, content: compactMode
     ? `Return only the compact structured output requested above. Write prose fields in ${language}, while preserving source technical terms and numeric spellings.`
@@ -473,7 +481,6 @@ async function call<T>(env: Env, revisionId: string, ordinal: number, instructio
   const artifactName = `distill-call${ordinal}.json`;
   let result: Awaited<ReturnType<typeof generateText>> | undefined;
   const streamed: { usage: GeneratedUsage | undefined; finishReason: string | null } | undefined = native ? { usage: undefined, finishReason: null } : undefined;
-  let responseBudgetExceeded = false;
   let nativeValidationCause: string | undefined;
   let schemaFailureOutput: unknown;
   let schemaFailureCause: unknown;

@@ -32,6 +32,48 @@ function SourcesRead({ projectId }: { projectId: string }) {
 }
 
 describe('Source claim evidence presentation', () => {
+  it('saves explicit anonymous access only in advanced provider configuration without requiring a Gateway', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host), native = 'workers-ai:flash';
+    let providers: ModelProvider[] = [{ id: 'fixture', type: 'openai-compatible', baseUrl: 'https://api.example.com/v1',
+      gatewaySlug: 'custom-fixture', gatewayPath: '', enabled: true }];
+    const writes: Array<{ path: string; body: { providers: ModelProvider[] } }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input), method = init?.method ?? 'GET';
+      if (method !== 'GET') {
+        if (method !== 'PUT' || path !== '/api/models/providers') throw new Error('No connection/default/refresh/model effects');
+        const body = JSON.parse(String(init?.body)) as { providers: ModelProvider[] }; writes.push({ path, body }); providers = body.providers;
+        return Response.json({ providers });
+      }
+      if (path === '/api/models/providers') return Response.json({ providers });
+      if (path === '/api/settings') return Response.json({ settings: { answerModel: native, distillModel: native, updatedAt: 0 } });
+      if (path === '/api/models/connection') return Response.json({ connection: { gatewayId: null, provider: 'ai-gateway', alias: 'default' } });
+      if (path === '/api/models') return Response.json({ models: [{ route: native, id: 'flash', label: 'Flash', enabled: true,
+        selectable: true, contextTokens: 64000, maxOutputTokens: 8192, checkedOn: null }], warnings: [], defaultModel: native });
+      throw new Error('Unexpected read');
+    }));
+    try {
+      await act(async () => root.render(<ModelSettings />));
+      expect(host.textContent).toContain('Gateway-authenticated providers require an authorized connection.');
+      const dialog = host.querySelector<HTMLDialogElement>('.er-providers__dialog');
+      const connection = host.querySelector<HTMLButtonElement>('button[aria-label="Connection details for fixture"]');
+      if (!dialog || !connection) throw new Error('Provider dialog missing');
+      Object.defineProperty(dialog, 'showModal', { value: () => { dialog.open = true; } });
+      await act(async () => connection.click());
+      const label = Array.from(dialog.querySelectorAll('label')).find(item => item.textContent?.includes('Authentication'));
+      const control = label?.querySelector('select');
+      if (!control) throw new Error('Authentication control missing');
+      expect(control.value).toBe('gateway');
+      await act(async () => { control.value = 'anonymous'; control.dispatchEvent(new Event('change', { bubbles: true })); });
+      const save = Array.from(host.querySelectorAll('button')).find(item => item.textContent === 'Save');
+      if (!save) throw new Error('Save missing'); await act(async () => save.click());
+      expect(writes).toHaveLength(1); expect(writes[0]?.body.providers[0]).toMatchObject({ authMode: 'anonymous', enabled: true });
+      expect(writes[0]?.body.providers[0]).not.toHaveProperty('keyAlias');
+      await act(async () => save.click()); expect(writes).toHaveLength(1);
+    } finally { await act(async () => root.unmount()); host.remove(); }
+  });
+
   it.each(['named-fixture', ''])('roundtrips advanced BYOK alias %s through only the provider PUT', async keyAlias => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const host = document.createElement('div'); document.body.appendChild(host);
@@ -152,7 +194,7 @@ describe('Source claim evidence presentation', () => {
     try {
       await act(async () => root.render(<ModelSettings />));
       expect(writes).toEqual([]); expect(host.querySelectorAll('.er-model-picker')).toHaveLength(1);
-      expect(host.textContent).toContain('External requests are not connected.');
+      expect(host.textContent).toContain('No Gateway connection is saved.');
       expect(Array.from(host.querySelectorAll('button')).filter(button => button.textContent === 'AI Gateway connection')).toHaveLength(1);
       if (field === 'distillModel') {
         const target = host.querySelector('input[type="radio"][value="distill"]');
@@ -168,7 +210,7 @@ describe('Source claim evidence presentation', () => {
       await act(async () => save.click());
       expect(writes).toEqual([{ path: '/api/settings', method: 'PUT', body: { [field]: external } }]);
       expect(settings).toMatchObject({ [field]: external, [field === 'answerModel' ? 'distillModel' : 'answerModel']: missing });
-      expect(host.textContent).toContain('External requests are not connected.');
+      expect(host.textContent).toContain('No Gateway connection is saved.');
       await act(async () => save.click());
       expect(writes).toHaveLength(1); // The untouched missing route must not cause a second Save.
       const target = host.querySelector('input[type="radio"][value="' + (field === 'answerModel' ? 'distill' : 'answer') + '"]');

@@ -5,6 +5,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ModelProvider } from '../models';
 import { isOpenRouterApiBase, type DataCollectionPolicy } from '../shared/api';
+import { validateSourceUrl } from '../url-guard';
 import './model-providers.css';
 
 export interface ModelProvidersProps {
@@ -26,6 +27,7 @@ export interface Draft {
   modelsUrl: string;
   metadataUrl: string;
   keyAlias: string;
+  authMode?: ModelProvider['authMode'];
   dataCollection: DataCollectionPolicy;
 }
 
@@ -46,7 +48,7 @@ function providerName(id: string): string {
 }
 
 export function toDraft(p: ModelProvider): Draft {
-  return { isNew: false, id: p.id, type: p.type, baseUrl: p.baseUrl ?? '', gatewaySlug: p.gatewaySlug ?? '', gatewayPath: p.gatewayPath, enabled: p.enabled, modelsUrl: p.modelsUrl ?? '', metadataUrl: p.metadataUrl ?? '', keyAlias: p.keyAlias ?? '', dataCollection: p.dataCollection ?? 'deny' };
+  return { isNew: false, id: p.id, type: p.type, baseUrl: p.baseUrl ?? '', gatewaySlug: p.gatewaySlug ?? '', gatewayPath: p.gatewayPath, enabled: p.enabled, modelsUrl: p.modelsUrl ?? '', metadataUrl: p.metadataUrl ?? '', keyAlias: p.keyAlias ?? '', ...(p.authMode === undefined ? {} : { authMode: p.authMode }), dataCollection: p.dataCollection ?? 'deny' };
 }
 
 export function validateDrafts(drafts: Draft[]): { providers: ModelProvider[] | null; errors: Record<number, string> } {
@@ -61,6 +63,7 @@ export function validateDrafts(drafts: Draft[]): { providers: ModelProvider[] | 
     if (d.type === 'workers-ai') {
       if (id !== 'workers-ai') errors[i] = 'The native provider ID is workers-ai.';
       if (d.keyAlias !== '') errors[i] = 'Workers AI does not use a BYOK alias.';
+      if (d.authMode !== undefined) errors[i] = 'Workers AI does not use an external authentication mode.';
       out.push({ id: 'workers-ai', type: 'workers-ai', baseUrl: null, gatewaySlug: null, gatewayPath: '', enabled: d.enabled });
       return;
     }
@@ -70,11 +73,16 @@ export function validateDrafts(drafts: Draft[]): { providers: ModelProvider[] | 
     const gatewayPath = d.gatewayPath.trim();
     let url: URL | null;
     try { url = baseUrl === '' ? null : new URL(baseUrl); } catch { url = null; }
-    if (baseUrl === '' || url === null || url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '' || !ID_RE.test(gatewaySlug)) {
+    if (baseUrl === '' || url === null || url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '' || (d.authMode !== 'anonymous' && !ID_RE.test(gatewaySlug))) {
       errors[i] = 'Use a provider HTTPS base URL without credentials, query or fragment, plus a gateway slug.';
     }
     if (!PATH_RE.test(gatewayPath)) errors[i] = 'Use an optional path prefix such as v1, or leave blank.';
     const base: ModelProvider = { id, type: 'openai-compatible', baseUrl: baseUrl === '' ? null : baseUrl, gatewaySlug: gatewaySlug === '' ? null : gatewaySlug, gatewayPath, enabled: d.enabled };
+    if (d.authMode !== undefined) base.authMode = d.authMode;
+    if (d.authMode === 'anonymous') {
+      if (d.keyAlias !== '') errors[i] = 'Remove the BYOK alias to use anonymous access.';
+      try { validateSourceUrl(baseUrl); } catch { errors[i] = 'Anonymous providers require a public HTTPS API root.'; }
+    }
     if (d.keyAlias !== '') {
       try {
         if (d.keyAlias.trim() !== d.keyAlias || /\p{Cc}/u.test(d.keyAlias)) throw new Error('Invalid header value');
@@ -112,7 +120,7 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
     onChange(drafts.map((d, i) => {
       if (i !== index) return d;
       const next: Draft = { ...d, ...patch };
-      if (patch.type === 'workers-ai') { next.id = 'workers-ai'; next.baseUrl = ''; next.gatewaySlug = ''; next.gatewayPath = ''; next.modelsUrl = ''; next.metadataUrl = ''; next.keyAlias = ''; next.dataCollection = 'deny'; }
+      if (patch.type === 'workers-ai') { next.id = 'workers-ai'; next.baseUrl = ''; next.gatewaySlug = ''; next.gatewayPath = ''; next.modelsUrl = ''; next.metadataUrl = ''; next.keyAlias = ''; delete next.authMode; next.dataCollection = 'deny'; }
       return next;
     }));
   }
@@ -188,6 +196,13 @@ export function ModelProviders({ drafts, onChange, quotas, fieldErrors = {}, dis
                   <p className="er-status"><span>Uses the existing native binding.</span></p>
                 ) : (
                   <>
+                    <label className="er-field er-providers__row">
+                      <span className="er-providers__label">Authentication</span>
+                      <select value={selectedDraft.authMode ?? 'gateway'} disabled={disabled} onChange={(e) => update(editingIndex, { authMode: e.currentTarget.value as 'gateway' | 'anonymous' })}>
+                        <option value="gateway">Existing Gateway credentials</option>
+                        <option value="anonymous">Anonymous provider access</option>
+                      </select>
+                    </label>
                     <label className="er-field er-providers__row">
                       <span className="er-providers__label">Provider address</span>
                       <input type="url" inputMode="url" value={selectedDraft.baseUrl} onChange={(e) => update(editingIndex, { baseUrl: e.currentTarget.value })} placeholder="https://" autoComplete="off" disabled={disabled} aria-invalid={selectedFieldError !== undefined} />

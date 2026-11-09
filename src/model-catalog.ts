@@ -102,7 +102,7 @@ async function readProviderMetadata(feedUrl: string, providerId: string, liveMod
   }
   let response: Response;
   try {
-    response = await fetch(feedUrl, { headers: { accept: "application/json" }, redirect: "manual", signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) });
+    response = await fetch(feedUrl, { headers: { accept: "application/json" }, credentials: "omit", redirect: "manual", signal: AbortSignal.timeout(METADATA_TIMEOUT_MS) });
   } catch (error) {
     if (isCatalogTimeout(error)) throw new Error("The provider metadata request timed out.", { cause: error });
     throw new Error("The provider metadata is unavailable.", { cause: error });
@@ -315,17 +315,19 @@ export async function discoverGatewayModels(
     && typeof provider?.baseUrl === "string"
     && provider.baseUrl.trim() !== "");
   const catalogues = await Promise.allSettled(enabled.map(async (provider) => {
+    const anonymous = provider.authMode === "anonymous";
+    if (anonymous) validateSourceUrl(provider.baseUrl ?? "");
     const officialOpenRouter = isOpenRouterApiBase(provider.baseUrl);
     const endpoint = provider.modelsUrl && provider.modelsUrl.trim() !== ""
       ? provider.modelsUrl.trim().replace(/\/+$/, "")
-      : (provider.baseUrl ?? "").replace(/\/+$/, "") + (officialOpenRouter && gateway ? "/models/user" : "/models");
+      : (provider.baseUrl ?? "").replace(/\/+$/, "") + (officialOpenRouter && gateway && !anonymous ? "/models/user" : "/models");
     try {
       validateSourceUrl(endpoint);
     } catch (error) {
       throw new Error("The " + provider.id + " model catalogue is unavailable.", { cause: error });
     }
     const target = new URL(endpoint);
-    const authenticated = officialOpenRouter && target.origin === "https://openrouter.ai" &&
+    const authenticated = !anonymous && officialOpenRouter && target.origin === "https://openrouter.ai" &&
       target.pathname.replace(/\/+$/, "") === "/api/v1/models/user";
     if (authenticated && (!gateway || !provider.gatewaySlug)) {
       throw new Error("The " + provider.id + " model catalogue requires a connected Gateway for authenticated discovery.");
@@ -334,8 +336,8 @@ export async function discoverGatewayModels(
     try {
       response = authenticated && gateway
         ? await readGatewayCatalogue(provider, target, gateway)
-        : await fetch(endpoint, { headers: { accept: "application/json" }, redirect: "manual", signal: AbortSignal.timeout(10_000) });
-      if (!authenticated && (response.status === 401 || response.status === 403) && gateway && provider.baseUrl && provider.gatewaySlug) {
+        : await fetch(endpoint, { headers: { accept: "application/json" }, ...(anonymous ? { credentials: "omit" as const } : {}), redirect: "manual", signal: AbortSignal.timeout(10_000) });
+      if (!anonymous && !authenticated && (response.status === 401 || response.status === 403) && gateway && provider.baseUrl && provider.gatewaySlug) {
         const base = new URL(provider.baseUrl);
         const prefix = base.pathname.replace(/\/+$/, "");
         if (target.origin === base.origin && target.pathname.startsWith(prefix + "/") && !target.pathname.includes("%")) {

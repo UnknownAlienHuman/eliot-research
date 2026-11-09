@@ -425,6 +425,96 @@ describe.each([
   });
 });
 
+describe("explicit anonymous SDK transport", () => {
+  const root = "https://api.example.com/provider";
+  const modelFor = (protocol?: NonNullable<ModelSpec["apiProtocol"]>): ModelSpec => ({
+    route: "gateway:fixture/opaque-priced-id", id: "opaque-priced-id", label: "Anonymous fixture", contextTokens: 64000,
+    maxOutputTokens: 8192, outputReserveTokens: 8192, enabled: true, checkedOn: "2026-11-09",
+    routing: { provider: { id: "fixture", type: "openai-compatible", baseUrl: root, gatewaySlug: null, gatewayPath: "", enabled: true, authMode: "anonymous" }, gatewayId: null },
+    ...(protocol === undefined ? {} : { apiProtocol: protocol, apiBaseUrl: root + "/v1" }),
+  });
+  it.each([undefined, "openai-chat", "openai-responses", "anthropic", "google"] as const)("serializes %s directly without AI, ambient credentials, redirects or changed output capacity", async protocol => {
+    const controller = new AbortController(), model = modelFor(protocol);
+    const network = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ error: { message: "PRIVATE" } }, { status: 401 }));
+    try {
+      const transport = await resolveModelTransport({ DB: {} as Env["DB"] }, model, "chat-fixture");
+      const options = { model: transport, prompt: "Offline", maxOutputTokens: 16, maxRetries: 0, abortSignal: controller.signal,
+        headers: { authorization: "SECRET", cookie: "SECRET", "cf-aig-authorization": "SECRET", "x-api-key": "SECRET", "x-goog-api-key": "SECRET" } };
+      if (protocol === "google") await expect(streamText(options).text).rejects.toThrow();
+      else await expect(generateText(options)).rejects.toThrow();
+      expect(network).toHaveBeenCalledTimes(1);
+      const request = network.mock.calls[0];
+      if (!request) throw new Error("Direct request missing.");
+      const url = new URL(String(request[0])), init = request[1];
+      expect(url.origin).toBe("https://api.example.com"); expect(url.pathname.startsWith("/provider/")).toBe(true);
+      expect([...url.searchParams.keys()]).toEqual(protocol === "google" ? ["alt"] : []);
+      expect(init).toMatchObject({ method: "POST", credentials: "omit", redirect: "manual", signal: controller.signal });
+      expect(init?.signal).toBe(controller.signal);
+      const headers = new Headers(init?.headers);
+      for (const name of headers.keys()) expect(["content-type", "user-agent", "x-session-affinity", "anthropic-version", "anthropic-beta"]).toContain(name);
+      expect(JSON.stringify([...headers])).not.toContain("SECRET");
+      const body = JSON.parse(String(init?.body));
+      expect(protocol === "google" ? body.generationConfig.maxOutputTokens : protocol === "openai-responses" ? body.max_output_tokens : body.max_tokens).toBe(16);
+      expect(modelFailure({ statusCode: 401, responseBody: "PRIVATE" }, model)).toContain("selected provider and its status");
+      expect(modelFailure({ statusCode: 401, responseBody: "PRIVATE" }, model)).not.toContain("PRIVATE");
+    } finally { network.mockRestore(); }
+  });
+
+  it.each([undefined, "1"])("rejects streamed wire overflow before SDK parsing with content-length=%s", async length => {
+    const cancel = vi.fn(), controller = new AbortController();
+    const network = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(new ReadableStream<Uint8Array>({
+      pull(c) { c.enqueue(new Uint8Array(16 * 1024 * 1024 + 1)); }, cancel,
+    }), { headers: length === undefined ? {} : { "content-length": length } }));
+    const onResponseBytes = vi.fn();
+    try {
+      const transport = await resolveModelTransport({ DB: {} as Env["DB"] }, modelFor(), "chat-fixture", { onResponseBytes });
+      await expect(generateText({ model: transport, prompt: "Offline", maxOutputTokens: 16, maxRetries: 0, abortSignal: controller.signal })).rejects.toThrow();
+      expect(network).toHaveBeenCalledTimes(1); expect(cancel).toHaveBeenCalledTimes(1);
+      expect(onResponseBytes).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); }
+  });
+
+  it("cancels an outstanding raw response on the owned signal and rejects redirects without a second request", async () => {
+    const controller = new AbortController(), cancel = vi.fn();
+    const network = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(new ReadableStream({ pull() { controller.abort(); }, cancel })));
+    try {
+      let transport = await resolveModelTransport({ DB: {} as Env["DB"] }, modelFor(), "chat-fixture");
+      await expect(generateText({ model: transport, prompt: "Offline", maxRetries: 0, abortSignal: controller.signal })).rejects.toThrow();
+      expect(cancel).toHaveBeenCalled(); expect(network).toHaveBeenCalledTimes(1);
+      network.mockClear().mockResolvedValue(new Response(null, { status: 302, headers: { location: "http://127.0.0.1/private" } }));
+      transport = await resolveModelTransport({ DB: {} as Env["DB"] }, modelFor(), "chat-fixture");
+      await expect(generateText({ model: transport, prompt: "Offline", maxRetries: 0, abortSignal: new AbortController().signal })).rejects.toThrow();
+      expect(network).toHaveBeenCalledTimes(1);
+    } finally { network.mockRestore(); }
+  });
+
+  it.each(["https://127.0.0.1/provider", "https://private.internal/provider"])("rejects private roots before HTTP even when metadata uses public URLs: %s", async baseUrl => {
+    const model = modelFor();
+    if (!model.routing) throw new Error("Routing missing."); model.routing.provider.baseUrl = baseUrl;
+    model.routing.provider.modelsUrl = "https://catalogue.example.com/models";
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No private egress"));
+    try { await expect(resolveModelTransport({ DB: {} as Env["DB"] }, model, "chat-fixture")).rejects.toThrow(); expect(network).not.toHaveBeenCalled(); }
+    finally { network.mockRestore(); }
+  });
+
+  it("requires a structured operation counter and applies its reservation before SDK response parsing", async () => {
+    const model = modelFor();
+    await expect(resolveModelTransport({ DB: {} as Env["DB"] }, model, "distill-fixture", { structuredOutput: true })).rejects.toThrow("materialization counter");
+    const counter = { used: 16 * 1024 * 1024 - 1, blocks: new Map(), rangeReads: 0 };
+    const { reserve } = await import("./context");
+    const charge = vi.fn((bytes: number) => reserve(counter, 12 * (bytes + 64)));
+    const cancel = vi.fn(), network = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(new ReadableStream<Uint8Array>({
+      start(c) { c.enqueue(new TextEncoder().encode('{"not":"a complete structured response"}')); }, cancel,
+    })));
+    try {
+      const transport = await resolveModelTransport({ DB: {} as Env["DB"] }, model, "distill-fixture", { structuredOutput: true, onResponseBytes: charge });
+      await expect(generateText({ model: transport, prompt: "Offline", maxRetries: 0, abortSignal: new AbortController().signal })).rejects.toThrow();
+      expect(charge).toHaveBeenCalledTimes(1); expect(cancel).toHaveBeenCalledTimes(1); expect(network).toHaveBeenCalledTimes(1);
+      expect(counter.used).toBe(16 * 1024 * 1024 - 1);
+    } finally { network.mockRestore(); }
+  });
+});
+
 describe("native Responses reasoning classification", () => {
   it.each([undefined, false, true])("uses the pinned SDK classification only for frozen capability=%s", async supportsReasoning => {
     const root = "https://opencode.ai/inference/go";

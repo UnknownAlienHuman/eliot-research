@@ -2377,6 +2377,50 @@ describe("DistillWorkflow admitted model snapshot", () => {
 });
 
 describe("compact K3 producer", () => {
+  it.each([false, true].flatMap(overflow => [false, true].map(structured => ({ overflow, structured }))))("uses the same operation allowance before anonymous SDK parsing; overflow=$overflow structured=$structured", async ({ overflow, structured }) => {
+    const model: ModelSpec = { ...snapshot, route: "gateway:fixture/opaque", id: "opaque", maxOutputTokens: 8192,
+      responseFormat: structured, structuredOutputs: structured,
+      routing: { provider: { id: "fixture", type: "openai-compatible", baseUrl: "https://api.example.com/v1", gatewaySlug: null,
+        gatewayPath: "", enabled: true, authMode: "anonymous" }, gatewayId: null } };
+    const f = fixture(model.route);
+    f.db.prepare("UPDATE source_revision SET distill_request_json=? WHERE id=?").run(JSON.stringify({ sourceId, revisionId, model: model.route, producerFormat: "compact-k3-v1" }), revisionId);
+    const sdk = await vi.importActual<typeof AISDK>("ai"), transport = await vi.importActual<typeof ModelTransport>("../model-transport");
+    vi.mocked(generateText).mockImplementation(sdk.generateText);
+    const context = await import("../context");
+    const reservations = vi.spyOn(context, "reserve");
+    let operation: { used: number } | undefined, beforeSchema = 0;
+    vi.mocked(resolveModelTransport).mockImplementation(async (...args) => {
+      operation = reservations.mock.calls.at(-1)?.[0]; beforeSchema = operation?.used ?? 0;
+      return transport.resolveModelTransport(...args);
+    });
+    vi.mocked(Output.object).mockReset().mockImplementation(options => sdk.Output.object(options));
+    let ordinal = 0;
+    const network = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      expect(init?.signal).toBeDefined(); expect(init?.credentials).toBe("omit");
+      if (structured) {
+        const schema = JSON.parse(String(init?.body)).response_format.json_schema.schema;
+        expect((operation?.used ?? 0) - beforeSchema).toBeGreaterThanOrEqual(2 * JSON.stringify(schema).length);
+      }
+      const output = overflow ? { candidates: [], metadata: "x".repeat(2 * 1024 * 1024) }
+        : ++ordinal === 1 ? { candidates: [{ quoteBlock: "[S1:1]", kind: "method", statement: "The method uses normalization." }] }
+          : { selected: [{ candidateId: "C0", reason: "Its own quote states this." }], rejected: [], guide: ["C0"] };
+      return Response.json({ id: "offline", object: "chat.completion", created: 0, model: model.id,
+        choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(output) }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } });
+    });
+    try {
+      await run(f, false, model, "compact-k3-v1");
+      const report = JSON.parse(f.bodies.get(prefix + "distill.json") ?? "null");
+      expect(report).toMatchObject({ state: overflow ? "failed" : "done", kept: overflow ? 0 : 1, usage: { calls: overflow ? 1 : 2 } });
+      if (overflow) {
+        expect(report.error).toBe("Local response materialization budget exceeded. No retry was started.");
+        expect(JSON.parse(f.bodies.get(prefix + "distill-call1.json") ?? "null").output).toBeNull();
+        expect(f.bodies.has(prefix + "distill-call2.json")).toBe(false);
+      } else expect(report.usage).toMatchObject({ inputTokens: 20, outputTokens: 10 });
+      expect(network).toHaveBeenCalledTimes(overflow ? 1 : 2); expect(experimental_streamTextLowMemory).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); reservations.mockRestore(); vi.mocked(Output.object).mockReset(); f.db.close(); }
+  });
+
   it.each(["invalid-value", "unknown-key", "array-bound", "length", "deadline", "json-parse"] as const)(
     "persists external typed schema diagnostics before Workflow serialization without retaining output: %s", async mode => {
       const model = Object.freeze({ ...snapshot, route: "gateway:openrouter/fixture/diagnostic", id: "fixture/diagnostic",

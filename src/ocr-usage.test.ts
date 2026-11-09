@@ -86,6 +86,36 @@ function fixture({ pageCount = 2, state = "failed", calls = 1, completedPages = 
 }
 beforeEach(() => { vi.mocked(generateText).mockReset().mockRejectedValue(new Error("Unexpected model generation")); });
 
+it.each([false, true])("bounds anonymous OCR HTTP without AI while preserving page/token/preview ownership; overflow=%s", async overflow => {
+  const f = fixture({ pageCount: 1, state: "running", calls: 0, completedPages: 0, error: null });
+  const model = { route: "gateway:fixture/vision", id: "vision", label: "Anonymous OCR", contextTokens: 4096, maxOutputTokens: 4096,
+    outputReserveTokens: 4096, supportsImages: true, enabled: true, checkedOn: "2026-11-09", routing: { provider: {
+      id: "fixture", type: "openai-compatible", baseUrl: "https://api.example.com/v1", gatewaySlug: null, gatewayPath: "", enabled: true, authMode: "anonymous",
+    }, gatewayId: null } };
+  const image = f.save("page-1.png", "fixture image");
+  f.db.prepare("UPDATE source_ocr_job SET pages_json=?,model_route=?,model_snapshot=?,token_limit=8192,input_tokens=0,cached_tokens=0,output_tokens=0,deadline_at=? WHERE id='job'")
+    .run(JSON.stringify({ 1: { sha256: image.customMetadata.sha256, bytes: image.bytes.length, width: 1, height: 1 } }), model.route, JSON.stringify(model), Date.now() + 240_000);
+  const sdk = await vi.importActual<typeof AISDK>("ai"), transport = await vi.importActual<typeof ModelTransport>("./model-transport");
+  vi.mocked(generateText).mockImplementation(sdk.generateText); vi.mocked(resolveModelTransport).mockImplementation(transport.resolveModelTransport);
+  const cancel = vi.fn(), network = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    expect(init?.signal).toBeDefined(); expect(init?.credentials).toBe("omit");
+    expect(JSON.parse(String(init?.body)).max_tokens).toBe(4096);
+    return overflow ? new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array(16 * 1024 * 1024 + 1)); }, cancel }))
+      : Response.json({ id: "offline", object: "chat.completion", created: 0, model: "vision",
+        choices: [{ index: 0, message: { role: "assistant", content: "Transcription fixture." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } });
+  });
+  try {
+    await new OcrWorkflow({} as never, f.env).run({ payload: { jobId: "job" } } as WorkflowEvent<{ jobId: string }>,
+      { do: async (name: string, _options: unknown, callback: () => Promise<unknown>) => name === "begin OCR" ? 1 : callback() } as unknown as WorkflowStep);
+    expect(f.progress()).toMatchObject({ state: overflow ? "failed" : "ready", calls: 1, completed_pages: overflow ? 0 : 1 });
+    if (overflow) { expect(f.objects.has(prefix + "page-1.md")).toBe(false); expect(cancel).toHaveBeenCalledTimes(1); }
+    else expect(f.report()).toMatchObject({ inputTokens: 10, outputTokens: 5 });
+    await getOcrJob(f.env, { type: "owner" } as Actor, { projectId: "project", sourceId: "source", jobId: "job" });
+    expect(network).toHaveBeenCalledTimes(1);
+  } finally { network.mockRestore(); f.db.close(); }
+});
+
 it.each(["owned deadline", "HTTP 401", "HTTP 429"] as const)("persists %s through the real SDK before Workflow serialization without continuing", async mode => {
   const f = fixture({ pageCount: 3, state: "running", calls: 1, completedPages: 1, error: null });
   const model = { route: "gateway:openrouter/fixture/vision", id: "fixture/vision", label: "Fixture OCR", contextTokens: 4096,

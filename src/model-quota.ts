@@ -202,7 +202,7 @@ export async function readProviderQuotas(
 ): Promise<ProviderQuota[]> {
   const out: ProviderQuota[] = [];
   for (const p of providers) {
-    if (p === null || p === undefined || isOpenRouterRoute(p) === false) {
+    if (p === null || p === undefined || p.authMode === "anonymous" || isOpenRouterRoute(p) === false) {
       const id = p !== null && p !== undefined ? p.id : "unknown";
       out.push({ providerId: id, ...UNKNOWN });
       continue;

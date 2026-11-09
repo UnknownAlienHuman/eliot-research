@@ -690,6 +690,10 @@ conservative input estimate includes framing overhead; it is not provider tokeni
 and combined windows remain unknown. Each new raw artifact and final report records the requested and applied call
 budgets separately from declared capacity and reported usage. Missing historical budget fields remain unknown.
 Already admitted or in-flight legacy attempts retain their frozen cap policy.
+Anonymous HTTP also charges each incoming raw chunk to this same operation's remaining materialization allowance
+before SDK parsing, using the existing conservative 12× allocation charge plus chunk overhead. Prompt/schema charges
+remain; structured request schemas are charged even when carried only by `response_format`. Later stored JSON reads
+charge their distinct verification/synthesis allocations as before. Native and Gateway charging paths are unchanged.
 Retained High control `62ed…` produced 30 complete first-call candidates, then a second-call `length` failure with
 null output at requested/applied 4,096. Reported completion 0 and reasoning 134 contradict each other; this does not
 establish 4,096 tokens consumed or an upstream cause. The experimental budget is not a guaranteed fix; K2/K3 gates
@@ -994,6 +998,9 @@ unmarked stability/divergence explanations as caveats; semantic gates stay OPEN.
 Fresh chat requests an experimental job budget of 8,192 output tokens. After estimating the actual instructions
 and messages, `requestedOutputLimit(model, inputEstimate, requestedTokens)` validates the positive finite budget
 and clips it to a known provider maximum and the estimated remainder of a known combined window.
+Anonymous Chat responses have a separate 16 MiB streamed HTTP wire-envelope bound before SDK parsing. This new
+product safety bound is not §8's context-assembly allowance, provider capacity, token budget or measured heap usage.
+Anonymous OCR uses the same wire bound per page, retaining its existing page, job and 25 MiB preview bounds.
 The existing input estimate includes conservative framing overhead. An input-only ceiling does not establish
 a combined window, and unknown window metadata supplies no inferred output limit.
 Every fresh chat dispatch passes the applied value as the SDK `maxOutputTokens`, including when the provider's
@@ -1450,6 +1457,24 @@ the Cloudflare slug/path supplies routing, including the required `custom-` pref
 contain no credentials. Owner-only PUT `/api/models/providers` saves configuration; GET reads it. Neither discovers
 models or starts inference. The seeded providers preserve the existing Workers AI, OpenRouter and Command Code routes.
 
+Optional provider `authMode: "gateway" | "anonymous"` selects the transport explicitly; absence retains Gateway
+behavior without read-time enrichment. Workers AI rejects this field, and anonymous mode rejects `keyAlias`.
+Owner Save uses the same provider JSON; an effective mode change invalidates that provider's stored metadata/quota
+until explicit Refresh. Anonymous metadata never retries with Gateway credentials and skips authenticated quota;
+unknown quota stays unknown. Admission freezes the provider mode with `routing.gatewayId:null` for anonymous access,
+which requires neither an AI binding nor Gateway connection. The logical external route remains `gateway:<id>/<model>`.
+All three callers retain their ordinary admission, scope, call/token/time limits, usage and stored readers.
+The existing SDK fetch boundary selects a direct HTTPS URL only in anonymous mode, validating both the configured
+root and actual URL with the existing public URL guard and origin/path containment. It uses fresh protocol headers,
+`credentials:omit`, manual redirects, no provider/Cookie/CF credentials or credential queries, and explicit empty SDK
+API keys to prevent ambient-key loading. Only Google's `alt=sse` query survives this direct boundary. It never switches
+modes after an error. The 16 MiB raw response counter cancels on overflow/owned-signal abort before SDK JSON/SSE parsing;
+K3 additionally charges its existing operation counter. No full-body collector or alternate backend is introduced.
+Provider availability and anonymous limits remain upstream; Eliot adds no free-model allowlist, price veto or account
+billing path. Kilo's [authentication contract](https://kilo.ai/docs/gateway/authentication), retrieved 2026-11-09
+(no publication date exposed), documents anonymous access without Authorization or an extra token at 200 requests/hour/IP.
+This does not establish current entitlement or availability for a particular request.
+
 Optional nonsecret `keyAlias` selects an existing Gateway BYOK key. The advanced provider connection dialog and
 owner PUT roundtrip it in the existing D1 JSON. Empty, control-containing and header-unsafe aliases are rejected;
 Workers AI rejects the field. Cloudflare publishes a string without a maximum length or alias-pattern constraint.
@@ -1497,7 +1522,7 @@ limits or API metadata never authorize a call.
 Per-model `apiProtocol` and `apiBaseUrl` freeze the published API choice alongside normal routing metadata. Package
 metadata selects the maintained Chat Completions, Responses, Anthropic or Google SDK; absent metadata remains unknown.
 The endpoint must be HTTPS beneath the owner-approved provider API root, and is checked again before transport.
-The selected native SDK loads lazily and builds the request; receiver-bound `AI.fetch` forwards it through the configured custom Gateway route,
+The selected native SDK loads lazily and builds the request; Gateway mode uses receiver-bound `AI.fetch` through the configured custom route,
 stripping vendor credentials while keeping required protocol headers and streaming query parameters. Responses uses
 `store:false` without previous-response or conversation state. Calls retain their existing token, time, attempt and
 usage bounds. Editing either discovery URL invalidates old routing metadata until explicit Refresh succeeds.
@@ -1572,10 +1597,10 @@ Neither API nor HTML prices are required or parsed for new model selection/admis
 or assembly headroom blocks dispatch; a provider output maximum may remain unknown. UI filters perform no discovery
 and do not change selection.
 Catalogue and metadata URLs pass the existing public-URL guard, and redirects are rejected. If a public catalogue
-denies access with 401/403, an explicitly configured Gateway can read that same provider path using stored BYOK;
+denies access with 401/403, Gateway mode can read that same provider path using its explicitly configured BYOK;
 credentials are never sent by the app or forwarded to a different origin. A refused authenticated read remains a
 provider failure and preserves its prior catalogue slice.
-For the official OpenRouter API root, explicit Refresh with Gateway access and no `modelsUrl` reads
+For the official OpenRouter API root in Gateway mode, explicit Refresh with Gateway access and no `modelsUrl` reads
 `GET /api/v1/models/user` through receiver-bound Gateway BYOK first; an explicit official user-catalogue URL takes
 the same authenticated path and requires Gateway access, while an explicit owner public URL stays public.
 This metadata GET has one attempt, a 15-second deadline, the existing 4 MiB/2,000-row bounds and no-log/no-wholesale
@@ -1584,7 +1609,7 @@ with a fixed warning, and the disconnected omitted default still reads public `/
 The [user catalogue](https://openrouter.ai/docs/api/api-reference/models/list-models-filtered-by-user-provider-preferences-privacy-settings-and-guardrails)
 filters account preferences/privacy/guardrails, not request-level `data_collection: "deny"` eligibility; this
 does not change the app's Deny policy or prove inference access (official contract checked 2026-11-08).
-The admitted external `ModelSpec` carries the provider configuration and Gateway ID from that same catalogue read;
+The admitted external `ModelSpec` carries the provider configuration and nullable Gateway ID from that same catalogue read;
 transport uses this frozen routing instead of reading changed settings after admission.
 Published `supported_parameters` may advertise temperature support; those requests use temperature 0 for source-faithful
 generation, while missing metadata leaves the parameter unset. OpenRouter structured jobs disable reasoning only when
@@ -1650,14 +1675,14 @@ updates only changed values, leaving an untouched missing/disabled saved route i
 storage-only no-op. Empty/unknown payloads remain invalid, and the retired `nativeUsageMode` field is rejected before
 catalogue lookup or writes. Existing owner/Origin and Gateway credential-consent guards remain unchanged.
 
-Migration `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; null disables external routes. Owner-only
+Migration `0005_model_gateway.sql` adds nullable `settings.model_gateway_id`; null disables Gateway routes. Owner-only
 GET `/api/models/connection` and PUT read/save the exact existing named Gateway ID. Enabling requires
 `confirmCredentialAccess: true`; default is rejected because it may create a Gateway implicitly. Saving records owner
 consent/configuration only and does not prove Gateway or provider usability. No credential input, secret, direct
 provider Authorization header or dummy key is stored in Eliot; credentials remain in Cloudflare BYOK, using the
 default alias unless the provider explicitly selects `keyAlias`.
 
-Compatible providers use the installed `@ai-sdk/openai-compatible` provider through the pinned Agents provider-native
+Gateway-mode compatible providers use the installed `@ai-sdk/openai-compatible` provider through the pinned Agents provider-native
 `AI.fetch` adapter, with one attempt, no-wholesale, skip-cache and no-log controls. Source forwarding of those controls
 does not prove live Gateway enforcement. Command Code receives the current question and frozen source context without
 history, avoiding a private multi-turn protocol dependency. It uses no fabricated reasoning marker, private capture,
@@ -1683,7 +1708,7 @@ selection, policy or retry changes occur.
 The reported parameter or code establishes neither origin, credential/subscription validity nor a root cause. Historical Crouton
 control `3081b9fc…` retains an UNKNOWN HTTP 400 cause because its body was not retained.
 
-OpenRouter uses the installed Agents AI Gateway adapter and `@ai-sdk/openai-compatible`, with provider fallbacks
+Gateway-mode OpenRouter uses the installed Agents AI Gateway adapter and `@ai-sdk/openai-compatible`, with provider fallbacks
 disabled and the same one-attempt/no-wholesale/skip-cache/no-log intent. The gateway route contains the native model
 ID; no direct provider key or alternate route is used. Cloudflare Gateway BYOK describes Eliot's OpenRouter API
 credential; OpenRouter `usage.is_byok` describes an upstream provider key and does not prove Cloudflare wholesale or

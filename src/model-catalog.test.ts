@@ -1322,6 +1322,54 @@ describe("stored catalogue with provider snapshot", () => {
   });
 });
 
+describe("explicit anonymous providers", () => {
+  const provider: ModelProvider = { id: "fixture", type: "openai-compatible", baseUrl: "https://api.example.com/v1",
+    gatewaySlug: "custom-fixture", gatewayPath: "", enabled: true };
+  it("keeps absent mode Gateway, compares effective mode, and freezes anonymous admission with a null Gateway ID and no AI", async () => {
+    const route = "gateway:fixture/opaque";
+    const bucket = fakeBucket({ updatedAt: "2026-11-09T00:00:00Z", warnings: [], providers: [provider], models: [
+      { route, id: "opaque", label: "Opaque", contextTokens: 64000, maxOutputTokens: 8192, outputReserveTokens: 8192, checkedOn: "2026-11-09", enabled: true },
+    ] });
+    const env = fixtureEnv(bucket.binding, { providers: [provider] });
+    const network = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.credentials).toBe("omit");
+      return Response.json({ data: [{ id: "opaque", context_length: 64000, max_output_tokens: 8192, pricing: { prompt: "9" } }] });
+    });
+    vi.stubGlobal("fetch", network);
+    const old = await requireAvailableModel(env, route);
+    expect(old.routing?.provider).not.toHaveProperty("authMode");
+    await saveModelProviders(env, [{ ...provider, authMode: "gateway" }]);
+    expect((await requireAvailableModel(env, route)).route).toBe(route);
+    expect(network).not.toHaveBeenCalled();
+    await saveModelProviders(env, [{ ...provider, authMode: "anonymous", gatewaySlug: null }]);
+    await expect(requireAvailableModel(env, route)).rejects.toMatchObject({ status: 503 });
+    Reflect.deleteProperty(env, "AI");
+    await refreshModelCatalog(env);
+    const admitted = await requireAvailableModel(env, route);
+    expect(admitted.routing).toMatchObject({ gatewayId: null, provider: { authMode: "anonymous", gatewaySlug: null } });
+    expect(old.routing?.gatewayId).toBe("fixture-gateway"); expect(old.routing?.provider).not.toHaveProperty("authMode");
+    await expect(resolveModelTransport({ DB: env.DB }, old, "frozen-gateway")).rejects.toMatchObject({ status: 503 });
+    expect(network).toHaveBeenCalledTimes(1);
+    expect((await readModelCatalog(env)).quotas).toEqual([{ providerId: "fixture", usage: null, limit: null, error: "quota-unknown" }]);
+    expect(modelProviderSchema.safeParse({ ...provider, authMode: "anonymous", keyAlias: "named" }).success).toBe(false);
+    expect(modelProviderSchema.safeParse({ ...defaultProviders()[0], authMode: "gateway" }).success).toBe(false);
+  });
+  it.each([401, 403])("does not use Gateway credentials after anonymous metadata HTTP %s", async status => {
+    const network = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status })); vi.stubGlobal("fetch", network);
+    const fetch = vi.fn().mockRejectedValue(new Error("No anonymous credential fallback"));
+    const selected: ModelProvider = { ...provider, baseUrl: "https://openrouter.ai/api/v1", gatewaySlug: "openrouter", gatewayPath: "v1", authMode: "anonymous" };
+    expect(await discoverGatewayModels([selected], undefined, { id: "fixture", ai: { fetch } })).toEqual([]);
+    expect(network).toHaveBeenCalledTimes(1); expect(network.mock.calls[0]?.[0]).toBe("https://openrouter.ai/api/v1/models");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["https://127.0.0.1/v1", "https://localhost/v1", "https://api.internal/v1"])("rejects private anonymous roots despite a public catalogue: %s", async baseUrl => {
+    const selected: ModelProvider = { ...provider, baseUrl, modelsUrl: "https://catalogue.example.com/models", authMode: "anonymous" };
+    expect(modelProviderSchema.safeParse(selected).success).toBe(false);
+    const network = vi.fn().mockRejectedValue(new Error("No private egress")); vi.stubGlobal("fetch", network);
+    expect(await discoverGatewayModels([selected])).toEqual([]); expect(network).not.toHaveBeenCalled();
+  });
+});
+
 describe("Gateway BYOK alias configuration", () => {
   it("roundtrips nonsecret aliases and rejects unusable headers and native aliases", async () => {
     const providers = defaultProviders(), env = fixtureEnv(fakeBucket().binding);

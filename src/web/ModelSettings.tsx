@@ -250,9 +250,9 @@ export function ModelSettings({ projectId, onSaved }: { readonly projectId?: str
           loading={modelsLoading || savingAll} error={modelsError} warnings={modelWarnings} />
         <div className='er-models__actions'>
           <p className='er-status' role='status'><span>{!connectionLoaded
-            ? gatewayNote === '' ? 'Loading external connection…' : 'External connection status is unavailable.'
-            : initialGatewayId === '' ? 'External requests are not connected. You can choose and save models; running them requires an authorized Gateway connection.'
-            : 'External requests use the saved Gateway connection. Provider usability is not verified.'}</span></p>
+            ? gatewayNote === '' ? 'Loading Gateway connection…' : 'Gateway connection status is unavailable.'
+            : initialGatewayId === '' ? 'No Gateway connection is saved. Gateway-authenticated providers require an authorized connection.'
+            : 'Gateway-authenticated providers use the saved Gateway connection. Provider usability is not verified.'}</span></p>
           <button className='er-button er-button--text' type='button' disabled={savingAll} onClick={openGatewayDialog}>AI Gateway connection</button>
         </div>
         <p className='er-status'><span>Workers AI uses your existing Cloudflare plan. Free stops at the daily allowance; Paid overage may apply. Eliot does not change your subscription or enforce a separate free cap.</span></p>

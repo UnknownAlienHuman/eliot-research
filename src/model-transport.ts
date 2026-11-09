@@ -5,6 +5,7 @@ import { createOpenAICompatible, type OpenAICompatibleProviderSettings } from "@
 import { LibraryError } from "./library";
 import { isProviderApiBase, type ModelProvider, type ModelSpec } from "./models";
 import { isOpenRouterApiBase, type DataCollectionPolicy, type ProviderUsage } from "./shared/api";
+import { validateSourceUrl } from "./url-guard";
 
 const EXTERNAL_FAILURE =
   "External model request failed. Check the Gateway connection and provider status; no retry was started.";
@@ -117,13 +118,17 @@ function openRouterBody(responseFormatAllowed: boolean, options: { supportsTempe
 type GatewayProtocolFetchOptions = {
   rootBase: string;
   ownerBase: string;
-  gatewayBase: string;
+  gatewayBase?: string | undefined;
+  anonymous?: boolean;
+  onResponseBytes?: ((bytes: number) => void) | undefined;
   sessionAffinity: string;
   keyAlias?: string | undefined;
   preserveAnthropicHeaders: boolean;
 };
 
 const STRIPPED_QUERY_NAMES = new Set(["key", "apikey", "api_key", "x-goog-api-key", "x-goog-api_key"]);
+const ANONYMOUS_RESPONSE_BYTES = 16 * 1024 * 1024; // Product wire-envelope bound, separate from model/token capacity.
+const ANONYMOUS_RESPONSE_LIMIT_REASON = "Anonymous response exceeded the 16 MiB wire-envelope bound. No retry was started.";
 
 function normalizedBase(value: string): string {
   return value.replace(/\/+$/, "");
@@ -147,12 +152,13 @@ function gatewayBaseFor(provider: Pick<ModelProvider, "gatewaySlug" | "gatewayPa
 // protocol-safe headers (Anthropic version/beta, Google alt=sse query) and
 // drops vendor credentials before the Gateway. Gateway-selected BYOK supplies
 // credentials; the wrapper starts no retry and keeps raw native IDs untouched.
-function createProtocolFetch(env: Pick<Env, "AI">, opts: GatewayProtocolFetchOptions) {
+function createProtocolFetch(env: Partial<Pick<Env, "AI">>, opts: GatewayProtocolFetchOptions) {
   const root = new URL(normalizedBase(opts.rootBase));
   const rootPath = root.pathname.replace(/\/+$/, "") || "/";
   const owner = new URL(normalizedBase(opts.ownerBase));
   const ownerPath = owner.pathname.replace(/\/+$/, "") || "/";
-  const gatewayBase = normalizedBase(opts.gatewayBase);
+  const gatewayBase = normalizedBase(opts.gatewayBase ?? "");
+  if (opts.anonymous) { validateSourceUrl(root.href); validateSourceUrl(owner.href); }
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const vendorRaw = input instanceof Request ? input.url : String(input);
     let vendor: URL;
@@ -172,6 +178,7 @@ function createProtocolFetch(env: Pick<Env, "AI">, opts: GatewayProtocolFetchOpt
       throw new LibraryError("unavailable", "This provider endpoint is not supported.", 503);
     }
     init.signal?.throwIfAborted();
+    if (opts.anonymous) validateSourceUrl(vendor.href);
     // Gateway custom routes mirror the vendor path beneath the approved provider
     // root (legacy Command Code precedent: root /provider/v1 plus gatewayPath
     // v1 yields slug/v1/chat/completions). The owner protocol base only bounds
@@ -183,7 +190,7 @@ function createProtocolFetch(env: Pick<Env, "AI">, opts: GatewayProtocolFetchOpt
     const relative = rootPath === "/" ? vendor.pathname : vendor.pathname.slice(rootPath.length) || "/";
     const params = new URLSearchParams(vendor.search);
     for (const name of [...params.keys()]) {
-      if (STRIPPED_QUERY_NAMES.has(name.toLowerCase())) params.delete(name);
+      if (opts.anonymous ? name !== "alt" || params.get(name) !== "sse" : STRIPPED_QUERY_NAMES.has(name.toLowerCase())) params.delete(name);
     }
     const query = params.toString();
     const gatewayUrl = gatewayBase + relative + (query ? `?${query}` : "");
@@ -193,17 +200,54 @@ function createProtocolFetch(env: Pick<Env, "AI">, opts: GatewayProtocolFetchOpt
       "x-session-affinity": opts.sessionAffinity,
       "user-agent": "EliotResearch/0.1.0",
       ...(isOpenCodeGoRoot(root) ? { "x-opencode-session": opts.sessionAffinity } : {}),
-      ...(opts.keyAlias === undefined ? {} : { "cf-aig-byok-alias": opts.keyAlias }),
-      "cf-aig-no-wholesale": "true",
-      "cf-aig-max-attempts": "1",
-      "cf-aig-skip-cache": "true",
-      "cf-aig-collect-log": "false",
+      ...(opts.anonymous ? {} : {
+        ...(opts.keyAlias === undefined ? {} : { "cf-aig-byok-alias": opts.keyAlias }),
+        "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false",
+      }),
     };
     if (opts.preserveAnthropicHeaders) {
       for (const name of ["anthropic-version", "anthropic-beta"] as const) {
         const value = incoming.get(name);
         if (value !== null) headers[name] = value;
       }
+    }
+    if (opts.anonymous) {
+      const signal = init.signal;
+      if (!signal) throw new LibraryError("invalid", "Anonymous requests require the caller's abort signal.", 400);
+      const target = vendor.origin + vendor.pathname + (query ? `?${query}` : "");
+      const response = await fetch(target, { method: "POST", body: init.body, headers, credentials: "omit", redirect: "manual", signal });
+      const fail = () => new LibraryError("invalid", ANONYMOUS_RESPONSE_LIMIT_REASON, 400);
+      if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+        void response.body?.cancel().catch(() => undefined);
+        throw new LibraryError("unavailable", "Anonymous provider redirect was rejected. No retry was started.", 503);
+      }
+      const length = Number(response.headers.get("content-length"));
+      if (Number.isSafeInteger(length) && length > ANONYMOUS_RESPONSE_BYTES) { void response.body?.cancel().catch(() => undefined); throw fail(); }
+      if (!response.body) return response;
+      const reader = response.body.getReader();
+      let used = 0;
+      const abort = () => { void reader.cancel(signal.reason).catch(() => undefined); };
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      return new Response(new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            signal.throwIfAborted();
+            const part = await reader.read();
+            signal.throwIfAborted();
+            if (part.done) { signal.removeEventListener("abort", abort); controller.close(); return; }
+            if (part.value.byteLength > ANONYMOUS_RESPONSE_BYTES - used) throw fail();
+            opts.onResponseBytes?.(part.value.byteLength);
+            used += part.value.byteLength;
+            controller.enqueue(part.value);
+          } catch (error) {
+            signal.removeEventListener("abort", abort);
+            void reader.cancel(error).catch(() => undefined);
+            controller.error(error);
+          }
+        },
+        cancel(reason) { signal.removeEventListener("abort", abort); return reader.cancel(reason); },
+      }), { status: response.status, statusText: response.statusText, headers: response.headers });
     }
     // Native binding mechanism: Agents 0.30.1, packages/agents/src/models/core/transport.ts.
     // Ai.fetch is not declared in the pinned types; preserve its receiver with this narrow cast.
@@ -236,13 +280,14 @@ const responsesStatelessMiddleware = (supportsReasoning: boolean | undefined): L
 });
 
 export async function resolveModelTransport(
-  env: Pick<Env, "AI" | "DB">,
+  env: Pick<Env, "DB"> & Partial<Pick<Env, "AI">>,
   model: ModelSpec,
   sessionAffinity: string,
-  options: { structuredOutput?: boolean; freshChat?: boolean } = {},
+  options: { structuredOutput?: boolean; freshChat?: boolean; onResponseBytes?: (bytes: number) => void } = {},
 ): Promise<LanguageModel> {
   if (model.route.startsWith("workers-ai:")) {
-    if (model.routing?.provider.keyAlias !== undefined) throw new LibraryError("invalid", "Workers AI does not use a BYOK alias.", 400);
+    if (model.routing?.provider.keyAlias !== undefined || model.routing?.provider.authMode !== undefined) throw new LibraryError("invalid", "Workers AI does not use external authentication settings.", 400);
+    if (!env.AI) throw new LibraryError("unavailable", "Workers AI binding is unavailable.", 503);
     const native = createAI({ binding: env.AI }).languageModel(model.id, { ...(model.nativeReasoningEffort ? { reasoningEffort: model.nativeReasoningEffort } : {}), sessionAffinity });
     return options.structuredOutput === true ? wrapLanguageModel({ model: native, middleware: {
       transformParams: async ({ params, type }) => type === "stream" ? { ...params, responseFormat: { type: "text" } } : params,
@@ -252,12 +297,19 @@ export async function resolveModelTransport(
     throw new LibraryError("unavailable", "This model route is not supported.", 503);
   }
   const routing = model.routing;
-  if (!routing || !routing.provider || typeof routing.gatewayId !== "string" || !routing.gatewayId
-    || routing.gatewayId === "default" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(routing.gatewayId)) {
+  if (!routing || !routing.provider) {
     throw new LibraryError("unavailable", "This model route is not supported.", 503);
   }
   const provider = routing.provider;
-  const gatewayId = routing.gatewayId;
+  const anonymous = provider.authMode === "anonymous";
+  if (anonymous && options.structuredOutput && !options.onResponseBytes)
+    throw new LibraryError("invalid", "Anonymous structured calls require the operation materialization counter.", 400);
+  const gatewayId = routing.gatewayId ?? ""; // Unused for anonymous; the frozen field remains null.
+  if (provider.authMode !== undefined && provider.authMode !== "gateway" && !anonymous)
+    throw new LibraryError("unavailable", "The authentication mode is unsupported.", 503);
+  if (anonymous ? routing.gatewayId !== null || provider.keyAlias !== undefined
+    : !env.AI || !gatewayId || gatewayId === "default" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(gatewayId))
+    throw new LibraryError("unavailable", "The provider connection is unavailable.", 503);
   if (provider.type !== "openai-compatible" || !provider.enabled) {
     throw new LibraryError("unavailable", "This model route is not supported.", 503);
   }
@@ -265,14 +317,15 @@ export async function resolveModelTransport(
   if (!model.id.trim() || model.route !== `gateway:${provider.id}/${model.id}`) {
     throw new LibraryError("unavailable", "This model route is not supported.", 503);
   }
-  if (!provider.baseUrl || !provider.gatewaySlug) {
+  if (!provider.baseUrl || (!anonymous && !provider.gatewaySlug)) {
     throw new LibraryError("unavailable", "This model route is not supported.", 503);
   }
   // The marker carries explicit mandatory discovery evidence; absence of optional reasoning alone is insufficient.
   const freshChatMinimal = options.freshChat === true && isOpenRouterApiBase(provider.baseUrl) &&
     model.structuredReasoningEffort === "minimal" && model.optionalReasoning !== true &&
     Array.isArray(model.openRouterReasoningEfforts) && model.openRouterReasoningEfforts.includes("minimal");
-  if (isNativeOpenRouterRoute(model)) {
+  if (!anonymous && isNativeOpenRouterRoute(model)) {
+    if (!env.AI) throw new LibraryError("unavailable", "The Gateway binding is unavailable.", 503);
     const structured = model.structuredOutputs === true;
     const responseFormatAllowed = model.responseFormat === true;
     const transportOptions = {
@@ -315,12 +368,16 @@ export async function resolveModelTransport(
       throw new LibraryError("unavailable", "This model route is not supported.", 503);
     }
     const ownerBase = normalizedBase(model.apiBaseUrl);
-    const protocolGatewayBase = gatewayBaseFor(provider, gatewayId);
+    const protocolGatewayBase = anonymous ? undefined : gatewayBaseFor(provider, gatewayId);
+    const protocolFetch = createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl), ownerBase,
+      gatewayBase: protocolGatewayBase, anonymous, onResponseBytes: options.onResponseBytes, sessionAffinity,
+      keyAlias: provider.keyAlias, preserveAnthropicHeaders: apiProtocol === "anthropic" });
     if (apiProtocol === "openai-chat") {
       const responseFormatAllowed = model.responseFormat === true;
       const supportsTemperature = model.supportsTemperature === true;
       return createOpenAICompatible({
         name: provider.id,
+        apiKey: "",
         baseURL: ownerBase,
         includeUsage: true,
         supportsStructuredOutputs: model.structuredOutputs === true,
@@ -329,22 +386,24 @@ export async function resolveModelTransport(
           isOpenRouterApiBase(ownerBase)
             ? openRouterBody(responseFormatAllowed, { supportsTemperature, optionalReasoning: model.optionalReasoning === true, structuredOutput: options.structuredOutput === true, structuredReasoningEffort: model.structuredReasoningEffort, openRouterReasoningEffort: model.openRouterReasoningEffort, freshChatMinimal }, provider.dataCollection ?? "deny")
             : compatibleBody(responseFormatAllowed, supportsTemperature),
-        fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, keyAlias: provider.keyAlias, preserveAnthropicHeaders: false }),
+        fetch: protocolFetch,
       }).languageModel(model.id);
     }
     if (apiProtocol === "openai-responses") {
       const { createOpenAI } = await import("@ai-sdk/openai");
-      const inner = createOpenAI({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, keyAlias: provider.keyAlias, preserveAnthropicHeaders: false }), name: provider.id }).responses(model.id);
+      const inner = createOpenAI({ baseURL: ownerBase, apiKey: "", fetch: protocolFetch, name: provider.id }).responses(model.id);
       return wrapLanguageModel({ model: inner, middleware: responsesStatelessMiddleware(model.supportsReasoning) });
     }
     if (apiProtocol === "anthropic") {
       const { createAnthropic } = await import("@ai-sdk/anthropic");
-      return createAnthropic({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, keyAlias: provider.keyAlias, preserveAnthropicHeaders: true }), name: provider.id }).languageModel(model.id);
+      return createAnthropic({ baseURL: ownerBase, apiKey: "", fetch: protocolFetch, name: provider.id }).languageModel(model.id);
     }
     const { createGoogle } = await import("@ai-sdk/google");
-    return createGoogle({ baseURL: ownerBase, apiKey: "", fetch: createProtocolFetch(env, { rootBase: normalizedBase(provider.baseUrl ?? ""), ownerBase, gatewayBase: protocolGatewayBase, sessionAffinity, keyAlias: provider.keyAlias, preserveAnthropicHeaders: false }), name: provider.id }).languageModel(model.id);
+    return createGoogle({ baseURL: ownerBase, apiKey: "", fetch: protocolFetch, name: provider.id }).languageModel(model.id);
   }
   const baseURL = provider.baseUrl.replace(/\/+$/, "");
+  const anonymousFetch = anonymous ? createProtocolFetch(env, { rootBase: baseURL, ownerBase: baseURL, anonymous,
+    onResponseBytes: options.onResponseBytes, sessionAffinity, preserveAnthropicHeaders: false }) : undefined;
   const gatewayPath = provider.gatewayPath ? `/${provider.gatewayPath}` : "";
   const gatewayUrl =
     "https://workers-binding.ai/ai-gateway/gateways/" + encodeURIComponent(gatewayId) + `/${provider.gatewaySlug}` + gatewayPath + "/chat/completions";
@@ -360,10 +419,10 @@ export async function resolveModelTransport(
     freshChatMinimal,
   };
   return createOpenAICompatible({
-    name: provider.id, baseURL, includeUsage: true,
+    name: provider.id, baseURL, ...(anonymous ? { apiKey: "" } : {}), includeUsage: true,
     supportsStructuredOutputs: structured, convertUsage: convertCompatibleUsage,
     transformRequestBody: isOpenRouterApiBase(baseURL) ? openRouterBody(responseFormatAllowed, transportOptions, provider.dataCollection ?? "deny") : compatibleBody(responseFormatAllowed, supportsTemperature),
-    fetch: async (input, init) => {
+    fetch: anonymousFetch ?? (async (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
       if (url !== new URL(baseURL + "/chat/completions").href || init?.method !== "POST" || typeof init.body !== "string")
         throw new LibraryError("unavailable", "This provider endpoint is not supported.", 503);
@@ -378,7 +437,7 @@ export async function resolveModelTransport(
       return (env.AI as unknown as Pick<Fetcher, "fetch">).fetch(
         gatewayUrl,
         { method: "POST", redirect: "manual", body: init.body, headers, ...(init.signal ? { signal: init.signal } : {}) });
-    },
+    }),
   }).languageModel(model.id);
 }
 
@@ -515,6 +574,9 @@ function badRequestCode(error: unknown): number | undefined {
 
 export function modelFailure(error: unknown, model: ModelSpec): string {
   const status = errorStatusCode(error);
+  const anonymous = model.routing?.provider.authMode === "anonymous";
+  if (anonymous && [error, error instanceof Error ? error.cause : undefined].some(value =>
+    value instanceof LibraryError && value.message === ANONYMOUS_RESPONSE_LIMIT_REASON)) return ANONYMOUS_RESPONSE_LIMIT_REASON;
   if (model.route.startsWith("gateway:")) {
     if (status === 429) {
       const wait = gatewayRetryAfterSeconds(error);
@@ -533,9 +595,10 @@ export function modelFailure(error: unknown, model: ModelSpec): string {
       if (code !== undefined) return "External model request failed (HTTP 400). Error response reported code " + code + ". No retry was started.";
     }
     if (status !== undefined) {
-      return "External model request failed (HTTP " + status + "). Check the Gateway connection and provider status; no retry was started.";
+      return "External model request failed (HTTP " + status + "). Check the " +
+        (anonymous ? "selected provider and its status" : "Gateway connection and provider status") + "; no retry was started.";
     }
-    return EXTERNAL_FAILURE;
+    return anonymous ? "External model request failed. Check the selected provider and its status; no retry was started." : EXTERNAL_FAILURE;
   }
   if (isNativeDailyLimit(error)) {
     return "Model stream failed. Daily limit exhausted, resets at 00:00 UTC. No retry was started.";
