@@ -594,10 +594,11 @@ describe("fresh chat unsupported reasoning metadata", () => {
   });
 });
 
-describe("OpenRouter bad-request parameter diagnostics", () => {
-  const provider = { id: "openrouter", type: "openai-compatible" as const, gatewaySlug: "openrouter", gatewayPath: "v1",
-    enabled: true, baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny" as const };
-  const model: ModelSpec = { route: "gateway:openrouter/fixture", id: "fixture", label: "Offline failure fixture",
+describe.each(["openrouter", "opencode-go"])("Gateway bad-request parameter diagnostics: %s", providerId => {
+  const provider = { id: providerId, type: "openai-compatible" as const,
+    gatewaySlug: providerId === "openrouter" ? "openrouter" : "custom-opencode-go", gatewayPath: "v1",
+    enabled: true, baseUrl: providerId === "openrouter" ? "https://openrouter.ai/api/v1" : "https://opencode.ai/inference/go" };
+  const model: ModelSpec = { route: `gateway:${providerId}/fixture`, id: "fixture", label: "Offline failure fixture",
     contextTokens: 64000, maxOutputTokens: 8192, checkedOn: "2026-11-08", enabled: true,
     routing: { provider, gatewayId: "fixture" } };
   const secret = "PRIVATE_SECRET: arbitrary provider prose mentions reasoning, temperature and response_format";
@@ -610,12 +611,13 @@ describe("OpenRouter bad-request parameter diagnostics", () => {
     { param: "reasoning.effort", category: "reasoning", nested: true, cause: false },
     { param: "reasoning_effort", category: "reasoning", nested: false, cause: true },
     { param: "temperature", category: "temperature", nested: true, cause: true },
+    { param: "temperature", category: "temperature", nested: false, cause: false },
     { param: "response_format", category: "structured-output format", nested: false, cause: false },
     { param: "response_format.json_schema", category: "structured-output format", nested: true, cause: false },
   ])("projects only the fixed category for $param", ({ param, category, nested, cause }) => {
     const failure = { statusCode: 400, responseBody: nested ? wrapped(body(param)) : body(param) };
     const reason = modelFailure(cause ? new Error(secret, { cause: failure }) : { ...failure, message: secret }, model);
-    expect(reason).toBe("External model request failed (HTTP 400). Provider identified the " + category + " parameter. Check the selected model's published controls; no retry was started.");
+    expect(reason).toBe("External model request failed (HTTP 400). Error response identified the " + category + " parameter. Check the selected model's published controls; no retry was started.");
     expect(reason).not.toContain(secret);
   });
 
@@ -632,7 +634,7 @@ describe("OpenRouter bad-request parameter diagnostics", () => {
   it("requires agreement across the wrapper, direct body and immediate cause", () => {
     const direct = { statusCode: 400, responseBody: body("reasoning") };
     expect(modelFailure(Object.assign(new Error(secret, { cause: direct }), direct), model))
-      .toContain("Provider identified the reasoning parameter.");
+      .toContain("Error response identified the reasoning parameter.");
     for (const responseBody of [wrapped(body("temperature"), "reasoning"), wrapped(body("reasoning"), "unknown")]) {
       expect(modelFailure({ statusCode: 400, responseBody }, model)).toBe(generic);
     }
@@ -646,12 +648,13 @@ describe("OpenRouter bad-request parameter diagnostics", () => {
     }
   });
 
-  it("preserves generic failures without the frozen official route and for other statuses", () => {
+  it("does not require provider routing, while other statuses and native failures stay generic", () => {
     const failure = { statusCode: 400, responseBody: body("reasoning") };
     const unrouted = { ...model };
     delete unrouted.routing;
-    expect(modelFailure(failure, unrouted)).toBe(generic);
-    expect(modelFailure(failure, { ...model, routing: { provider: { ...provider, baseUrl: "https://vendor.example/api/v1" }, gatewayId: "fixture" } })).toBe(generic);
+    expect(modelFailure(failure, unrouted)).toContain("Error response identified the reasoning parameter.");
+    expect(modelFailure(failure, { ...model, routing: { provider: { ...provider, baseUrl: "https://vendor.example/api/v1" }, gatewayId: "fixture" } }))
+      .toContain("Error response identified the reasoning parameter.");
     expect(modelFailure({ ...failure, statusCode: 401 }, model)).toBe("External model request failed (HTTP 401). Check the Gateway connection and provider status; no retry was started.");
     expect(modelFailure(failure, { ...model, route: "workers-ai:fixture" })).toBe("Model stream failed (HTTP 400).");
   });

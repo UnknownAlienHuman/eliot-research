@@ -502,10 +502,10 @@ export function modelFailure(error: unknown, model: ModelSpec): string {
     if (status === 404 && isNoEndpointDataPolicy(error)) {
       return NO_ENDPOINT_DATA_POLICY_REASON;
     }
-    if (status === 400 && isNativeOpenRouterRoute(model)) {
+    if (status === 400) {
       const parameter = badRequestParameter(error);
       if (parameter !== undefined) {
-        return "External model request failed (HTTP 400). Provider identified the " + parameter + " parameter. Check the selected model's published controls; no retry was started.";
+        return "External model request failed (HTTP 400). Error response identified the " + parameter + " parameter. Check the selected model's published controls; no retry was started.";
       }
     }
     if (status !== undefined) {

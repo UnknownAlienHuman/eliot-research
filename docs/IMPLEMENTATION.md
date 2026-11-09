@@ -1665,11 +1665,11 @@ for older admitted jobs that lack it. Later settings edits apply only to new adm
 field. Account privacy settings can impose additional restrictions and are never changed by this control. This
 contract was checked against the official provider-routing documentation on 2026-10-29; no publication date was exposed.
 
-A known structured 404 data-policy rejection retains its fixed safe message, and official OpenRouter HTTP 400 errors
-expose only a fixed provider-named reasoning, temperature or structured-output format category when all available
+A known structured 404 data-policy rejection retains its fixed safe message, and Gateway HTTP 400 errors
+expose only a fixed reasoning, temperature or structured-output format category when all available
 bounded structured parameters identify the same category; other 400 bodies remain generic, no raw text or values are exposed, and no
 selection, policy or retry changes occur.
-The category records the parameter named by the provider rather than a proven root cause, and historical Crouton
+The error response identified that parameter; this establishes neither upstream origin nor a root cause. Historical Crouton
 control `3081b9fc…` retains an UNKNOWN HTTP 400 cause because its body was not retained.
 
 OpenRouter uses the installed Agents AI Gateway adapter and `@ai-sdk/openai-compatible`, with provider fallbacks
