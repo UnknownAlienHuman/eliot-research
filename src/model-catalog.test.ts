@@ -930,6 +930,95 @@ describe("provider configuration loader", () => {
   });
 });
 
+describe("authenticated OpenRouter catalogue discovery", () => {
+  const userUrl = "https://openrouter.ai/api/v1/models/user";
+  const gatewayUrl = "https://workers-binding.ai/ai-gateway/gateways/fixture-gateway/openrouter/v1/models/user";
+  const provider: ModelProvider = { id: "owner-router", type: "openai-compatible", gatewaySlug: "openrouter", gatewayPath: "v1",
+    baseUrl: "https://openrouter.ai/api/v1", dataCollection: "deny", enabled: true };
+  const row = { id: "provider/filtered", context_length: 64000, architecture: textChat };
+
+  it.each([undefined, userUrl, userUrl + "?limit=16&output_modalities=text"])("uses receiver-bound Gateway GET first for modelsUrl=%s despite public anonymous 200", async modelsUrl => {
+    const selected = { ...provider, ...(modelsUrl === undefined ? {} : { modelsUrl }) };
+    const publicFetch = vi.fn(async () => Response.json({ data: [{ ...row, id: "anonymous/unfiltered" }] }));
+    vi.stubGlobal("fetch", publicFetch);
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const gateway = { id: "fixture-gateway", ai: { fetch: vi.fn(async function (this: unknown, url: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+      expect(this).toBe(gateway.ai);
+      expect(String(url)).toBe(gatewayUrl + (modelsUrl === undefined ? "" : new URL(modelsUrl).search));
+      expect(init).toMatchObject({ method: "GET", redirect: "manual", headers: { accept: "application/json",
+        "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" } });
+      expect(new Headers(init?.headers).has("authorization")).toBe(false);
+      expect(init?.body).toBeUndefined();
+      return Response.json({ data: [row] });
+    }) } };
+    try {
+      const warnings: string[] = [];
+      const models = await discoverGatewayModels([selected], (_id, warning) => warnings.push(warning), gateway);
+      expect(models.map(model => model.route)).toEqual(["gateway:owner-router/" + row.id]);
+      expect(warnings).toEqual([]);
+      expect(gateway.ai.fetch).toHaveBeenCalledTimes(1);
+      expect(timeout).toHaveBeenCalledWith(15000);
+      expect(publicFetch).not.toHaveBeenCalled();
+    } finally { timeout.mockRestore(); }
+  });
+
+  it("keeps the disconnected default public and honors explicit owner public catalogue URLs", async () => {
+    const publicFetch = vi.fn(async (_url: RequestInfo | URL) => Response.json({ data: [row] }));
+    vi.stubGlobal("fetch", publicFetch);
+    const gateway = { id: "fixture-gateway", ai: { fetch: vi.fn(async () => { throw new Error("Public discovery must stay public."); }) } };
+    for (const modelsUrl of [undefined, OR, "https://catalogue.example.com/models"]) {
+      const selected = { ...provider, ...(modelsUrl === undefined ? {} : { modelsUrl }) };
+      const models = await discoverGatewayModels([selected], undefined, modelsUrl === undefined ? undefined : gateway);
+      expect(models.map(model => model.id)).toEqual([row.id]);
+      expect(publicFetch.mock.calls.at(-1)?.[0]).toBe(modelsUrl ?? OR);
+    }
+    expect(publicFetch).toHaveBeenCalledTimes(3);
+    expect(gateway.ai.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("preserves the previous slice with a fixed warning when authenticated discovery cannot proceed (connected=%s)", async connected => {
+    const selected = { ...provider, ...(connected ? {} : { modelsUrl: userUrl }) };
+    const old = { route: "gateway:owner-router/previous/model", id: "previous/model", label: "Previous model", contextTokens: 64000,
+      maxOutputTokens: 8192, checkedOn: "2026-11-08", enabled: true };
+    const bucket = fakeBucket({ updatedAt: "2026-11-08T00:00:00Z", warnings: [], providers: [selected], models: [old] });
+    const env = fixtureEnv(bucket.binding, { providers: [selected], gatewayId: connected ? "fixture-gateway" : null });
+    const publicFetch = vi.fn(async () => Response.json({ data: [{ ...row, id: "anonymous/unfiltered" }] }));
+    vi.stubGlobal("fetch", publicFetch);
+    const gatewayFetch = vi.fn(async (url: RequestInfo | URL) => String(url).endsWith("/key")
+      ? Response.json({ data: { usage: 0, limit: null } })
+      : new Response("PRIVATE_PROVIDER_BODY", { status: 503 }));
+    Object.assign(env.AI, { fetch: gatewayFetch });
+    const refreshed = await refreshModelCatalog(env);
+    expect(refreshed.models.map(model => model.route)).toEqual([old.route]);
+    expect((bucket.stored() as { models: unknown[] }).models).toEqual([old]);
+    expect(refreshed.warnings).toContain(connected
+      ? "owner-router model catalogue is unavailable (HTTP 503)."
+      : "owner-router model catalogue requires a connected Gateway for authenticated discovery.");
+    expect(JSON.stringify(refreshed)).not.toContain("PRIVATE_PROVIDER_BODY");
+    expect(gatewayFetch.mock.calls.filter(([url]) => String(url) === gatewayUrl)).toHaveLength(connected ? 1 : 0);
+    expect(publicFetch).not.toHaveBeenCalled();
+  });
+
+  it("retains the same-provider public 401 fallback for other providers", async () => {
+    const configured = defaultProviders().find(provider => provider.id === "command-code");
+    if (!configured) throw new Error("The compatible provider fixture is missing.");
+    const selected = { ...configured, modelsUrl: CC + "?limit=16" };
+    const publicFetch = vi.fn(async () => new Response("PRIVATE_401_BODY", { status: 401 }));
+    vi.stubGlobal("fetch", publicFetch);
+    const gateway = { id: "fixture-gateway", ai: { fetch: vi.fn(async function (this: unknown, url: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+      expect(this).toBe(gateway.ai);
+      expect(String(url)).toBe("https://workers-binding.ai/ai-gateway/gateways/fixture-gateway/custom-command-code/v1/models?limit=16");
+      expect(init?.method).toBe("GET");
+      expect(new Headers(init?.headers).has("authorization")).toBe(false);
+      return Response.json({ data: [{ ...row, supported_endpoints: ["/chat/completions"] }] });
+    }) } };
+    const models = await discoverGatewayModels([selected], undefined, gateway);
+    expect(models.map(model => model.id)).toEqual([row.id]);
+    expect(publicFetch).toHaveBeenCalledTimes(1);
+    expect(gateway.ai.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("stored catalogue with provider snapshot", () => {
   it("preserves stored low on reads and replaces it with fresh native reasoning metadata on refresh", async () => {
     const workersAi = defaultProviders().filter((provider) => provider.type === "workers-ai");

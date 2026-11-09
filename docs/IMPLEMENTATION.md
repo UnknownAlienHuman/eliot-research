@@ -1521,6 +1521,15 @@ Catalogue and metadata URLs pass the existing public-URL guard, and redirects ar
 denies access with 401/403, an explicitly configured Gateway can read that same provider path using stored BYOK;
 credentials are never sent by the app or forwarded to a different origin. A refused authenticated read remains a
 provider failure and preserves its prior catalogue slice.
+For the official OpenRouter API root, explicit Refresh with Gateway access and no `modelsUrl` reads
+`GET /api/v1/models/user` through receiver-bound Gateway BYOK first; an explicit official user-catalogue URL takes
+the same authenticated path and requires Gateway access, while an explicit owner public URL stays public.
+This metadata GET has one attempt, a 15-second deadline, the existing 4 MiB/2,000-row bounds and no-log/no-wholesale
+controls, with no direct Authorization header or anonymous fallback; failure preserves the prior provider slice
+with a fixed warning, and the disconnected omitted default still reads public `/models`.
+The [user catalogue](https://openrouter.ai/docs/api/api-reference/models/list-models-filtered-by-user-provider-preferences-privacy-settings-and-guardrails)
+filters account preferences/privacy/guardrails, not request-level `data_collection: "deny"` eligibility; this
+does not change the app's Deny policy or prove inference access (official contract checked 2026-11-08).
 The admitted external `ModelSpec` carries the provider configuration and Gateway ID from that same catalogue read;
 transport uses this frozen routing instead of reading changed settings after admission.
 Published `supported_parameters` may advertise temperature support; those requests use temperature 0 for source-faithful

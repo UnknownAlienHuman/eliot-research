@@ -280,10 +280,23 @@ const isCatalogTimeout = (error: unknown): boolean =>
     ? error.name === "TimeoutError" || error.name === "AbortError"
     : error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
 
+type CatalogueGateway = { id: string; ai: Pick<Fetcher, "fetch"> };
+
+function readGatewayCatalogue(provider: ModelProvider, target: URL, gateway: CatalogueGateway, timeoutMs = 15_000): Promise<Response> {
+  const prefix = new URL(provider.baseUrl ?? "").pathname.replace(/\/+$/, "");
+  const path = provider.gatewayPath ? "/" + provider.gatewayPath : "";
+  return gateway.ai.fetch("https://workers-binding.ai/ai-gateway/gateways/" + encodeURIComponent(gateway.id) +
+    "/" + provider.gatewaySlug + path + target.pathname.slice(prefix.length) + target.search, {
+    method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs),
+    headers: { accept: "application/json", "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1",
+      "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" },
+  });
+}
+
 export async function discoverGatewayModels(
   providers: ModelProvider[],
   onError?: (providerId: string, message: string) => void,
-  gateway?: { id: string; ai: Pick<Fetcher, "fetch"> },
+  gateway?: CatalogueGateway,
 ): Promise<CatalogModel[]> {
   const checkedOn = new Date().toISOString().slice(0, 10);
   const enabled = (providers ?? []).filter((provider) =>
@@ -292,29 +305,32 @@ export async function discoverGatewayModels(
     && typeof provider?.baseUrl === "string"
     && provider.baseUrl.trim() !== "");
   const catalogues = await Promise.allSettled(enabled.map(async (provider) => {
+    const officialOpenRouter = isOpenRouterApiBase(provider.baseUrl);
     const endpoint = provider.modelsUrl && provider.modelsUrl.trim() !== ""
       ? provider.modelsUrl.trim().replace(/\/+$/, "")
-      : (provider.baseUrl ?? "").replace(/\/+$/, "") + "/models";
+      : (provider.baseUrl ?? "").replace(/\/+$/, "") + (officialOpenRouter && gateway ? "/models/user" : "/models");
     try {
       validateSourceUrl(endpoint);
     } catch (error) {
       throw new Error("The " + provider.id + " model catalogue is unavailable.", { cause: error });
     }
+    const target = new URL(endpoint);
+    const authenticated = officialOpenRouter && target.origin === "https://openrouter.ai" &&
+      target.pathname.replace(/\/+$/, "") === "/api/v1/models/user";
+    if (authenticated && (!gateway || !provider.gatewaySlug)) {
+      throw new Error("The " + provider.id + " model catalogue requires a connected Gateway for authenticated discovery.");
+    }
     let response: Response;
     try {
-      response = await fetch(endpoint, { headers: { accept: "application/json" }, redirect: "manual", signal: AbortSignal.timeout(10_000) });
-      if ((response.status === 401 || response.status === 403) && gateway && provider.baseUrl && provider.gatewaySlug) {
-        const base = new URL(provider.baseUrl), target = new URL(endpoint);
+      response = authenticated && gateway
+        ? await readGatewayCatalogue(provider, target, gateway)
+        : await fetch(endpoint, { headers: { accept: "application/json" }, redirect: "manual", signal: AbortSignal.timeout(10_000) });
+      if (!authenticated && (response.status === 401 || response.status === 403) && gateway && provider.baseUrl && provider.gatewaySlug) {
+        const base = new URL(provider.baseUrl);
         const prefix = base.pathname.replace(/\/+$/, "");
         if (target.origin === base.origin && target.pathname.startsWith(prefix + "/") && !target.pathname.includes("%")) {
           void response.body?.cancel().catch(() => undefined);
-          const path = provider.gatewayPath ? "/" + provider.gatewayPath : "";
-          response = await gateway.ai.fetch("https://workers-binding.ai/ai-gateway/gateways/" + encodeURIComponent(gateway.id) +
-            "/" + provider.gatewaySlug + path + target.pathname.slice(prefix.length), {
-            method: "GET", redirect: "manual", signal: AbortSignal.timeout(10_000),
-            headers: { accept: "application/json", "cf-aig-no-wholesale": "true", "cf-aig-max-attempts": "1",
-              "cf-aig-skip-cache": "true", "cf-aig-collect-log": "false" },
-          });
+          response = await readGatewayCatalogue(provider, target, gateway, 10_000);
         }
       }
     } catch (error) {
